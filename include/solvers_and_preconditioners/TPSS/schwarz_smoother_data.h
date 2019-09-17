@@ -33,11 +33,13 @@ struct SchwarzSmootherData
   {
   }
 
-  template <typename T>
+  template<typename T>
   void
-  print_parameter (ConditionalOStream & cout, const std::string & description, const T parameter) const
+  print_parameter(ConditionalOStream & cout,
+                  const std::string &  description,
+                  const T              parameter) const
   {
-    print_row_variable (cout, 2, "", 43, description, parameter);
+    print_row_variable(cout, 2, "", 43, description, parameter);
   }
 
   void

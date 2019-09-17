@@ -47,9 +47,9 @@
 
 #include "operators/linear_operator_base.h"
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
+#include "solvers_and_preconditioners/TPSS/schwarz_smoother_data.h"
 #include "solvers_and_preconditioners/TPSS/time_info.h"
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
-#include "solvers_and_preconditioners/TPSS/schwarz_smoother_data.h"
 
 #include "laplace_integrator.h"
 
@@ -1089,6 +1089,11 @@ struct MatrixOperator : public Subscriptor
 
     switch(parameters.geometry_variant)
     {
+      case Parameter::GeometryVariant::SubdividedCubeoid:
+      {
+        AssertThrow(false, ExcNotImplemented());
+        break;
+      }
       case Parameter::GeometryVariant::Cube:
       {
         // function

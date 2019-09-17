@@ -118,25 +118,32 @@ struct ModelProblem : public Subscriptor
   std::shared_ptr<const MatrixFree<dim, Number2>>
   build_mf_storage(const unsigned level = static_cast<unsigned>(-1))
   {
-    typename MatrixFree<dim, Number2>::AdditionalData mf_additional_data;
+    typename MatrixFree<dim, Number2>::AdditionalData additional_data;
     const auto                                        p_scheme =
       static_cast<typename MatrixFree<dim, Number2>::AdditionalData::TasksParallelScheme>(
         parameters.mf_tasks_scheme_id);
 
-    mf_additional_data.tasks_parallel_scheme = p_scheme;
-    const auto mapping_update_flags =
-      dealii::update_gradients | dealii::update_JxW_values | dealii::update_quadrature_points;
-    mf_additional_data.mapping_update_flags                = mapping_update_flags;
-    mf_additional_data.mapping_update_flags_inner_faces    = mapping_update_flags;
-    mf_additional_data.mapping_update_flags_boundary_faces = mapping_update_flags;
+    additional_data.tasks_parallel_scheme = p_scheme;
+    additional_data.mapping_update_flags =
+      (update_gradients | update_JxW_values | update_quadrature_points);
+    additional_data.mapping_update_flags_inner_faces =
+      (update_gradients | update_JxW_values | update_normal_vectors);
+    additional_data.mapping_update_flags_boundary_faces =
+      (update_gradients | update_JxW_values | update_normal_vectors |
+       update_quadrature_points);
+    // const auto mapping_update_flags =
+    //   dealii::update_gradients | dealii::update_JxW_values | dealii::update_quadrature_points;
+    // additional_data.mapping_update_flags                = mapping_update_flags;
+    // additional_data.mapping_update_flags_inner_faces    = mapping_update_flags;
+    // additional_data.mapping_update_flags_boundary_faces = mapping_update_flags;
     if(level != static_cast<unsigned>(-1))
-      mf_additional_data.level_mg_handler = level;
+      additional_data.level_mg_handler = level;
     AffineConstraints<double> constraints_dummy;
     constraints_dummy.close();
     const auto   mf_storage = std::make_shared<MatrixFree<dim, Number2>>();
     unsigned int n_qpoints  = fe_degree + 1;
     QGauss<1>    quadrature(n_qpoints);
-    mf_storage->reinit(mapping, dof_handler, constraints_dummy, quadrature, mf_additional_data);
+    mf_storage->reinit(mapping, dof_handler, constraints_dummy, quadrature, additional_data);
     return mf_storage;
   }
 

@@ -363,11 +363,11 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::multiplicative
 
   // *** apply the patch inverses to the first color
   timer.restart();
-  if (!color_sequence.empty())
-    {
-      apply_subdomain_inverses_add(solution, rhs, color_sequence.front());
-      color_sequence.erase(color_sequence.begin());
-    }
+  if(!color_sequence.empty())
+  {
+    apply_subdomain_inverses_add(solution, rhs, color_sequence.front());
+    color_sequence.erase(color_sequence.begin());
+  }
   time_data[1].add_time(timer.wall_time());
 
   for(const auto color : color_sequence)

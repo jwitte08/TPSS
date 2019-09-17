@@ -569,7 +569,7 @@ Operator<dim, fe_degree, Number>::vmult(
   LinearAlgebra::distributed::Vector<Number> &       dst,
   const LinearAlgebra::distributed::Vector<Number> & src) const
 {
-  Timer timer;//{MPI_COMM_WORLD, /*sync procs?*/ true};
+  Timer timer; //{MPI_COMM_WORLD, /*sync procs?*/ true};
   timer.restart();
   adjust_ghost_range_if_necessary(*data, dst);
   adjust_ghost_range_if_necessary(*data, src);

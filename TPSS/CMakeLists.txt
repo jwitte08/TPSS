@@ -90,9 +90,9 @@ SET( SOURCE_FILES
   # mlaplace.cc
   # linelasticity.cc
   # proceeding_elasticity_diagonly.cc
-  paper_poisson.cc
-  mpi_coloring.cc
-  cell_coloring.cc
+  # paper_poisson.cc
+  # mpi_coloring.cc
+  # cell_coloring.cc
   poisson.cc
   )
 

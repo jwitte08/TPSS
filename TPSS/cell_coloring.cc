@@ -36,6 +36,8 @@
 
 #include <deal.II/numerics/vector_tools.h>
 
+#include <fstream>
+
 using namespace dealii;
 
 
@@ -121,7 +123,7 @@ test()
     Triangulation<dim>::limit_level_difference_at_vertices,
     parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy);
   GridGenerator::hyper_cube(tria, 0, 1);
-  tria.refine_global(3);
+  tria.refine_global(1);
 
   DoFHandler<dim> dof(tria);
   dof.distribute_dofs(FE_Q<dim>(1));
