@@ -129,8 +129,7 @@ struct ModelProblem : public Subscriptor
     additional_data.mapping_update_flags_inner_faces =
       (update_gradients | update_JxW_values | update_normal_vectors);
     additional_data.mapping_update_flags_boundary_faces =
-      (update_gradients | update_JxW_values | update_normal_vectors |
-       update_quadrature_points);
+      (update_gradients | update_JxW_values | update_normal_vectors | update_quadrature_points);
     // const auto mapping_update_flags =
     //   dealii::update_gradients | dealii::update_JxW_values | dealii::update_quadrature_points;
     // additional_data.mapping_update_flags                = mapping_update_flags;
