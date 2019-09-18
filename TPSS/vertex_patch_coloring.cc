@@ -228,92 +228,116 @@ test(const TestParameter & prms)
   dof_handler.distribute_mg_dofs();
   const unsigned int global_level = tria.n_global_levels() - 1;
 
-  // gather vertex patches
-  const auto patch_collection = gather(dof_handler, global_level);
+  std::cout << tria.locally_owned_subdomain() << " n_vertices: " << tria.n_vertices() << std::endl;
+  std::cout << tria.locally_owned_subdomain() << " n_used_vertices: " << tria.n_used_vertices() << std::endl;
 
-  // color vertex patches
-  const auto patch_iterators = get_coloring<dim>(patch_collection);
-  
-  // collect output data
-  DataOut<dim> data_out;
-  data_out.attach_dof_handler(dof_handler);
-
-  Vector<double> subdomain(tria.n_active_cells());
-  for(unsigned int i = 0; i < subdomain.size(); ++i)
-    subdomain(i) = tria.locally_owned_subdomain();
-  data_out.add_data_vector(subdomain, "subdomain");
-
-  // mark each single patch
-  std::vector<Vector<double>> patch_markers;
-  for(const auto & patch : patch_collection)
-  {
-    Vector<double> patch_marker;
-    patch_marker.reinit(tria.n_active_cells());
-    std::fill(patch_marker.begin(), patch_marker.end(), 0);
-    for(const auto & cell : patch)
+  const auto locally_owned_range_mg =
+    filter_iterators(dof_handler.mg_cell_iterators_on_level(global_level),
+  		     IteratorFilters::LocallyOwnedCell(),
+		     IteratorFilters::AtBoundary());
+  std::vector<unsigned> vertices;
+  for (const auto & cell : locally_owned_range_mg)
+    for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
     {
-      const auto active_cell          = typename DoFHandler<dim>::active_cell_iterator{&tria,
-                                                                              cell->level(),
-                                                                              cell->index(),
-                                                                              &dof_handler};
-      const auto active_cell_index    = active_cell->active_cell_index();
-      patch_marker(active_cell_index) = 1;
+      vertices.push_back(cell->vertex_index(v));
     }
-    patch_markers.emplace_back(patch_marker);
-  }
-  unsigned int patch_no = 0;
-  for(const auto & patch_marker : patch_markers)
-  {
-    std::string patch_name = "patch" + Utilities::int_to_string(patch_no++, 4);
-    data_out.add_data_vector(patch_marker, patch_name);
-  }
+  std::sort(vertices.begin(),vertices.end());
+  const auto last = std::unique(vertices.begin(),vertices.end());
+  vertices.erase(last, vertices.end());
+  std::ostringstream oss;
+  oss << tria.locally_owned_subdomain() << " n_vertices: " << tria.n_vertices() << std::endl;
+  for (unsigned v : vertices)
+    oss << v << " ";
+  oss << "\n\n";
+  std::cout << oss.str();
+  // for(const auto & cell : filtered_iterators_range)
 
-  // for each color mark all patches
-  std::vector<Vector<double>> colored_markers;
-  for(unsigned color = 0; color < patch_iterators.size(); ++color)
-  {
-    Vector<double> marker;
-    marker.reinit(tria.n_active_cells());
-    std::fill(marker.begin(), marker.end(), 0);
-    const auto & patch_collection = patch_iterators[color];
-    for(const auto & patch : patch_collection)
-      for(const auto & cell : (*patch))
-      {
-        const auto active_cell       = typename DoFHandler<dim>::active_cell_iterator{&tria,
-                                                                                cell->level(),
-                                                                                cell->index(),
-                                                                                &dof_handler};
-        const auto active_cell_index = active_cell->active_cell_index();
-        marker(active_cell_index)    = 1;
-      }
-    colored_markers.emplace_back(marker);
-  }
-  unsigned int color = 0;
-  AssertDimension(colored_markers.size(), 2 * (1 << dim));
-  for(const auto & marker : colored_markers)
-  {
-    std::string color_name = "color" + Utilities::int_to_string(color++, 2);
-    data_out.add_data_vector(marker, color_name);
-  }
+  // // gather vertex patches
+  // const auto patch_collection = gather(dof_handler, global_level);
 
-  // write paraview files
-  data_out.build_patches();
-  {
-    std::ofstream file(
-      "data-active-" + Utilities::int_to_string(dim) + "d-" +
-      Utilities::int_to_string(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD), 4) + ".vtu");
-    data_out.write_vtu(file);
-  }
-  if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-  {
-    std::vector<std::string> filenames;
-    for(unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD); ++i)
-      filenames.push_back("data-active-" + Utilities::int_to_string(dim) + "d-" +
-                          Utilities::int_to_string(i, 4) + ".vtu");
+  // // color vertex patches
+  // const auto patch_iterators = get_coloring<dim>(patch_collection);
+  
+  // // collect output data
+  // DataOut<dim> data_out;
+  // data_out.attach_dof_handler(dof_handler);
 
-    std::ofstream master_output("data-active-" + Utilities::int_to_string(dim) + "d.pvtu");
-    data_out.write_pvtu_record(master_output, filenames);
-  }
+  // Vector<double> subdomain(tria.n_active_cells());
+  // for(unsigned int i = 0; i < subdomain.size(); ++i)
+  //   subdomain(i) = tria.locally_owned_subdomain();
+  // data_out.add_data_vector(subdomain, "subdomain");
+
+  // // mark each single patch
+  // std::vector<Vector<double>> patch_markers;
+  // for(const auto & patch : patch_collection)
+  // {
+  //   Vector<double> patch_marker;
+  //   patch_marker.reinit(tria.n_active_cells());
+  //   std::fill(patch_marker.begin(), patch_marker.end(), 0);
+  //   for(const auto & cell : patch)
+  //   {
+  //     const auto active_cell          = typename DoFHandler<dim>::active_cell_iterator{&tria,
+  //                                                                             cell->level(),
+  //                                                                             cell->index(),
+  //                                                                             &dof_handler};
+  //     const auto active_cell_index    = active_cell->active_cell_index();
+  //     patch_marker(active_cell_index) = 1;
+  //   }
+  //   patch_markers.emplace_back(patch_marker);
+  // }
+  // unsigned int patch_no = 0;
+  // for(const auto & patch_marker : patch_markers)
+  // {
+  //   std::string patch_name = "patch" + Utilities::int_to_string(patch_no++, 4);
+  //   data_out.add_data_vector(patch_marker, patch_name);
+  // }
+
+  // // for each color mark all patches
+  // std::vector<Vector<double>> colored_markers;
+  // for(unsigned color = 0; color < patch_iterators.size(); ++color)
+  // {
+  //   Vector<double> marker;
+  //   marker.reinit(tria.n_active_cells());
+  //   std::fill(marker.begin(), marker.end(), 0);
+  //   const auto & patch_collection = patch_iterators[color];
+  //   for(const auto & patch : patch_collection)
+  //     for(const auto & cell : (*patch))
+  //     {
+  //       const auto active_cell       = typename DoFHandler<dim>::active_cell_iterator{&tria,
+  //                                                                               cell->level(),
+  //                                                                               cell->index(),
+  //                                                                               &dof_handler};
+  //       const auto active_cell_index = active_cell->active_cell_index();
+  //       marker(active_cell_index)    = 1;
+  //     }
+  //   colored_markers.emplace_back(marker);
+  // }
+  // unsigned int color = 0;
+  // AssertDimension(colored_markers.size(), 2 * (1 << dim));
+  // for(const auto & marker : colored_markers)
+  // {
+  //   std::string color_name = "color" + Utilities::int_to_string(color++, 2);
+  //   data_out.add_data_vector(marker, color_name);
+  // }
+
+  // // write paraview files
+  // data_out.build_patches();
+  // {
+  //   std::ofstream file(
+  //     "data-active-" + Utilities::int_to_string(dim) + "d-" +
+  //     Utilities::int_to_string(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD), 4) + ".vtu");
+  //   data_out.write_vtu(file);
+  // }
+  // if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+  // {
+  //   std::vector<std::string> filenames;
+  //   for(unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD); ++i)
+  //     filenames.push_back("data-active-" + Utilities::int_to_string(dim) + "d-" +
+  //                         Utilities::int_to_string(i, 4) + ".vtu");
+
+  //   std::ofstream master_output("data-active-" + Utilities::int_to_string(dim) + "d.pvtu");
+  //   data_out.write_pvtu_record(master_output, filenames);
+  // }
 }
 
 
