@@ -6,11 +6,13 @@
 #include <deal.II/base/timer.h>
 #include <deal.II/base/utilities.h>
 #include <deal.II/grid/grid_out.h>
+#include <deal.II/matrix_free/matrix_free.h>
 #include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/vector_tools.h>
 
 #include "TPSS.h"
 #include "generic_functionalities.h"
+#include "time_info.h"
 
 #include <array>
 #include <fstream>
