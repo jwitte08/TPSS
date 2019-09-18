@@ -33,6 +33,11 @@
 
 using namespace dealii;
 
+// // LATER
+// using IndexIteratorPair = typename std::pair<unsigned,typename DoFHandler<dim>::level_cell_iterator>;
+//   const auto & compare_func = [](const IndexIteratorPair & lhs, const IndexIteratorPair & rhs){return std::less<unsigned>(lhs.first,rhs.first);};
+//   std::set<IndexIteratorPair,decltype(compare_func)> global_indices_with_ghost;
+
 template<int dim>
 std::vector<std::vector<typename DoFHandler<dim>::level_cell_iterator>>
 gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
@@ -50,72 +55,170 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
   constexpr unsigned int regular_vpatch_size = 1 << dim;
   const auto &           tria                = dof_handler.get_triangulation();
 
-  // // TODO work on locally owend and ghosted cells
-  // const auto filtered_iterators_range =
-  //   filter_iterators(dof_handler.active_cell_iterators_on_level(global_level),
-  // 		     IteratorFilters::LocallyOwnedCell());
-  // // for(const auto & cell : filtered_iterators_range)
-  // //   {
+  std::map <unsigned int, std::pair<unsigned int, unsigned int>> global_to_local_map;
+  std::ostringstream oss;
+  oss << "process " << tria.locally_owned_subdomain() << " reports:\n";
+  const auto locally_owned_range_mg =
+    filter_iterators(dof_handler.mg_cell_iterators_on_level(level),
+  		     IteratorFilters::LocallyOwnedLevelCell());
+  unsigned int local_index = 0;
+  oss << "loop over locally owned\n";
+  for (const auto & cell : locally_owned_range_mg)
+  {
+      oss << "cell " << cell->index()
+	  << " is locally owned " << cell->is_locally_owned_on_level()
+	  << ", is ghosted " << cell->is_ghost()
+	  << ", is artificial " << cell->is_artificial()
+	  << std::endl;
+      for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
+	if(!is_boundary_vertex(cell, v))
+	  {
+	    const unsigned int global_index = cell->vertex_index(v);
+	    const auto element = global_to_local_map.find (global_index);
+	    if (element != global_to_local_map.cend())
+	      ++(element->second.second);
+	    else
+	      {
+		const auto local_index_pair = std::pair<unsigned, unsigned>{local_index++,1};
+		const auto status = global_to_local_map.insert(std::make_pair(global_index, local_index_pair));
+		Assert (status.second, ExcMessage("failed to insert key-value-pair"))
+	      }
+	  }
+  }
+    
+  const unsigned int my_subdomain_id = tria.locally_owned_subdomain();
+  // TODO balance vertex patches with ghosts better
+  const auto partial_ghost_range_mg =
+    filter_iterators(dof_handler.mg_cell_iterators_on_level(level),
+  		     [](const auto & cell){return cell->is_ghost();},
+		     [&,my_subdomain_id](const auto & cell){return tria.locally_owned_subdomain() < cell->level_subdomain_id();});
+  oss << "loop over ghosts\n";
+  std::set<unsigned> global_indices_with_ghost;
+  for (const auto & cell : partial_ghost_range_mg)
+  {
+      oss << "cell " << cell->index()
+	  << " is locally owned " << cell->is_locally_owned_on_level()
+	  << ", is ghosted " << cell->is_ghost()
+	  << ", is artificial " << cell->is_artificial()
+	  << std::endl;
+      for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
+	  {
+	    const unsigned int global_index = cell->vertex_index(v);
+	    const auto element = global_to_local_map.find (global_index);
+	    if (element != global_to_local_map.cend())
+	      ++(element->second.second);
+	  }
+  }
 
-  // PRE-PROCESSING
-  std::vector<unsigned int> cell_count(tria.n_vertices(), 0);
-  std::vector<unsigned int> vloc_map(tria.n_vertices(), -1);
-  unsigned int              vg_max       = 0;
-  unsigned int              n_subdomains = 0;
-
-  // *** map each interior vertex (vg, i.e. global index) onto a
-  // *** local index (vloc) and count the amount of cells
-  // *** belonging to each vertex
-  for(auto & cell : dof_handler.mg_cell_iterators_on_level(level))
-    for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
-      if(!is_boundary_vertex(cell, v))
+  // TODO see TODO balance ...
+  oss << "erase irregular patches:\n";
+      const auto & is_invalid_patch = [](const auto & key_value){
+      const unsigned int n_cells = key_value.second.second;
+      const bool is_invalid = (n_cells != regular_vpatch_size); // TODO non-irregular cases?
+      return is_invalid;
+      };
+  while (std::any_of (global_to_local_map.begin(),global_to_local_map.end(), is_invalid_patch))
+    for (const auto key_value : global_to_local_map)
       {
-        const unsigned int vg = cell->vertex_index(v);
-        vg_max                = std::max(vg_max, vg);
-        if(vloc_map[vg] == static_cast<unsigned int>(-1))
-          vloc_map[vg] = n_subdomains++;
-        ++cell_count[vg];
+	const unsigned int n_cells = key_value.second.second;
+	const unsigned int global_index = key_value.first;
+	if (n_cells != regular_vpatch_size)
+	  global_to_local_map.erase(global_index);
       }
-  std::pair<unsigned int, unsigned int> vg_range(
-    0, vg_max + 1); // half-open range of global vertex indices to be considered
-  cell_count.resize(vg_range.second);
-  vloc_map.resize(vg_range.second);
-
-  // *** count the amount of regular and irregular patches
-  unsigned int n_regular_patches =
-    std::count_if(cell_count.cbegin(), cell_count.cend(), [](const auto & n) {
-      return regular_vpatch_size == n;
-    });
-  unsigned int n_irregular_patches =
-    std::count_if(cell_count.cbegin(), cell_count.cbegin() + vg_max + 1, [](const auto & n) {
-      return (regular_vpatch_size != n) && (0 != n);
-    });
-  (void)n_regular_patches, (void)n_irregular_patches;
-  AssertDimension(n_subdomains, n_regular_patches + n_irregular_patches);
-  // TODO treat irregular patches
-  Assert(n_irregular_patches == 0, ExcNotImplemented());
+  unsigned int new_local_index = 0;
+  for (auto & key_value : global_to_local_map)
+    key_value.second.first = new_local_index++;
+  
+  oss << "print global-to-local-mapping\n";
+  for (const auto key_value : global_to_local_map)
+    oss << key_value.first << ", ("
+	<< key_value.second.first << "," << key_value.second.second << ")   ";
+  std::cout << oss.str() << std::endl;
 
   // *** we gather CellIterators into patches (cell_collections)
+  const unsigned n_subdomains = global_to_local_map.size();
+  AssertDimension(n_subdomains,new_local_index);
   cell_collections.clear();
   cell_collections.resize(n_subdomains);
   for(auto & cell : dof_handler.mg_cell_iterators_on_level(level))
     for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
-      if(!is_boundary_vertex(cell, v))
       {
-        const unsigned int vg   = cell->vertex_index(v);
-        const unsigned int vloc = vloc_map[vg];
-        Assert(vloc != static_cast<unsigned int>(-1), ExcInternalError());
-        auto &     collection = cell_collections[vloc];
-        const auto patch_size = cell_count[vg];
-
-        if(collection.empty())
-          collection.resize(patch_size);
-        if(patch_size == regular_vpatch_size) // regular patch
-          collection[regular_vpatch_size - 1 - v] = cell;
-        else // irregular patch
-          Assert(false, ExcNotImplemented());
+        const unsigned int global_index = cell->vertex_index(v);
+	const auto element = global_to_local_map.find (global_index);
+	if (element != global_to_local_map.cend())
+	  {
+	    const unsigned int local_index = element->second.first;
+	    auto & collection = cell_collections[local_index];
+	    const unsigned patch_size = element->second.second;
+	    if(collection.empty())
+	      collection.resize(patch_size);
+	    if(patch_size == regular_vpatch_size) // regular patch
+	      collection[regular_vpatch_size - 1 - v] = cell;
+	    else // irregular patch
+	      Assert (false, ExcMessage("TODO"));
+	  }
       }
   return cell_collections;
+
+  // // PRE-PROCESSING
+  // std::vector<unsigned int> cell_count(tria.n_vertices(), 0);
+  // std::vector<unsigned int> vloc_map(tria.n_vertices(), -1);
+  // unsigned int              vg_max       = 0;
+  // unsigned int              n_subdomains = 0;
+
+  // // *** map each interior vertex (vg, i.e. global index) onto a
+  // // *** local index (vloc) and count the amount of cells
+  // // *** belonging to each vertex
+  // for(auto & cell : dof_handler.mg_cell_iterators_on_level(level))
+  //   for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
+  //     if(!is_boundary_vertex(cell, v))
+  //     {
+  //       const unsigned int vg = cell->vertex_index(v);
+  //       vg_max                = std::max(vg_max, vg);
+  //       if(vloc_map[vg] == static_cast<unsigned int>(-1))
+  //         vloc_map[vg] = n_subdomains++;
+  //       ++cell_count[vg];
+  //     }
+  // std::pair<unsigned int, unsigned int> vg_range(
+  //   0, vg_max + 1); // half-open range of global vertex indices to be considered
+  // cell_count.resize(vg_range.second);
+  // vloc_map.resize(vg_range.second);
+
+  // // *** count the amount of regular and irregular patches
+  // unsigned int n_regular_patches =
+  //   std::count_if(cell_count.cbegin(), cell_count.cend(), [](const auto & n) {
+  //     return regular_vpatch_size == n;
+  //   });
+  // unsigned int n_irregular_patches =
+  //   std::count_if(cell_count.cbegin(), cell_count.cbegin() + vg_max + 1, [](const auto & n) {
+  //     return (regular_vpatch_size != n) && (0 != n);
+  //   });
+  // (void)n_regular_patches, (void)n_irregular_patches;
+  // AssertDimension(n_subdomains, n_regular_patches + n_irregular_patches);
+  // // TODO treat irregular patches
+  // Assert(n_irregular_patches == 0, ExcNotImplemented());
+
+  // // *** we gather CellIterators into patches (cell_collections)
+  // cell_collections.clear();
+  // cell_collections.resize(n_subdomains);
+  // for(auto & cell : dof_handler.mg_cell_iterators_on_level(level))
+  //   for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
+  //     if(!is_boundary_vertex(cell, v))
+  //     {
+  //       const unsigned int vg   = cell->vertex_index(v);
+  //       const unsigned int vloc = vloc_map[vg];
+  //       Assert(vloc != static_cast<unsigned int>(-1), ExcInternalError());
+  //       auto &     collection = cell_collections[vloc];
+  //       const auto patch_size = cell_count[vg];
+
+  //       if(collection.empty())
+  //         collection.resize(patch_size);
+  //       if(patch_size == regular_vpatch_size) // regular patch
+  //         collection[regular_vpatch_size - 1 - v] = cell;
+  //       else // irregular patch
+  //         Assert(false, ExcNotImplemented());
+  //     }
+  // return cell_collections;
 }
 
 
@@ -228,32 +331,32 @@ test(const TestParameter & prms)
   dof_handler.distribute_mg_dofs();
   const unsigned int global_level = tria.n_global_levels() - 1;
 
-  std::cout << tria.locally_owned_subdomain() << " n_vertices: " << tria.n_vertices() << std::endl;
-  std::cout << tria.locally_owned_subdomain() << " n_used_vertices: " << tria.n_used_vertices() << std::endl;
+  // std::cout << tria.locally_owned_subdomain() << " n_vertices: " << tria.n_vertices() << std::endl;
+  // std::cout << tria.locally_owned_subdomain() << " n_used_vertices: " << tria.n_used_vertices() << std::endl;
 
-  const auto locally_owned_range_mg =
-    filter_iterators(dof_handler.mg_cell_iterators_on_level(global_level),
-  		     IteratorFilters::LocallyOwnedCell(),
-		     IteratorFilters::AtBoundary());
-  std::vector<unsigned> vertices;
-  for (const auto & cell : locally_owned_range_mg)
-    for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
-    {
-      vertices.push_back(cell->vertex_index(v));
-    }
-  std::sort(vertices.begin(),vertices.end());
-  const auto last = std::unique(vertices.begin(),vertices.end());
-  vertices.erase(last, vertices.end());
-  std::ostringstream oss;
-  oss << tria.locally_owned_subdomain() << " n_vertices: " << tria.n_vertices() << std::endl;
-  for (unsigned v : vertices)
-    oss << v << " ";
-  oss << "\n\n";
-  std::cout << oss.str();
-  // for(const auto & cell : filtered_iterators_range)
+  // const auto locally_owned_range_mg =
+  //   filter_iterators(dof_handler.mg_cell_iterators_on_level(global_level),
+  // 		     IteratorFilters::LocallyOwnedCell(),
+  // 		     IteratorFilters::AtBoundary());
+  // std::vector<unsigned> vertices;
+  // for (const auto & cell : locally_owned_range_mg)
+  //   for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
+  //   {
+  //     vertices.push_back(cell->vertex_index(v));
+  //   }
+  // std::sort(vertices.begin(),vertices.end());
+  // const auto last = std::unique(vertices.begin(),vertices.end());
+  // vertices.erase(last, vertices.end());
+  // std::ostringstream oss;
+  // oss << tria.locally_owned_subdomain() << " n_vertices: " << tria.n_vertices() << std::endl;
+  // for (unsigned v : vertices)
+  //   oss << v << " ";
+  // oss << "\n\n";
+  // std::cout << oss.str();
+  // // for(const auto & cell : filtered_iterators_range)
 
-  // // gather vertex patches
-  // const auto patch_collection = gather(dof_handler, global_level);
+  // gather vertex patches
+  const auto patch_collection = gather(dof_handler, global_level);
 
   // // color vertex patches
   // const auto patch_iterators = get_coloring<dim>(patch_collection);
