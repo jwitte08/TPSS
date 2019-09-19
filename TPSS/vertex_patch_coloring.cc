@@ -57,34 +57,36 @@ struct GhostPatch
 {
   GhostPatch(const unsigned int proc, const int cell_id)
   {
-    submit_id(proc,cell_id);
+    submit_id(proc, cell_id);
   }
-  
+
   void
   submit_id(const unsigned int proc, const int cell_id)
   {
     const auto member = proc_to_cell_ids.find(proc);
-    if (member != proc_to_cell_ids.cend())
-      {
-	member->second.push_back(cell_id);
-	Assert (!(member->second.empty()), ExcMessage("at least one element"));
-      }
+    if(member != proc_to_cell_ids.cend())
+    {
+      member->second.push_back(cell_id);
+      Assert(!(member->second.empty()), ExcMessage("at least one element"));
+    }
     else
-      {
-	const auto status = proc_to_cell_ids.emplace (proc, std::vector<int>{cell_id});
-	Assert(status.second, ExcMessage("failed to insert key-value-pair"));
-      }
+    {
+      const auto status = proc_to_cell_ids.emplace(proc, std::vector<int>{cell_id});
+      Assert(status.second, ExcMessage("failed to insert key-value-pair"));
+    }
   }
-  
+
   std::string
   str() const
   {
     std::ostringstream oss;
     oss << "{";
     const auto size = proc_to_cell_ids.size();
-    unsigned i = 0;
-    for (auto key_value = proc_to_cell_ids.cbegin(); key_value != proc_to_cell_ids.cend(); ++key_value, ++i)
-      oss << "(" << key_value->first << ", " << vector_to_string(key_value->second) << ((i + 1) < size ? "), " : ")}");
+    unsigned   i    = 0;
+    for(auto key_value = proc_to_cell_ids.cbegin(); key_value != proc_to_cell_ids.cend();
+        ++key_value, ++i)
+      oss << "(" << key_value->first << ", " << vector_to_string(key_value->second)
+          << ((i + 1) < size ? "), " : ")}");
     return oss.str();
   }
 
@@ -117,23 +119,13 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
   const auto locally_owned_range_mg =
     filter_iterators(dof_handler.mg_cell_iterators_on_level(level),
                      IteratorFilters::LocallyOwnedLevelCell());
-  // const auto locally_owned_range_mg =
-  //   filter_iterators(dof_handler.mg_cell_iterators_on_level(level),
-  //                    IteratorFilters::LocallyOwnedCell());
   for(const auto & cell : locally_owned_range_mg)
   {
     for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
       if(!is_boundary_vertex(cell, v))
       {
         const unsigned int global_index = cell->vertex_index(v);
-        // if(global_index == 45)
-        // {
-        //   oss << "45!!! " << std::endl;
-        //   oss << "cell " << cell->index() << " is locally owned "
-        //       << cell->is_locally_owned_on_level() << ", is ghosted " << cell->is_ghost()
-        //       << ", is artificial " << cell->is_artificial() << std::endl;
-        // }
-        const auto element = global_to_local_map.find(global_index);
+        const auto         element      = global_to_local_map.find(global_index);
         if(element != global_to_local_map.cend())
         {
           ++(element->second.first);
@@ -167,8 +159,7 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
   // const auto not_locally_owned_range_mg =
   //   filter_iterators(dof_handler.mg_cell_iterators_on_level(level),
   //                    [](const auto & cell) { return cell->is_ghost(); });
-  std::map<unsigned int, GhostPatch> global_to_new_ghost_id;
-  std::map<unsigned int, std::set<unsigned int>> global_to_ghost_id;
+  std::map<unsigned int, GhostPatch> global_to_ghost_id;
   for(const auto & cell : not_locally_owned_range_mg)
   {
     for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
@@ -179,31 +170,22 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
       {
         ++(element->second.second);
         const unsigned int subdomain_id_ghost = cell->level_subdomain_id();
-        const auto         new_ghost              = global_to_new_ghost_id.find(global_index);
         const auto         ghost              = global_to_ghost_id.find(global_index);
         if(ghost != global_to_ghost_id.cend())
-          ghost->second.insert(subdomain_id_ghost);
-        if(new_ghost != global_to_new_ghost_id.cend())
-          new_ghost->second.submit_id(subdomain_id_ghost,cell->index());
+          ghost->second.submit_id(subdomain_id_ghost, cell->index());
         else
         {
-          const auto status = global_to_ghost_id.insert(
-            std::make_pair(global_index, std::set<unsigned>{subdomain_id_ghost}));
+          const auto status =
+            global_to_ghost_id.emplace(global_index, GhostPatch(subdomain_id_ghost, cell->index()));
           Assert(status.second, ExcMessage("failed to insert key-value-pair"));
-          const auto new_status = global_to_new_ghost_id.emplace (global_index, GhostPatch(subdomain_id_ghost, cell->index()));
-          Assert(new_status.second, ExcMessage("failed to insert key-value-pair"));
-	}
+        }
       }
     }
   }
 
-  oss << "vertex indices with ghosts (raw):" << std::endl;
-  for(const auto key_value : global_to_ghost_id)
-    oss << key_value.first << ", (" << set_to_string(key_value.second) << ")   ";
-  oss << std::endl;
   oss << "ghost patches (raw):" << std::endl;
-  for(const auto key_value : global_to_new_ghost_id)
-    oss << key_value.first << ", " << key_value.second.str() << ")   ";
+  for(const auto key_value : global_to_ghost_id)
+    oss << key_value.first << ", " << key_value.second.str() << "   ";
   oss << std::endl;
   oss << "global-to-local mapping (raw):" << std::endl;
   for(const auto key_value : global_to_local_map)
@@ -212,92 +194,80 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
   oss << std::endl;
 
   { // SIMPLE ASSIGN
-  //   // 1.) assign ghost patches with more locally owned cells than ghosted cells to this proc
-  //   std::set<unsigned> to_be_erased;
-  //   for(const auto & ghost : global_to_ghost_id)
-  //   {
-  //     const unsigned global_index          = ghost.first;
-  //     const auto &   n_cells_pair          = global_to_local_map[global_index];
-  //     const unsigned n_locally_owned_cells = n_cells_pair.first;
-  //     const unsigned n_cells               = n_cells_pair.second;
-  //     Assert(n_locally_owned_cells < n_cells,
-  //            ExcMessage("there has to be at least one ghost cell in global_to_local_map"));
-  //     const bool more_locally_owned_cells = (n_locally_owned_cells > (n_cells / 2));
-  //     if(more_locally_owned_cells)
-  //     {
-  //       to_be_erased.insert(global_index);
-  //       oss << global_index << " : " << n_locally_owned_cells << " vs. " << n_cells << std::endl;
-  //     }
-  //   }
-  //   unsigned size_before_erase = global_to_ghost_id.size();
-  //   for(const unsigned i : to_be_erased)
-  //   {
-  //     oss << "to be erased " << i << std::endl;
-  //     global_to_ghost_id.erase(i);
-  //     auto & my_patch = global_to_local_map[i];
-  //     my_patch.first  = my_patch.second;
-  //   }
-  //   AssertDimension(global_to_ghost_id.size() + to_be_erased.size(), size_before_erase);
+    //   // 1.) assign ghost patches with more locally owned cells than ghosted cells to this proc
+    //   std::set<unsigned> to_be_erased;
+    //   for(const auto & ghost : global_to_ghost_id)
+    //   {
+    //     const unsigned global_index          = ghost.first;
+    //     const auto &   n_cells_pair          = global_to_local_map[global_index];
+    //     const unsigned n_locally_owned_cells = n_cells_pair.first;
+    //     const unsigned n_cells               = n_cells_pair.second;
+    //     Assert(n_locally_owned_cells < n_cells,
+    //            ExcMessage("there has to be at least one ghost cell in global_to_local_map"));
+    //     const bool more_locally_owned_cells = (n_locally_owned_cells > (n_cells / 2));
+    //     if(more_locally_owned_cells)
+    //     {
+    //       to_be_erased.insert(global_index);
+    //       oss << global_index << " : " << n_locally_owned_cells << " vs. " << n_cells <<
+    //       std::endl;
+    //     }
+    //   }
+    //   unsigned size_before_erase = global_to_ghost_id.size();
+    //   for(const unsigned i : to_be_erased)
+    //   {
+    //     oss << "to be erased " << i << std::endl;
+    //     global_to_ghost_id.erase(i);
+    //     auto & my_patch = global_to_local_map[i];
+    //     my_patch.first  = my_patch.second;
+    //   }
+    //   AssertDimension(global_to_ghost_id.size() + to_be_erased.size(), size_before_erase);
 
-  //   oss << "global-to-local mapping (after 1.)):" << std::endl;
-  //   for(const auto key_value : global_to_local_map)
-  //     oss << key_value.first << ", (" << key_value.second.first << "," << key_value.second.second
-  //         << ")   ";
-  //   oss << std::endl;
-  //   oss << "vertex indices with ghosts (after 1.)):" << std::endl;
-  // for(const auto key_value : global_to_ghost_id)
-  //   oss << key_value.first << ", (" << set_to_string(key_value.second) << ")   ";
-  // oss << std::endl;
+    //   oss << "global-to-local mapping (after 1.)):" << std::endl;
+    //   for(const auto key_value : global_to_local_map)
+    //     oss << key_value.first << ", (" << key_value.second.first << "," <<
+    //     key_value.second.second
+    //         << ")   ";
+    //   oss << std::endl;
+    //   oss << "vertex indices with ghosts (after 1.)):" << std::endl;
+    // for(const auto key_value : global_to_ghost_id)
+    //   oss << key_value.first << ", (" << set_to_string(key_value.second) << ")   ";
+    // oss << std::endl;
 
-    std::set<unsigned>  to_be_owned;
+    std::set<unsigned> to_be_owned;
     for(const auto & cell : locally_owned_range_mg)
+    {
+      const unsigned v            = (1 << dim) - 1; // last local vertex
+      const unsigned global_index = cell->vertex_index(v);
+      const auto     ghost        = global_to_ghost_id.find(global_index);
+      //: checks if the global vertex has ghost cells attached
+      if(ghost != global_to_ghost_id.end())
       {
-	const unsigned v = (1 << dim) - 1; // last local vertex
-	const unsigned global_index = cell->vertex_index(v);
-	const auto ghost = global_to_ghost_id.find(global_index);
-	//: checks if the global vertex has ghost cells attached
-	if(ghost != global_to_ghost_id.end())
-	  {
-	    oss << "v " << global_index << " cell " << cell->index() << " is locally owned "
-		<< cell->is_locally_owned_on_level() << ", is ghosted " << cell->is_ghost()
-		<< ", is artificial " << cell->is_artificial() << std::endl;
-	    const auto         element      = global_to_local_map.find(global_index);
-	    //: checks if lower left cell is contained is locally owned
-	    if(element != global_to_local_map.end())
-	      {
-		to_be_owned.insert(global_index);
-		// to_be_erased.insert(global_index);
-	      }
-	    // else
-	    //   to_be_erased.insert(global_index);
-	  }
+        const auto element = global_to_local_map.find(global_index);
+        //: checks if lower left cell is contained is locally owned TODO
+        if(element != global_to_local_map.end())
+        {
+          to_be_owned.insert(global_index);
+        }
       }
-    // size_before_erase = global_to_ghost_id.size();
-    // for(const unsigned i : to_be_erased)
-    // {
-    //   oss << "to be erased " << i << std::endl;
-    //   global_to_local_map.erase(i);
-    //   global_to_ghost_id.erase(i);
-    // }
+    }
     for(const unsigned i : to_be_owned)
     {
-      oss << "to be owned " << i << std::endl;
       auto & my_patch = global_to_local_map[i];
       my_patch.first  = my_patch.second;
       global_to_ghost_id.erase(i);
     }
     for(const auto key_value : global_to_ghost_id)
-      {
-	const unsigned int global_index = key_value.first;
-	global_to_local_map.erase(global_index);
-      }
+    {
+      const unsigned int global_index = key_value.first;
+      global_to_local_map.erase(global_index);
+    }
     // AssertDimension(global_to_ghost_id.size(), 0);
     // AssertDimension(global_to_ghost_id.size() + to_be_erased.size(), size_before_erase);
 
-    oss << "vertex indices with ghosts (final):" << std::endl;
-  for(const auto key_value : global_to_ghost_id)
-    oss << key_value.first << ", (" << set_to_string(key_value.second) << ")   ";
-  oss << std::endl;
+    oss << "ghost patches (final):" << std::endl;
+    for(const auto key_value : global_to_ghost_id)
+      oss << key_value.first << ", " << key_value.second.str() << "   ";
+    oss << std::endl;
     oss << "global-to-local mapping (final):" << std::endl;
     for(const auto key_value : global_to_local_map)
       oss << key_value.first << ", (" << key_value.second.first << "," << key_value.second.second
@@ -408,7 +378,8 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
   //         << ")   ";
   //   oss << std::endl;
 
-  //   // 3.) assign ghost patches owned by more than 3 procs: the mpi-proc with the highest rank takes
+  //   // 3.) assign ghost patches owned by more than 3 procs: the mpi-proc with the highest rank
+  //   takes
   //   // ownership
   //   for(const auto & ghost : global_to_ghost_id)
   //   {
@@ -437,24 +408,24 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
   //         << ")   ";
   //   oss << std::endl;
   // }
-  
-    //: global_to_local_map:   global vertex index -> (local index, N of cells)
-    unsigned int new_local_index = 0;
-    for(auto & key_value : global_to_local_map)
-      key_value.second.first = new_local_index++;
-    oss << std::endl;
 
-    // oss << "global-to-local mapping (local indexing):" << std::endl;
-    // for(const auto key_value : global_to_local_map)
-    //   oss << key_value.first << ", (" << key_value.second.first << "," << key_value.second.second
-    //       << ")   ";
-    // oss << std::endl;
+  //: global_to_local_map:   global vertex index -> (local index, N of cells)
+  unsigned int local_index = 0;
+  for(auto & key_value : global_to_local_map)
+    key_value.second.first = local_index++;
+  oss << std::endl;
+
+  // oss << "global-to-local mapping (local indexing):" << std::endl;
+  // for(const auto key_value : global_to_local_map)
+  //   oss << key_value.first << ", (" << key_value.second.first << "," << key_value.second.second
+  //       << ")   ";
+  // oss << std::endl;
 
   std::cout << oss.str() << "\n\n";
 
   // *** we gather CellIterators into patches (cell_collections)
   const unsigned n_subdomains = global_to_local_map.size();
-  AssertDimension(n_subdomains, new_local_index);
+  AssertDimension(n_subdomains, local_index);
   cell_collections.clear();
   cell_collections.resize(n_subdomains);
   for(auto & cell : dof_handler.mg_cell_iterators_on_level(level))
