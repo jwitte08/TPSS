@@ -55,23 +55,23 @@ set_to_string(const std::set<T> & set)
 
 struct GhostPatch
 {
-  GhostPatch(const unsigned int proc, const int cell_id)
+  GhostPatch(const unsigned int proc, const CellId & cell_id)
   {
     submit_id(proc, cell_id);
   }
 
   void
-  submit_id(const unsigned int proc, const int cell_id)
+  submit_id(const unsigned int proc, const CellId & cell_id)
   {
     const auto member = proc_to_cell_ids.find(proc);
     if(member != proc_to_cell_ids.cend())
     {
-      member->second.push_back(cell_id);
+      member->second.emplace_back(cell_id);
       Assert(!(member->second.empty()), ExcMessage("at least one element"));
     }
     else
     {
-      const auto status = proc_to_cell_ids.emplace(proc, std::vector<int>{cell_id});
+      const auto status = proc_to_cell_ids.emplace(proc, std::vector<CellId>{cell_id});
       Assert(status.second, ExcMessage("failed to insert key-value-pair"));
     }
   }
@@ -90,7 +90,7 @@ struct GhostPatch
     return oss.str();
   }
 
-  std::map<unsigned, std::vector<int>> proc_to_cell_ids;
+  std::map<unsigned, std::vector<CellId>> proc_to_cell_ids;
 };
 
 template<int dim>
@@ -172,11 +172,11 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
         const unsigned int subdomain_id_ghost = cell->level_subdomain_id();
         const auto         ghost              = global_to_ghost_id.find(global_index);
         if(ghost != global_to_ghost_id.cend())
-          ghost->second.submit_id(subdomain_id_ghost, cell->index());
+          ghost->second.submit_id(subdomain_id_ghost, cell->id());
         else
         {
           const auto status =
-            global_to_ghost_id.emplace(global_index, GhostPatch(subdomain_id_ghost, cell->index()));
+            global_to_ghost_id.emplace(global_index, GhostPatch(subdomain_id_ghost, cell->id()));
           Assert(status.second, ExcMessage("failed to insert key-value-pair"));
         }
       }
@@ -233,36 +233,59 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
     //   oss << key_value.first << ", (" << set_to_string(key_value.second) << ")   ";
     // oss << std::endl;
 
-    std::set<unsigned> to_be_owned;
-    for(const auto & cell : locally_owned_range_mg)
+    // TODO: no lower left cell on irregular patches possible (see unit ball)
+    // owner of lower left cell takes ownership of ghost patches (all)
     {
-      const unsigned v            = (1 << dim) - 1; // last local vertex
-      const unsigned global_index = cell->vertex_index(v);
-      const auto     ghost        = global_to_ghost_id.find(global_index);
-      //: checks if the global vertex has ghost cells attached
-      if(ghost != global_to_ghost_id.end())
-      {
-        const auto element = global_to_local_map.find(global_index);
-        //: checks if lower left cell is contained is locally owned TODO
-        if(element != global_to_local_map.end())
+      const unsigned int my_subdomain_id = tria.locally_owned_subdomain();
+      std::set<unsigned> to_be_owned;
+      //: (1) add subdomain_ids of locally owned cells to GhostPatches
+      for(const auto & cell : locally_owned_range_mg)
+        for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
         {
-          to_be_owned.insert(global_index);
+          const unsigned global_index = cell->vertex_index(v);
+          const auto     ghost        = global_to_ghost_id.find(global_index);
+          //: checks if the global vertex has ghost cells attached
+          if(ghost != global_to_ghost_id.end())
+            ghost->second.submit_id(my_subdomain_id, cell->id());
         }
+
+      for(const auto key_value : global_to_ghost_id)
+      {
+        const unsigned int global_index     = key_value.first;
+        const auto &       proc_to_cell_ids = key_value.second.proc_to_cell_ids;
+
+        const auto & get_min_subdomain_id = [](const auto & lhs, const auto & rhs) {
+          std::vector<CellId>   cell_ids_lhs = lhs.second;
+          Assert(!cell_ids_lhs.empty(), ExcMessage("should not be empty"));
+          std::sort(cell_ids_lhs.begin(), cell_ids_lhs.end());
+          const auto         min_cell_id_lhs = cell_ids_lhs.front();
+          std::vector<CellId>   cell_ids_rhs    = rhs.second;
+          Assert(!cell_ids_rhs.empty(), ExcMessage("should not be empty"));
+          std::sort(cell_ids_rhs.begin(), cell_ids_rhs.end());
+          const auto min_cell_id_rhs = cell_ids_rhs.front();
+          return min_cell_id_lhs < min_cell_id_rhs;
+        };
+
+        const auto         min              = std::min_element(proc_to_cell_ids.cbegin(),
+                                          proc_to_cell_ids.cend(),
+                                          get_min_subdomain_id);
+        const unsigned int subdomain_id_min = min->first;
+        oss << "min " << subdomain_id_min << " vs. " << my_subdomain_id << std::endl;
+        if(my_subdomain_id == subdomain_id_min)
+          to_be_owned.insert(global_index);
+      }
+      for(const unsigned global_index : to_be_owned)
+      {
+        auto & my_patch = global_to_local_map[global_index];
+        my_patch.first  = my_patch.second;
+        global_to_ghost_id.erase(global_index);
+      }
+      for(const auto key_value : global_to_ghost_id)
+      {
+        const unsigned int global_index = key_value.first;
+        global_to_local_map.erase(global_index);
       }
     }
-    for(const unsigned i : to_be_owned)
-    {
-      auto & my_patch = global_to_local_map[i];
-      my_patch.first  = my_patch.second;
-      global_to_ghost_id.erase(i);
-    }
-    for(const auto key_value : global_to_ghost_id)
-    {
-      const unsigned int global_index = key_value.first;
-      global_to_local_map.erase(global_index);
-    }
-    // AssertDimension(global_to_ghost_id.size(), 0);
-    // AssertDimension(global_to_ghost_id.size() + to_be_erased.size(), size_before_erase);
 
     oss << "ghost patches (final):" << std::endl;
     for(const auto key_value : global_to_ghost_id)
@@ -415,15 +438,10 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
     key_value.second.first = local_index++;
   oss << std::endl;
 
-  // oss << "global-to-local mapping (local indexing):" << std::endl;
-  // for(const auto key_value : global_to_local_map)
-  //   oss << key_value.first << ", (" << key_value.second.first << "," << key_value.second.second
-  //       << ")   ";
-  // oss << std::endl;
-
   std::cout << oss.str() << "\n\n";
 
-  // *** we gather CellIterators into patches (cell_collections)
+  // TODO: only loop over locally owned cells and gather ghost cells by means of GhostPatches
+  // we gather the CellIterators representing the vertex patches in cell_collections
   const unsigned n_subdomains = global_to_local_map.size();
   AssertDimension(n_subdomains, local_index);
   cell_collections.clear();
@@ -436,8 +454,8 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
       if(element != global_to_local_map.cend())
       {
         const unsigned int local_index = element->second.first;
+        const unsigned int patch_size  = element->second.second;
         auto &             collection  = cell_collections[local_index];
-        const unsigned     patch_size  = element->second.second;
         if(collection.empty())
           collection.resize(patch_size);
         if(patch_size == regular_vpatch_size) // regular patch
@@ -446,6 +464,8 @@ gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
           Assert(false, ExcMessage("TODO"));
       }
     }
+  // typename DoFHandler<dim>::level_cell_iterator>
+
   return cell_collections;
 }
 
