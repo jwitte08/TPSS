@@ -32,6 +32,25 @@ varray_to_string(const VectorizedArray<Number> & array)
   return osstream.str();
 }
 
+template<typename T>
+std::string
+vector_to_string(const std::vector<T> & vector)
+{
+  std::ostringstream oss;
+  oss << "{";
+  for(unsigned i = 0; i < vector.size(); ++i)
+    oss << vector[i] << ((i + 1) < vector.size() ? ", " : "}");
+  return oss.str();
+}
+
+template<typename T>
+std::string
+set_to_string(const std::set<T> & set)
+{
+  std::vector<T> set_as_vector(set.cbegin(), set.cend());
+  return vector_to_string(set_as_vector);
+}
+
 class NullStreambuf : public std::streambuf
 {
   char dummyBuffer[64];

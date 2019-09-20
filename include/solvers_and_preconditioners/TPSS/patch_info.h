@@ -112,10 +112,66 @@ public:
    */
   std::vector<TimeInfo> time_data;
 
+  struct GhostPatch
+  {
+    GhostPatch(const unsigned int proc, const CellId & cell_id)
+    {
+      submit_id(proc, cell_id);
+    }
+
+    void
+    submit_id(const unsigned int proc, const CellId & cell_id)
+    {
+      const auto member = proc_to_cell_ids.find(proc);
+      if(member != proc_to_cell_ids.cend())
+      {
+        member->second.emplace_back(cell_id);
+        Assert(!(member->second.empty()), ExcMessage("at least one element"));
+      }
+      else
+      {
+        const auto status = proc_to_cell_ids.emplace(proc, std::vector<CellId>{cell_id});
+        Assert(status.second, ExcMessage("failed to insert key-value-pair"));
+      }
+    }
+
+    std::string
+    str() const
+    {
+      std::ostringstream oss;
+      oss << "{";
+      const auto size = proc_to_cell_ids.size();
+      unsigned   i    = 0;
+      for(auto key_value = proc_to_cell_ids.cbegin(); key_value != proc_to_cell_ids.cend();
+          ++key_value, ++i)
+        oss << "(" << key_value->first << ", " << vector_to_string(key_value->second)
+            << ((i + 1) < size ? "), " : ")}");
+      return oss.str();
+    }
+
+    std::map<unsigned, std::vector<CellId>> proc_to_cell_ids;
+  };
+
 private:
   void
   initialize_cell_patches(const dealii::DoFHandler<dim> * dof_handler,
                           const AdditionalData            additional_data);
+
+  /**
+   * Gathering the locally owned and ghost cells attached to a common
+   * vertex as the collection of cell iterators (patch). The
+   * successive distribution of the collections with ghost cells
+   * currently follows the logic:
+   *
+   * 1.) owns one mpi-proc more than half of the cells (locally owned)
+   * of the vertex patch the mpi-proc takes the ownership
+   *
+   * 2.) for the remaining ghost patches the mpi-proc with the cell of
+   * the lowest CellId (see dealii::Triangulation) takes the ownership
+   */
+  std::vector<std::vector<CellIterator>>
+  gather_vertex_patches(const DoFHandler<dim> & dof_handler,
+                        const AdditionalData &  additional_data) const;
 
   void
   initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_handler,

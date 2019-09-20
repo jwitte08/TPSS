@@ -34,69 +34,71 @@
 
 using namespace dealii;
 
-template<typename T>
-std::string
-vector_to_string(const std::vector<T> & vector)
-{
-  std::ostringstream oss;
-  oss << "{";
-  for(unsigned i = 0; i < vector.size(); ++i)
-    oss << vector[i] << ((i + 1) < vector.size() ? ", " : "}");
-  return oss.str();
-}
+// template<typename T>
+// std::string
+// vector_to_string(const std::vector<T> & vector)
+// {
+//   std::ostringstream oss;
+//   oss << "{";
+//   for(unsigned i = 0; i < vector.size(); ++i)
+//     oss << vector[i] << ((i + 1) < vector.size() ? ", " : "}");
+//   return oss.str();
+// }
 
-template<typename T>
-std::string
-set_to_string(const std::set<T> & set)
-{
-  std::vector<T> set_as_vector(set.cbegin(), set.cend());
-  return vector_to_string(set_as_vector);
-}
+// template<typename T>
+// std::string
+// set_to_string(const std::set<T> & set)
+// {
+//   std::vector<T> set_as_vector(set.cbegin(), set.cend());
+//   return vector_to_string(set_as_vector);
+// }
 
-struct GhostPatch
-{
-  GhostPatch(const unsigned int proc, const CellId & cell_id)
-  {
-    submit_id(proc, cell_id);
-  }
+// struct GhostPatch
+// {
+//   GhostPatch(const unsigned int proc, const CellId & cell_id)
+//   {
+//     submit_id(proc, cell_id);
+//   }
 
-  void
-  submit_id(const unsigned int proc, const CellId & cell_id)
-  {
-    const auto member = proc_to_cell_ids.find(proc);
-    if(member != proc_to_cell_ids.cend())
-    {
-      member->second.emplace_back(cell_id);
-      Assert(!(member->second.empty()), ExcMessage("at least one element"));
-    }
-    else
-    {
-      const auto status = proc_to_cell_ids.emplace(proc, std::vector<CellId>{cell_id});
-      Assert(status.second, ExcMessage("failed to insert key-value-pair"));
-    }
-  }
+//   void
+//   submit_id(const unsigned int proc, const CellId & cell_id)
+//   {
+//     const auto member = proc_to_cell_ids.find(proc);
+//     if(member != proc_to_cell_ids.cend())
+//     {
+//       member->second.emplace_back(cell_id);
+//       Assert(!(member->second.empty()), ExcMessage("at least one element"));
+//     }
+//     else
+//     {
+//       const auto status = proc_to_cell_ids.emplace(proc, std::vector<CellId>{cell_id});
+//       Assert(status.second, ExcMessage("failed to insert key-value-pair"));
+//     }
+//   }
 
-  std::string
-  str() const
-  {
-    std::ostringstream oss;
-    oss << "{";
-    const auto size = proc_to_cell_ids.size();
-    unsigned   i    = 0;
-    for(auto key_value = proc_to_cell_ids.cbegin(); key_value != proc_to_cell_ids.cend();
-        ++key_value, ++i)
-      oss << "(" << key_value->first << ", " << vector_to_string(key_value->second)
-          << ((i + 1) < size ? "), " : ")}");
-    return oss.str();
-  }
+//   std::string
+//   str() const
+//   {
+//     std::ostringstream oss;
+//     oss << "{";
+//     const auto size = proc_to_cell_ids.size();
+//     unsigned   i    = 0;
+//     for(auto key_value = proc_to_cell_ids.cbegin(); key_value != proc_to_cell_ids.cend();
+//         ++key_value, ++i)
+//       oss << "(" << key_value->first << ", " << vector_to_string(key_value->second)
+//           << ((i + 1) < size ? "), " : ")}");
+//     return oss.str();
+//   }
 
-  std::map<unsigned, std::vector<CellId>> proc_to_cell_ids;
-};
+//   std::map<unsigned, std::vector<CellId>> proc_to_cell_ids;
+// };
 
 template<int dim>
 std::vector<std::vector<typename DoFHandler<dim>::level_cell_iterator>>
 gather(const DoFHandler<dim> & dof_handler, const unsigned int level)
 {
+  using GhostPatch = typename TPSS::PatchInfo<dim>::GhostPatch;
+
   // LAMBDA checks if a vertex is at the physical boundary
   auto && is_boundary_vertex = [](const typename DoFHandler<dim>::level_cell_iterator & cell,
                                   const unsigned int                                    vertex_id) {
