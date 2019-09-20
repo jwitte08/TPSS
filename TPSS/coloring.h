@@ -93,6 +93,12 @@ struct RedBlackColoring
     {
       coloring = std::move(cell_coloring_impl(patches));
     }
+    else if(additional_data.patch_variant == TPSS::PatchVariant::vertex)
+    {
+      coloring = std::move(vertex_patch_coloring_impl(patches));
+    }
+    else
+      AssertThrow(false, ExcNotImplemented());
     return coloring;
   }
 
@@ -131,8 +137,7 @@ struct RedBlackColoring
     std::vector<std::vector<PatchIterator>> colored_patches;
     const unsigned int                      n_colors = 2 * (1 << dim);
     colored_patches.resize(n_colors);
-    for(PatchIterator patch = patches.cbegin(); patch != patches.cend();
-        ++patch)
+    for(PatchIterator patch = patches.cbegin(); patch != patches.cend(); ++patch)
     {
       // determine shift of the lowest leftmost cell
       const auto & shift = [](const PatchIterator & patch, const unsigned direction) {
@@ -166,134 +171,3 @@ struct RedBlackColoring
     return colored_patches;
   }
 };
-
-
-template<int dim>
-std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>>
-get_coloring(
-  const std::vector<std::vector<typename DoFHandler<dim>::level_cell_iterator>> & patches)
-{
-  using PatchIterator = typename TPSS::PatchInfo<dim>::PatchIterator;
-  std::vector<std::vector<PatchIterator>> patch_iterators;
-  const unsigned int                      n_colors = 2 * (1 << dim);
-  patch_iterators.resize(n_colors);
-  for(PatchIterator patch = patches.cbegin(); patch != patches.cend(); ++patch)
-  {
-    // determine shift of the lowest leftmost cell
-    const auto & shift = [](const PatchIterator & patch, const unsigned direction) {
-      AssertIndexRange(direction, dim);
-      const unsigned stride                 = 1 << direction;
-      const auto     cell_left              = (*patch)[0];
-      const auto     cell_right             = (*patch)[stride];
-      const auto     coord_left             = get_integer_coords<dim>(cell_left->id());
-      const auto     coord_right            = get_integer_coords<dim>(cell_right->id());
-      const auto     patch_coord_from_left  = coord_left(direction) / 2;
-      const auto     patch_coord_from_right = coord_right(direction) / 2;
-      return patch_coord_from_left != patch_coord_from_right;
-    };
-    std::bitset<dim> shift_mask;
-    for(unsigned int d = 0; d < dim; ++d)
-      shift_mask[d] = (shift(patch, d));
-    AssertIndexRange(shift_mask.to_ulong(), 1 << dim);
-
-    // (1 << dim) layers of red-black colorings (layer is determined by the shift)
-    const auto                     cell        = patch->front();
-    const Point<dim, unsigned int> coordinates = get_integer_coords<dim>(cell->id());
-    unsigned int                   sum         = 0;
-    for(unsigned int d = 0; d < dim; ++d)
-      sum += (coordinates(d) + static_cast<unsigned>(shift_mask[d])) / 2;
-    const unsigned red_or_black = sum % 2;
-    const unsigned color        = 2 * shift_mask.to_ulong() + red_or_black;
-    AssertIndexRange(color, (1 << dim) * 2);
-
-    patch_iterators[color].emplace_back(patch);
-  }
-  return patch_iterators;
-}
-
-
-
-struct TestParameter
-{
-  unsigned int n_refinements = 3;
-};
-
-
-
-template<int dim>
-void
-test(const TestParameter & prms)
-{
-  // create tria and distribute dofs
-  parallel::distributed::Triangulation<dim> tria(
-    MPI_COMM_WORLD,
-    Triangulation<dim>::limit_level_difference_at_vertices,
-    parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy);
-  GridGenerator::hyper_cube(tria, 0, 1);
-  tria.refine_global(prms.n_refinements);
-  DoFHandler<dim> dof_handler(tria);
-  dof_handler.distribute_dofs(FE_DGQ<dim>(0));
-  dof_handler.distribute_mg_dofs();
-  const unsigned int global_level = tria.n_global_levels() - 1;
-
-  // gather vertex patches
-  const auto patch_collection = gather(dof_handler, global_level);
-
-  // color vertex patches
-  const auto patch_iterators = get_coloring<dim>(patch_collection);
-
-  for(unsigned color = 0; color < patch_iterators.size(); ++color)
-  {
-    // collect output data
-    DataOut<dim> data_out;
-    data_out.attach_dof_handler(dof_handler);
-
-    Vector<double> subdomain(tria.n_active_cells());
-    for(unsigned int i = 0; i < subdomain.size(); ++i)
-      subdomain(i) = tria.locally_owned_subdomain();
-    data_out.add_data_vector(subdomain, "subdomain", DataOut<dim>::type_cell_data);
-
-    LinearAlgebra::distributed::Vector<double> marker;
-    IndexSet                                   locally_relevant_dofs;
-    DoFTools::extract_locally_relevant_level_dofs(dof_handler, global_level, locally_relevant_dofs);
-    marker.reinit(dof_handler.locally_owned_dofs(), locally_relevant_dofs, MPI_COMM_WORLD);
-    marker                        = 0;
-    const auto & patch_collection = patch_iterators[color];
-    for(const auto & patch : patch_collection)
-      for(const auto & cell : (*patch))
-      {
-        const auto            active_cell = typename DoFHandler<dim>::active_cell_iterator{&tria,
-                                                                                cell->level(),
-                                                                                cell->index(),
-                                                                                &dof_handler};
-        std::vector<unsigned> dof_indices(dof_handler.get_fe().dofs_per_cell);
-        active_cell->get_dof_indices(dof_indices);
-        const auto active_cell_index = dof_indices.front(); // active_cell->active_cell_index();
-        marker(active_cell_index)    = 1;
-      }
-    marker.compress(VectorOperation::add);
-    data_out.add_data_vector(marker, "coloring", DataOut<dim>::type_dof_data);
-
-    // write paraview files
-    std::string color_name = "_color" + Utilities::int_to_string(color, 2);
-    data_out.build_patches();
-    {
-      std::ofstream file(
-        "data-active-" + Utilities::int_to_string(dim) + "d-" +
-        Utilities::int_to_string(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD), 4) + color_name +
-        ".vtu");
-      data_out.write_vtu(file);
-    }
-    if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-    {
-      std::vector<std::string> filenames;
-      for(unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD); ++i)
-        filenames.push_back("data-active-" + Utilities::int_to_string(dim) + "d-" +
-                            Utilities::int_to_string(i, 4) + color_name + ".vtu");
-
-      std::ofstream master_output("data-active-" + Utilities::int_to_string(dim) + "d" +
-                                  color_name + ".pvtu");
-      data_out.write_pvtu_record(master_output, filenames);
-    }
-  }
-}

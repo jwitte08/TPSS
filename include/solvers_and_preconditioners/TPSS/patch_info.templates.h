@@ -1,35 +1,35 @@
 
 namespace TPSS
 {
-template<int dim>
-std::vector<std::pair<typename PatchInfo<dim>::CellIterator, unsigned int>>
-PatchInfo<dim>::extract_relevant_cells(CellIterator cell, const CellIterator end_cell) const
-{
-  using namespace dealii;
+// template<int dim>
+// std::vector<std::pair<typename PatchInfo<dim>::CellIterator, unsigned int>>
+// PatchInfo<dim>::extract_relevant_cells(CellIterator cell, const CellIterator end_cell) const
+// {
+//   using namespace dealii;
 
-  std::vector<std::pair<CellIterator, unsigned int>> range_storage;
+//   std::vector<std::pair<CellIterator, unsigned int>> range_storage;
 
-  typedef typename CellIterator::AccessorType CellAccessorType;
-  const unsigned int my_pid = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+//   typedef typename CellIterator::AccessorType CellAccessorType;
+//   const unsigned int my_pid = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
 
-  // *** step-1: first range contains all locally owned cells
-  const auto && is_locally_owned = [my_pid](const CellAccessorType & cell) {
-    return (my_pid == cell.level_subdomain_id());
-  };
+//   // *** step-1: first range contains all locally owned cells
+//   const auto && is_locally_owned = [my_pid](const CellAccessorType & cell) {
+//     return (my_pid == cell.level_subdomain_id());
+//   };
 
-  const CellIterator first_locally_owned_cell = std::find_if(cell, end_cell, is_locally_owned);
-  const CellIterator end_locally_owned_cell =
-    std::find_if_not(first_locally_owned_cell, end_cell, is_locally_owned);
-  const unsigned int n_locally_owned_cells =
-    std::distance(first_locally_owned_cell, end_locally_owned_cell);
+//   const CellIterator first_locally_owned_cell = std::find_if(cell, end_cell, is_locally_owned);
+//   const CellIterator end_locally_owned_cell =
+//     std::find_if_not(first_locally_owned_cell, end_cell, is_locally_owned);
+//   const unsigned int n_locally_owned_cells =
+//     std::distance(first_locally_owned_cell, end_locally_owned_cell);
 
-  range_storage.emplace_back(first_locally_owned_cell, n_locally_owned_cells);
+//   range_storage.emplace_back(first_locally_owned_cell, n_locally_owned_cells);
 
-  // *** step-2: collect all ghost cells with a higher subdomain_id
-  // TODO required for MPI parallel vertex patches ...
+//   // *** step-2: collect all ghost cells with a higher subdomain_id
+//   // TODO required for MPI parallel vertex patches ...
 
-  return range_storage;
-}
+//   return range_storage;
+// }
 
 template<int dim>
 void
@@ -37,30 +37,27 @@ PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
                            const AdditionalData            additional_data_in)
 {
   clear();
+  additional_data = additional_data_in;
 
-  // Assert(!(dof_handler->get_triangulation().has_hanging_nodes()),
-  //        ExcMessage("Not implemented for adaptive meshes!"));
+  Assert(!(dof_handler->get_triangulation().has_hanging_nodes()),
+         ExcMessage("Not implemented for adaptive meshes!"));
   Assert(additional_data_in.level != static_cast<unsigned int>(-1),
-         ExcMessage("Only implemented for level-dependent meshes!"));
-  Assert(additional_data_in.level != static_cast<unsigned int>(-1),
-         ExcMessage("Implemented for multigrid meshes!"));
+         ExcMessage("Implemented for level cell iterators!"));
 
-  additional_data    = additional_data_in;
-  const auto   level = additional_data_in.level;
-  CellIterator cell = dof_handler->begin_mg(level), end_cell = dof_handler->end_mg(level);
-  const auto   range_storage      = extract_relevant_cells(cell, end_cell);
-  const bool   is_mpi_parallel    = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
-  const bool   locally_owns_cells = (range_storage.front().second > 0);
-  if(is_mpi_parallel && !locally_owns_cells)
-    return; //: nothing to do
-  else
-    AssertThrow(locally_owns_cells, ExcInternalError());
+  // const auto   level = additional_data_in.level;
+  // CellIterator cell = dof_handler->begin_mg(level), end_cell = dof_handler->end_mg(level);
+  // const auto   range_storage      = extract_relevant_cells(cell, end_cell);
+  // const bool   locally_owns_cells = true;//(range_storage.front().second > 0);
+  // if(is_mpi_parallel && !locally_owns_cells)
+  //   return; //: nothing to do
+  // else
+  //   AssertThrow(locally_owns_cells, ExcInternalError());
 
   // *** submit additional data
-  internal_data.level         = level;
-  internal_data.range_storage = range_storage;
-  internal_data.end_cell_in_storage =
-    std::next(range_storage.back().first, range_storage.back().second);
+  internal_data.level = additional_data.level;
+  // internal_data.range_storage = range_storage;
+  // internal_data.end_cell_in_storage =
+  //   std::next(range_storage.back().first, range_storage.back().second);
 
   // *** initialize depending on the patch variant
   if(additional_data.patch_variant == TPSS::PatchVariant::cell)
@@ -69,6 +66,8 @@ PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
     initialize_vertex_patches(dof_handler, additional_data);
   else
     AssertThrow(false, dealii::ExcNotImplemented());
+
+  AssertThrow(!internal_data.empty_on_all(), ExcMessage("at least one patch is required"));
 }
 
 
@@ -130,24 +129,9 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
     const bool do_graph_coloring = !additional_data.coloring_func;
     if(do_graph_coloring) // graph coloring
     {
-      // *** GRAPH COLORING: cells sharing a common face get different colors
-      const auto & get_face_conflicts =
-        [this, level](const PatchIterator & patch) -> std::vector<types::global_dof_index> {
-        AssertDimension(patch->size(), 1);
-        const auto &                         cell = patch->front();
-        std::vector<types::global_dof_index> conflicts;
-        for(unsigned int face_no = 0; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
-        {
-          const bool neighbor_has_same_level =
-            (cell->neighbor_level(face_no) == static_cast<int>(level));
-          const bool neighbor_doesnt_exist = (cell->neighbor_level(face_no) == -1);
-          const bool non_adaptive          = neighbor_has_same_level || neighbor_doesnt_exist;
-          (void)non_adaptive;
-          Assert(non_adaptive, ExcNotImplemented());
-          conflicts.emplace_back(cell->face(face_no)->index());
-        }
-        return conflicts;
-      };
+      const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
+      AssertThrow(!is_mpi_parallel,
+                  ExcMessage("Graph coloring is not compatible with distributed triangulations."));
       colored_iterators = std::move(GraphColoring::make_graph_coloring(cell_collections.cbegin(),
                                                                        cell_collections.cend(),
                                                                        get_face_conflicts));
@@ -222,8 +206,8 @@ PatchInfo<dim>::gather_vertex_patches(const DoFHandler<dim> & dof_handler,
   };
   constexpr unsigned int regular_vpatch_size = 1 << dim;
   const auto &           tria                = dof_handler.get_triangulation();
-  std::ostringstream     oss;
-  oss << "process " << tria.locally_owned_subdomain() << " reports:\n";
+  // std::ostringstream     oss;
+  // oss << "process " << tria.locally_owned_subdomain() << " reports:\n";
   const auto locally_owned_range_mg =
     filter_iterators(dof_handler.mg_cell_iterators_on_level(level),
                      IteratorFilters::LocallyOwnedLevelCell());
@@ -435,6 +419,19 @@ PatchInfo<dim>::gather_vertex_patches(const DoFHandler<dim> & dof_handler,
     // oss << std::endl;
   }
 
+  // /**
+  //  * Check if regular vertex patch exists otherwise exit. TODO irregular patch
+  //  */
+  // const auto & has_regular_size = [](const auto & key_value){
+  //   const auto n_cells_per_patch = key_value.second.second;
+  //   return (n_cells_per_patch == regular_vpatch_size);
+  // };
+  // const bool regular_patch_exists = std::any_of(global_to_local_map.cbegin(),
+  // global_to_local_map.cend(), has_regular_size); if (!regular_patch_exists)
+  //   {
+  //     return std::vector<std::vector<CellIterator>>{};
+  //   }
+
   /**
    * Enumerate the patches contained in @p global_to_local_map by
    * replacing the former number of locally owned cells in terms of a
@@ -444,10 +441,12 @@ PatchInfo<dim>::gather_vertex_patches(const DoFHandler<dim> & dof_handler,
    */
   unsigned int local_index = 0;
   for(auto & key_value : global_to_local_map)
+  {
     key_value.second.first = local_index++;
+  }
   const unsigned n_subdomains = global_to_local_map.size();
   AssertDimension(n_subdomains, local_index);
-  std::vector<std::vector<CellIterator>> cell_collections; // temporary vector gathering all
+  std::vector<std::vector<CellIterator>> cell_collections;
   cell_collections.resize(n_subdomains);
   for(auto & cell : dof_handler.mg_cell_iterators_on_level(level))
     for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
@@ -468,7 +467,7 @@ PatchInfo<dim>::gather_vertex_patches(const DoFHandler<dim> & dof_handler,
       }
     }
 
-  std::cout << oss.str() << "\n\n";
+  // std::cout << oss.str() << "\n\n";
   return cell_collections;
 }
 
@@ -478,254 +477,142 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
                                           const AdditionalData            additional_data)
 {
   constexpr auto regular_vpatch_size = UniversalInfo<dim>::n_cells(PatchVariant::vertex);
-  const auto     level               = additional_data.level;
   const auto     color_scheme        = additional_data.smoother_variant;
-  const auto &   range_storage       = internal_data.range_storage;
-
-  // LAMBDA checks if a vertex is at the physical boundary
-  auto && is_boundary_vertex = [](const CellIterator & cell, const unsigned int vertex_id) {
-    return std::any_of(std::begin(GeometryInfo<dim>::vertex_to_face[vertex_id]),
-                       std::end(GeometryInfo<dim>::vertex_to_face[vertex_id]),
-                       [&cell](const auto & face_no) { return cell->at_boundary(face_no); });
-  };
-
-  // *** check if this proc has locally owned cells
-  const unsigned int n_cells_stored =
-    std::accumulate(range_storage.cbegin(),
-                    range_storage.cend(),
-                    0,
-                    [](const auto val, const auto range) { return val + range.second; });
 
   Timer time;
+  time.restart();
+
   /**
-   * CASE-1 Serial case ...
+   * Collecting the cell iterators attached to a vertex. See @p
+   * gather_vertex_patches for more information.
    */
-  if(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1)
+  std::vector<std::vector<CellIterator>> cell_collections;
+  if(!additional_data.manual_gathering_func)
+    cell_collections = std::move(gather_vertex_patches(*dof_handler, additional_data));
+  else
+    additional_data.manual_gathering_func(dof_handler, additional_data, cell_collections);
+
+  time.stop();
+  time_data.emplace_back(time.wall_time(), "Vertex patch gathering");
+  time.restart();
+
+  /**
+   * Coloring of vertex patches. For the additive operator, we only
+   * require one color as long as we do not use thread-parallelism
+   * (TODO). In multi-threaded loops, race-conditions might occur due
+   * to overlapping cells: two local solvers sharing a common cell
+   * might simultaneously write to the same DoF entry in the
+   * destination vector. Therefore, two vertex patches are in conflict
+   * if they share a common cell.
+   */
+  AssertThrow(MultithreadInfo::n_threads() == 1, ExcMessage("TODO"));
+  std::string                             str_coloring_algorithm = "TBA";
+  std::vector<std::vector<PatchIterator>> colored_iterators;
+  switch(color_scheme)
   {
-    // TODO if we have one irregular patches?
-    AssertThrow(n_cells_stored >= regular_vpatch_size,
-                ExcMessage("There are not enough cells to construct a regular vertex patch."))
-      Assert(range_storage.size() == 1, ExcInternalError()); // only locally owned patches
-
-    std::vector<std::vector<CellIterator>> cell_collections; // temporary vector gathering all
-                                                             // subdomains (represented as a
-                                                             // vector of CellIterators), i.e.
-                                                             // irregular and regular subdomains
-    time.restart();
-
-    if(!additional_data.manual_gathering_func)
+    case TPSS::SmootherVariant::additive:
     {
-      cell_collections = std::move(gather_vertex_patches(*dof_handler, additional_data));
-
-      // const auto & tria     = dof_handler->get_triangulation();
-      // auto         cell     = range_storage.front().first;
-      // const auto   end_cell = std::next(range_storage.front().first,
-      // range_storage.front().second);
-
-
-      // // PRE-PROCESSING
-      // std::vector<unsigned int> cell_count(tria.n_vertices(), 0);
-      // std::vector<unsigned int> vloc_map(tria.n_vertices(), -1);
-      // unsigned int              vg_max       = 0;
-      // unsigned int              n_subdomains = 0;
-
-      // // *** map each interior vertex (vg, i.e. global index) onto a
-      // // *** local index (vloc) and count the amount of cells
-      // // *** belonging to each vertex
-      // for(; cell != end_cell; ++cell)
-      //   for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
-      //     if(!is_boundary_vertex(cell, v))
-      //     {
-      //       const unsigned int vg = cell->vertex_index(v);
-      //       vg_max                = std::max(vg_max, vg);
-      //       if(vloc_map[vg] == static_cast<unsigned int>(-1))
-      //         vloc_map[vg] = n_subdomains++;
-      //       ++cell_count[vg];
-      //     }
-      // std::pair<unsigned int, unsigned int> vg_range(
-      //   0, vg_max + 1); // half-open range of global vertex indices to be considered
-      // cell_count.resize(vg_range.second);
-      // vloc_map.resize(vg_range.second);
-
-      // // *** count the amount of regular and irregular patches
-      // unsigned int n_regular_patches =
-      //   std::count_if(cell_count.cbegin(), cell_count.cend(), [](const auto & n) {
-      //     return regular_vpatch_size == n;
-      //   });
-      // unsigned int n_irregular_patches =
-      //   std::count_if(cell_count.cbegin(), cell_count.cbegin() + vg_max + 1, [](const auto & n) {
-      //     return (regular_vpatch_size != n) && (0 != n);
-      //   });
-      // (void)n_regular_patches, (void)n_irregular_patches;
-      // AssertDimension(n_subdomains, n_regular_patches + n_irregular_patches);
-      // // TODO treat irregular patches
-      // Assert(n_irregular_patches == 0, ExcNotImplemented());
-
-      // // *** we gather CellIterators into patches (cell_collections)
-      // cell_collections.clear();
-      // cell_collections.resize(n_subdomains);
-      // for(cell = dof_handler->begin(level); cell != end_cell; ++cell)
-      //   for(unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
-      //     if(!is_boundary_vertex(cell, v))
-      //     {
-      //       const unsigned int vg   = cell->vertex_index(v);
-      //       const unsigned int vloc = vloc_map[vg];
-      //       Assert(vloc != static_cast<unsigned int>(-1), ExcInternalError());
-      //       auto &     collection = cell_collections[vloc];
-      //       const auto patch_size = cell_count[vg];
-
-      //       if(collection.empty())
-      //         collection.resize(patch_size);
-      //       if(patch_size == regular_vpatch_size) // regular patch
-      //         collection[regular_vpatch_size - 1 - v] = cell;
-      //       else // irregular patch
-      //         Assert(false, ExcNotImplemented());
-      //     }
+      str_coloring_algorithm = "none";
+      colored_iterators.resize(1);
+      auto & patch_iterators = colored_iterators.front();
+      for(auto it = cell_collections.cbegin(); it != cell_collections.cend(); ++it)
+        patch_iterators.emplace_back(it);
+      break;
     }
-
-    else
-      additional_data.manual_gathering_func(dof_handler, additional_data, cell_collections);
-
-    time_data.emplace_back(time.wall_time(), "[PatchInfo] Gathering vertex patches:");
-    time.restart();
-
-    // *** coloring for vertex patches
-    std::string                             str_coloring_algorithm = "TBA";
-    std::vector<std::vector<PatchIterator>> colored_patch_iterators;
-    switch(color_scheme)
+    case TPSS::SmootherVariant::multiplicative:
     {
-        // NOTE the overhead we have to pay for a unified submission of
-        // patches into the InternalData
-      case TPSS::SmootherVariant::additive:
+      if(!additional_data.coloring_func) // graph coloring
       {
-        str_coloring_algorithm = "No";
-
-        // *** fake a first color of PatchIterators
-        colored_patch_iterators.clear();
-        colored_patch_iterators.resize(1);
-        for(auto it = cell_collections.cbegin(); it != cell_collections.cend(); ++it)
-          colored_patch_iterators[0].emplace_back(it);
-
-        break;
+        const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
+        AssertThrow(!is_mpi_parallel,
+                    ExcMessage(
+                      "Graph coloring is not compatible with distributed triangulations."));
+        str_coloring_algorithm = "graph";
+        colored_iterators = std::move(GraphColoring::make_graph_coloring(cell_collections.cbegin(),
+                                                                         cell_collections.cend(),
+                                                                         get_face_conflicts));
       }
-      case TPSS::SmootherVariant::multiplicative:
+
+      else // user-defined coloring
       {
-        if(!additional_data.manual_coloring_func) // graph coloring
-        {
-          str_coloring_algorithm = "Graph";
-
-          // LAMBDA conflicts appear if a pair of vertex patches shares a common face
-          const auto get_face_conflicts =
-            [&](const auto & it) -> std::vector<types::global_dof_index> {
-            (void)level;
-            const auto & collection = *it;
-
-            std::vector<types::global_dof_index> conflicts;
-            for(const auto & cell : collection)
-              for(unsigned int face_no = 0; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
-              {
-                Assert(cell->neighbor_level(face_no) == static_cast<int>(level) ||
-                         cell->neighbor_level(face_no) == -1,
-                       ExcNotImplemented()); // no adaptive refinement allowed
-                conflicts.emplace_back(cell->face(face_no)->index());
-              }
-            return conflicts;
-          };
-
-          // *** make graph coloring with respect to a given conflict funtion
-          const auto conflict_func_wrapper = std::ref(get_face_conflicts);
-          colored_patch_iterators          = std::move(GraphColoring::make_graph_coloring(
-            cell_collections.cbegin(), cell_collections.cend(), conflict_func_wrapper));
-        }
-
-        else // manual coloring
-        {
-          str_coloring_algorithm = "Manual";
-
-          colored_patch_iterators = std::move(
-            additional_data.manual_coloring_func(dof_handler, additional_data, cell_collections));
-        }
-
-        break;
+        str_coloring_algorithm = "user";
+        colored_iterators =
+          std::move(additional_data.coloring_func(cell_collections, additional_data));
       }
-      default:
-      {
-        AssertThrow(false, ExcNotImplemented());
-        break;
-      }
-    } // end switch
-
-    std::ostringstream ostream;
-    ostream << "[PatchInfo] " << str_coloring_algorithm << " coloring (VP):";
-    time_data.emplace_back(time.wall_time(), ostream.str());
-    time.restart();
-
-    // TODO
-    // *** REORDER COLORING: work in progress ...
-
-    // pair is (# of cells, initial color)
-    std::vector<std::pair<unsigned int, unsigned int>> reordered_colors;
-    if(/*do_color_reordering?*/ false)
-      reordered_colors = reorder_colors(colored_patch_iterators);
-    else
-      for(unsigned int color = 0; color < colored_patch_iterators.size(); ++color)
-        reordered_colors.emplace_back(colored_patch_iterators[color].size(), color);
-
-    AssertDimension(colored_patch_iterators.size(), reordered_colors.size());
-
-    // *** we submit the (colored) collections of CellIterators into the InternalData
-    const unsigned int n_colors = colored_patch_iterators.size();
-    for(unsigned int cc = 0; cc < n_colors; ++cc)
-    {
-      const unsigned int color = reordered_colors[cc].second;
-      AssertDimension(colored_patch_iterators[color].size(), reordered_colors[cc].first);
-      submit_patches<regular_vpatch_size>(colored_patch_iterators[color]);
+      break;
     }
-
-    // *** check if the InternalData is valid
-    AssertDimension(internal_data.cell_iterators.size() % regular_vpatch_size, 0);
-    AssertDimension(internal_data.n_interior_subdomains.size(),
-                    internal_data.n_boundary_subdomains.size());
-    AssertDimension(std::accumulate(internal_data.n_interior_subdomains.cbegin(),
-                                    internal_data.n_interior_subdomains.cend(),
-                                    static_cast<unsigned int>(0)) +
-                      std::accumulate(internal_data.n_boundary_subdomains.cbegin(),
-                                      internal_data.n_boundary_subdomains.cend(),
-                                      static_cast<unsigned int>(0)),
-                    internal_data.cell_iterators.size() / regular_vpatch_size);
-    if(color_scheme == TPSS::SmootherVariant::additive)
-      AssertDimension(internal_data.n_boundary_subdomains.size(), 1);
-
-    if(additional_data.print_details && color_scheme != TPSS::SmootherVariant::additive)
+    default:
     {
-      if(additional_data.manual_coloring_func)
-        print_row_variable(
-          pcout, 2, "", 43, "Printing manual coloring on level:", additional_data.level);
-      else
-        print_row_variable(
-          pcout, 2, "", 43, "Printing graph coloring on level:", additional_data.level);
-      pcout << std::endl;
-
-      print_row_variable(
-        pcout, 5, "", 10, "color:", 30, "# of interior patches:", 30, "# of boundary patches:");
-      const auto n_colors   = internal_data.n_interior_subdomains.size();
-      auto       n_interior = internal_data.n_interior_subdomains.cbegin();
-      auto       n_boundary = internal_data.n_boundary_subdomains.cbegin();
-      for(unsigned c = 0; c < n_colors; ++c, ++n_interior, ++n_boundary)
-        print_row_variable(pcout, 5, "", 10, c, 30, *n_interior, 30, *n_boundary);
-      pcout << std::endl;
+      AssertThrow(false, ExcNotImplemented());
+      break;
     }
+  } // end switch
 
-    // *** OUTPUT PATCHES: output patches per color as SVG-files ***/
-    if(false)
-      write_visual_data(*dof_handler, reordered_colors);
+  // TODO
+  // *** REORDER COLORING: work in progress ...
+  // pair is (# of cells, initial color)
+  std::vector<std::pair<unsigned int, unsigned int>> reordered_colors;
+  if(/*do_color_reordering?*/ false)
+    reordered_colors = reorder_colors(colored_iterators);
+  else
+    for(unsigned int color = 0; color < colored_iterators.size(); ++color)
+      reordered_colors.emplace_back(colored_iterators[color].size(), color);
+  AssertDimension(colored_iterators.size(), reordered_colors.size());
+
+  std::ostringstream oss;
+  oss << "Vertex patch coloring (" << str_coloring_algorithm << ")";
+  time.stop();
+  time_data.emplace_back(time.wall_time(), oss.str());
+  time.restart();
+
+  /**
+   * Submisson of the colored collections of CellIterators into the
+   * InternalData.
+   */
+  const unsigned int n_colors = colored_iterators.size();
+  for(unsigned int cc = 0; cc < n_colors; ++cc)
+  {
+    const unsigned int color = reordered_colors[cc].second;
+    AssertDimension(colored_iterators[color].size(), reordered_colors[cc].first);
+    submit_patches<regular_vpatch_size>(colored_iterators[color]);
   }
 
-  /**
-   * CASE-2: MPI-parallel case with more than one processor ...
-   */
-  else
-    Assert(false, ExcNotImplemented());
+  time.stop();
+  time_data.emplace_back(time.wall_time(), "Submit vertex patches");
+  time.restart();
+
+  // *** check if the InternalData is valid
+  AssertDimension(internal_data.cell_iterators.size() % regular_vpatch_size, 0);
+  AssertDimension(internal_data.n_interior_subdomains.size(),
+                  internal_data.n_boundary_subdomains.size());
+  if(color_scheme == TPSS::SmootherVariant::additive)
+    AssertDimension(internal_data.n_boundary_subdomains.size(), 1);
+  const unsigned int n_interior_subdomains =
+    std::accumulate(internal_data.n_interior_subdomains.cbegin(),
+                    internal_data.n_interior_subdomains.cend(),
+                    0);
+  const unsigned int n_boundary_subdomains =
+    std::accumulate(internal_data.n_boundary_subdomains.cbegin(),
+                    internal_data.n_boundary_subdomains.cend(),
+                    0);
+  const unsigned int n_subdomains = n_interior_subdomains + n_boundary_subdomains;
+  (void)n_subdomains;
+  AssertDimension(n_subdomains, internal_data.cell_iterators.size() / regular_vpatch_size);
+
+  if(additional_data.print_details && color_scheme != TPSS::SmootherVariant::additive)
+  {
+    print_row_variable(pcout, 2, "", 43, oss.str(), additional_data.level);
+    pcout << std::endl;
+
+    print_row_variable(
+      pcout, 5, "", 10, "color:", 30, "# of interior patches:", 30, "# of boundary patches:");
+    const auto n_colors   = internal_data.n_interior_subdomains.size();
+    auto       n_interior = internal_data.n_interior_subdomains.cbegin();
+    auto       n_boundary = internal_data.n_boundary_subdomains.cbegin();
+    for(unsigned c = 0; c < n_colors; ++c, ++n_interior, ++n_boundary)
+      print_row_variable(pcout, 5, "", 10, c, 30, *n_interior, 30, *n_boundary);
+    pcout << std::endl;
+  }
 }
 
 template<int dim>

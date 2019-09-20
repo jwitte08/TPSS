@@ -67,7 +67,7 @@ struct ModelProblem : public Subscriptor
   // *** multigrid
   MGLevelObject<LEVEL_MATRIX>                                  mg_matrices;
   MG_TRANSFER                                                  mg_transfer;
-  Laplace::ManualColoringCP<dim>                               user_coloring_cp;
+  RedBlackColoring<dim>                                        red_black_coloring;
   MGLevelObject<std::shared_ptr<const SCHWARZ_PRECONDITIONER>> mg_schwarz_precondition;
   MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR> mg_schwarz_smoother;
   std::shared_ptr<const MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR>>
@@ -130,11 +130,6 @@ struct ModelProblem : public Subscriptor
       (update_gradients | update_JxW_values | update_normal_vectors);
     additional_data.mapping_update_flags_boundary_faces =
       (update_gradients | update_JxW_values | update_normal_vectors | update_quadrature_points);
-    // const auto mapping_update_flags =
-    //   dealii::update_gradients | dealii::update_JxW_values | dealii::update_quadrature_points;
-    // additional_data.mapping_update_flags                = mapping_update_flags;
-    // additional_data.mapping_update_flags_inner_faces    = mapping_update_flags;
-    // additional_data.mapping_update_flags_boundary_faces = mapping_update_flags;
     if(level != static_cast<unsigned>(-1))
       additional_data.level_mg_handler = level;
     AffineConstraints<double> constraints_dummy;
@@ -165,7 +160,7 @@ struct ModelProblem : public Subscriptor
     fdss_additional_data.print_details    = parameters.schwarz_smoother_data.print_details;
     if(parameters.schwarz_smoother_data.manual_coloring)
     {
-      fdss_additional_data.manual_coloring_func_cp = std::ref(user_coloring_cp);
+      fdss_additional_data.coloring_func = std::ref(red_black_coloring);
     }
     // if(parameters.non_overlapping)
     //   fdss_additional_data.manual_gathering_func = std::ref(make_non_overlapping_vertex_patch);

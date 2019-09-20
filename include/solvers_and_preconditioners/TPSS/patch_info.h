@@ -153,6 +153,25 @@ public:
   };
 
 private:
+  static std::vector<types::global_dof_index>
+  get_face_conflicts(const PatchIterator & patch)
+  {
+    std::vector<types::global_dof_index> conflicts;
+    const auto &                         cell_collection = *patch;
+
+    for(const auto & cell : cell_collection)
+      for(unsigned int face_no = 0; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
+      {
+        const bool neighbor_has_same_level = (cell->neighbor_level(face_no) == cell->level());
+        const bool neighbor_doesnt_exist   = (cell->neighbor_level(face_no) == -1);
+        const bool non_adaptive            = neighbor_has_same_level || neighbor_doesnt_exist;
+        (void)non_adaptive;
+        Assert(non_adaptive, ExcNotImplemented());
+        conflicts.emplace_back(cell->face(face_no)->index());
+      }
+    return conflicts;
+  }
+
   void
   initialize_cell_patches(const dealii::DoFHandler<dim> * dof_handler,
                           const AdditionalData            additional_data);
@@ -191,63 +210,63 @@ private:
     return patch.front();
   }
 
-  template<typename ColoredStorage> // TODO
-  void
-  store_flattened_patches(const ColoredStorage & colored_iterators)
-  {
-    // LAMBDA unary predicate functions for interior and boundary cells
-    auto && interior_cell_predicate = [](auto & cell) { return !(cell.at_boundary()); };
-    auto && boundary_cell_predicate = [](auto & cell) { return cell.at_boundary(); };
+  // template<typename ColoredStorage> // TODO
+  // void
+  // store_flattened_patches(const ColoredStorage & colored_iterators)
+  // {
+  //   // LAMBDA unary predicate functions for interior and boundary cells
+  //   auto && interior_cell_predicate = [](auto & cell) { return !(cell.at_boundary()); };
+  //   auto && boundary_cell_predicate = [](auto & cell) { return cell.at_boundary(); };
 
-    /**
-     * STORE: counts the amount of predicated cells with a given
-     * predicate and stores them in the InternalData
-     */
-    const auto & count_and_store_predicated_cells = [this](auto &&      unary_predicate,
-                                                           const auto & iterators) {
-      auto &       patches_flattened  = this->internal_data.cell_iterators;
-      unsigned int n_predicated_cells = 0;
-      for(const auto cell_or_patch : iterators)
-      {
-        const auto & cell = convert_to_cell_iterator(cell_or_patch);
-        if(unary_predicate(*cell))
-        {
-          ++n_predicated_cells;
-          patches_flattened.emplace_back(cell);
-        }
-      }
-      return n_predicated_cells;
-    };
-    const auto & sum_n_cells = [](const std::size_t val, const auto iterators) {
-      return val + iterators.size();
-    };
-    const unsigned int n_cells =
-      std::accumulate(colored_iterators.cbegin(), colored_iterators.cend(), 0, sum_n_cells);
-    internal_data.cell_iterators.reserve(n_cells);
-    const std::size_t n_colors = colored_iterators.size();
-    internal_data.n_interior_subdomains.resize(n_colors);
-    internal_data.n_boundary_subdomains.resize(n_colors);
+  //   /**
+  //    * STORE: counts the amount of predicated cells with a given
+  //    * predicate and stores them in the InternalData
+  //    */
+  //   const auto & count_and_store_predicated_cells = [this](auto &&      unary_predicate,
+  //                                                          const auto & iterators) {
+  //     auto &       patches_flattened  = this->internal_data.cell_iterators;
+  //     unsigned int n_predicated_cells = 0;
+  //     for(const auto cell_or_patch : iterators)
+  //     {
+  //       const auto & cell = convert_to_cell_iterator(cell_or_patch);
+  //       if(unary_predicate(*cell))
+  //       {
+  //         ++n_predicated_cells;
+  //         patches_flattened.emplace_back(cell);
+  //       }
+  //     }
+  //     return n_predicated_cells;
+  //   };
+  //   const auto & sum_n_cells = [](const std::size_t val, const auto iterators) {
+  //     return val + iterators.size();
+  //   };
+  //   const unsigned int n_cells =
+  //     std::accumulate(colored_iterators.cbegin(), colored_iterators.cend(), 0, sum_n_cells);
+  //   internal_data.cell_iterators.reserve(n_cells);
+  //   const std::size_t n_colors = colored_iterators.size();
+  //   internal_data.n_interior_subdomains.resize(n_colors);
+  //   internal_data.n_boundary_subdomains.resize(n_colors);
 
-    for(unsigned int color = 0; color < n_colors; ++color)
-    {
-      internal_data.n_interior_subdomains[color] =
-        count_and_store_predicated_cells(interior_cell_predicate, colored_iterators[color]);
-      internal_data.n_boundary_subdomains[color] =
-        count_and_store_predicated_cells(boundary_cell_predicate, colored_iterators[color]);
-      AssertDimension(colored_iterators[color].size(),
-                      internal_data.n_boundary_subdomains[color] +
-                        internal_data.n_interior_subdomains[color]);
-    }
-  }
+  //   for(unsigned int color = 0; color < n_colors; ++color)
+  //   {
+  //     internal_data.n_interior_subdomains[color] =
+  //       count_and_store_predicated_cells(interior_cell_predicate, colored_iterators[color]);
+  //     internal_data.n_boundary_subdomains[color] =
+  //       count_and_store_predicated_cells(boundary_cell_predicate, colored_iterators[color]);
+  //     AssertDimension(colored_iterators[color].size(),
+  //                     internal_data.n_boundary_subdomains[color] +
+  //                       internal_data.n_interior_subdomains[color]);
+  //   }
+  // }
 
-  /**
-   * Extract the contiguous ranges of relevant cells owned by the
-   * current process. The first range is always the contiguous range
-   * of locally owned cells. TODO implement functionality for vertex
-   * patches ...
-   */
-  std::vector<std::pair<CellIterator, unsigned int>>
-  extract_relevant_cells(CellIterator cell, const CellIterator end_cell) const;
+  // /**
+  //  * Extract the contiguous ranges of relevant cells owned by the
+  //  * current process. The first range is always the contiguous range
+  //  * of locally owned cells. TODO implement functionality for vertex
+  //  * patches ...
+  //  */
+  // std::vector<std::pair<CellIterator, unsigned int>>
+  // extract_relevant_cells(CellIterator cell, const CellIterator end_cell) const;
 
   // TODO access by public method
   std::vector<std::pair<unsigned int, unsigned int>>
@@ -451,6 +470,13 @@ struct PatchInfo<dim>::InternalData
     return cell_iterators.empty();
   }
 
+  bool
+  empty_on_all() const
+  {
+    const auto n_iterators_mpimax = Utilities::MPI::max(cell_iterators.size(), MPI_COMM_WORLD);
+    return (n_iterators_mpimax == 0);
+  }
+
   unsigned int level = -1;
 
   /**
@@ -463,21 +489,21 @@ struct PatchInfo<dim>::InternalData
    */
   std::vector<unsigned int> n_boundary_subdomains;
 
-  /**
-   * An array of contiguous CellIterators, uniquely determined by a
-   * pair of the first CellIterator and the length of the range.
-   * Since the CellIterators are stored contiguously, i.e. locally
-   * owned first, then ghosted, etc..., we need to store only few
-   * contiguous ranges to represent the set of all relevant cells on
-   * the current process.
-   */
-  std::vector<std::pair<CellIterator, unsigned int>> range_storage;
+  // /**
+  //  * An array of contiguous CellIterators, uniquely determined by a
+  //  * pair of the first CellIterator and the length of the range.
+  //  * Since the CellIterators are stored contiguously, i.e. locally
+  //  * owned first, then ghosted, etc..., we need to store only few
+  //  * contiguous ranges to represent the set of all relevant cells on
+  //  * the current process.
+  //  */
+  // std::vector<std::pair<CellIterator, unsigned int>> range_storage;
 
-  /**
-   * The iterator following the last CellIterator of the last contiguous range
-   * of @p range_storage.
-   */
-  CellIterator end_cell_in_storage;
+  // /**
+  //  * The iterator following the last CellIterator of the last contiguous range
+  //  * of @p range_storage.
+  //  */
+  // CellIterator end_cell_in_storage;
 
   /**
    * Flat array that stores all CellIterators for the construction of
@@ -701,9 +727,7 @@ PatchInfo<dim>::InternalData::clear()
   level = -1;
   n_interior_subdomains.clear();
   n_boundary_subdomains.clear();
-  range_storage.clear();
   cell_iterators.clear();
-  // TODO clear end_cell_in_storage ;
 }
 
 // --------------------------------   PatchInfo::PartitionData   --------------------------------

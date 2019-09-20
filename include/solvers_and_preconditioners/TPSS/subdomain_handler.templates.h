@@ -35,10 +35,6 @@ SubdomainHandler<dim, number>::internal_reinit()
 {
   using namespace dealii;
 
-  // // *** restriction to 1 mpi process (TODO)
-  // Assert(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
-  //        ExcMessage("Implemented for parallel distributed triangulations with 1 process!"));
-
   // *** check if additional_data is reasonable
   Assert(additional_data.level != static_cast<unsigned int>(-1), ExcNotImplemented());
   Assert(additional_data.patch_variant != TPSS::PatchVariant::invalid, ExcInvalidState());
