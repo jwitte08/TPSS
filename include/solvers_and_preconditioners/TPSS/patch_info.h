@@ -196,78 +196,6 @@ private:
   initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_handler,
                             const AdditionalData            additional_data);
 
-  const CellIterator & // TODO
-  convert_to_cell_iterator(const CellIterator & cell_iterator) const
-  {
-    return cell_iterator;
-  }
-
-  const CellIterator & // TODO
-  convert_to_cell_iterator(const std::vector<CellIterator> & patch) const
-  {
-    const bool is_cell_patch = (patch.size() == 1);
-    Assert(is_cell_patch, ExcMessage("No cell patch passed."));
-    return patch.front();
-  }
-
-  // template<typename ColoredStorage> // TODO
-  // void
-  // store_flattened_patches(const ColoredStorage & colored_iterators)
-  // {
-  //   // LAMBDA unary predicate functions for interior and boundary cells
-  //   auto && interior_cell_predicate = [](auto & cell) { return !(cell.at_boundary()); };
-  //   auto && boundary_cell_predicate = [](auto & cell) { return cell.at_boundary(); };
-
-  //   /**
-  //    * STORE: counts the amount of predicated cells with a given
-  //    * predicate and stores them in the InternalData
-  //    */
-  //   const auto & count_and_store_predicated_cells = [this](auto &&      unary_predicate,
-  //                                                          const auto & iterators) {
-  //     auto &       patches_flattened  = this->internal_data.cell_iterators;
-  //     unsigned int n_predicated_cells = 0;
-  //     for(const auto cell_or_patch : iterators)
-  //     {
-  //       const auto & cell = convert_to_cell_iterator(cell_or_patch);
-  //       if(unary_predicate(*cell))
-  //       {
-  //         ++n_predicated_cells;
-  //         patches_flattened.emplace_back(cell);
-  //       }
-  //     }
-  //     return n_predicated_cells;
-  //   };
-  //   const auto & sum_n_cells = [](const std::size_t val, const auto iterators) {
-  //     return val + iterators.size();
-  //   };
-  //   const unsigned int n_cells =
-  //     std::accumulate(colored_iterators.cbegin(), colored_iterators.cend(), 0, sum_n_cells);
-  //   internal_data.cell_iterators.reserve(n_cells);
-  //   const std::size_t n_colors = colored_iterators.size();
-  //   internal_data.n_interior_subdomains.resize(n_colors);
-  //   internal_data.n_boundary_subdomains.resize(n_colors);
-
-  //   for(unsigned int color = 0; color < n_colors; ++color)
-  //   {
-  //     internal_data.n_interior_subdomains[color] =
-  //       count_and_store_predicated_cells(interior_cell_predicate, colored_iterators[color]);
-  //     internal_data.n_boundary_subdomains[color] =
-  //       count_and_store_predicated_cells(boundary_cell_predicate, colored_iterators[color]);
-  //     AssertDimension(colored_iterators[color].size(),
-  //                     internal_data.n_boundary_subdomains[color] +
-  //                       internal_data.n_interior_subdomains[color]);
-  //   }
-  // }
-
-  // /**
-  //  * Extract the contiguous ranges of relevant cells owned by the
-  //  * current process. The first range is always the contiguous range
-  //  * of locally owned cells. TODO implement functionality for vertex
-  //  * patches ...
-  //  */
-  // std::vector<std::pair<CellIterator, unsigned int>>
-  // extract_relevant_cells(CellIterator cell, const CellIterator end_cell) const;
-
   // TODO access by public method
   std::vector<std::pair<unsigned int, unsigned int>>
   reorder_colors(const std::vector<
@@ -284,21 +212,16 @@ private:
   void
   submit_patches(const std::vector<PatchIterator> & patch_iterators)
   {
-    // constexpr auto regular_vpatch_size       = UniversalInfo<dim>::n_cells(PatchVariant::vertex);
-    // constexpr auto size_reg       = UniversalInfo<dim>::n_cells(variant);
+    // *** submit the interior subdomains first
     unsigned int               n_interior_subdomains_reg = 0;
     std::vector<PatchIterator> boundary_patch_reg;
-
     for(auto patch : patch_iterators)
     {
-      // TODO replace IteratorFilters::AtBoundary
-      const bool at_boundary = std::any_of(patch->cbegin(), patch->cend(), [](const auto & cell) {
-        return cell->at_boundary();
-      });
-
+      const bool patch_at_boundary =
+        std::any_of(patch->cbegin(), patch->cend(), IteratorFilters::AtBoundary{});
       if(patch->size() == size_reg) // regular
       {
-        if(at_boundary)
+        if(patch_at_boundary)
         {
           boundary_patch_reg.push_back(patch);
         }
@@ -309,18 +232,16 @@ private:
             internal_data.cell_iterators.emplace_back(cell);
         }
       }
-
       else // irregular
         Assert(false, ExcNotImplemented());
     }
 
-    // submit all regular subdomains at the boundary into the InternalData
+    // *** submit the boundary subdomains next
     for(const auto it : boundary_patch_reg)
     {
       for(const auto & cell : *it)
         internal_data.cell_iterators.emplace_back(cell);
     }
-
     internal_data.n_interior_subdomains.emplace_back(n_interior_subdomains_reg);
     internal_data.n_boundary_subdomains.emplace_back(boundary_patch_reg.size());
   }
@@ -328,7 +249,7 @@ private:
   ConditionalOStream pcout{std::cout, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0};
 
   /**
-   * Storing actual data shaping (macro) patches.
+   * Storing the actual data shaping patches.
    */
   InternalData   internal_data;
   AdditionalData additional_data;
@@ -341,22 +262,17 @@ struct PatchInfo<dim>::AdditionalData
   TPSS::SmootherVariant smoother_variant = TPSS::SmootherVariant::invalid;
   unsigned int          level            = -1;
   std::function<
-    std::vector<std::vector<std::vector<CellIterator>>>(const DoFHandler<dim> * dof_handler,
-                                                        const AdditionalData    additional_data)>
-    manual_coloring_func_cp;
-  std::function<
     std::vector<std::vector<PatchIterator>>(const std::vector<std::vector<CellIterator>> & patches,
                                             const AdditionalData additional_data)>
     coloring_func;
-  std::function<std::vector<std::vector<PatchIterator>>(
-    const DoFHandler<dim> *                  dof_handler,
-    const AdditionalData                     additional_data,
-    std::vector<std::vector<CellIterator>> & cell_collections)>
-    manual_coloring_func;
   std::function<void(const DoFHandler<dim> *                  dof_handler,
                      const AdditionalData                     additional_data,
                      std::vector<std::vector<CellIterator>> & cell_collections)>
-       manual_gathering_func;
+    manual_gathering_func;
+  std::function<void(		     const DoFHandler<dim> & dof_handler_in,
+                     const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> &
+				     colored_iterators, const std::string)>
+       visualize_coloring;
   bool print_details = false; // DEBUG
 };
 

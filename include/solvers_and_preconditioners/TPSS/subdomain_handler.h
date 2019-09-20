@@ -161,19 +161,10 @@ struct SubdomainHandler<dim, number>::AdditionalData
   unsigned int          level            = -1;
   TPSS::PatchVariant    patch_variant    = TPSS::PatchVariant::invalid;
   TPSS::SmootherVariant smoother_variant = TPSS::SmootherVariant::invalid;
-  std::function<std::vector<std::vector<std::vector<CellIterator>>>(
-    const DoFHandler<dim> *                             dof_handler,
-    const typename TPSS::PatchInfo<dim>::AdditionalData additional_data)>
-    manual_coloring_func_cp;
   std::function<std::vector<std::vector<PatchIterator>>(
     const std::vector<std::vector<CellIterator>> &      patches,
     const typename TPSS::PatchInfo<dim>::AdditionalData additional_data)>
     coloring_func;
-  std::function<std::vector<std::vector<PatchIterator>>(
-    const DoFHandler<dim> *                             dof_handler,
-    const typename TPSS::PatchInfo<dim>::AdditionalData additional_data,
-    std::vector<std::vector<CellIterator>> &            cell_collections)>
-    manual_coloring_func;
   std::function<void(const DoFHandler<dim> *                             dof_handler,
                      const typename TPSS::PatchInfo<dim>::AdditionalData additional_data,
                      std::vector<std::vector<CellIterator>> &            cell_collections)>

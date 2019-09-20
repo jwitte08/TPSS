@@ -1,36 +1,5 @@
-
 namespace TPSS
 {
-// template<int dim>
-// std::vector<std::pair<typename PatchInfo<dim>::CellIterator, unsigned int>>
-// PatchInfo<dim>::extract_relevant_cells(CellIterator cell, const CellIterator end_cell) const
-// {
-//   using namespace dealii;
-
-//   std::vector<std::pair<CellIterator, unsigned int>> range_storage;
-
-//   typedef typename CellIterator::AccessorType CellAccessorType;
-//   const unsigned int my_pid = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
-
-//   // *** step-1: first range contains all locally owned cells
-//   const auto && is_locally_owned = [my_pid](const CellAccessorType & cell) {
-//     return (my_pid == cell.level_subdomain_id());
-//   };
-
-//   const CellIterator first_locally_owned_cell = std::find_if(cell, end_cell, is_locally_owned);
-//   const CellIterator end_locally_owned_cell =
-//     std::find_if_not(first_locally_owned_cell, end_cell, is_locally_owned);
-//   const unsigned int n_locally_owned_cells =
-//     std::distance(first_locally_owned_cell, end_locally_owned_cell);
-
-//   range_storage.emplace_back(first_locally_owned_cell, n_locally_owned_cells);
-
-//   // *** step-2: collect all ghost cells with a higher subdomain_id
-//   // TODO required for MPI parallel vertex patches ...
-
-//   return range_storage;
-// }
-
 template<int dim>
 void
 PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
@@ -44,20 +13,8 @@ PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
   Assert(additional_data_in.level != static_cast<unsigned int>(-1),
          ExcMessage("Implemented for level cell iterators!"));
 
-  // const auto   level = additional_data_in.level;
-  // CellIterator cell = dof_handler->begin_mg(level), end_cell = dof_handler->end_mg(level);
-  // const auto   range_storage      = extract_relevant_cells(cell, end_cell);
-  // const bool   locally_owns_cells = true;//(range_storage.front().second > 0);
-  // if(is_mpi_parallel && !locally_owns_cells)
-  //   return; //: nothing to do
-  // else
-  //   AssertThrow(locally_owns_cells, ExcInternalError());
-
   // *** submit additional data
   internal_data.level = additional_data.level;
-  // internal_data.range_storage = range_storage;
-  // internal_data.end_cell_in_storage =
-  //   std::next(range_storage.back().first, range_storage.back().second);
 
   // *** initialize depending on the patch variant
   if(additional_data.patch_variant == TPSS::PatchVariant::cell)
@@ -175,6 +132,9 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
   const unsigned int n_subdomains = n_interior_subdomains + n_boundary_subdomains;
   (void)n_subdomains;
   AssertDimension(n_subdomains, internal_data.cell_iterators.size());
+
+  if(additional_data.visualize_coloring)
+    additional_data.visualize_coloring(*dof_handler, colored_iterators, "cp_");
 
   // *** print detailed information
   if(additional_data.print_details)
@@ -564,6 +524,9 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
   time.stop();
   time_data.emplace_back(time.wall_time(), oss.str());
   time.restart();
+
+  if(additional_data.visualize_coloring)
+    additional_data.visualize_coloring(*dof_handler, colored_iterators, "vp_");
 
   /**
    * Submisson of the colored collections of CellIterators into the

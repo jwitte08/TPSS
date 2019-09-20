@@ -59,14 +59,12 @@ SubdomainHandler<dim, number>::internal_reinit()
   {
     // *** gather patches (in vectorization batches) & colorize them
     typename TPSS::PatchInfo<dim>::AdditionalData patch_info_data;
-    patch_info_data.patch_variant           = additional_data.patch_variant;
-    patch_info_data.smoother_variant        = additional_data.smoother_variant;
-    patch_info_data.level                   = additional_data.level;
-    patch_info_data.coloring_func           = additional_data.coloring_func;
-    patch_info_data.manual_coloring_func    = additional_data.manual_coloring_func;
-    patch_info_data.manual_coloring_func_cp = additional_data.manual_coloring_func_cp;
-    patch_info_data.manual_gathering_func   = additional_data.manual_gathering_func;
-    patch_info_data.print_details           = additional_data.print_details;
+    patch_info_data.patch_variant         = additional_data.patch_variant;
+    patch_info_data.smoother_variant      = additional_data.smoother_variant;
+    patch_info_data.level                 = additional_data.level;
+    patch_info_data.coloring_func         = additional_data.coloring_func;
+    patch_info_data.manual_gathering_func = additional_data.manual_gathering_func;
+    patch_info_data.print_details         = additional_data.print_details;
     patch_info.initialize(dof_handler, patch_info_data);
 
     // *** map the patch batches to MatrixFree's cell batches (used for the patch-local transfers)

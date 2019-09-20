@@ -1423,15 +1423,7 @@ struct MatrixOperator : public Subscriptor
     fdss_additional_data.print_details    = parameters.schwarz_smoother_data.print_details;
     if(parameters.schwarz_smoother_data.manual_coloring)
     {
-      fdss_additional_data.coloring_func        = std::ref(red_black_coloring);
-      fdss_additional_data.manual_coloring_func = std::ref(make_manual_coloring);
-      using CellIterator                        = typename TPSS::PatchInfo<dim>::CellIterator;
-      fdss_additional_data.manual_coloring_func_cp =
-        [](const DoFHandler<dim> *                             dof_handler,
-           const typename TPSS::PatchInfo<dim>::AdditionalData additional_data)
-        -> std::vector<std::vector<std::vector<CellIterator>>> {
-        return ManualColoringCP<dim>{}(dof_handler, additional_data);
-      };
+      fdss_additional_data.coloring_func = std::ref(red_black_coloring);
     }
     if(parameters.non_overlapping)
       fdss_additional_data.manual_gathering_func = std::ref(make_non_overlapping_vertex_patch);
