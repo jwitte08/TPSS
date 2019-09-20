@@ -5,6 +5,7 @@
 #include <deal.II/base/graph_coloring.h>
 #include <deal.II/base/timer.h>
 #include <deal.II/base/utilities.h>
+#include <deal.II/grid/filtered_iterator.h>
 #include <deal.II/grid/grid_out.h>
 #include <deal.II/matrix_free/matrix_free.h>
 #include <deal.II/numerics/data_out.h>
@@ -130,7 +131,7 @@ private:
   convert_to_cell_iterator(const std::vector<CellIterator> & patch) const
   {
     const bool is_cell_patch = (patch.size() == 1);
-    AssertThrow(is_cell_patch, ExcMessage("No cell patch passed."));
+    Assert(is_cell_patch, ExcMessage("No cell patch passed."));
     return patch.front();
   }
 
@@ -204,29 +205,32 @@ private:
     const dealii::DoFHandler<dim> &                            dof_handler,
     const std::vector<std::pair<unsigned int, unsigned int>> & reordered_colors) const;
 
+  template<int size_reg>
   void
   submit_patches(const std::vector<PatchIterator> & patch_iterators)
   {
-    constexpr auto regular_vpatch_size       = UniversalInfo<dim>::n_cells(PatchVariant::vertex);
-    unsigned int   n_interior_subdomains_reg = 0;
-    std::vector<PatchIterator> boundary_patch_it_reg;
+    // constexpr auto regular_vpatch_size       = UniversalInfo<dim>::n_cells(PatchVariant::vertex);
+    // constexpr auto size_reg       = UniversalInfo<dim>::n_cells(variant);
+    unsigned int               n_interior_subdomains_reg = 0;
+    std::vector<PatchIterator> boundary_patch_reg;
 
-    for(auto patch_it : patch_iterators)
+    for(auto patch : patch_iterators)
     {
-      const bool at_boundary = std::any_of(patch_it->cbegin(),
-                                           patch_it->cend(),
-                                           [](const auto & cell) { return cell->at_boundary(); });
+      // TODO replace IteratorFilters::AtBoundary
+      const bool at_boundary = std::any_of(patch->cbegin(), patch->cend(), [](const auto & cell) {
+        return cell->at_boundary();
+      });
 
-      if(patch_it->size() == regular_vpatch_size) // regular
+      if(patch->size() == size_reg) // regular
       {
         if(at_boundary)
         {
-          boundary_patch_it_reg.push_back(patch_it);
+          boundary_patch_reg.push_back(patch);
         }
         else
         {
           ++n_interior_subdomains_reg;
-          for(const auto & cell : *patch_it)
+          for(const auto & cell : *patch)
             internal_data.cell_iterators.emplace_back(cell);
         }
       }
@@ -236,14 +240,14 @@ private:
     }
 
     // submit all regular subdomains at the boundary into the InternalData
-    for(const auto it : boundary_patch_it_reg)
+    for(const auto it : boundary_patch_reg)
     {
       for(const auto & cell : *it)
         internal_data.cell_iterators.emplace_back(cell);
     }
 
     internal_data.n_interior_subdomains.emplace_back(n_interior_subdomains_reg);
-    internal_data.n_boundary_subdomains.emplace_back(boundary_patch_it_reg.size());
+    internal_data.n_boundary_subdomains.emplace_back(boundary_patch_reg.size());
   }
 
   ConditionalOStream pcout{std::cout, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0};

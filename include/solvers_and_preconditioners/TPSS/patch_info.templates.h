@@ -56,7 +56,7 @@ PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
   else
     AssertThrow(locally_owns_cells, ExcInternalError());
 
-  // *** submit data
+  // *** submit additional data
   internal_data.level         = level;
   internal_data.range_storage = range_storage;
   internal_data.end_cell_in_storage =
@@ -83,48 +83,51 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
   const auto   color_scheme  = additional_data.smoother_variant;
   const auto & range_storage = internal_data.range_storage;
 
-  // LAMBDA unary predicate functions for interior and boundary cells
-  auto && interior_cell_predicate = [](auto & cell) { return !(cell.at_boundary()); };
-  auto && boundary_cell_predicate = [](auto & cell) { return cell.at_boundary(); };
+  /**
+   * Gathering the locally owned cell iterators as collection of cells
+   * (patch). Here, it is only one cell iterator per collection.
+   */
+  const auto locally_owned_range_mg =
+    filter_iterators(dof_handler->mg_cell_iterators_on_level(level),
+                     IteratorFilters::LocallyOwnedLevelCell());
+  std::vector<std::vector<typename DoFHandler<dim>::level_cell_iterator>> cell_collections;
+  for(const auto & cell : locally_owned_range_mg)
+  {
+    std::vector<typename DoFHandler<dim>::level_cell_iterator> patch;
+    patch.push_back(cell);
+    cell_collections.emplace_back(patch);
+  }
 
+  /**
+   * Coloring of the "cell patches". Here, we only have one
+   * color. However, we require a vector of PatchIterators to call
+   * submit_patches.
+   */
   // *** count and store interior and boundary (in physical sense) cells
+  constexpr int regular_size = UniversalInfo<dim>::n_cells(PatchVariant::cell);
   if(color_scheme == TPSS::SmootherVariant::additive) // ADDITIVE
   {
-    // LAMBDA We count the amount of cells with a given predicate and
-    // store them in the InternalData.
-    const auto count_and_store_predicated_cells = [&](auto && unary_predicate) {
-      Assert(range_storage.size() == 1,
-             ExcInternalError()); // range_storage contains only locally owned range
+    std::vector<PatchIterator> colored_iterators;
+    for(auto patch = cell_collections.cbegin(); patch != cell_collections.cend(); ++patch)
+      colored_iterators.emplace_back(patch);
+    submit_patches<regular_size>(colored_iterators);
 
-      auto &       cell_iters_uncolored = this->internal_data.cell_iterators;
-      unsigned int n_predicated_cells   = 0;
-
-      auto         range    = range_storage.cbegin();
-      CellIterator cell     = range->first;
-      CellIterator end_cell = std::next(range->first, range->second);
-      for(; cell != end_cell; ++cell)
-        if(unary_predicate(*cell))
-        {
-          ++n_predicated_cells;
-          cell_iters_uncolored.emplace_back(cell);
-        }
-
-      return n_predicated_cells;
-    };
-
+    // *** check if the InternalData is valid
+    AssertDimension(internal_data.n_interior_subdomains.size(),
+                    internal_data.n_boundary_subdomains.size());
+    if(color_scheme == TPSS::SmootherVariant::additive)
+      AssertDimension(internal_data.n_boundary_subdomains.size(), 1);
     const unsigned int n_interior_subdomains =
-      count_and_store_predicated_cells(interior_cell_predicate);
+      std::accumulate(internal_data.n_interior_subdomains.cbegin(),
+                      internal_data.n_interior_subdomains.cend(),
+                      0);
     const unsigned int n_boundary_subdomains =
-      count_and_store_predicated_cells(boundary_cell_predicate);
-
-    internal_data.n_interior_subdomains.emplace_back(n_interior_subdomains);
-    internal_data.n_boundary_subdomains.emplace_back(n_boundary_subdomains);
-
-    AssertDimension(internal_data.n_interior_subdomains.size(), 1);
-    AssertDimension(internal_data.n_boundary_subdomains.size(), 1);
-    AssertDimension(internal_data.cell_iterators.size(),
-                    internal_data.n_interior_subdomains.front() +
-                      internal_data.n_boundary_subdomains.front());
+      std::accumulate(internal_data.n_boundary_subdomains.cbegin(),
+                      internal_data.n_boundary_subdomains.cend(),
+                      0);
+    const unsigned int n_subdomains = n_interior_subdomains + n_boundary_subdomains;
+    (void)n_subdomains;
+    AssertDimension(n_subdomains, internal_data.cell_iterators.size());
   }
 
   else if(color_scheme == TPSS::SmootherVariant::multiplicative) // MULTIPLICATIVE
@@ -410,7 +413,7 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
     {
       const unsigned int color = reordered_colors[cc].second;
       AssertDimension(colored_patch_iterators[color].size(), reordered_colors[cc].first);
-      submit_patches(colored_patch_iterators[color]);
+      submit_patches<regular_vpatch_size>(colored_patch_iterators[color]);
     }
 
     // *** check if the InternalData is valid
