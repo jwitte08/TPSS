@@ -119,14 +119,17 @@ main(int argc, char * argv[])
   }
   {
     pcout << "TEST: cell patch, multiplicative: \n\n\n";
-    const unsigned fine_level   = 2;
-    const unsigned coarse_level = 0;
-    const unsigned upper_bound  = 8;
+    const unsigned fine_level      = 2;
+    const unsigned coarse_level    = 0;
+    const unsigned upper_bound     = 8;
+    const unsigned smoothing_steps = 1;
     Test<3, 2>{pcout}(fine_level,
                       coarse_level,
                       TPSS::PatchVariant::cell,
                       TPSS::SmootherVariant::multiplicative,
-                      upper_bound);
+                      upper_bound,
+                      smoothing_steps,
+                      /*manual_coloring*/ true);
   }
 
   // *** test CASE:   vertex patch, additive

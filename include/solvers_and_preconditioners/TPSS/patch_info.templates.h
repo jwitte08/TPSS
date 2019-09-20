@@ -77,11 +77,11 @@ void
 PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_handler,
                                         const AdditionalData            additional_data)
 {
-  using namespace dealii;
+  const auto level        = additional_data.level;
+  const auto color_scheme = additional_data.smoother_variant;
 
-  const auto   level         = additional_data.level;
-  const auto   color_scheme  = additional_data.smoother_variant;
-  const auto & range_storage = internal_data.range_storage;
+  Timer time;
+  time.restart();
 
   /**
    * Gathering the locally owned cell iterators as collection of cells
@@ -98,54 +98,43 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
     cell_collections.emplace_back(patch);
   }
 
+  time.stop();
+  time_data.emplace_back(time.wall_time(), "Cell-based gathering");
+  time.restart();
+
   /**
-   * Coloring of the "cell patches". Here, we only have one
+   * Coloring of the "cell patches". For the additive operator, we only have one
    * color. However, we require a vector of PatchIterators to call
    * submit_patches.
    */
-  // *** count and store interior and boundary (in physical sense) cells
+  std::vector<std::vector<PatchIterator>> colored_iterators;
   constexpr int regular_size = UniversalInfo<dim>::n_cells(PatchVariant::cell);
   if(color_scheme == TPSS::SmootherVariant::additive) // ADDITIVE
   {
-    std::vector<PatchIterator> colored_iterators;
+    colored_iterators.resize(1);
+    std::vector<PatchIterator> & patch_iterators = colored_iterators.front();
     for(auto patch = cell_collections.cbegin(); patch != cell_collections.cend(); ++patch)
-      colored_iterators.emplace_back(patch);
-    submit_patches<regular_size>(colored_iterators);
-
-    // *** check if the InternalData is valid
-    AssertDimension(internal_data.n_interior_subdomains.size(),
-                    internal_data.n_boundary_subdomains.size());
-    if(color_scheme == TPSS::SmootherVariant::additive)
-      AssertDimension(internal_data.n_boundary_subdomains.size(), 1);
-    const unsigned int n_interior_subdomains =
-      std::accumulate(internal_data.n_interior_subdomains.cbegin(),
-                      internal_data.n_interior_subdomains.cend(),
-                      0);
-    const unsigned int n_boundary_subdomains =
-      std::accumulate(internal_data.n_boundary_subdomains.cbegin(),
-                      internal_data.n_boundary_subdomains.cend(),
-                      0);
-    const unsigned int n_subdomains = n_interior_subdomains + n_boundary_subdomains;
-    (void)n_subdomains;
-    AssertDimension(n_subdomains, internal_data.cell_iterators.size());
+      patch_iterators.emplace_back(patch);
   }
 
+  /**
+   * Coloring of the "cell patches". For the multiplicative algorithm,
+   * one has to prevent that two local solvers sharing a (global)
+   * degree of freedom are applied to the same residual vector. For
+   * example, DG elements are coupled in terms of the face integrals
+   * involving traces of both elements. Therefore, we cells are in
+   * conflict if they share a common face. TODO other FE types!
+   */
   else if(color_scheme == TPSS::SmootherVariant::multiplicative) // MULTIPLICATIVE
   {
-    Timer time;
-    time.restart();
-
-    const bool do_graph_coloring = !additional_data.manual_coloring_func_cp;
-    if(do_graph_coloring)
+    const bool do_graph_coloring = !additional_data.coloring_func;
+    if(do_graph_coloring) // graph coloring
     {
-      const bool locally_owned_cells_only = (range_storage.size() == 1);
-      AssertThrow(locally_owned_cells_only, ExcNotImplemented());
-      auto cell_iter_begin = range_storage[0].first;
-      auto cell_iter_end   = std::next(range_storage[0].first, range_storage[0].second);
-
       // *** GRAPH COLORING: cells sharing a common face get different colors
-      const auto & get_cell_conflicts =
-        [this, level](const auto & cell) -> std::vector<types::global_dof_index> {
+      const auto & get_face_conflicts =
+        [this, level](const PatchIterator & patch) -> std::vector<types::global_dof_index> {
+        AssertDimension(patch->size(), 1);
+        const auto &                         cell = patch->front();
         std::vector<types::global_dof_index> conflicts;
         for(unsigned int face_no = 0; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
         {
@@ -159,52 +148,63 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
         }
         return conflicts;
       };
-      const std::vector<std::vector<CellIterator>> colored_iterators =
-        GraphColoring::make_graph_coloring(cell_iter_begin, cell_iter_end, get_cell_conflicts);
-      time_data.emplace_back(time.wall_time(), "[PatchInfo] graph coloring:");
-      time.restart();
-
-      store_flattened_patches(colored_iterators);
+      colored_iterators = std::move(GraphColoring::make_graph_coloring(cell_collections.cbegin(),
+                                                                       cell_collections.cend(),
+                                                                       get_face_conflicts));
     }
 
     else // user-defined coloring
     {
-      const std::vector<std::vector<std::vector<CellIterator>>> colored_iterators =
-        additional_data.manual_coloring_func_cp(dof_handler, additional_data);
-      time_data.emplace_back(time.wall_time(), "[PatchInfo] user-defined coloring:");
-      time.restart();
-
-      store_flattened_patches(colored_iterators);
-    }
-
-    // *** check validity of the InternalData
-    AssertDimension(internal_data.n_interior_subdomains.size(),
-                    internal_data.n_boundary_subdomains.size());
-    AssertDimension(std::accumulate(internal_data.n_interior_subdomains.cbegin(),
-                                    internal_data.n_interior_subdomains.cend(),
-                                    static_cast<unsigned int>(0)) +
-                      std::accumulate(internal_data.n_boundary_subdomains.cbegin(),
-                                      internal_data.n_boundary_subdomains.cend(),
-                                      static_cast<unsigned int>(0)),
-                    internal_data.cell_iterators.size());
-
-    // *** print detailed information
-    if(additional_data.print_details)
-    {
-      print_row_variable(pcout, 45, "Coloring on level:", additional_data.level);
-      print_row_variable(
-        pcout, 5, "", 10, "color:", 30, "# of interior patches:", 30, "# of boundary patches:");
-      const auto n_colors   = internal_data.n_interior_subdomains.size();
-      auto       n_interior = internal_data.n_interior_subdomains.cbegin();
-      auto       n_boundary = internal_data.n_boundary_subdomains.cbegin();
-      for(unsigned c = 0; c < n_colors; ++c, ++n_interior, ++n_boundary)
-        print_row_variable(pcout, 5, "", 10, c, 30, *n_interior, 30, *n_boundary);
-      pcout << std::endl;
+      colored_iterators =
+        std::move(additional_data.coloring_func(cell_collections, additional_data));
     }
   }
 
-  else
-    Assert(false, ExcNotImplemented());
+  else // color_scheme
+    AssertThrow(false, ExcNotImplemented());
+
+  time.stop();
+  time_data.emplace_back(time.wall_time(), "Cell-based coloring");
+  time.restart();
+
+  const unsigned int n_colors = colored_iterators.size();
+  for(unsigned int color = 0; color < n_colors; ++color)
+    submit_patches<regular_size>(colored_iterators[color]);
+
+  time.stop();
+  time_data.emplace_back(time.wall_time(), "Submit cell-based patches");
+  time.restart();
+
+  // *** check if the InternalData is valid
+  AssertDimension(internal_data.n_interior_subdomains.size(),
+                  internal_data.n_boundary_subdomains.size());
+  if(color_scheme == TPSS::SmootherVariant::additive)
+    AssertDimension(internal_data.n_boundary_subdomains.size(), 1);
+  const unsigned int n_interior_subdomains =
+    std::accumulate(internal_data.n_interior_subdomains.cbegin(),
+                    internal_data.n_interior_subdomains.cend(),
+                    0);
+  const unsigned int n_boundary_subdomains =
+    std::accumulate(internal_data.n_boundary_subdomains.cbegin(),
+                    internal_data.n_boundary_subdomains.cend(),
+                    0);
+  const unsigned int n_subdomains = n_interior_subdomains + n_boundary_subdomains;
+  (void)n_subdomains;
+  AssertDimension(n_subdomains, internal_data.cell_iterators.size());
+
+  // *** print detailed information
+  if(additional_data.print_details)
+  {
+    print_row_variable(pcout, 45, "Coloring on level:", additional_data.level);
+    print_row_variable(
+      pcout, 5, "", 10, "color:", 30, "# of interior patches:", 30, "# of boundary patches:");
+    const auto n_colors   = internal_data.n_interior_subdomains.size();
+    auto       n_interior = internal_data.n_interior_subdomains.cbegin();
+    auto       n_boundary = internal_data.n_boundary_subdomains.cbegin();
+    for(unsigned c = 0; c < n_colors; ++c, ++n_interior, ++n_boundary)
+      print_row_variable(pcout, 5, "", 10, c, 30, *n_interior, 30, *n_boundary);
+    pcout << std::endl;
+  }
 }
 
 template<int dim>

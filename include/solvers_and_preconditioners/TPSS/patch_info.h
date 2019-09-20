@@ -269,6 +269,10 @@ struct PatchInfo<dim>::AdditionalData
     std::vector<std::vector<std::vector<CellIterator>>>(const DoFHandler<dim> * dof_handler,
                                                         const AdditionalData    additional_data)>
     manual_coloring_func_cp;
+  std::function<
+    std::vector<std::vector<PatchIterator>>(const std::vector<std::vector<CellIterator>> & patches,
+                                            const AdditionalData additional_data)>
+    coloring_func;
   std::function<std::vector<std::vector<PatchIterator>>(
     const DoFHandler<dim> *                  dof_handler,
     const AdditionalData                     additional_data,

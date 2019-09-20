@@ -51,7 +51,9 @@
 #include "solvers_and_preconditioners/TPSS/time_info.h"
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
 
+#include "coloring.h"
 #include "laplace_integrator.h"
+
 
 namespace Laplace
 {
@@ -387,44 +389,44 @@ struct MultigridSignal
   MGLevelObject<TimeInfo> time_infos;
 };
 
-template<int dim>
-Point<dim, unsigned int>
-get_integer_coords(const CellId cell_id)
-{
-  // Get child indices
-  std::vector<unsigned int> child_indices;
-  std::string               cell_id_str = cell_id.to_string();
-  while(cell_id_str.size() > 4)
-  {
-    child_indices.insert(child_indices.begin(), Utilities::string_to_int(&(cell_id_str.back())));
-    cell_id_str.pop_back();
-  }
+// template<int dim>
+// Point<dim, unsigned int>
+// get_integer_coords(const CellId cell_id)
+// {
+//   // Get child indices
+//   std::vector<unsigned int> child_indices;
+//   std::string               cell_id_str = cell_id.to_string();
+//   while(cell_id_str.size() > 4)
+//   {
+//     child_indices.insert(child_indices.begin(), Utilities::string_to_int(&(cell_id_str.back())));
+//     cell_id_str.pop_back();
+//   }
 
-  // Initialize global coordinate with coarse cell coordinate
-  Point<dim, unsigned int> global_coord;
-  const unsigned int       coarse_id = cell_id.to_binary<dim>()[0];
-  {
-    const std::bitset<dim> bit_indices(coarse_id);
-    for(unsigned int d = 0; d < dim; ++d)
-      global_coord(d) = bit_indices[d];
-  }
+//   // Initialize global coordinate with coarse cell coordinate
+//   Point<dim, unsigned int> global_coord;
+//   const unsigned int       coarse_id = cell_id.to_binary<dim>()[0];
+//   {
+//     const std::bitset<dim> bit_indices(coarse_id);
+//     for(unsigned int d = 0; d < dim; ++d)
+//       global_coord(d) = bit_indices[d];
+//   }
 
-  // Compute local coordinate and add to global
-  for(auto c : child_indices)
-  {
-    Point<dim, unsigned int> local_coord;
-    {
-      const std::bitset<dim> bit_indices(c);
-      for(unsigned int d = 0; d < dim; ++d)
-        local_coord(d) = bit_indices[d];
-    }
+//   // Compute local coordinate and add to global
+//   for(auto c : child_indices)
+//   {
+//     Point<dim, unsigned int> local_coord;
+//     {
+//       const std::bitset<dim> bit_indices(c);
+//       for(unsigned int d = 0; d < dim; ++d)
+//         local_coord(d) = bit_indices[d];
+//     }
 
-    global_coord *= 2;
-    global_coord += local_coord;
-  }
+//     global_coord *= 2;
+//     global_coord += local_coord;
+//   }
 
-  return global_coord;
-}
+//   return global_coord;
+// }
 
 template<int dim>
 std::vector<std::vector<std::vector<typename DoFHandler<dim>::level_cell_iterator>>>
@@ -975,6 +977,7 @@ struct MatrixOperator : public Subscriptor
   PreconditionIdentity                                         precondition_identity;
   MGLevelObject<LEVEL_MATRIX>                                  mg_matrices;
   MGTransferMatrixFree<dim, value_type_mg>                     mg_transfer;
+  RedBlackColoring<dim>                                        red_black_coloring;
   ManualColoring<dim>                                          make_manual_coloring;
   ManualColoringCP<dim>                                        make_manual_coloring_cp;
   NonOverlappingVertexPatch<dim>                               make_non_overlapping_vertex_patch;
@@ -1420,6 +1423,7 @@ struct MatrixOperator : public Subscriptor
     fdss_additional_data.print_details    = parameters.schwarz_smoother_data.print_details;
     if(parameters.schwarz_smoother_data.manual_coloring)
     {
+      fdss_additional_data.coloring_func        = std::ref(red_black_coloring);
       fdss_additional_data.manual_coloring_func = std::ref(make_manual_coloring);
       using CellIterator                        = typename TPSS::PatchInfo<dim>::CellIterator;
       fdss_additional_data.manual_coloring_func_cp =
