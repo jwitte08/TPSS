@@ -9,8 +9,8 @@
 
 #include <deal.II/base/utilities.h>
 
-#include "laplace_problem.h"
 #include "coloring.h"
+#include "laplace_problem.h"
 
 using namespace dealii;
 
@@ -61,30 +61,30 @@ test(const TestParameter & prms)
   additional_data.print_details    = true;
   RedBlackColoring<dim> user_coloring;
   additional_data.coloring_func = std::ref(user_coloring);
-  if (dim == 2)
-    if (prms.n_refinements == 4)
+  if(dim == 2)
+    if(prms.n_refinements == 4)
       additional_data.visualize_coloring = std::ref(RedBlackColoring<dim>::visualize_coloring);
   patch_info.initialize(&dof_handler, additional_data);
   pcout << " ... done!\n\n";
 
-  if (prms.patch_variant == TPSS::PatchVariant::cell)
-    {
-      pcout << "Testing cell patch distribution ...  \n\n";
-      std::vector<int> cindices;
-  const auto       cell_iterators = patch_info.get_internal_data()->cell_iterators;
-  for(const auto & cell : cell_iterators)
-    cindices.emplace_back(cell->index());
-  const auto n_cell_patches = cindices.size();
-  std::sort(cindices.begin(), cindices.end());
-  std::unique(cindices.begin(), cindices.end());
-  AssertThrow(n_cell_patches == cindices.size(), ExcMessage("Duplicates!"));
-  const unsigned int n_active_cells_all = triangulation.n_global_active_cells();
-  const unsigned int n_cell_patches_all = Utilities::MPI::sum(n_cell_patches, MPI_COMM_WORLD);
-  std::ostringstream oss;
-  oss << n_cell_patches_all << " != " << n_active_cells_all;
-  AssertThrow(n_cell_patches_all == n_active_cells_all, ExcMessage(oss.str()));
-  pcout << " ... success!\n\n";
-    }
+  if(prms.patch_variant == TPSS::PatchVariant::cell)
+  {
+    pcout << "Testing cell patch distribution ...  \n\n";
+    std::vector<int> cindices;
+    const auto       cell_iterators = patch_info.get_internal_data()->cell_iterators;
+    for(const auto & cell : cell_iterators)
+      cindices.emplace_back(cell->index());
+    const auto n_cell_patches = cindices.size();
+    std::sort(cindices.begin(), cindices.end());
+    std::unique(cindices.begin(), cindices.end());
+    AssertThrow(n_cell_patches == cindices.size(), ExcMessage("Duplicates!"));
+    const unsigned int n_active_cells_all = triangulation.n_global_active_cells();
+    const unsigned int n_cell_patches_all = Utilities::MPI::sum(n_cell_patches, MPI_COMM_WORLD);
+    std::ostringstream oss;
+    oss << n_cell_patches_all << " != " << n_active_cells_all;
+    AssertThrow(n_cell_patches_all == n_active_cells_all, ExcMessage(oss.str()));
+    pcout << " ... success!\n\n";
+  }
 }
 
 int

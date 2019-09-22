@@ -106,7 +106,7 @@ struct RedBlackColoring
   }
 
 
-  
+
   std::vector<std::vector<PatchIterator>>
   cell_coloring_impl(const std::vector<std::vector<CellIterator>> & patches) const
   {
@@ -137,7 +137,7 @@ struct RedBlackColoring
   }
 
 
-  
+
   std::vector<std::vector<PatchIterator>>
   vertex_patch_coloring_impl(const std::vector<std::vector<CellIterator>> & patches) const
   {
@@ -180,74 +180,76 @@ struct RedBlackColoring
 
 
 
-static void
-visualize_coloring(
-  const DoFHandler<dim> &                                                        dof_handler_in,
-  const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> & colored_iterators,
-  const std::string prefix)
-{
-  for(unsigned color = 0; color < colored_iterators.size(); ++color)
+  static void
+  visualize_coloring(const DoFHandler<dim> & dof_handler_in,
+                     const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> &
+                                       colored_iterators,
+                     const std::string prefix)
   {
-    // collect output data
-    const auto &       tria         = dof_handler_in.get_triangulation();
-    const unsigned int global_level = tria.n_global_levels() - 1;
-    DoFHandler<dim>    dof_handler(tria);
-    dof_handler.distribute_dofs(FE_DGQ<dim>(0)); // require one (dof) value per cell !!!
-    dof_handler.distribute_mg_dofs();
-    DataOut<dim> data_out;
-    data_out.attach_dof_handler(dof_handler);
+    for(unsigned color = 0; color < colored_iterators.size(); ++color)
+    {
+      // collect output data
+      const auto &       tria         = dof_handler_in.get_triangulation();
+      const unsigned int global_level = tria.n_global_levels() - 1;
+      DoFHandler<dim>    dof_handler(tria);
+      dof_handler.distribute_dofs(FE_DGQ<dim>(0)); // require one (dof) value per cell !!!
+      dof_handler.distribute_mg_dofs();
+      DataOut<dim> data_out;
+      data_out.attach_dof_handler(dof_handler);
 
-    // print the subdomain_ids
-    Vector<double> subdomain(tria.n_active_cells());
-    for(unsigned int i = 0; i < subdomain.size(); ++i)
-      subdomain(i) = tria.locally_owned_subdomain();
-    data_out.add_data_vector(subdomain, "subdomain", DataOut<dim>::type_cell_data);
+      // print the subdomain_ids
+      Vector<double> subdomain(tria.n_active_cells());
+      for(unsigned int i = 0; i < subdomain.size(); ++i)
+        subdomain(i) = tria.locally_owned_subdomain();
+      data_out.add_data_vector(subdomain, "subdomain", DataOut<dim>::type_cell_data);
 
-    // initialize the ghosted dof vector
-    LinearAlgebra::distributed::Vector<double> marker;
-    IndexSet                                   locally_relevant_dofs;
-    DoFTools::extract_locally_relevant_level_dofs(dof_handler, global_level, locally_relevant_dofs);
-    marker.reinit(dof_handler.locally_owned_dofs(), locally_relevant_dofs, MPI_COMM_WORLD);
-    marker                        = 0;
-    const auto & patch_collection = colored_iterators[color];
-    for(const auto & patch : patch_collection)
-      for(const auto & cell : (*patch))
+      // initialize the ghosted dof vector
+      LinearAlgebra::distributed::Vector<double> marker;
+      IndexSet                                   locally_relevant_dofs;
+      DoFTools::extract_locally_relevant_level_dofs(dof_handler,
+                                                    global_level,
+                                                    locally_relevant_dofs);
+      marker.reinit(dof_handler.locally_owned_dofs(), locally_relevant_dofs, MPI_COMM_WORLD);
+      marker                        = 0;
+      const auto & patch_collection = colored_iterators[color];
+      for(const auto & patch : patch_collection)
+        for(const auto & cell : (*patch))
+        {
+          const auto            active_cell = typename DoFHandler<dim>::active_cell_iterator{&tria,
+                                                                                  cell->level(),
+                                                                                  cell->index(),
+                                                                                  &dof_handler};
+          std::vector<unsigned> dof_indices(dof_handler.get_fe().dofs_per_cell);
+          active_cell->get_dof_indices(dof_indices);
+          const auto active_cell_index = dof_indices.front(); // active_cell->active_cell_index();
+          marker(active_cell_index)    = 1;
+        }
+      marker.compress(VectorOperation::add);
+      data_out.add_data_vector(marker, "coloring", DataOut<dim>::type_dof_data);
+
+      // write paraview files
+      std::string color_name = "_color" + Utilities::int_to_string(color, 2);
+      data_out.build_patches();
       {
-        const auto            active_cell = typename DoFHandler<dim>::active_cell_iterator{&tria,
-                                                                                cell->level(),
-                                                                                cell->index(),
-                                                                                &dof_handler};
-        std::vector<unsigned> dof_indices(dof_handler.get_fe().dofs_per_cell);
-        active_cell->get_dof_indices(dof_indices);
-        const auto active_cell_index = dof_indices.front(); // active_cell->active_cell_index();
-        marker(active_cell_index)    = 1;
+        std::ofstream file(
+          prefix + "data-active-" + Utilities::int_to_string(dim) + "d-" +
+          Utilities::int_to_string(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD), 4) +
+          color_name + ".vtu");
+        data_out.write_vtu(file);
       }
-    marker.compress(VectorOperation::add);
-    data_out.add_data_vector(marker, "coloring", DataOut<dim>::type_dof_data);
+      if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+      {
+        std::vector<std::string> filenames;
+        for(unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD); ++i)
+          filenames.push_back(prefix + "data-active-" + Utilities::int_to_string(dim) + "d-" +
+                              Utilities::int_to_string(i, 4) + color_name + ".vtu");
 
-    // write paraview files
-    std::string color_name = "_color" + Utilities::int_to_string(color, 2);
-    data_out.build_patches();
-    {
-      std::ofstream file(
-			 prefix + "data-active-" + Utilities::int_to_string(dim) + "d-" +
-        Utilities::int_to_string(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD), 4) + color_name +
-        ".vtu");
-      data_out.write_vtu(file);
-    }
-    if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-    {
-      std::vector<std::string> filenames;
-      for(unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD); ++i)
-        filenames.push_back(prefix + "data-active-" + Utilities::int_to_string(dim) + "d-" +
-                            Utilities::int_to_string(i, 4) + color_name + ".vtu");
-
-      std::ofstream master_output(prefix + "data-active-" + Utilities::int_to_string(dim) + "d" +
-                                  color_name + ".pvtu");
-      data_out.write_pvtu_record(master_output, filenames);
+        std::ofstream master_output(prefix + "data-active-" + Utilities::int_to_string(dim) + "d" +
+                                    color_name + ".pvtu");
+        data_out.write_pvtu_record(master_output, filenames);
+      }
     }
   }
-}
 };
 
 #endif /* TPSS_COLORING_H */
