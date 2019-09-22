@@ -24,7 +24,13 @@ PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
   else
     AssertThrow(false, dealii::ExcNotImplemented());
 
-  AssertThrow(!internal_data.empty_on_all(), ExcMessage("at least one patch is required"));
+  const auto n_colors_mpimin =
+    Utilities::MPI::min(internal_data.n_interior_subdomains.size(), MPI_COMM_WORLD);
+  const auto n_colors_mpimax =
+    Utilities::MPI::max(internal_data.n_interior_subdomains.size(), MPI_COMM_WORLD);
+  Assert(n_colors_mpimin == n_colors_mpimax,
+         ExcMessage("No unified number of colors between mpi-procs."));
+  Assert(!internal_data.empty_on_all(), ExcMessage("No mpi-proc owns a patch!"));
 }
 
 
@@ -682,20 +688,17 @@ template<int dim, typename number>
 void
 PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
 {
-  using namespace dealii;
-
   compute_partition_data(info.subdomain_partition_data, info.get_internal_data());
   const auto & subdomain_partition_data = info.subdomain_partition_data;
 
   const auto & additional_data = info.get_additional_data();
   const auto   patch_size      = UniversalInfo<dim>::n_cells(additional_data.patch_variant);
-  // patch_info                 = &info;
-  const auto * internal_data = info.get_internal_data();
-  auto &       patch_starts  = info.patch_starts;
+  const auto * internal_data   = info.get_internal_data();
+  auto &       patch_starts    = info.patch_starts;
   patch_starts.clear();
 
-  const unsigned int stride_irr     = patch_size;
-  const unsigned int stride_reg     = patch_size * macro_size;
+  const unsigned int stride_incomp  = patch_size;
+  const unsigned int stride_comp    = patch_size * macro_size;
   unsigned int       start_interior = 0;
   unsigned int       start_boundary = 0;
   for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
@@ -705,7 +708,7 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
     { // interior incomplete
       const auto patch_range = subdomain_partition_data.get_patch_range(0, color);
       for(unsigned int pp = patch_range.first; pp < patch_range.second;
-          ++pp, start_interior += stride_irr)
+          ++pp, start_interior += stride_incomp)
         patch_starts.emplace_back(start_interior);
     }
     // std::cout << "interior start: " << start_interior << std::endl ;
@@ -713,7 +716,7 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
     { // boundary incomplete
       const auto patch_range = subdomain_partition_data.get_patch_range(1, color);
       for(unsigned int pp = patch_range.first; pp < patch_range.second;
-          ++pp, start_boundary += stride_irr)
+          ++pp, start_boundary += stride_incomp)
         patch_starts.emplace_back(start_boundary);
     }
     // std::cout << "boundary start: " << start_boundary  << std::endl ;
@@ -721,7 +724,7 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
     { // interior complete
       const auto patch_range = subdomain_partition_data.get_patch_range(2, color);
       for(unsigned int pp = patch_range.first; pp < patch_range.second;
-          ++pp, start_interior += stride_reg)
+          ++pp, start_interior += stride_comp)
         patch_starts.emplace_back(start_interior);
     }
     // std::cout << "interior start: " << start_interior  << std::endl ;
@@ -730,7 +733,7 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
     { // boundary complete
       const auto patch_range = subdomain_partition_data.get_patch_range(3, color);
       for(unsigned int pp = patch_range.first; pp < patch_range.second;
-          ++pp, start_boundary += stride_reg)
+          ++pp, start_boundary += stride_comp)
         patch_starts.emplace_back(start_boundary);
     }
     // std::cout << "boundary start: " << start_boundary  << std::endl ;

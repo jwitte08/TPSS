@@ -55,38 +55,34 @@ SubdomainHandler<dim, number>::internal_reinit()
   const auto   level         = additional_data.level;
   const auto & triangulation = dof_handler->get_triangulation();
   AssertIndexRange(level, triangulation.n_global_levels());
-  if(level < triangulation.n_levels())
-  {
-    // *** gather patches (in vectorization batches) & colorize them
-    typename TPSS::PatchInfo<dim>::AdditionalData patch_info_data;
-    patch_info_data.patch_variant         = additional_data.patch_variant;
-    patch_info_data.smoother_variant      = additional_data.smoother_variant;
-    patch_info_data.level                 = additional_data.level;
-    patch_info_data.coloring_func         = additional_data.coloring_func;
-    patch_info_data.manual_gathering_func = additional_data.manual_gathering_func;
-    patch_info_data.print_details         = additional_data.print_details;
-    patch_info.initialize(dof_handler, patch_info_data);
 
-    // *** map the patch batches to MatrixFree's cell batches (used for the patch-local transfers)
-    TPSS::PatchWorker<dim, number> patch_worker{patch_info};
-    patch_worker.connect_to_matrixfree(mf_connect);
+  // *** gather patches (in vectorization batches) & colorize them
+  typename TPSS::PatchInfo<dim>::AdditionalData patch_info_data;
+  patch_info_data.patch_variant         = additional_data.patch_variant;
+  patch_info_data.smoother_variant      = additional_data.smoother_variant;
+  patch_info_data.level                 = additional_data.level;
+  patch_info_data.coloring_func         = additional_data.coloring_func;
+  patch_info_data.manual_gathering_func = additional_data.manual_gathering_func;
+  patch_info_data.print_details         = additional_data.print_details;
+  patch_info.initialize(dof_handler, patch_info_data);
+  for(const auto & info : patch_info.time_data)
+    time_data.emplace_back(info.time, info.description, info.unit);
 
-    // *** compute the surrogate patches which pertain the tensor structure
-    typename TPSS::MappingInfo<dim, number>::AdditionalData mapping_info_data;
-    mapping_info_data.n_q_points      = additional_data.n_q_points_surrogate;
-    mapping_info_data.normalize_patch = additional_data.normalize_surrogate_patch;
-    mapping_info_data.use_arc_length  = additional_data.use_arc_length;
-    mapping_info.initialize_storage(patch_info, mf_connect, mapping_info_data);
-  }
+  // *** map the patch batches to MatrixFree's cell batches (used for the patch-local transfers)
+  TPSS::PatchWorker<dim, number> patch_worker{patch_info};
+  patch_worker.connect_to_matrixfree(mf_connect);
+
+  // *** compute the surrogate patches which pertain the tensor structure
+  typename TPSS::MappingInfo<dim, number>::AdditionalData mapping_info_data;
+  mapping_info_data.n_q_points      = additional_data.n_q_points_surrogate;
+  mapping_info_data.normalize_patch = additional_data.normalize_surrogate_patch;
+  mapping_info_data.use_arc_length  = additional_data.use_arc_length;
+  mapping_info.initialize_storage(patch_info, mf_connect, mapping_info_data);
 
   // *** check if the initialization was successful TODO
   AssertThrow(quadrature_storage.size() == dim, ExcNotImplemented()); // each direction is filled
   for(const auto & quad : quadrature_storage)
     AssertThrow(quad == quadrature_storage[0], ExcMessage("Quadrature storage is not isotropic!"));
-
-  // *** extend the time data
-  for(const auto & info : patch_info.time_data)
-    time_data.emplace_back(info.time, info.description, info.unit);
 }
 
 template<int dim, typename number>

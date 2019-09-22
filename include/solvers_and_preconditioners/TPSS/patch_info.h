@@ -269,9 +269,10 @@ struct PatchInfo<dim>::AdditionalData
                      const AdditionalData                     additional_data,
                      std::vector<std::vector<CellIterator>> & cell_collections)>
     manual_gathering_func;
-  std::function<void(		     const DoFHandler<dim> & dof_handler_in,
+  std::function<void(const DoFHandler<dim> & dof_handler_in,
                      const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> &
-				     colored_iterators, const std::string)>
+                       colored_iterators,
+                     const std::string)>
        visualize_coloring;
   bool print_details = false; // DEBUG
 };
@@ -404,22 +405,6 @@ struct PatchInfo<dim>::InternalData
    * Number of boundary patches for each color.
    */
   std::vector<unsigned int> n_boundary_subdomains;
-
-  // /**
-  //  * An array of contiguous CellIterators, uniquely determined by a
-  //  * pair of the first CellIterator and the length of the range.
-  //  * Since the CellIterators are stored contiguously, i.e. locally
-  //  * owned first, then ghosted, etc..., we need to store only few
-  //  * contiguous ranges to represent the set of all relevant cells on
-  //  * the current process.
-  //  */
-  // std::vector<std::pair<CellIterator, unsigned int>> range_storage;
-
-  // /**
-  //  * The iterator following the last CellIterator of the last contiguous range
-  //  * of @p range_storage.
-  //  */
-  // CellIterator end_cell_in_storage;
 
   /**
    * Flat array that stores all CellIterators for the construction of
@@ -573,9 +558,6 @@ public:
   get_partition_data() const;
 
 private:
-  // void
-  // initialize(PatchInfo<dim> & patch_info, MatrixFreeConnect<dim, number> & mf_connect);
-
   void
   initialize(const PatchInfo<dim> & patch_info);
 
@@ -772,6 +754,7 @@ PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_)
   if(subdomain_partition_data.check_compatibility(patch_info_.subdomain_partition_data))
     return;
 
+  // TODO this is wrong !!!
   // If we do not locally own cells nothing has to be initialized
   auto internal_data = patch_info_.get_internal_data();
   if(internal_data->cell_iterators.size() == 0)
@@ -880,7 +863,6 @@ PatchWorker<dim, number>::compute_partition_data(
   const unsigned int n_colors = internal_data->n_interior_subdomains.size();
   partition_data.clear();
   partition_data.partitions.resize(n_colors);
-
   unsigned int n_subdomains_before = 0;
   for(unsigned int color = 0; color < n_colors; ++color)
   {
