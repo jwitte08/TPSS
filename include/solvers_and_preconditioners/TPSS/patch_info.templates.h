@@ -12,6 +12,7 @@ PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
          ExcMessage("Not implemented for adaptive meshes!"));
   Assert(additional_data_in.level != static_cast<unsigned int>(-1),
          ExcMessage("Implemented for level cell iterators!"));
+  AssertIndexRange(additional_data_in.level, dof_handler->get_triangulation().n_global_levels());
 
   // *** submit additional data
   internal_data.level = additional_data.level;
@@ -877,48 +878,47 @@ template<int dim, typename number>
 void
 PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> & mf_connect)
 {
-  using namespace dealii;
-
   Assert(patch_info != nullptr, ExcNotInitialized());
-  if(patch_info->empty())
-    return; //: nothing to do
-
-  // const auto & additional_data = patch_info->get_additional_data();
-  // std::cout << patch_size << "  " << TPSS::Info<dim>::n_cells.at(additional_data.patch_variant)
-  // << std::endl; patch_size = TPSS::Info<dim>::n_cells.at(additional_data.patch_variant);
   mf_connect.stride_triple = patch_size * macro_size;
 
-  std::vector<std::pair<unsigned int, unsigned int>> mf_cell_indices;
-  const auto &                                       mf_storage = *(mf_connect.mf_storage);
-  const unsigned int                                 n_batches  = mf_storage.n_cell_batches();
-  const auto &   internal_data = *(patch_info->get_internal_data());
-  const unsigned level         = internal_data.level;
-  const auto &   dof_handler   = mf_storage.get_dof_handler();
-  const auto &   tria          = dof_handler.get_triangulation();
+  const auto &       mf_storage     = *(mf_connect.mf_storage);
+  const unsigned int n_cell_batches = mf_storage.n_cell_batches();
+  const auto &       internal_data  = *(patch_info->get_internal_data());
+  const unsigned     level          = internal_data.level;
+  const auto &       dof_handler    = mf_storage.get_dof_handler();
+  const auto &       tria           = dof_handler.get_triangulation();
   //: N of locally stored cell iterators (including ghost and artificial)
-  const unsigned int n_cells_stored = tria.n_cells(level);
+  const bool         proc_has_cells_on_level = (level < tria.n_levels());
+  const unsigned int n_cells_stored          = proc_has_cells_on_level ? tria.n_cells(level) : 0;
 
-  /*** map each cell-index to its MatrixFree counterpart, namely the bcomp'th lane of the batch
-   * given by the batch-index bindex ***/
+  /**
+   * map each cell-index to its MatrixFree counterpart, namely the
+   * bcomp'th lane of the batch given by the batch-index bindex
+   */
   std::vector<std::pair<unsigned int, unsigned int>> cindex_to_bindex_bcomp_pair;
   cindex_to_bindex_bcomp_pair.resize(n_cells_stored); // we don't care about the accurate size
-  for(unsigned int bid = 0; bid < n_batches; ++bid)
+  for(unsigned int bid = 0; bid < n_cell_batches; ++bid)
     for(unsigned int comp = 0; comp < macro_size; ++comp)
       if(comp < mf_storage.n_components_filled(bid))
       {
-        // TODO quicker access to cell-level-index field within MatrixFree object ??
+        // TODO pull request of 'get_cell_index'
         const unsigned int cindex{mf_storage.get_cell_index(bid, comp)};
         AssertIndexRange(cindex, n_cells_stored);
         cindex_to_bindex_bcomp_pair[cindex] = std::make_pair(bid, comp);
       }
 
-  /*** map (batch-index,batch-lane) pairs to its corresponding CellIterator within a patch by
-   * storing them in the same order we stride through the subdomain_partition_data. Note that within
-   * a patch the cell-number runs faster than the vec-lane and so do the (batch-index, batch-lane)
-   * pairs as well! ***/
+  /**
+   * map (batch-index,batch-comp) pairs to its corresponding
+   * CellIterator within a patch by storing them in the same order we
+   * stride through the subdomain_partition_data. Note that within a
+   * patch the cell-number runs faster than the vectorization-lane and
+   * so do the (batch-index, batch-comp) pairs as well!
+   */
   const auto & patch_starts             = patch_info->patch_starts;
   const auto & cell_iterators           = patch_info->get_internal_data()->cell_iterators;
   const auto & subdomain_partition_data = patch_info->subdomain_partition_data;
+
+  std::vector<std::pair<unsigned int, unsigned int>> mf_cell_indices;
   for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
   {
     { // interior incomplete
@@ -963,7 +963,6 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
       }
     }
   }
-
   AssertDimension(mf_cell_indices.size(), cell_iterators.size());
 
   const unsigned int n_patches          = subdomain_partition_data.n_subdomains();
@@ -977,11 +976,13 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
   batch_count_per_id.reserve(n_patches);
   bcomp_vcomp_cindex.reserve(macro_size * n_patches);
 
-  /*** Last, we gather batch-indices that occur more than once within a patch. That is
-   * each batch-index is mapped to its associated (batch-lane, cell-lane, local-cell-number)
+  /**
+   * Last, we gather batch-indices that occur more than once within a patch. That is
+   * each batch-index is mapped to its associated (batch-comp, cell-comp, cell index)
    * triples. The count of those triples and the batch-index itself is stored in batch_count_per_id.
    * Similar to the patch_starts the batch_starts point to the first batch-index(batch_count_per_id)
-   * of patch represented by patch-index. ***/
+   * of patch represented by patch-index.
+   */
   auto mf_cell_index = mf_cell_indices.cbegin();
   for(unsigned int patch_id = 0; patch_id < n_patches; ++patch_id)
   {
@@ -1032,7 +1033,10 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
     (void)n_counts_accumulated;
     AssertDimension(patch_size * macro_size, n_counts_accumulated);
   } // patch loop
-  batch_starts.emplace_back(batch_count_per_id.size());
+  AssertDimension(batch_starts.size(), patch_starts.size());
+  if(!batch_starts.empty())
+    batch_starts.emplace_back(batch_count_per_id.size());
+  Assert(batch_starts.empty() == patch_starts.empty(), ExcMessage("Invalid starts."));
 
   // // DEBUG
   // for(auto e : batch_starts)
@@ -1044,27 +1048,6 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
   // for(auto e : bcomp_vcomp_cindex)
   //   std::cout << e[0] << "," << e[1] << "," << e[2] << " ";
   // std::cout << std::endl;
-
-  // this->batch_starts       = &mf_connect.batch_starts;
-  // this->batch_count_per_id = &mf_connect.batch_count_per_id;
-  // this->bcomp_vcomp_cindex = &mf_connect.bcomp_vcomp_cindex;
-  // Assert (mf_connect.batch_starts != nullptr, ExcNotInitialized ());
-  // Assert (mf_connect.batch_count_per_id != nullptr, ExcNotInitialized ());
-  // Assert (mf_connect.bcomp_vcomp_cindex != nullptr, ExcNotInitialized ());
-}
-
-template<int dim, typename number>
-void
-PatchWorker<dim, number>::initialize(const PatchInfo<dim> & info)
-{
-  using namespace dealii;
-
-  typename PatchInfo<dim>::PartitionData subdomain_partition_data;
-  compute_partition_data(subdomain_partition_data, info.get_internal_data());
-  Assert(subdomain_partition_data.check_compatibility(info.subdomain_partition_data),
-         ExcMessage(
-           "The PatchInfo object passed is corrupt. Subdomain partitioning does not fit the "
-           "InternalData!"));
 }
 
 template<int dim, typename number>
@@ -1087,39 +1070,5 @@ PatchWorker<dim, number>::clear_mf_connect(MatrixFreeConnect<dim, number> & mf_c
   mf_connect.batch_starts.clear();
   mf_connect.stride_triple = -1;
 }
-
-// template<int dim, typename number>
-// void
-// PatchWorker<dim, number>::initialize(PatchInfo<dim> &                 info,
-//                                                      MatrixFreeConnect<dim, number> & mf_connect)
-// {
-//   using namespace dealii;
-
-//   //const auto & additional_data = info.get_additional_data();
-//   //std::cout << patch_size << "  " << TPSS::Info<dim>::n_cells.at(additional_data.patch_variant)
-//   << std::endl;
-//   //patch_size = TPSS::Info<dim>::n_cells.at(additional_data.patch_variant);
-
-//   // clear existing data in PatchInfo and MatrixFreeConnect
-//   clear_patch_info(info);
-//   clear_mf_connect(mf_connect);
-
-//   // If we do not locally own cells nothing has to be initialized
-//   auto internal_data = info.get_internal_data();
-//   if(internal_data->cell_iterators.size() == 0)
-//     return;
-
-//   // Distribute the (non-vectorized) patches, stored in PatchInfo, and
-//   // distribute them according to the given vectorization length.
-//   // Partitions are stored in PatchInfo::subdomain_partition_data and
-//   // the associated vectorized strides are set in
-//   // PatchInfo::patch_starts
-//   partition_patches(info);
-
-//   // In a last step we provide a mapping between cells stored in the
-//   // macro patches, distributed above, and its MatrixFree
-//   // counterpart, the so-called cell batches.
-//   connect_to_matrixfree(mf_connect);
-// }
 
 } // end namespace TPSS

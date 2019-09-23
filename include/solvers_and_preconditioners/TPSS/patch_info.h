@@ -83,6 +83,7 @@ public:
   /**
    * A boolean array that stores the information if a (macro) patch is physically interior.
    */
+  // TODO this field is redundant compared to at_boundary_mask
   std::vector<unsigned char> is_interior_patch;
 
   /**
@@ -90,8 +91,6 @@ public:
    */
   std::vector<unsigned char> is_incomplete_patch;
 
-  // TODO rename
-  // TODO instead on patch-level we need masks on cell-level ... (not generic!!)
   /**
    * A flat array that stores the information if each face within a
    * (macro) face is at the physical boundary. Faces are ordered in
@@ -99,6 +98,10 @@ public:
    * reinterpreted as std::bitset of length @p macro_size.
    * Lexicographical:   face number   <   patch id
    */
+  // TODO instead on patch-level we need masks on cell-level ... (not
+  // generic!!)  TODO replace this field. we can extract the
+  // information given the cell collections, i.e
+  // std::vector<CellIterators>
   std::vector<unsigned short> at_boundary_mask;
 
   /**
@@ -558,8 +561,8 @@ public:
   get_partition_data() const;
 
 private:
-  void
-  initialize(const PatchInfo<dim> & patch_info);
+  // void
+  // initialize(const PatchInfo<dim> & patch_info);
 
   void
   clear_patch_info(PatchInfo<dim> & info);
@@ -656,6 +659,7 @@ template<int dim>
 inline std::size_t
 PatchInfo<dim>::PartitionData::n_subdomains() const
 {
+  // Assert(!partitions.empty(), ExcMessage("TODO should not be empty."));
   return partitions.empty() ? 0 : (partitions.back().empty()) ? 0 : partitions.back().back();
 }
 
@@ -730,45 +734,49 @@ MatrixFreeConnect<dim, number>::set_pointers_and_count(
 // --------------------------------   PatchWorker   --------------------------------
 
 template<int dim, typename number>
-PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_)
-  : patch_info(&patch_info_),
-    patch_size(UniversalInfo<dim>::n_cells(patch_info_.get_additional_data().patch_variant))
+PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
+  : patch_info(&patch_info_in),
+    patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant))
 {
-  AssertThrow(patch_info_.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
+  AssertThrow(patch_info_in.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
               ExcInvalidState());
-  initialize(patch_info_);
+  typename PatchInfo<dim>::PartitionData subdomain_partition_data;
+  compute_partition_data(subdomain_partition_data, patch_info_in.get_internal_data());
+  const bool partition_data_is_valid =
+    subdomain_partition_data.check_compatibility(patch_info_in.subdomain_partition_data);
+  Assert(partition_data_is_valid, ExcMessage("The PartitionData does not fit the InternalData."));
 }
 
 template<int dim, typename number>
-PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_)
-  : patch_info(&patch_info_),
-    patch_size(UniversalInfo<dim>::n_cells(patch_info_.get_additional_data().patch_variant))
+PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
+  : patch_info(&patch_info_in),
+    patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant))
 {
-  AssertThrow(patch_info_.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
+  AssertThrow(patch_info_in.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
               ExcInvalidState());
 
-  // If the given patch_info_ is already in compatible state no work
-  // has to be done
+  /**
+   * If the given patch_info_in is already initialized and in valid state there is no work
+   */
   typename PatchInfo<dim>::PartitionData subdomain_partition_data;
-  compute_partition_data(subdomain_partition_data, patch_info_.get_internal_data());
-  if(subdomain_partition_data.check_compatibility(patch_info_.subdomain_partition_data))
+  compute_partition_data(subdomain_partition_data, patch_info_in.get_internal_data());
+  if(subdomain_partition_data.check_compatibility(patch_info_in.subdomain_partition_data))
     return;
 
-  // TODO this is wrong !!!
-  // If we do not locally own cells nothing has to be initialized
-  auto internal_data = patch_info_.get_internal_data();
-  if(internal_data->cell_iterators.size() == 0)
-    return;
-
-  // Clear existing data
-  clear_patch_info(patch_info_);
-
-  // Distribute the (non-vectorized) patches, stored in PatchInfo, and
-  // distribute them according to the given vectorization length.
-  // Partitions are stored in PatchInfo::subdomain_partition_data and
-  // the associated vectorized strides are set in
-  // PatchInfo::patch_starts
-  partition_patches(patch_info_);
+  /**
+   * Initialize the vectorized infrastructure for the patches stored
+   * in the PatchInfo. Partitioning into boundary/interior and
+   * complete/incomplete patches is presented by @p
+   * PatchInfo::subdomain_partition_data and the associated strides
+   * through with respect to the flat data array are set in
+   * PatchInfo::patch_starts
+   */
+  clear_patch_info(patch_info_in);
+  partition_patches(patch_info_in);
+  const auto & partition_data = patch_info_in.subdomain_partition_data;
+  Assert(partition_data.n_colors() > 0, ExcMessage("At least one color."));
+  for(unsigned color = 0; color < partition_data.n_colors(); ++color)
+    has_valid_state(partition_data, color);
 }
 
 template<int dim, typename number>
