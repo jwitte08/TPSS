@@ -15,8 +15,8 @@ using namespace Laplace;
 
 struct TestParameter
 {
-  TPSS::PatchVariant    patch_variant    = TPSS::PatchVariant::cell;
-  TPSS::SmootherVariant smoother_variant = TPSS::SmootherVariant::multiplicative;
+  TPSS::PatchVariant    patch_variant    = CT::PATCH_VARIANT_;//TPSS::PatchVariant::cell;
+  TPSS::SmootherVariant smoother_variant = CT::SMOOTHER_VARIANT_;//TPSS::SmootherVariant::multiplicative;
   double                cg_reduction     = 1.e-8;
   unsigned              n_refinements    = 1;
   unsigned              n_cycles         = 1;
@@ -36,10 +36,12 @@ test(const TestParameter & prm = TestParameter{})
   parameters.solver_max_iterations = 200;
   parameters.precondition_variant  = Parameter::PreconditionVariant::MG;
   //: multigrid
-  parameters.coarse_level                           = 0;
+  parameters.coarse_level                           = 1;
   parameters.schwarz_smoother_data.patch_variant    = prm.patch_variant;
   parameters.schwarz_smoother_data.smoother_variant = prm.smoother_variant;
   parameters.schwarz_smoother_data.manual_coloring  = true;
+  const double damping_factor = TPSS::lookup_damping_factor(prm.patch_variant, prm.smoother_variant, dim);
+  parameters.schwarz_smoother_data.damping_factor  = damping_factor;
   //   parameters.schwarz_smoother_data.number_of_smoothing_steps = prm.n_smoothing_steps;
   //   parameters.compute_damping_factor                          = false;
   //   parameters.schwarz_smoother_data.damping_factor            = outer_damping_factor;
@@ -50,17 +52,17 @@ test(const TestParameter & prm = TestParameter{})
   //     Parameter::CoarseGridVariant::ChebyshevAccurate; // IterativeFixed;
   //   parameters.mg_coarse_chebyshev_reduction = 1.e-8;
   //   //: post process
-  parameters.sync_timings = true;
+  parameters.sync_timings = false;
   //   parameters.compute_errors = true;
   //   // parameters.write_fe_output = true;
 
   PoissonProblem poisson_problem{parameters};
-  poisson_problem.create_triangulation(parameters.n_refines);
-  poisson_problem.distribute_dofs();
-  poisson_problem.prepare_linear_system();
-  const unsigned level             = poisson_problem.level;
-  const auto     mf_storage        = poisson_problem.system_matrix.get_matrix_free();
-  const auto     subdomain_handler = poisson_problem.build_patch_storage(level, mf_storage);
+  // poisson_problem.create_triangulation(parameters.n_refines);
+  // poisson_problem.distribute_dofs();
+  // poisson_problem.prepare_linear_system();
+  // const unsigned level             = poisson_problem.level;
+  // const auto     mf_storage        = poisson_problem.system_matrix.get_matrix_free();
+  // const auto     subdomain_handler = poisson_problem.build_patch_storage(level, mf_storage);
   poisson_problem.run();
 
   //   // *** configure output filenames

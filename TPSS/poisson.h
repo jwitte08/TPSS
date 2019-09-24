@@ -99,11 +99,6 @@ struct ModelProblem : public Subscriptor
       mg_smoother_pre(nullptr),
       mg_smoother_post(nullptr)
   {
-    const bool is_m =
-      parameters.schwarz_smoother_data.smoother_variant == TPSS::SmootherVariant::multiplicative;
-    const bool is_cp  = parameters.schwarz_smoother_data.patch_variant == TPSS::PatchVariant::cell;
-    const bool is_mcp = is_m && is_cp;
-    AssertThrow(is_mcp, ExcMessage("TODO"));
   }
 
   template<typename T>
@@ -185,6 +180,7 @@ struct ModelProblem : public Subscriptor
     {
       const double left = 0.0, right = 1.0;
       GridGenerator::subdivided_hyper_cube(triangulation, 1, left, right);
+      // const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
       triangulation.refine_global(n_refinements);
       mesh_info.first = true; // TODO
     }
