@@ -6,39 +6,49 @@ AlignedVector<VectorizedArray<Number>>
 PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::gather(
   const VectorType & src) const
 {
+  AssertIndexRange(patch_id, sd_handler.get_partition_data().n_subdomains());
   AssertDimension(src.size(), sd_handler.get_dof_handler().n_dofs(level));
 
-  auto bid_count_pair = batch_count;
-  auto triple_bvc     = batch_triple;
-
-  AlignedVector<VectorizedArray<Number>> dst{n_dofs};
-  for(auto & elem : dst)
-    elem = 0.;
-
-  for(unsigned int bb = 0; bb < n_batches; ++bb, ++bid_count_pair)
+  AlignedVector<VectorizedArray<Number>>     dst(n_dofs);
+  std::vector<ArrayView<const CellIterator>> cell_collection =
+    patch_worker.get_cell_collection_views(patch_id);
+  const unsigned int n_lanes_filled = cell_collection.size();
+  Assert(n_lanes_filled > 0, ExcMessage("No vectorization lane filled."));
+  for(unsigned int lane = 0; lane < n_lanes_filled; ++lane)
   {
-    const unsigned int batch_id = bid_count_pair->first;
-    // std::cout << "batch id: " << batch_id << ", count: " << bid_count_pair->second << std::endl;
-    fe_eval.reinit(batch_id);
-    fe_eval.read_dof_values(src);
-    const VectorizedArray<Number> * values = fe_eval.begin_dof_values();
-    for(unsigned int comp = 0; comp < bid_count_pair->second; ++comp, ++triple_bvc)
+    const auto &       cell_view = cell_collection[lane];
+    const unsigned int n_cells   = cell_view.size();
+    Assert(n_cells > 0, ExcMessage("No cell contained in collection."));
+    for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
     {
-      const auto bcomp   = (*triple_bvc)[0];
-      const auto vcomp   = (*triple_bvc)[1];
-      const auto cell_no = (*triple_bvc)[2];
-      // std::cout << "bcomp: " << bcomp << "  vcomp: " << vcomp << "  cell_no: " << cell_no
-      //           << std::endl;
-      auto pindex = cell_to_patch_indices.data() + cell_no * n_dofs_per_cell;
-      auto in     = values;
-      if(is_incomplete_patch)
-        for(unsigned int dof = 0; dof < n_dofs_per_cell; ++pindex, ++in, ++dof)
-          dst[*pindex][vcomp] = (*in)[bcomp];
-      else
-        for(unsigned int dof = 0; dof < n_dofs_per_cell; ++pindex, ++in, ++dof)
-          dst[*pindex][vcomp] += (*in)[bcomp];
+      const ArrayView<const unsigned> &    patch_dofs = patch_dofs_on_cell(cell_no);
+      const CellIterator &                 cell       = cell_view[cell_no];
+      std::vector<types::global_dof_index> global_dofs_on_cell;
+      global_dofs_on_cell.resize(n_dofs_per_cell);
+      cell->get_active_or_mg_dof_indices(global_dofs_on_cell);
+      // std::cout << "dofs on " << cell->index() << std::endl;
+      // for (auto dofs : global_dofs_on_cell)
+      //   std::cout << dofs << " ";
+      // std::cout << std::endl;
+      std::vector<Number> global_values;
+      global_values.resize(n_dofs_per_cell);
+      constraints.get_dof_values(src,
+                                 global_dofs_on_cell.cbegin(),
+                                 global_values.begin(),
+                                 global_values.end());
+      auto dof = patch_dofs.cbegin();
+      for(auto value = global_values.cbegin(); value != global_values.cend(); ++value, ++dof)
+        dst[*dof][lane] = *value;
     }
   }
+  //: fill the unused lanes with meaningful data to avoid divison by zero in LAC solvers
+  for(unsigned int lane = n_lanes_filled; lane < VectorizedArray<Number>::n_array_elements; ++lane)
+    for(auto & elem : dst)
+      elem[lane] = elem[0];
+
+  // std::cout << "new" << std::endl;
+  // for (auto elem : dst)
+  //   std::cout << varray_to_string(elem) << " " << std::endl;
 
   AssertDimension(dst.size(), n_dofs);
   return dst;

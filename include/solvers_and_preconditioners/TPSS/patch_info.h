@@ -557,6 +557,9 @@ public:
   std::vector<std::array<CellIterator, macro_size>>
   get_cell_collection(unsigned int patch_id) const;
 
+  std::vector<ArrayView<const CellIterator>>
+  get_cell_collection_views(unsigned int patch_id) const;
+
   const typename PatchInfo<dim>::PartitionData &
   get_partition_data() const;
 
@@ -858,6 +861,29 @@ PatchWorker<dim, number>::get_cell_collection(unsigned int patch) const
   }
 
   return cell_collect;
+}
+
+template<int dim, typename number>
+inline std::vector<ArrayView<const typename PatchWorker<dim, number>::CellIterator>>
+PatchWorker<dim, number>::get_cell_collection_views(unsigned int patch_id) const
+{
+  Assert(patch_info != nullptr, ExcNotInitialized());
+  AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
+
+  std::vector<ArrayView<const CellIterator>> views;
+  const auto &      cell_iterators = patch_info->get_internal_data()->cell_iterators;
+  const auto &      patch_starts   = patch_info->patch_starts;
+  const auto        begin          = cell_iterators.data() + patch_starts[patch_id];
+  const bool        is_incomplete  = patch_info->is_incomplete_patch[patch_id];
+  const std::size_t n_lanes_filled = is_incomplete ? 1 : macro_size;
+
+  for(unsigned int m = 0; m < n_lanes_filled; ++m)
+  {
+    const auto first = begin + m * patch_size;
+    views.emplace_back(ArrayView<const CellIterator>(first, patch_size));
+  }
+
+  return views;
 }
 
 template<int dim, typename number>

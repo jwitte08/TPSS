@@ -18,6 +18,7 @@ namespace TPSS
 {
 // TODO replace FEEvaluation with read-write-operations -> reduces
 // templates
+// TODO merge Base and Derived PatchTransfer !!!
 /**
  * Base class providing the interface to model the (mathematical)
  * restriction operator from global degrees of freedom onto subdomain
@@ -43,6 +44,7 @@ template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
 class PatchTransferBase
 {
 public:
+  using CellIterator                            = typename PatchInfo<dim>::CellIterator;
   static constexpr unsigned int fe_order        = fe_degree + 1;
   static constexpr unsigned int n_dofs_per_cell = Utilities::pow(fe_order, dim);
 
@@ -126,6 +128,14 @@ protected:
   PatchTransferBase &
   operator=(const PatchTransferBase & other) = delete;
 
+  ArrayView<const unsigned>
+  patch_dofs_on_cell(const unsigned int cell_no) const
+  {
+    const auto begin = cell_to_patch_indices.data() + cell_no * n_dofs_per_cell;
+    AssertIndexRange((cell_no + 1) * n_dofs_per_cell, cell_to_patch_indices.size() + 1);
+    return ArrayView<const unsigned>(begin, n_dofs_per_cell);
+  }
+
   /**
    * Underlying SubdomainHandler that holds a MatrixFreeConnect object.
    */
@@ -165,6 +175,8 @@ private:
   const std::pair<unsigned int, unsigned int> * batch_count;
   const std::array<unsigned int, 3> *           batch_triple;
 
+  PatchWorker<dim, Number>  patch_worker;
+  AffineConstraints<Number> constraints;
   /**
    * Read-write-operations differ if not all vectorization lanes are meaningfully
    * filled.
@@ -444,11 +456,13 @@ inline PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::PatchTr
     n_batches(-1),
     batch_count(nullptr),
     batch_triple(nullptr),
+    patch_worker(sd_handler_in.get_patch_info()),
     is_incomplete_patch(false)
 {
   static_assert(n_comp == 1, "Handles only one scalar DoFHandler.");
   AssertThrow(n_dofs != static_cast<unsigned int>(-1),
               ExcMessage("The cell to patch index map is uninitialized!"));
+  constraints.close();
 }
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
