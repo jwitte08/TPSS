@@ -93,8 +93,7 @@ SET( SOURCE_FILES
   # paper_poisson.cc
   # mpi_coloring.cc
   # cell_coloring.cc
-  # poisson.cc
-  vertex_patch_coloring.cc
+  poisson.cc
   )
 
 foreach ( sourcefile ${SOURCE_FILES} )
