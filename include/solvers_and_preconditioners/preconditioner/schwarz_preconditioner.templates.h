@@ -157,9 +157,6 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult_add(
 {
   using namespace dealii;
 
-  adjust_ghost_range_if_necessary(dst);
-  adjust_ghost_range_if_necessary(src);
-
   switch(smoother_variant)
   {
     case TPSS::SmootherVariant::additive:
@@ -282,11 +279,18 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_subdomai
     }
   };
 
+  // *** initialize ghosted vectors
+  initialize_ghost_vector(solution);
+  initialize_ghost_vector(residual);
+  solution.zero_out_ghosts();
+  residual.update_ghost_values();
+
   // *** loop over all patches of given color !
   subdomain_handler->template loop<const VectorType, VectorType>(std::ref(apply_inverses_lambda),
                                                                  solution,
                                                                  residual,
                                                                  color);
+  solution.compress(VectorOperation::add);
 }
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>

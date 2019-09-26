@@ -34,19 +34,22 @@ public:
   void
   clear();
 
-  // TODO: other VectorTypes
+  template<typename OtherVectorType>
   void
-  adjust_ghost_range_if_necessary(const LinearAlgebra::distributed::Vector<value_type> & vec) const
+  initialize_ghost_vector(const OtherVectorType &)
   {
-    AssertThrow(typeid(VectorType) == typeid(LinearAlgebra::distributed::Vector<value_type>),
-                ExcMessage("TODO mismatched types"));
-    const auto & data = subdomain_handler->get_matrix_free();
-    if(vec.get_partitioner().get() == data.get_dof_info(0).vector_partitioner.get())
-      return;
+    AssertThrow(false, ExcMessage("VectorType not supported."));
+  }
 
+  // TODO support more VectorTypes
+  void
+  initialize_ghost_vector(const LinearAlgebra::distributed::Vector<value_type> & vec) const
+  {
+    const auto ghost_partitioner = subdomain_handler->get_vector_partitioner();
+    if(vec.get_partitioner().get() == ghost_partitioner.get())
+      return;
     LinearAlgebra::distributed::Vector<value_type> copy_vec(vec);
-    const_cast<LinearAlgebra::distributed::Vector<value_type> &>(vec).reinit(
-      data.get_dof_info(0).vector_partitioner);
+    const_cast<LinearAlgebra::distributed::Vector<value_type> &>(vec).reinit(ghost_partitioner);
     const_cast<LinearAlgebra::distributed::Vector<value_type> &>(vec).copy_locally_owned_data_from(
       copy_vec);
   }
@@ -85,13 +88,6 @@ public:
   {
     return additional_data;
   }
-
-  // /**
-  //  * Satisfies PreconditionerBase interface.
-  //  */
-  // void
-  // vmult(LinearAlgebra::distributed::Vector<value_type> &       dst,
-  //       const LinearAlgebra::distributed::Vector<value_type> & src) const override;
 
   void
   vmult(VectorType & dst, const VectorType & src) const override;
