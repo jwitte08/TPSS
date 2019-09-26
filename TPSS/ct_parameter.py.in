@@ -35,13 +35,13 @@ def parse_args():
                         default=DEFAULT_OUTFILE_
     )
     parser.add_argument('-DIM','--dimension',
-                        default=2,
+                        default=3,
                         type=int,
                         choices=[2,3],
                         help="PRM: spatial dimension of the domain"
     )
     parser.add_argument('-DEG','--fe-degree',
-                        default=2,
+                        default=3,
                         type=int,
                         choices=range(1,31),
                         help="PRM: spatial dimension of the domain"
