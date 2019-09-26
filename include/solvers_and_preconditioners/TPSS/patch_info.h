@@ -134,6 +134,7 @@ public:
       else
       {
         const auto status = proc_to_cell_ids.emplace(proc, std::vector<CellId>{cell_id});
+        (void)status;
         Assert(status.second, ExcMessage("failed to insert key-value-pair"));
       }
     }
@@ -747,6 +748,7 @@ PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
   compute_partition_data(subdomain_partition_data, patch_info_in.get_internal_data());
   const bool partition_data_is_valid =
     subdomain_partition_data.check_compatibility(patch_info_in.subdomain_partition_data);
+  (void)partition_data_is_valid;
   Assert(partition_data_is_valid, ExcMessage("The PartitionData does not fit the InternalData."));
 }
 

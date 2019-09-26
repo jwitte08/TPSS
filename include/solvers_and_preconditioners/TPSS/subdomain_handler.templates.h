@@ -52,9 +52,8 @@ SubdomainHandler<dim, number>::internal_reinit()
   AssertDimension(Utilities::fixed_power<dim>(dof_handler->get_fe().tensor_degree() + 1),
                   dof_handler->get_fe().n_dofs_per_cell());
 
-  const auto   level         = additional_data.level;
-  const auto & triangulation = dof_handler->get_triangulation();
-  AssertIndexRange(level, triangulation.n_global_levels());
+  const auto level = additional_data.level;
+  AssertIndexRange(level, dof_handler->get_triangulation().n_global_levels());
 
   // *** gather patches (in vectorization batches) & colorize them
   typename TPSS::PatchInfo<dim>::AdditionalData patch_info_data;
