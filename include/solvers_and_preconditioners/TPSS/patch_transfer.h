@@ -176,6 +176,7 @@ private:
   const std::array<unsigned int, 3> *           batch_triple;
 
   PatchWorker<dim, Number>  patch_worker;
+  // TODO pass meaningful constraints from the MatrixFree/SubdomainHandler
   AffineConstraints<Number> constraints;
   /**
    * Read-write-operations differ if not all vectorization lanes are meaningfully
