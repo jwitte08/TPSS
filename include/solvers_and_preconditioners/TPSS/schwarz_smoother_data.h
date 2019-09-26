@@ -28,6 +28,7 @@ struct SchwarzSmootherData
       n_q_points_surrogate(5),
       normalize_surrogate_patch(false),
       use_arc_length(true),
+      reverse_smoothing(false),
       symmetrize_smoothing(false),
       print_details(false)
   {
@@ -63,8 +64,9 @@ struct SchwarzSmootherData
     print_parameter(pcout, "Arc length for surrogate", use_arc_length ? "true" : "false");
     if(smoother_variant != TPSS::SmootherVariant::additive)
       print_parameter(pcout,
-                      "Symmetrize Schwarz operator",
+                      "Symmetrized Schwarz operator",
                       symmetrize_smoothing ? "true" : "false");
+    print_parameter(pcout, "Reversed Schwarz operator", reverse_smoothing ? "true" : "false");
   }
 
   // ...
@@ -95,6 +97,9 @@ struct SchwarzSmootherData
   // of the arc length between opposite faces (otherwise direct
   // distance)
   bool use_arc_length;
+
+  // apply the colors in reverse order
+  bool reverse_smoothing;
 
   // symmetrizes the multiplicative Schwarz preconditioner
   bool symmetrize_smoothing;
