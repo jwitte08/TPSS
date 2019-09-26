@@ -91,7 +91,10 @@ template<int dim, int fe_degree>
 void
 test(const TestParameter & prm = TestParameter{})
 {
-  using PoissonProblem   = typename Poisson::ModelProblem<dim, fe_degree>;
+  constexpr int n_patch_dofs_per_direction =
+    TPSS::UniversalInfo<dim>::n_cells_per_direction(CT::PATCH_VARIANT_) * (fe_degree + 1);
+  using PoissonProblem =
+    typename Poisson::ModelProblem<dim, fe_degree, double, n_patch_dofs_per_direction>;
   using VECTOR           = typename PoissonProblem::VECTOR;
   using SCHWARZ_SMOOTHER = typename PoissonProblem::SCHWARZ_SMOOTHER;
   using SYSTEM_MATRIX    = typename PoissonProblem::SYSTEM_MATRIX;
@@ -130,15 +133,16 @@ test(const TestParameter & prm = TestParameter{})
 
   Timings                  timings_vmult, timings_smooth, timings_mg, timings_total;
   Laplace::PostProcessData pp_data;
+  PoissonProblem poisson_problem{parameters};
+  poisson_problem.create_triangulation(parameters.n_refines);
+  poisson_problem.distribute_dofs();
+
   for(unsigned sample = 0; sample < prm.n_samples; ++sample)
   {
-    PoissonProblem poisson_problem{parameters};
     Timer          time(MPI_COMM_WORLD, true);
 
     //: setup (total)
     time.restart();
-    poisson_problem.create_triangulation(parameters.n_refines);
-    poisson_problem.distribute_dofs();
     poisson_problem.prepare_linear_system();
     const auto & gmg_preconditioner = poisson_problem.prepare_preconditioner_mg();
     time.stop();
@@ -162,7 +166,7 @@ test(const TestParameter & prm = TestParameter{})
       VECTOR dst = tmp;
       time.restart();
       for(unsigned subsample = 0; subsample < prm.n_subsamples_vmult; ++subsample)
-	system_matrix.vmult(dst, tmp);
+        system_matrix.vmult(dst, tmp);
       time.stop();
       timings_vmult.apply.push_back(time.get_last_lap_wall_time_data());
     }
@@ -194,7 +198,7 @@ test(const TestParameter & prm = TestParameter{})
       VECTOR dst = tmp;
       time.restart();
       for(unsigned subsample = 0; subsample < prm.n_subsamples_smooth; ++subsample)
-	schwarz_smoother.step(dst, tmp);
+        schwarz_smoother.step(dst, tmp);
       time.stop();
       timings_smooth.apply.push_back(time.get_last_lap_wall_time_data());
     }
