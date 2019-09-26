@@ -68,6 +68,13 @@ SubdomainHandler<dim, number>::internal_reinit()
   for(const auto & info : patch_info.time_data)
     time_data.emplace_back(info.time, info.description, info.unit);
 
+  // *** initialize the MPI-partitioner
+  const IndexSet owned_indices = std::move(dof_handler->locally_owned_mg_dofs(level));
+  IndexSet       ghost_indices;
+  DoFTools::extract_locally_relevant_level_dofs(*dof_handler, level, ghost_indices);
+  vector_partitioner =
+    std::make_shared<Utilities::MPI::Partitioner>(owned_indices, ghost_indices, MPI_COMM_WORLD);
+
   // *** map the patch batches to MatrixFree's cell batches (used for the patch-local transfers)
   TPSS::PatchWorker<dim, number> patch_worker{patch_info};
   patch_worker.connect_to_matrixfree(mf_connect);

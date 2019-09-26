@@ -175,7 +175,7 @@ private:
   const std::pair<unsigned int, unsigned int> * batch_count;
   const std::array<unsigned int, 3> *           batch_triple;
 
-  PatchWorker<dim, Number>  patch_worker;
+  PatchWorker<dim, Number> patch_worker;
   // TODO pass meaningful constraints from the MatrixFree/SubdomainHandler
   AffineConstraints<Number> constraints;
   /**

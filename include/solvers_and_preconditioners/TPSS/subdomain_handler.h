@@ -91,6 +91,12 @@ public:
   const dealii::MatrixFree<dim, number> &
   get_matrix_free() const;
 
+  std::shared_ptr<const Utilities::MPI::Partitioner>
+  get_vector_partitioner() const
+  {
+    return vector_partitioner;
+  }
+
   std::vector<TimeInfo>
   get_time_data() const;
 
@@ -145,9 +151,10 @@ private:
   std::shared_ptr<const dealii::MatrixFree<dim, number>> owned_mf_storage;
   const dealii::DoFHandler<dim> *                        dof_handler;
 
-  TPSS::PatchInfo<dim>                 patch_info;
-  TPSS::MatrixFreeConnect<dim, number> mf_connect;
-  TPSS::MappingInfo<dim, number>       mapping_info;
+  TPSS::PatchInfo<dim>                               patch_info;
+  TPSS::MatrixFreeConnect<dim, number>               mf_connect;
+  TPSS::MappingInfo<dim, number>                     mapping_info;
+  std::shared_ptr<const Utilities::MPI::Partitioner> vector_partitioner;
 
   // TODO
   std::vector<dealii::Quadrature<1>> quadrature_storage;
