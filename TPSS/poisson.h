@@ -169,6 +169,22 @@ struct ModelProblem : public Subscriptor
     return patch_storage;
   }
 
+  template<typename MatrixType>
+  std::shared_ptr<SCHWARZ_PRECONDITIONER>
+  build_schwarz_preconditioner(std::shared_ptr<const SubdomainHandler<dim, Number>> patch_storage,
+                               MatrixType &                                         matrix,
+                               const SchwarzSmootherData & schwarz_data) const
+  {
+    typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data;
+    precondition_data.relaxation       = schwarz_data.damping_factor;
+    precondition_data.local_relaxation = schwarz_data.local_damping_factor;
+    precondition_data.reverse          = schwarz_data.reverse_smoothing;
+    precondition_data.symmetrized      = schwarz_data.symmetrize_smoothing;
+    const auto schwarz_preconditioner  = std::make_shared<SCHWARZ_PRECONDITIONER>();
+    schwarz_preconditioner->initialize(patch_storage, matrix, precondition_data);
+    return schwarz_preconditioner;
+  }
+
   bool
   create_triangulation(const unsigned n_refinements)
   {
@@ -317,13 +333,13 @@ struct ModelProblem : public Subscriptor
       mg_schwarz_precondition[level] = schwarz_preconditioner; // book-keeping
 
       // *** setup Schwarz smoother
-      typename SCHWARZ_SMOOTHER::AdditionalData mg_smoother_data;
-      mg_smoother_data.number_of_smoothing_steps = schwarz_data.number_of_smoothing_steps;
+      typename SCHWARZ_SMOOTHER::AdditionalData smoother_data;
+      smoother_data.number_of_smoothing_steps = schwarz_data.number_of_smoothing_steps;
       mg_schwarz_smoother.smoothers[level].initialize(
         mg_matrices[level],
         schwarz_preconditioner,
-        mg_smoother_data); // actual initialization of Schwarz smoother within
-                           // MGSmootherRelaxation
+        smoother_data); // actual initialization of Schwarz smoother within
+                        // MGSmootherRelaxation
     }
     mg_smoother_pre = &mg_schwarz_smoother;
 
@@ -384,13 +400,14 @@ struct ModelProblem : public Subscriptor
                                                     mg_level_max);
   }
 
-  void
+  const GMG_PRECONDITIONER &
   prepare_preconditioner_mg()
   {
     prepare_multigrid();
     AssertThrow(multigrid, ExcNotInitialized());
 
     preconditioner_mg = std::make_shared<GMG_PRECONDITIONER>(dof_handler, *multigrid, mg_transfer);
+    return *preconditioner_mg;
   }
 
   /**
