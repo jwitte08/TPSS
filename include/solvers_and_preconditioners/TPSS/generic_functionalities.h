@@ -19,6 +19,16 @@
 
 using namespace dealii;
 
+template<typename VectorType>
+void
+fill_with_random_values(VectorType & vec)
+{
+  for(auto it = vec.begin(); it != vec.end(); ++it)
+    *it = (double)rand() / RAND_MAX;
+}
+
+
+
 template<typename Number>
 std::string
 varray_to_string(const VectorizedArray<Number> & array)
