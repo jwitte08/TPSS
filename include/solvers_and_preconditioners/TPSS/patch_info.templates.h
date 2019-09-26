@@ -29,6 +29,7 @@ PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
     Utilities::MPI::min(internal_data.n_interior_subdomains.size(), MPI_COMM_WORLD);
   const auto n_colors_mpimax =
     Utilities::MPI::max(internal_data.n_interior_subdomains.size(), MPI_COMM_WORLD);
+  (void)n_colors_mpimin, (void)n_colors_mpimax;
   Assert(n_colors_mpimin == n_colors_mpimax,
          ExcMessage("No unified number of colors between mpi-procs."));
   Assert(!internal_data.empty_on_all(), ExcMessage("No mpi-proc owns a patch!"));
@@ -202,6 +203,7 @@ PatchInfo<dim>::gather_vertex_patches(const DoFHandler<dim> & dof_handler,
           const auto n_cells_pair = std::pair<unsigned, unsigned>{1, 1};
           const auto status =
             global_to_local_map.insert(std::make_pair(global_index, n_cells_pair));
+          (void)status;
           Assert(status.second, ExcMessage("failed to insert key-value-pair"))
         }
       }
@@ -235,6 +237,7 @@ PatchInfo<dim>::gather_vertex_patches(const DoFHandler<dim> & dof_handler,
         {
           const auto status =
             global_to_ghost_id.emplace(global_index, GhostPatch(subdomain_id_ghost, cell->id()));
+          (void)status;
           Assert(status.second, ExcMessage("failed to insert key-value-pair"));
         }
       }
@@ -902,7 +905,10 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
       if(comp < mf_storage.n_components_filled(bid))
       {
         // TODO pull request of 'get_cell_index'
-        const unsigned int cindex{mf_storage.get_cell_index(bid, comp)};
+        // TODO intermediate state
+        const auto         cell = mf_storage.get_cell_iterator(bid, comp, /*dof_handler_index*/ 0);
+        const unsigned int cindex = cell->index();
+        // const unsigned int cindex{mf_storage.get_cell_index(bid, comp)};
         AssertIndexRange(cindex, n_cells_stored);
         cindex_to_bindex_bcomp_pair[cindex] = std::make_pair(bid, comp);
       }
