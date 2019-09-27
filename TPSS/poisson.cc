@@ -312,7 +312,14 @@ main(int argc, char * argv[])
   if(argc > 2)
     prms.n_cycles = std::atoi(argv[2]);
 
+  // *** run tests
+  Timer time(MPI_COMM_WORLD, true);
+  time.restart();
   test<dim, fe_degree>(prms);
+  time.stop();
+  const bool is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
+  const auto pcout         = ConditionalOStream(std::cout, is_first_proc);
+  time.print_accumulated_wall_time_data(pcout);
 
   return 0;
 }
