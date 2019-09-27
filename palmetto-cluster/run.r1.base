@@ -1,0 +1,31 @@
+#!/bin/bash
+#PBS -l select=&NODES&:ncpus=40:interconnect=hdr:mem=2gb
+#PBS -l walltime=1:00:00
+#PBS -l place=scatter
+#PBS -j oe
+#PBS -N test
+
+. ~/shared-dealii/modules_9.1.1v2
+module load python/3.4
+cd $PBS_O_WORKDIR
+
+echo "starting on `date` with n=&TASKS&, nodes=&NODES& at `pwd`"
+
+#echo nodelist is $SLURM_JOB_NODELIST
+#echo node count is $SLURM_JOB_NUM_NODES
+
+export OMP_NUM_THREADS=1
+echo "OMP_NUM_THREADS=$OMP_NUM_THREADS"
+echo "DEAL_II_NUM_THREADS=$DEAL_II_NUM_THREADS"
+
+
+Nprocs=&TASKS&
+(time mpirun -n $Nprocs $cmd 2>&1)
+#--mca btl openib,self,sm $cmd 2>&1) 
+
+for refinement in 4 5 6 7; do # 8 9; do # 4 5 6 7
+    cmd="./TPSS/poisson $refinement"
+    mpirun -n $Nprocs $cmd 2>&1
+done
+
+echo "exiting on `date` with n=&TASKS&, nodes=&NODES& at `pwd`"
