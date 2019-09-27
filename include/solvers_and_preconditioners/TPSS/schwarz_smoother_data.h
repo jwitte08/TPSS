@@ -46,27 +46,24 @@ struct SchwarzSmootherData
   void
   print(ConditionalOStream & pcout) const
   {
-    std::string str_patch_variant[] = {"Undefined", "Cell-Patch", "Vertex-Patch"};
-
+    std::string str_patch_variant[]    = {"Undefined", "Cell-Based", "Vertex Patch"};
     std::string str_smoother_variant[] = {"Undefined", "Additive", "Multiplicative"};
+    std::string str_schwarz_operator =
+      str_smoother_variant[(int)smoother_variant] + " " + str_patch_variant[(int)patch_variant];
+    const auto bool_to_str = [](const bool b) { return std::string(b ? "true" : "false"); };
 
-    std::string str_schwarz_operator = str_smoother_variant[(int)smoother_variant] + ", " +
-                                       str_patch_variant[(int)patch_variant] + " Operator";
     print_parameter(pcout, "Schwarz operator", str_schwarz_operator);
     print_parameter(pcout, "Number of smoothing steps", number_of_smoothing_steps);
     print_parameter(pcout, "Damping factor", damping_factor);
-    print_parameter(pcout, "Patch-wise damping factor", local_damping_factor);
-    print_parameter(pcout, "Manual coloring", manual_coloring ? "true" : "false");
+    print_parameter(pcout, "Patch-local damping factor", local_damping_factor);
+
+    print_parameter(pcout, "Manual coloring", bool_to_str(manual_coloring));
+    print_parameter(pcout, "Symmetrized Schwarz operator", bool_to_str(symmetrize_smoothing));
+    print_parameter(pcout, "Reversed Schwarz operator", bool_to_str(reverse_smoothing));
+
     print_parameter(pcout, "Number of quad points (surrogate)", n_q_points_surrogate);
-    print_parameter(pcout,
-                    "Normalize surrogate patches",
-                    normalize_surrogate_patch ? "true" : "false");
-    print_parameter(pcout, "Arc length for surrogate", use_arc_length ? "true" : "false");
-    if(smoother_variant != TPSS::SmootherVariant::additive)
-      print_parameter(pcout,
-                      "Symmetrized Schwarz operator",
-                      symmetrize_smoothing ? "true" : "false");
-    print_parameter(pcout, "Reversed Schwarz operator", reverse_smoothing ? "true" : "false");
+    print_parameter(pcout, "Normalize surrogate patches", bool_to_str(normalize_surrogate_patch));
+    print_parameter(pcout, "Compute arc length (surrogate)", bool_to_str(use_arc_length));
   }
 
   // ...
