@@ -1,0 +1,97 @@
+import argparse
+from argparse import RawTextHelpFormatter
+import sys
+import os
+import shutil
+import subprocess
+
+BUILD_DIR_  = os.path.abspath("@CMAKE_BINARY_DIR@") # @...@ replaced by CMake
+BUILD_EXEC_ = os.path.join(BUILD_DIR_,'TPSS')
+PWD_        = os.path.abspath(os.curdir)
+OUTPUT_DIR_ = os.path.join(PWD_, 'exec')
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=
+        """
+        Run this script from the build directory.
+        
+        Compiles the variants of maketarget and stores them in the
+        output directory.
+        """,
+        formatter_class=RawTextHelpFormatter
+    )
+    parser.add_argument('maketarget',
+                        help="make target",
+                        type=str,
+    )
+    parser.add_argument('-O', '--output-directory',
+                        help="output directory of executables",
+                        default=OUTPUT_DIR_
+    )
+    parser.add_argument('-DIM','--dimension',
+                        type=int,
+                        nargs='+',
+                        default=[3],
+                        help="spatial dimension of the domain"
+    )
+    parser.add_argument('-DEG','--fe-degree',
+                        type=int,
+                        nargs='+',
+                        default=[3],
+                        help="finite element degree"
+    )
+    parser.add_argument('-SMO','--smoother',
+                        type=str,
+                        nargs='+',
+                        default=['ACP'],
+                        choices=['ACP','AVP','MCP','MVP'],
+                        help="Schwarz operator"
+    )
+    args = parser.parse_args()
+    # output_dir = os.path.abspath(args.output_directory)
+    # assert os.path.isdir(output_dir),"Invalid directory path: {}".format(args.output_directory)
+    return args
+
+def main():
+    options = parse_args()
+    target = str(options.maketarget)
+    path_old = os.path.join(BUILD_EXEC_,target)
+    dimensions = options.dimension
+    fe_degrees = options.fe_degree
+    smoothers = options.smoother
+    output_dir = os.path.abspath(options.output_directory)
+    
+    #: setup or clean directory
+    def mkdir_clean(dir):
+        if os.path.exists(dir):
+            shutil.rmtree(dir)
+        os.mkdir(dir)
+
+    mkdir_clean(output_dir)
+
+    for smo in smoothers:
+        for dim in dimensions:
+            for deg in fe_degrees:
+                exec_name = '{}_{}_DIM{}_DEG{}.out'.format(target,smo,dim,deg)
+
+                def find_ctprm_py():
+                    for root, dirs, files in os.walk(BUILD_DIR_, topdown=False):
+                        for name in files:
+                            if (name == 'ct_parameter.py'):
+                                return os.path.join(root, name)
+
+                #: set compile-time parameters and compile
+                ctprm_py = find_ctprm_py()
+                subprocess.run(['python3',ctprm_py,'-DIM',str(dim),'-DEG',str(deg),'-SMO',smo])
+                subprocess.run(['make', 'clean'])
+                print ("compile {} ...".format(exec_name))
+                subprocess.run(['make',target])
+                print ("finished compiling {}".format(exec_name))
+
+                #: copy compilation to designated directory
+                path_new = os.path.join(output_dir, exec_name)
+                shutil.copy(path_old, path_new)
+
+if __name__ == '__main__':
+    main()

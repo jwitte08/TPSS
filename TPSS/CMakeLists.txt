@@ -1,7 +1,3 @@
-##
-#  CMake script
-##
-
 PROJECT(TPSS)
 
 MESSAGE("_________________________________________________________________________________")
@@ -10,7 +6,7 @@ MESSAGE("                                    TPSS                               
 MESSAGE("       numerical experiments and tests of tensor product Schwarz smoothers       ")
 MESSAGE("_________________________________________________________________________________")
 
-MESSAGE("${PROJECT_SOURCE_DIR}")
+# MESSAGE("${PROJECT_SOURCE_DIR}")
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/.git")
   # extract the name of the current git branch
@@ -42,24 +38,27 @@ configure_file(
   ${CMAKE_BINARY_DIR}/include/git_version.h
   )
 
-#: generate python script (paper_poisson)
+#: generate (python) scripts
 configure_file(
   ${CMAKE_CURRENT_LIST_DIR}/paper_poisson.py.in
   ${CMAKE_BINARY_DIR}/paper_poisson.py
   )
-
-#: generate python script (ct_parameter)
 configure_file(
-  ${CMAKE_CURRENT_LIST_DIR}/ct_parameter.py.in
-  ${CMAKE_BINARY_DIR}/ct_parameter.py
+  ${CMAKE_SOURCE_DIR}/scripts/generate_exec.py.in
+  ${CMAKE_BINARY_DIR}/scripts/generate_exec.py
   )
+configure_file(
+  ${CMAKE_SOURCE_DIR}/scripts/ct_parameter.py.in
+  ${CMAKE_BINARY_DIR}/scripts/ct_parameter.py
+  )
+
 #: find a python3 interpreter
 find_package ( PythonInterp 3 REQUIRED )
 #: path to the compile-time parameter file
 set (CTPRM_FILE "${CMAKE_BINARY_DIR}/include/ct_parameter.h")
 #: generating compile-time parameters
 execute_process (
-  COMMAND ${PYTHON_EXECUTABLE} ct_parameter.py -LOG ${CMAKE_BINARY_DIR}
+  COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_BINARY_DIR}/scripts/ct_parameter.py
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
