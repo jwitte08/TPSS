@@ -308,28 +308,12 @@ struct Parameter
   bool        write_post_process_output;
   bool        compute_errors;
 };
-const std::string Parameter::str_solver_variant[] = {"cg", "gmres"};
-// enum class GeometryVariant
-// {
-//   Cube,
-//   CubeDistorted,
-//   Ball
-// };
-const std::string Parameter::str_geometry_variant[] = {"cube",
+const std::string Parameter::str_solver_variant[]      = {"cg", "gmres"};
+const std::string Parameter::str_geometry_variant[]    = {"cube",
                                                        "cubedist",
                                                        "ball",
                                                        "subdivided_cubeoid"};
-// enum class MGSmootherVariant
-// {
-//   Schwarz,
-//   ChebyshevSchwarz
-// };
 const std::string Parameter::str_mg_smoother_variant[] = {"schwarz", "chebyschwarz"};
-// enum class CoarseGridVariant
-// {
-//   IterativeFixed,
-//   ChebyshevAccurate
-// };
 const std::string Parameter::str_coarse_grid_variant[] = {"fixed", "chebacc"};
 
 struct PostProcessData
