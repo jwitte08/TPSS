@@ -44,6 +44,23 @@ git_version_to_fstring()
   oss << std::endl;
   return oss.str();
 }
+
+std::string
+si_metric_prefix(std::size_t measurement)
+{
+  std::array<std::string, 7> prefixes = {"", "k", "M", "G", "T", "P", "E"};
+  std::ostringstream         oss;
+
+  constexpr std::size_t base = 1000;
+  std::size_t           iexp = 0;
+  std::size_t           div  = measurement;
+  while(!(div < 1000))
+    div = measurement / Utilities::pow(base, ++iexp);
+
+  oss << div << prefixes[iexp];
+  return oss.str();
+}
+
 } // end namespace Util
 
 #endif /* UTILITIES_H_ */
