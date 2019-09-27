@@ -15,10 +15,11 @@
 #include <deal.II/fe/fe_system.h>
 
 #include "laplace_problem.h"
+#include "utilities.h"
 #include "vectorization_helper.h"
 
 using namespace dealii;
-
+using namespace Laplace;
 
 
 namespace Poisson
@@ -41,9 +42,9 @@ struct ModelProblem : public Subscriptor
   using GMG_PRECONDITIONER     = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 
   // *** parameters and auxiliary structs
-  Laplace::Parameter               parameters;
-  mutable ConditionalOStream       pcout;
-  mutable Laplace::PostProcessData pp_data;
+  Laplace::Parameter                          parameters;
+  mutable std::shared_ptr<ConditionalOStream> pcout;
+  mutable Laplace::PostProcessData            pp_data;
 
   // *** FEM fundamentals
   parallel::distributed::Triangulation<dim> triangulation;
@@ -87,7 +88,9 @@ struct ModelProblem : public Subscriptor
 
   ModelProblem(const Laplace::Parameter & parameters_in)
     : parameters(parameters_in),
-      pcout(std::cout, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0),
+      pcout(std::make_shared<ConditionalOStream>(std::cout,
+                                                 Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) ==
+                                                   0)),
       triangulation(MPI_COMM_WORLD,
                     Triangulation<dim>::limit_level_difference_at_vertices,
                     parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
@@ -101,12 +104,36 @@ struct ModelProblem : public Subscriptor
   {
   }
 
+  unsigned
+  n_colors_system()
+  {
+    if(!multigrid)
+      return 0;
+
+    const auto mg_level_max     = mg_schwarz_precondition.max_level();
+    const auto precondition_max = mg_schwarz_precondition[mg_level_max];
+    return precondition_max->get_subdomain_handler()->get_partition_data().n_colors();
+  }
+
   template<typename T>
   void
   print_parameter(const std::string & description, const T & value) const
   {
-    AssertIndexRange(description.size(), 43);
-    print_row_variable(pcout, 2, "", 43, description, value);
+    *pcout << Util::parameter_to_fstring(description, value);
+  }
+
+  void
+  print_informations()
+  {
+    print_parameter("Geometry:", Parameter::str_geometry_variant[(int)parameters.geometry_variant]);
+    AssertThrow(fe, ExcMessage("Finite element is not initialized."));
+    print_parameter("Finite element:", fe->get_name());
+    print_parameter("Iterative solver:",
+                    Parameter::str_solver_variant[(int)parameters.solver_variant]);
+    print_parameter("Solver reduction:", parameters.solver_reduction);
+    print_parameter("Preconditioner:",
+                    parameters.str_precondition_variant(parameters.precondition_variant));
+    *pcout << std::endl;
   }
 
   template<typename Number2>
@@ -141,12 +168,6 @@ struct ModelProblem : public Subscriptor
   build_patch_storage(const unsigned                                        level,
                       const std::shared_ptr<const MatrixFree<dim, Number2>> mf_storage)
   {
-    // const bool is_m =
-    //   parameters.schwarz_smoother_data.smoother_variant == TPSS::SmootherVariant::multiplicative;
-    // const bool is_cp  = parameters.schwarz_smoother_data.patch_variant ==
-    // TPSS::PatchVariant::cell; const bool is_mcp = is_m && is_cp; AssertThrow(is_mcp,
-    // ExcMessage("TODO"));
-
     typename SubdomainHandler<dim, Number2>::AdditionalData fdss_additional_data;
     fdss_additional_data.level            = level;
     fdss_additional_data.n_threads        = parameters.n_threads;
@@ -157,8 +178,6 @@ struct ModelProblem : public Subscriptor
     {
       fdss_additional_data.coloring_func = std::ref(red_black_coloring);
     }
-    // if(parameters.non_overlapping)
-    //   fdss_additional_data.manual_gathering_func = std::ref(make_non_overlapping_vertex_patch);
     fdss_additional_data.n_q_points_surrogate =
       parameters.schwarz_smoother_data.n_q_points_surrogate;
     fdss_additional_data.normalize_surrogate_patch =
@@ -302,7 +321,7 @@ struct ModelProblem : public Subscriptor
 
     // *** initialize level matrices A_l
     mg_matrices.resize(mg_level_min, mg_level_max);
-    for(unsigned int level = mg_level_min; level < mg_level_max + 1; ++level)
+    for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
     {
       const auto mf_storage_level = build_mf_storage<value_type_mg>(level);
       mg_matrices[level].initialize(mf_storage_level);
@@ -318,7 +337,7 @@ struct ModelProblem : public Subscriptor
                                    dummy_data); // insert A_l in MGSmootherRelaxation
 
     mg_schwarz_precondition.resize(mg_level_min, mg_level_max); // book-keeping
-    for(unsigned int level = mg_level_min; level < mg_level_max + 1; ++level)
+    for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
     {
       const auto mf_storage_on_level = mg_matrices[level].get_matrix_free();
       const auto patch_storage = build_patch_storage<value_type_mg>(level, mf_storage_on_level);
@@ -441,9 +460,6 @@ struct ModelProblem : public Subscriptor
   void
   solve(const PreconditionerType & preconditioner)
   {
-    Timer time{MPI_COMM_WORLD, parameters.sync_timings};
-    time.restart();
-
     solver_control.set_max_steps(parameters.solver_max_iterations);
     solver_control.set_reduction(parameters.solver_reduction);
     solver_control.set_tolerance(1.e-16);
@@ -454,12 +470,11 @@ struct ModelProblem : public Subscriptor
     iterative_solver.set_control(solver_control);
     iterative_solver.select(Laplace::Parameter::str_solver_variant[(int)parameters.solver_variant]);
     iterative_solver.solve(system_matrix, system_u, system_rhs, preconditioner);
-    time.stop();
 
     const auto n_frac_and_reduction_rate = compute_fractional_steps(solver_control);
     pp_data.average_reduction_system.push_back(n_frac_and_reduction_rate.second);
     pp_data.n_iterations_system.push_back(n_frac_and_reduction_rate.first);
-    pp_data.solve_time.push_back(time.wall_time());
+    pp_data.solve_time.push_back(-2712.1989);
 
     print_parameter("Average reduction (solver):", n_frac_and_reduction_rate.second);
     print_parameter("N of fractional steps (solver):", n_frac_and_reduction_rate.first);
@@ -505,29 +520,50 @@ struct ModelProblem : public Subscriptor
   run()
   {
     pp_data = Laplace::PostProcessData{};
+    TimerOutput time(MPI_COMM_WORLD, *pcout, TimerOutput::summary, TimerOutput::wall_times);
+
     for(unsigned cycle = 0; cycle < parameters.n_cycles; ++cycle)
     {
-      const bool is_tria_valid = create_triangulation(parameters.n_refines + cycle);
-      if(!is_tria_valid)
-        continue;
+      {
+        TimerOutput::Scope time_section(time, "Create triangulation");
+        const bool         is_tria_valid = create_triangulation(parameters.n_refines + cycle);
+        if(!is_tria_valid)
+          continue;
+      }
 
-      distribute_dofs();
-      prepare_linear_system();
+      {
+        TimerOutput::Scope time_section(time, "Distribute dofs");
+        distribute_dofs();
+      }
 
-      const auto str_preconditioner =
-        parameters.str_precondition_variant(parameters.precondition_variant);
-      print_parameter("Preconditioner:", str_preconditioner);
+      {
+        TimerOutput::Scope time_section(time, "Setup linear system");
+        prepare_linear_system();
+      }
+
+      print_informations();
       switch(parameters.precondition_variant)
       {
         case Laplace::Parameter::PreconditionVariant::ID:
         {
-          solve(preconditioner_id);
+          {
+            TimerOutput::Scope time_section(time, "Solve linear system");
+            solve(preconditioner_id);
+            pp_data.n_colors_system.push_back(0);
+          }
           break;
         }
         case Laplace::Parameter::PreconditionVariant::MG:
         {
+          parameters.schwarz_smoother_data.print(*pcout);
+          *pcout << std::endl;
+          TimerOutput::Scope time_section(time, "Setup MG preconditioner");
           prepare_preconditioner_mg();
-          solve(*preconditioner_mg);
+          pp_data.n_colors_system.push_back(n_colors_system());
+          {
+            TimerOutput::Scope time_section(time, "Solve");
+            solve(*preconditioner_mg);
+          }
           break;
         }
         default:

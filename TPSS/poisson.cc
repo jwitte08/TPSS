@@ -8,7 +8,6 @@
 
 #include "poisson.h"
 #include "ct_parameter.h"
-//#include "laplace_problem.h"
 
 using namespace dealii;
 using namespace Laplace;
@@ -33,12 +32,27 @@ struct TestParameter
   unsigned              n_subsamples_mg     = 4;
 };
 
+
+std::string
+write_header()
+{
+  std::ostringstream oss;
+  oss << Util::git_version_to_fstring();
+
+  oss << Util::parameter_to_fstring("Date:", Utilities::System::get_date());
+  oss << Util::parameter_to_fstring("Number of MPI processes:",
+                                    Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD));
+  oss << Util::parameter_to_fstring("Vectorization level:",
+                                    Utilities::System::get_current_vectorization_level());
+  oss << std::endl;
+  return oss.str();
+}
+
 std::string
 write_ppdata_to_string(const Laplace::PostProcessData & pp_data)
 {
   std::ostringstream oss;
-
-  ConvergenceTable info_table;
+  ConvergenceTable   info_table;
   Assert(!pp_data.n_cells_global.empty(), ExcMessage("No cells to post process."));
   for(unsigned run = 0; run < pp_data.n_cells_global.size(); ++run)
   {
@@ -61,9 +75,7 @@ std::string
 write_timings_to_string(const Timings & timings)
 {
   std::ostringstream oss;
-
-  ConvergenceTable timings_table;
-
+  ConvergenceTable   timings_table;
   for(unsigned n = 0; n < timings.apply.size(); ++n)
   {
     timings_table.add_value("sample", n + 1);
@@ -130,9 +142,8 @@ test(const TestParameter & prms = TestParameter{})
   parameters.schwarz_smoother_data.number_of_smoothing_steps = prms.n_smoothing_steps;
   parameters.mg_smoother_post_reversed                       = true;
 
-  Timings                  timings_vmult, timings_smooth, timings_mg, timings_total;
-  Laplace::PostProcessData pp_data;
-  PoissonProblem           poisson_problem{parameters};
+  Timings        timings_vmult, timings_smooth, timings_mg, timings_total;
+  PoissonProblem poisson_problem{parameters};
   poisson_problem.create_triangulation(parameters.n_refines);
   poisson_problem.distribute_dofs();
 
@@ -236,11 +247,6 @@ test(const TestParameter & prms = TestParameter{})
     }
   }
 
-  // {
-  //   PoissonProblem           poisson_problem{parameters};
-  //   poisson_problem.pcout
-  // }
-
   if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
   {
     std::fstream fstream;
@@ -259,6 +265,26 @@ test(const TestParameter & prms = TestParameter{})
     fstream.open("solve_" + filename + ".time", std::ios_base::out);
     fstream << write_timings_to_string(timings_total);
     fstream.close();
+  }
+
+  {
+    PoissonProblem     poisson_problem{parameters};
+    std::ostringstream oss;
+    const bool         is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
+    poisson_problem.pcout            = std::make_shared<ConditionalOStream>(oss, is_first_proc);
+    oss << write_header();
+
+    poisson_problem.run();
+    const auto pp_data = poisson_problem.pp_data;
+    oss << write_ppdata_to_string(pp_data);
+
+    if(is_first_proc)
+    {
+      std::fstream fstream;
+      fstream.open("summary_" + filename + ".log", std::ios_base::out);
+      fstream << oss.str();
+      fstream.close();
+    }
   }
 }
 
