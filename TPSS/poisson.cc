@@ -110,18 +110,7 @@ test(const TestParameter & prms = TestParameter{})
   using SCHWARZ_SMOOTHER = typename PoissonProblem::SCHWARZ_SMOOTHER;
   using SYSTEM_MATRIX    = typename PoissonProblem::SYSTEM_MATRIX;
   using LEVEL_MATRIX     = typename PoissonProblem::LEVEL_MATRIX;
-
-  // *** configure output filenames
-  const auto         n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
-  std::ostringstream oss;
-  oss << TPSS::getstr_schwarz_variant(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_);
-  oss << "_" << dim << "D";
-  oss << "_" << fe_degree << "deg";
-  oss << "_" << n_mpi_procs << "procs";
-  oss << "_" << prms.n_smoothing_steps << "steps";
-  // oss << std::scientific << std::setprecision(3);
-  // oss << "_" << prms.damping_factor << "ldamp";
-  const std::string filename = oss.str();
+  const auto n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
 
   Laplace::Parameter parameters;
   //: discretization
@@ -245,8 +234,22 @@ test(const TestParameter & prms = TestParameter{})
       t_apply                           = t_apply / prms.n_subsamples_mg;
       timings_mg.apply.push_back(t_apply);
     }
+  } // end sample loop
+
+  //: determine filename from test parameters
+  std::string filename;
+  {
+    std::ostringstream oss;
+    const auto         n_dofs_global = poisson_problem.pp_data.n_dofs_global.front();
+    oss << TPSS::getstr_schwarz_variant(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_);
+    oss << "_" << dim << "D";
+    oss << "_" << fe_degree << "deg";
+    oss << "_" << n_mpi_procs << "procs";
+    oss << "_" << Util::si_metric_prefix(n_dofs_global) << "DoFs";
+    filename = oss.str();
   }
 
+  //: write performance timings
   if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
   {
     std::fstream fstream;
@@ -267,6 +270,7 @@ test(const TestParameter & prms = TestParameter{})
     fstream.close();
   }
 
+  //: run complete Poisson problem once writing a generic log-file
   {
     PoissonProblem     poisson_problem{parameters};
     std::ostringstream oss;
@@ -281,7 +285,7 @@ test(const TestParameter & prms = TestParameter{})
     if(is_first_proc)
     {
       std::fstream fstream;
-      fstream.open("summary_" + filename + ".log", std::ios_base::out);
+      fstream.open("poisson_" + filename + ".log", std::ios_base::out);
       fstream << oss.str();
       fstream.close();
     }
