@@ -19,6 +19,12 @@
 
 using namespace dealii;
 
+std::string
+bool_to_str(const bool b)
+{
+  return std::string(b ? "true" : "false");
+}
+
 Utilities::MPI::MinMaxAvg
 operator/(const Utilities::MPI::MinMaxAvg & mma_in, const double t)
 {
