@@ -19,6 +19,18 @@
 
 using namespace dealii;
 
+Utilities::MPI::MinMaxAvg
+operator/(const Utilities::MPI::MinMaxAvg & mma_in, const double t)
+{
+  Utilities::MPI::MinMaxAvg mma;
+  mma.min = mma_in.min / t;
+  mma.max = mma_in.max / t;
+  mma.avg = mma_in.avg / t;
+  mma.sum = mma_in.sum / t;
+  return mma;
+}
+
+
 template<typename VectorType>
 void
 fill_with_random_values(VectorType & vec)
