@@ -1,0 +1,24 @@
+#!/bin/bash
+
+#MSUB -q dev_multinode
+#MSUB -l nodes=&NODES&:ppn=&PPN&
+#MSUB -l walltime=00:30:00
+#MSUB -l naccesspolicy=singlejob                                                                                                                           
+#MSUB -l pmem=4gb
+#MSUB -v OMP_NUM_THREADS=1
+#MSUB -N ompi_test
+#MSUB -m bea
+#MSUB -M julius.witte@iwr.uni-heidelberg.de
+
+echo "starting on `date` with ppn=&PPN&, nodes=&NODES& at `pwd`"
+
+echo "OMP_NUM_THREADS=$OMP_NUM_THREADS"
+echo "DEAL_II_NUM_THREADS=$DEAL_II_NUM_THREADS"
+
+for args in &ARGS&;
+do
+    cmd="./&MYPROG& ${args}"
+    mpirun --bind-to core --map-by core -display-devel-map -report-bindings ${cmd}
+done
+
+echo "exiting on `date` with ppn=&PPN&, nodes=&NODES& at `pwd`"
