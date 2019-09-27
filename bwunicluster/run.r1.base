@@ -15,10 +15,13 @@ echo "starting on `date` with ppn=&PPN&, nodes=&NODES& at `pwd`"
 echo "OMP_NUM_THREADS=$OMP_NUM_THREADS"
 echo "DEAL_II_NUM_THREADS=$DEAL_II_NUM_THREADS"
 
+for prog in &MYPROG&;
+do
 for args in &ARGS&;
 do
-    cmd="./&MYPROG& ${args}"
+    cmd="./${prog} ${args}"
     mpirun --bind-to core --map-by core -display-devel-map -report-bindings ${cmd}
+done
 done
 
 echo "exiting on `date` with ppn=&PPN&, nodes=&NODES& at `pwd`"
