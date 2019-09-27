@@ -138,6 +138,7 @@ test(const TestParameter & prms = TestParameter{})
 
   for(unsigned sample = 0; sample < prms.n_samples; ++sample)
   {
+    *(poisson_problem.pcout) << "Compute sample " << sample << std::endl;
     Timer time(MPI_COMM_WORLD, true);
 
     //: setup (total)
