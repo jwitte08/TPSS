@@ -72,13 +72,15 @@ write_ppdata_to_string(const Laplace::PostProcessData & pp_data)
 }
 
 std::string
-write_timings_to_string(const Timings & timings)
+write_timings_to_string(const Timings & timings, const Laplace::PostProcessData & pp_data)
 {
   std::ostringstream oss;
   ConvergenceTable   timings_table;
   for(unsigned n = 0; n < timings.apply.size(); ++n)
   {
     timings_table.add_value("sample", n + 1);
+    timings_table.add_value("procs", Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD));
+    timings_table.add_value("dofs", pp_data.n_dofs_global.at(0));
     timings_table.add_value("setup (max)", timings.setup[n].max);
     timings_table.add_value("setup (min)", timings.setup[n].min);
     timings_table.add_value("setup (avg)", timings.setup[n].avg);
@@ -93,7 +95,7 @@ write_timings_to_string(const Timings & timings)
   timings_table.set_scientific("apply (max)", true);
   timings_table.set_scientific("apply (min)", true);
   timings_table.set_scientific("apply (avg)", true);
-  timings_table.write_text(oss);
+  timings_table.write_text(oss, TableHandler::TextOutputFormat::org_mode_table);
 
   return oss.str();
 }
@@ -146,7 +148,7 @@ test(const TestParameter & prms = TestParameter{})
     poisson_problem.prepare_linear_system();
     const auto & gmg_preconditioner = poisson_problem.prepare_preconditioner_mg();
     time.stop();
-    timings_total.setup.push_back(time.get_accumulated_wall_time_data());
+    timings_total.setup.push_back(time.get_last_lap_wall_time_data());
 
     //: solve (total)
     time.restart();
@@ -253,21 +255,23 @@ test(const TestParameter & prms = TestParameter{})
   //: write performance timings
   if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
   {
-    std::fstream fstream;
+    std::fstream                     fstream;
+    const Laplace::PostProcessData & pp_data = poisson_problem.pp_data;
+
     fstream.open("vmult_" + filename + ".time", std::ios_base::out);
-    fstream << write_timings_to_string(timings_vmult);
+    fstream << write_timings_to_string(timings_vmult, pp_data);
     fstream.close();
 
     fstream.open("smooth_" + filename + ".time", std::ios_base::out);
-    fstream << write_timings_to_string(timings_smooth);
+    fstream << write_timings_to_string(timings_smooth, pp_data);
     fstream.close();
 
     fstream.open("mg_" + filename + ".time", std::ios_base::out);
-    fstream << write_timings_to_string(timings_mg);
+    fstream << write_timings_to_string(timings_mg, pp_data);
     fstream.close();
 
     fstream.open("solve_" + filename + ".time", std::ios_base::out);
-    fstream << write_timings_to_string(timings_total);
+    fstream << write_timings_to_string(timings_total, pp_data);
     fstream.close();
   }
 
