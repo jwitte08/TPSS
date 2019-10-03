@@ -11,3 +11,6 @@ cmake_install.cmake
 build/
 *#
 run.r1.*
+*.csv
+*.org
+*.tmp
