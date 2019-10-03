@@ -1687,7 +1687,7 @@ struct MatrixOperator : public Subscriptor
         // *** setup Schwarz preconditioner
         typename CHEBPREC_COARSE::AdditionalData precondition_data;
         precondition_data.relaxation =
-          TPSS::lookup_damping_factor(fdss_additional_data.patch_variant,
+          0.8 * TPSS::lookup_damping_factor(fdss_additional_data.patch_variant,
                                       fdss_additional_data.smoother_variant,
                                       dim);
         const auto schwarz_preconditioner = std::make_shared<CHEBPREC_COARSE>();

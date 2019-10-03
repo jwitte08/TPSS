@@ -42,7 +42,7 @@ test(const TestParameter & prm = TestParameter{})
   const bool mesh_is_cartesian = (prm.geometry_variant == Parameter::GeometryVariant::Cube);
   const bool mesh_is_distorted =
     (prm.geometry_variant == Parameter::GeometryVariant::CubeDistorted);
-  const bool mesh_is_circular = (prm.geometry_variant == Parameter::GeometryVariant::Ball);
+  // const bool mesh_is_circular = (prm.geometry_variant == Parameter::GeometryVariant::Ball);
   IP::pre_factor              = !mesh_is_cartesian ? 4. : 1.;
   parameters.n_cycles         = mesh_is_distorted ? 1 : 15;
   parameters.n_refines =
@@ -58,7 +58,7 @@ test(const TestParameter & prm = TestParameter{})
     TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim);
   const double local_damping_factor = prm.damping_factor / outer_damping_factor;
 
-  parameters.coarse_level                                    = 1; // TODO distorted?
+  parameters.coarse_level                                    = mesh_is_distorted ? prm.n_refinements_distort : 1;
   parameters.schwarz_smoother_data.patch_variant             = CT::PATCH_VARIANT_;
   parameters.schwarz_smoother_data.smoother_variant          = CT::SMOOTHER_VARIANT_;
   parameters.schwarz_smoother_data.manual_coloring           = true;
@@ -70,7 +70,7 @@ test(const TestParameter & prm = TestParameter{})
   // parameters.mg_coarse_iterations = 100;
   parameters.mg_coarse_grid_variant =
     Parameter::CoarseGridVariant::ChebyshevAccurate; // IterativeFixed;
-  parameters.mg_coarse_chebyshev_reduction = 1.e-8;
+  parameters.mg_coarse_chebyshev_reduction = mesh_is_distorted ? 1.e-4 : 1.e-8 ;
 
   // *** SOLVER
   parameters.solver_reduction      = prm.cg_reduction;
@@ -92,6 +92,7 @@ test(const TestParameter & prm = TestParameter{})
   oss << "_" << prm.n_smoothing_steps << "steps";
   oss << std::scientific << std::setprecision(3);
   oss << "_" << prm.damping_factor << "ldamp";
+  oss << "_" << prm.n_mg_levels_distort << "lvls";
   const std::string filename = oss.str();
 
   std::fstream fstream_log;

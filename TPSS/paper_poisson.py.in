@@ -5,6 +5,7 @@ import os
 import subprocess
 
 BUILD_DIR_ = os.path.abspath("@CMAKE_BINARY_DIR@") # @...@ replaced by CMake
+SCRIPTS_DIR_ = os.path.join(BUILD_DIR_,'scripts')
 EXEC_DIR_ = os.path.join(BUILD_DIR_,'TPSS')
 
 def parse_args():
@@ -13,6 +14,12 @@ def parse_args():
         test several damping factors regarding the Poisson problem on a distorted Cartesian mesh
         """,
         formatter_class=RawTextHelpFormatter
+    )
+    parser.add_argument('-np','--mpi-processes',
+                        type=int,
+                        default=[1],
+                        metavar='int',
+                        help="number of mpi processes"
     )
     parser.add_argument('-stp','--smoothing-steps',
                         type=int,
@@ -91,20 +98,21 @@ def main():
     levels = options.levels
     geometry_id = options.geometry
     steps = options.smoothing_steps
+    n_procs = options.mpi_processes
     
     for smo in smoothers:
         for dim in dimensions:
             for deg in fe_degrees:
-                ctprm_py = os.path.join(BUILD_DIR_,'ct_parameter.py')
+                ctprm_py = os.path.join(SCRIPTS_DIR_,'ct_parameter.py')
                 subprocess.run(['python3',ctprm_py,'-DIM',str(dim),'-DEG',str(deg),'-SMO',smo])
                 for step in steps:
                     for level in levels:
                         damp = damp_min
                         while damp<=damp_max:
-                            subprocess.run(['make'])
+                            subprocess.run(['make','paper_poisson'])
                             exec = os.path.join(EXEC_DIR_,'paper_poisson')
                             # print("{} - {} - {} - {} - {}".format(str(exec),str(step),str(damp),str(geometry_id),str(level)))
-                            subprocess.run([exec,str(step),str(damp),str(geometry_id),str(level)])
+                            subprocess.run(['mpirun','-np',str(n_procs),exec,str(step),str(damp),str(geometry_id),str(level)])
                             damp = damp + stride;
                             
 if __name__ == '__main__':
