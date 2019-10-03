@@ -48,7 +48,15 @@ get_integer_coords(const CellId cell_id)
   // Get child indices
   std::vector<unsigned int> child_indices;
   std::string               cell_id_str = cell_id.to_string();
-  while(cell_id_str.size() > 4)
+  // TODO better solution than this hack
+  // std::cout << cell_id_str << std::endl;
+  unsigned pos_of_colon = 0;
+  for (unsigned int pos = 0; pos<cell_id_str.size(); ++pos)
+    if (cell_id_str[pos] == ':')
+      pos_of_colon = pos;
+  Assert (pos_of_colon > 0, ExcInternalError());
+  // std::cout << pos_of_colon << std::endl;
+  while(cell_id_str.size() > (pos_of_colon+1))
   {
     child_indices.insert(child_indices.begin(), Utilities::string_to_int(&(cell_id_str.back())));
     cell_id_str.pop_back();
