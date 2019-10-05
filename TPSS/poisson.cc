@@ -24,7 +24,6 @@ struct TestParameter
   TPSS::SmootherVariant smoother_variant    = CT::SMOOTHER_VARIANT_;
   double                cg_reduction        = 1.e-8;
   unsigned              n_refinements       = 1;
-  unsigned              n_cycles            = 1;
   unsigned              n_smoothing_steps   = 1;
   unsigned              n_samples           = 10;
   unsigned              n_subsamples_vmult  = 100;
@@ -63,7 +62,7 @@ struct Test
   Test(const TestParameter & prms_in = TestParameter{}) : prms(prms_in)
   {
     //: discretization
-    parameters.n_cycles  = prms.n_cycles;
+    parameters.n_cycles  = 1;
     parameters.n_refines = prms.n_refinements;
     //: iterative solver
     parameters.solver_reduction      = prms.cg_reduction;
@@ -352,7 +351,7 @@ main(int argc, char * argv[])
   if(argc > 1)
     prms.n_refinements = std::atoi(argv[1]);
   if(argc > 2)
-    prms.n_cycles = std::atoi(argv[2]);
+    prms.n_samples = std::atoi(argv[2]);
 
   // *** run tests
   Timer                time(MPI_COMM_WORLD, true);
