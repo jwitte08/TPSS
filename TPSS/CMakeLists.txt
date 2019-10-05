@@ -92,6 +92,7 @@ SET( SOURCE_FILES
   # paper_poisson.cc
   # mpi_coloring.cc
   # cell_coloring.cc
+  test_mesh.cc
   poisson.cc
   )
 
