@@ -53,6 +53,7 @@
 
 #include "coloring.h"
 #include "laplace_integrator.h"
+#include "mesh.h"
 
 
 namespace Laplace
@@ -146,9 +147,10 @@ struct Parameter
                 ExcMessage("Coarse level equals or exceeds finest level!"));
     // AssertThrow (n_cell_repetitions%2 == 1,
     // 		   ExcMessage("Cell repetition is not odd!"));
-    AssertThrow(n_refines_distort <= n_refines,
-                ExcMessage(
-                  "The refinement step at which we distort exceeds the global refinement step!"));
+    // AssertThrow(n_refines_distort <= n_refines,
+    //             ExcMessage(
+    //               "The refinement step at which we distort exceeds the global refinement
+    //               step!"));
     AssertThrow(distortion_factor < 0.5,
                 ExcMessage("Distortion factor must not exceed 0.5 to prevent negative volumes."));
     if(non_overlapping)
@@ -1125,51 +1127,59 @@ struct MatrixOperator : public Subscriptor
       case Parameter::GeometryVariant::CubeDistorted:
       {
         // function
-        const auto create_distorted_cube =
-          [DOF_LIMIT_MIN_, DOF_LIMIT_MAX_](Triangulation<dim> & tria,
-                                           const double         distortion,
-                                           const unsigned int   n_refinements_distort,
-                                           const unsigned int   n_refinements,
-                                           const unsigned int   n_repetitions) {
-            AssertThrow(n_refinements_distort <= n_refinements, ExcMessage("Check refinements."));
-            AssertThrow(distortion < 0.5, ExcMessage("Check distortion factor."));
-            constexpr unsigned n_dofs_per_cell_est = dim * Utilities::pow(fe_degree + 1, dim);
-            const unsigned     n_cells_per_dim     = n_repetitions * (1 << n_refinements);
-            const unsigned     n_cells_est         = Utilities::pow(n_cells_per_dim, dim);
-            const unsigned     n_dofs_est          = n_cells_est * n_dofs_per_cell_est;
-            if(n_dofs_est < DOF_LIMIT_MIN_ || DOF_LIMIT_MAX_ < n_dofs_est)
-              return std::make_pair<bool, std::string>(false, "mesh exceeds limits!");
+        // const auto create_distorted_cube =
+        //   [DOF_LIMIT_MIN_, DOF_LIMIT_MAX_](Triangulation<dim> & tria,
+        //                                    const double         distortion,
+        //                                    const unsigned int   n_refinements_distort,
+        //                                    const unsigned int   n_refinements,
+        //                                    const unsigned int   n_repetitions) {
+        //     AssertThrow(n_refinements_distort <= n_refinements, ExcMessage("Check
+        //     refinements.")); AssertThrow(distortion < 0.5, ExcMessage("Check distortion
+        //     factor.")); constexpr unsigned n_dofs_per_cell_est = dim * Utilities::pow(fe_degree +
+        //     1, dim); const unsigned     n_cells_per_dim     = n_repetitions * (1 <<
+        //     n_refinements); const unsigned     n_cells_est         =
+        //     Utilities::pow(n_cells_per_dim, dim); const unsigned     n_dofs_est          =
+        //     n_cells_est * n_dofs_per_cell_est; if(n_dofs_est < DOF_LIMIT_MIN_ || DOF_LIMIT_MAX_ <
+        //     n_dofs_est)
+        //       return std::make_pair<bool, std::string>(false, "mesh exceeds limits!");
 
-            const double left = 0.0, right = 1.0;
-            GridGenerator::subdivided_hyper_cube(tria, n_repetitions, left, right);
-            tria.refine_global(n_refinements_distort);
-            GridTools::distort_random(distortion,
-                                      tria,
-                                      /*keep_boundary*/ true);
-            const unsigned int n_remaining = n_refinements - n_refinements_distort;
-            tria.refine_global(n_remaining);
+        //     const double left = 0.0, right = 1.0;
+        //     GridGenerator::subdivided_hyper_cube(tria, n_repetitions, left, right);
+        //     tria.refine_global(n_refinements_distort);
+        //     GridTools::distort_random(distortion,
+        //                               tria,
+        //                               /*keep_boundary*/ true);
+        //     const unsigned int n_remaining = n_refinements - n_refinements_distort;
+        //     tria.refine_global(n_remaining);
 
-            std::ostringstream oss;
-            oss << "domain: ";
-            for(unsigned int d = 0; d < dim; ++d)
-              oss << "(" << left << ", " << right << (d != (dim - 1) ? ") x " : ")\n");
-            oss << "mesh: ";
-            for(unsigned int d = 0; d < dim; ++d)
-              oss << n_cells_per_dim << (d != (dim - 1) ? " x " : "\n");
-            const unsigned n_cells_per_dim_distort = n_repetitions * (1 << n_refinements_distort);
-            oss << "based on " << distortion * 100 << "%-distorted mesh: ";
-            for(unsigned int d = 0; d < dim; ++d)
-              oss << n_cells_per_dim_distort << (d != (dim - 1) ? " x " : "\n");
+        //     std::ostringstream oss;
+        //     oss << "domain: ";
+        //     for(unsigned int d = 0; d < dim; ++d)
+        //       oss << "(" << left << ", " << right << (d != (dim - 1) ? ") x " : ")\n");
+        //     oss << "mesh: ";
+        //     for(unsigned int d = 0; d < dim; ++d)
+        //       oss << n_cells_per_dim << (d != (dim - 1) ? " x " : "\n");
+        //     const unsigned n_cells_per_dim_distort = n_repetitions * (1 <<
+        //     n_refinements_distort); oss << "based on " << distortion * 100 << "%-distorted mesh:
+        //     "; for(unsigned int d = 0; d < dim; ++d)
+        //       oss << n_cells_per_dim_distort << (d != (dim - 1) ? " x " : "\n");
 
-            const auto info = std::make_pair<bool, std::string>(true, oss.str());
-            return info;
-          };
+        //     const auto info = std::make_pair<bool, std::string>(true, oss.str());
+        //     return info;
+        //   };
 
-        mesh_info = create_distorted_cube(triangulation,
-                                          parameters.distortion_factor,
-                                          parameters.n_refines_distort,
-                                          n_refines,
-                                          parameters.n_cell_repetitions);
+        Assert(
+          parameters.n_cell_repetitions == (1 << parameters.n_refines_distort),
+          ExcMessage(
+            "New implementation which sets the root by means of the cell repetitions instead of a N of refinements."));
+        MeshParameter mesh_prms;
+        mesh_prms.n_refinements = n_refines;
+        mesh_prms.n_repetitions = parameters.n_cell_repetitions;
+        mesh_prms.distortion    = parameters.distortion_factor;
+        mesh_prms.variant       = MeshParameter::GeometryVariant::CubeDistorted;
+        std::pair<bool, std::string> mesh_info;
+        mesh_info.first  = true; // TODO specify valid range of n_dofs
+        mesh_info.second = create_distorted_cube(triangulation, mesh_prms);
 
         const bool triangulation_was_created = mesh_info.first;
         if(!triangulation_was_created) // invalid mesh

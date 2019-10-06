@@ -23,6 +23,7 @@ struct TestParameter
   double                     damping_factor        = 1.;
   Parameter::GeometryVariant geometry_variant      = Parameter::GeometryVariant::Cube;
   unsigned                   n_refinements_distort = (CT::DIMENSION_ == 2) ? 5 : 3;
+  unsigned                   n_repetitions         = (CT::DIMENSION_ == 2) ? 32 : 8;
   double                     distortion_factor     = 0.25;
   unsigned                   n_mg_levels_distort   = 2;
 };
@@ -42,16 +43,16 @@ test(const TestParameter & prm = TestParameter{})
   const bool mesh_is_cartesian = (prm.geometry_variant == Parameter::GeometryVariant::Cube);
   const bool mesh_is_distorted =
     (prm.geometry_variant == Parameter::GeometryVariant::CubeDistorted);
-  const bool mesh_is_circular = (prm.geometry_variant == Parameter::GeometryVariant::Ball);
-  IP::pre_factor              = !mesh_is_cartesian ? 4. : 1.;
-  parameters.n_cycles         = mesh_is_distorted ? 1 : 15;
-  parameters.n_refines =
-    mesh_is_distorted ? (prm.n_refinements_distort + prm.n_mg_levels_distort - 1) : 2;
-  parameters.geometry_variant  = prm.geometry_variant;
-  parameters.n_refines_distort = mesh_is_distorted ? prm.n_refinements_distort : 0;
-  parameters.distortion_factor = prm.distortion_factor;
-  parameters.dof_limit_min     = mesh_is_distorted ? 1 : prm.dof_limit_min;
-  parameters.dof_limit_max     = mesh_is_distorted ? 1e10 : prm.dof_limit_max;
+  const bool mesh_is_circular   = (prm.geometry_variant == Parameter::GeometryVariant::Ball);
+  IP::pre_factor                = !mesh_is_cartesian ? 4. : 1.;
+  parameters.n_cycles           = mesh_is_distorted ? 1 : 15;
+  parameters.n_refines          = mesh_is_distorted ? (prm.n_mg_levels_distort - 1) : 2;
+  parameters.geometry_variant   = prm.geometry_variant;
+  parameters.n_cell_repetitions = prm.n_repetitions;
+  parameters.n_refines_distort  = mesh_is_distorted ? prm.n_refinements_distort : 0;
+  parameters.distortion_factor  = prm.distortion_factor;
+  parameters.dof_limit_min      = mesh_is_distorted ? 1 : prm.dof_limit_min;
+  parameters.dof_limit_max      = mesh_is_distorted ? 1e10 : prm.dof_limit_max;
 
   // *** MULTIGRID
   const double outer_damping_factor =
