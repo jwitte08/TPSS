@@ -82,6 +82,8 @@ create_distorted_cube(Triangulation<dim> & tria, const MeshParameter & prm)
   Assert(0. <= prm.distortion, ExcMessage("Distortion factor is invalid."));
   Assert(0 <= prm.n_refinements, ExcMessage("N of refinements is negative."));
   Assert(0 < prm.n_repetitions, ExcMessage("At least one repitition required"));
+  Assert(prm.variant == MeshParameter::GeometryVariant::CubeDistorted,
+         ExcMessage("Check geometry variant"));
   tria.clear();
 
   // domain
