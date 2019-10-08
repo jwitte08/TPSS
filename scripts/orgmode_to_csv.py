@@ -11,6 +11,7 @@ from argparse import RawTextHelpFormatter
 # import shutil
 import os
 import csv
+import numpy as np
 # import re
 
 
@@ -48,7 +49,8 @@ def org_to_csv(fname, fieldnames):
         rdialect = csv.unix_dialect
         rdialect.delimiter = '|'
         reader = csv.DictReader(orgfile, dialect=rdialect)
-        with open('{}.csv'.format(fname), 'w') as csvfile:
+        fname_csv = '{}.csv'.format(fname)
+        with open(fname_csv, 'w') as csvfile:
             wdialect = csv.unix_dialect
             wdialect.delimiter = ';'
             wdialect.quoting = csv.QUOTE_NONE
@@ -65,6 +67,15 @@ def org_to_csv(fname, fieldnames):
 
     tmpfile = os.path.abspath('{}.tmp'.format(fname))
     os.remove(tmpfile)
+    return fname_csv
+
+
+def csv_to_nparray(fname, dtype=None, delimiter=None, skip_header=0):
+    data = np.genfromtxt(fname,
+                         dtype=dtype,
+                         delimiter=delimiter,
+                         skip_header=skip_header)
+    return data
 
 
 def main():

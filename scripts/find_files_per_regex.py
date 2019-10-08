@@ -28,7 +28,7 @@ def parse_args():
             help="The regex identifying the desired file(s)"
             )
     parser.add_argument(
-            '-dir','--root_dir',
+            '-dir', '--root_dir',
             type=path_type,
             default='.',
             help='The root directory of the recursive search'
