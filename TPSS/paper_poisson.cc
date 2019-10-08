@@ -59,7 +59,7 @@ test(const TestParameter & prm = TestParameter{})
     TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim);
   const double local_damping_factor = prm.damping_factor / outer_damping_factor;
 
-  parameters.coarse_level                                    = 1; // TODO distorted?
+  parameters.coarse_level                                    = mesh_is_distorted ? 0 : 1; // TODO distorted?
   parameters.schwarz_smoother_data.patch_variant             = CT::PATCH_VARIANT_;
   parameters.schwarz_smoother_data.smoother_variant          = CT::SMOOTHER_VARIANT_;
   parameters.schwarz_smoother_data.manual_coloring           = true;
@@ -73,9 +73,11 @@ test(const TestParameter & prm = TestParameter{})
     Parameter::CoarseGridVariant::ChebyshevAccurate; // IterativeFixed;
   parameters.mg_coarse_chebyshev_reduction = 1.e-8;
 
-  // *** SOLVER
+  // *** SOLVER>
   parameters.solver_reduction      = prm.cg_reduction;
   parameters.solver_max_iterations = 100;
+  if (CT::PATCH_VARIANT_ == TPSS::PatchVariant::vertex)
+    parameters.solver_max_iterations = 50;
   // parameters.solver_variant = Parameter::SolverVariant::GMRES;
   if(!parameters.mg_smoother_post_reversed)
     parameters.solver_variant = GlobParam::lookup_solver_variant_impl(CT::SMOOTHER_VARIANT_);
@@ -90,6 +92,9 @@ test(const TestParameter & prm = TestParameter{})
   oss << TPSS::getstr_schwarz_variant(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_);
   oss << "_" << dim << "D"
       << "_" << fe_degree << "deg";
+  oss << std::scientific << std::setprecision(3);
+  oss << "_" << prm.distortion_factor << "dist";
+  oss << "_" << prm.n_mg_levels_distort << "lvls";
   oss << "_" << prm.n_smoothing_steps << "steps";
   oss << std::scientific << std::setprecision(3);
   oss << "_" << prm.damping_factor << "ldamp";
@@ -140,6 +145,8 @@ test(const TestParameter & prm = TestParameter{})
     print_row_variable(fstream_pp, 50, "outer damping factor:", outer_damping_factor);
     print_row_variable(fstream_pp, 50, "local damping factor:", local_damping_factor);
     print_row_variable(fstream_pp, 50, "total damping factor:", prm.damping_factor);
+    print_row_variable(fstream_pp, 50, "Distortion factor:", prm.distortion_factor);
+    fstream_pp << std::endl;
     convergence_table.write_text(fstream_pp);
     fstream_pp.close();
 
@@ -174,6 +181,8 @@ main(int argc, char * argv[])
     test_prms.geometry_variant = Parameter::GeometryVariant(std::atoi(argv[3]));
   if(argc > 4)
     test_prms.n_mg_levels_distort = std::atoi(argv[4]);
+  if(argc > 5)
+    test_prms.distortion_factor = std::atof(argv[5]);
 
   test<dim, fe_degree, value_type>(test_prms);
 
