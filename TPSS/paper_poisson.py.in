@@ -46,6 +46,13 @@ def parse_args():
                         metavar='float',
                         help="stride through the interval [min-damp,max-damp]"
     )
+    parser.add_argument('-dis','--distortions',
+                        type=float,
+                        nargs='+',
+                        default=[0.25],
+                        metavar='float',
+                        help="set of distortion factors"
+    )
     parser.add_argument('-geo','--geometry',
                         type=int,
                         default=1,
@@ -105,15 +112,16 @@ def main():
             for deg in fe_degrees:
                 ctprm_py = os.path.join(SCRIPTS_DIR_,'ct_parameter.py')
                 subprocess.run(['python3',ctprm_py,'-DIM',str(dim),'-DEG',str(deg),'-SMO',smo])
-                for step in steps:
-                    for level in levels:
-                        damp = damp_min
-                        while damp<=damp_max:
-                            subprocess.run(['make','paper_poisson'])
-                            exec = os.path.join(EXEC_DIR_,'paper_poisson')
-                            # print("{} - {} - {} - {} - {}".format(str(exec),str(step),str(damp),str(geometry_id),str(level)))
-                            subprocess.run(['mpirun','-np',str(n_procs),exec,str(step),str(damp),str(geometry_id),str(level)])
-                            damp = damp + stride;
+                for distortion in options.distortions:
+                    for step in steps:
+                        for level in levels:
+                            damp = damp_min
+                            while damp<=damp_max:
+                                subprocess.run(['make','paper_poisson'])
+                                exec = os.path.join(EXEC_DIR_,'paper_poisson')
+                                print("{} - {} - {} - {} - {}".format(str(exec),str(step),str(damp),str(geometry_id),str(level),str(distortion)))
+                                subprocess.run(['mpirun','-np',str(n_procs),exec,str(step),str(damp),str(geometry_id),str(level),str(distortion)])
+                                damp = damp + stride;
                             
 if __name__ == '__main__':
     main()
