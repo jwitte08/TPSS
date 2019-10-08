@@ -17,7 +17,7 @@ def parse_args():
     )
     parser.add_argument('-np','--mpi-processes',
                         type=int,
-                        default=[1],
+                        default=1,
                         metavar='int',
                         help="number of mpi processes"
     )
