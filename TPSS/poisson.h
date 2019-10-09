@@ -20,7 +20,6 @@
 #include "vectorization_helper.h"
 
 using namespace dealii;
-using namespace Laplace;
 
 
 namespace Poisson
@@ -360,7 +359,8 @@ struct ModelProblem : public Subscriptor
 
       // *** setup Schwarz smoother
       typename SCHWARZ_SMOOTHER::AdditionalData smoother_data;
-      smoother_data.number_of_smoothing_steps = schwarz_data.number_of_smoothing_steps;
+      smoother_data.number_of_smoothing_steps =
+        rt_parameters.multigrid.pre_smoother.n_smoothing_steps;
       mg_schwarz_smoother.smoothers[level].initialize(
         mg_matrices[level],
         schwarz_preconditioner,
@@ -530,6 +530,7 @@ struct ModelProblem : public Subscriptor
 
     for(unsigned cycle = 0; cycle < rt_parameters.n_cycles; ++cycle)
     {
+      print_parameter("//////////////////////////////", "//////////////////////////////");
       print_parameter("Poisson run cycle:", cycle);
       *pcout << std::endl;
 

@@ -73,6 +73,14 @@ si_metric_prefix(std::size_t measurement)
   return oss.str();
 }
 
+std::string
+damping_to_fstring(double factor)
+{
+  std::ostringstream oss;
+  oss << factor;
+  return oss.str();
+}
+
 } // end namespace Util
 
 #endif /* UTILITIES_H_ */
