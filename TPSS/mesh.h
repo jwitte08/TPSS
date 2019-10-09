@@ -69,8 +69,8 @@ MeshParameter::to_string() const
 {
   std::ostringstream oss;
   oss << Util::parameter_to_fstring("Geometry:", str_geometry_variant(geometry_variant));
-  oss << Util::parameter_to_fstring("N of refinements:", n_refinements);
-  oss << Util::parameter_to_fstring("N of repetitions:", n_repetitions);
+  oss << Util::parameter_to_fstring("Number of refinements:", n_refinements);
+  oss << Util::parameter_to_fstring("Number of repetitions:", n_repetitions);
   oss << Util::parameter_to_fstring("Distortion factor:", distortion);
   return oss.str();
 }
@@ -79,9 +79,7 @@ template<int dim>
 std::string
 create_unit_cube(Triangulation<dim> & tria, const MeshParameter & prm)
 {
-  AssertThrow(prm.distortion < 0.5, ExcMessage("Check distortion factor."));
-  Assert(0. <= prm.distortion, ExcMessage("Distortion factor is invalid."));
-  Assert(0 <= prm.n_refinements, ExcMessage("N of refinements is negative."));
+  Assert(0 <= prm.n_refinements, ExcMessage("Number of refinements is negative."));
   Assert(0 < prm.n_repetitions, ExcMessage("At least one repitition required"));
   Assert(prm.geometry_variant == MeshParameter::GeometryVariant::Cube,
          ExcMessage("Check geometry variant"));
@@ -107,13 +105,12 @@ create_unit_cube(Triangulation<dim> & tria, const MeshParameter & prm)
       oss << n_root_cells_per_dim << (d != (dim - 1) ? " x " : "");
     return oss.str();
   };
-  oss << Util::parameter_to_fstring("Distorted root mesh:", str_root_mesh());
-  oss << Util::parameter_to_fstring("N of root cells:", tria.n_global_active_cells());
-  oss << Util::parameter_to_fstring("Distortion in %:", prm.distortion * 100);
+  oss << Util::parameter_to_fstring("Root mesh:", str_root_mesh());
+  oss << Util::parameter_to_fstring("Number of root cells:", tria.n_global_active_cells());
 
   // refine
   tria.refine_global(prm.n_refinements);
-  oss << Util::parameter_to_fstring("N of active cells:", tria.n_global_active_cells());
+  oss << Util::parameter_to_fstring("Number of active cells:", tria.n_global_active_cells());
 
   return oss.str();
 }
@@ -124,7 +121,7 @@ create_distorted_cube(Triangulation<dim> & tria, const MeshParameter & prm)
 {
   AssertThrow(prm.distortion < 0.5, ExcMessage("Check distortion factor."));
   Assert(0. <= prm.distortion, ExcMessage("Distortion factor is invalid."));
-  Assert(0 <= prm.n_refinements, ExcMessage("N of refinements is negative."));
+  Assert(0 <= prm.n_refinements, ExcMessage("Number of refinements is negative."));
   Assert(0 < prm.n_repetitions, ExcMessage("At least one repitition required"));
   Assert(prm.geometry_variant == MeshParameter::GeometryVariant::CubeDistorted,
          ExcMessage("Check geometry variant"));
@@ -154,12 +151,12 @@ create_distorted_cube(Triangulation<dim> & tria, const MeshParameter & prm)
     return oss.str();
   };
   oss << Util::parameter_to_fstring("Distorted root mesh:", str_root_mesh());
-  oss << Util::parameter_to_fstring("N of root cells:", tria.n_global_active_cells());
+  oss << Util::parameter_to_fstring("Number of root cells:", tria.n_global_active_cells());
   oss << Util::parameter_to_fstring("Distortion in %:", prm.distortion * 100);
 
   // refine
   tria.refine_global(prm.n_refinements);
-  oss << Util::parameter_to_fstring("N of active cells:", tria.n_global_active_cells());
+  oss << Util::parameter_to_fstring("Number of active cells:", tria.n_global_active_cells());
 
   return oss.str();
 }
