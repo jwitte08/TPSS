@@ -33,7 +33,7 @@ struct SolverParameter
   str_precondition_variant(const PreconditionVariant variant);
 
   std::string         variant              = "none"; // see SolverSelector
-  double              abs_tolerance        = 1.e-12;
+  double              abs_tolerance        = 1.e-14;
   double              rel_tolerance        = -1.;
   int                 n_iterations_max     = 100;
   PreconditionVariant precondition_variant = PreconditionVariant::None;
@@ -49,7 +49,7 @@ struct Parameter
   MeshParameter   mesh;
   SolverParameter solver;
   MGParameter     multigrid;
-  int             n_cycles = 0;
+  unsigned int    n_cycles = 0;
 
   std::string
   to_string() const;
@@ -84,10 +84,12 @@ std::string
 Parameter::to_string() const
 {
   std::ostringstream oss;
+  oss << Util::parameter_to_fstring("Number of run cycles:", n_cycles);
+  oss << std::endl;
   oss << mesh.to_string() << std::endl;
   oss << solver.to_string() << std::endl;
   if(solver.precondition_variant == SolverParameter::PreconditionVariant::GMG)
-    oss << multigrid.to_string() << std::endl;
+    oss << multigrid.to_string();
   return oss.str();
 }
 } // namespace RT
