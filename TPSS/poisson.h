@@ -15,6 +15,7 @@
 #include <deal.II/fe/fe_system.h>
 
 #include "laplace_problem.h"
+#include "rt_parameter.h"
 #include "utilities.h"
 #include "vectorization_helper.h"
 
@@ -42,6 +43,7 @@ struct ModelProblem : public Subscriptor
   using GMG_PRECONDITIONER     = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 
   // *** parameters and auxiliary structs
+  RT::Parameter                               rt_parameters;
   Laplace::Parameter                          parameters;
   mutable std::shared_ptr<ConditionalOStream> pcout;
   mutable Laplace::PostProcessData            pp_data;
@@ -86,8 +88,9 @@ struct ModelProblem : public Subscriptor
   std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
   PreconditionIdentity                preconditioner_id;
 
-  ModelProblem(const Laplace::Parameter & parameters_in)
-    : parameters(parameters_in),
+  ModelProblem(const RT::Parameter & rt_parameters_in, const Laplace::Parameter & parameters_in)
+    : rt_parameters(rt_parameters_in),
+      parameters(parameters_in),
       pcout(std::make_shared<ConditionalOStream>(std::cout,
                                                  Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) ==
                                                    0)),
@@ -102,6 +105,7 @@ struct ModelProblem : public Subscriptor
       mg_smoother_pre(nullptr),
       mg_smoother_post(nullptr)
   {
+    *pcout << rt_parameters.to_string();
   }
 
   unsigned
@@ -143,7 +147,7 @@ struct ModelProblem : public Subscriptor
     typename MatrixFree<dim, Number2>::AdditionalData additional_data;
     const auto                                        p_scheme =
       static_cast<typename MatrixFree<dim, Number2>::AdditionalData::TasksParallelScheme>(
-        parameters.mf_tasks_scheme_id);
+        0 /*none*/);
 
     additional_data.tasks_parallel_scheme = p_scheme;
     additional_data.mapping_update_flags =
@@ -170,7 +174,6 @@ struct ModelProblem : public Subscriptor
   {
     typename SubdomainHandler<dim, Number2>::AdditionalData fdss_additional_data;
     fdss_additional_data.level            = level;
-    fdss_additional_data.n_threads        = parameters.n_threads;
     fdss_additional_data.patch_variant    = parameters.schwarz_smoother_data.patch_variant;
     fdss_additional_data.smoother_variant = parameters.schwarz_smoother_data.smoother_variant;
     fdss_additional_data.print_details    = parameters.schwarz_smoother_data.print_details;
@@ -211,6 +214,8 @@ struct ModelProblem : public Subscriptor
     this->level    = static_cast<unsigned int>(-1);
     auto mesh_info = std::make_pair<bool, std::string>(false, "");
 
+    if(false) // TODO check estimated dofs
+      return false;
     //: create (subdivided) hyper rectangle
     {
       const double left = 0.0, right = 1.0;

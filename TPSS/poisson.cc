@@ -58,26 +58,49 @@ struct Test
 
   const TestParameter prms;
   Laplace::Parameter  parameters;
+  RT::Parameter       rt_parameters;
 
   Test(const TestParameter & prms_in = TestParameter{}) : prms(prms_in)
   {
+    {
+      //: discretization
+      parameters.n_cycles  = 1;
+      parameters.n_refines = prms.n_refinements;
+      //: iterative solver
+      parameters.solver_reduction      = prms.cg_reduction;
+      parameters.solver_max_iterations = 100;
+      parameters.precondition_variant  = Parameter::PreconditionVariant::MG;
+      //: multigrid
+      parameters.coarse_level                           = 1;
+      parameters.schwarz_smoother_data.patch_variant    = prms.patch_variant;
+      parameters.schwarz_smoother_data.smoother_variant = prms.smoother_variant;
+      parameters.schwarz_smoother_data.manual_coloring  = true;
+      const double damping_factor =
+        TPSS::lookup_damping_factor(prms.patch_variant, prms.smoother_variant, dim);
+      parameters.schwarz_smoother_data.damping_factor            = damping_factor;
+      parameters.schwarz_smoother_data.number_of_smoothing_steps = prms.n_smoothing_steps;
+      parameters.mg_smoother_post_reversed                       = true;
+    }
+
     //: discretization
-    parameters.n_cycles  = 1;
-    parameters.n_refines = prms.n_refinements;
+    rt_parameters.n_cycles              = 1;
+    rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+    rt_parameters.mesh.n_refinements    = 1;
+    rt_parameters.mesh.n_repetitions    = 2;
     //: iterative solver
-    parameters.solver_reduction      = prms.cg_reduction;
-    parameters.solver_max_iterations = 100;
-    parameters.precondition_variant  = Parameter::PreconditionVariant::MG;
+    rt_parameters.solver.rel_tolerance        = prms.cg_reduction;
+    rt_parameters.solver.precondition_variant = SolverParameter::PreconditionVariant::GMG;
     //: multigrid
-    parameters.coarse_level                           = 1;
-    parameters.schwarz_smoother_data.patch_variant    = prms.patch_variant;
-    parameters.schwarz_smoother_data.smoother_variant = prms.smoother_variant;
-    parameters.schwarz_smoother_data.manual_coloring  = true;
+    rt_parameters.multigrid.coarse_level     = 1;
+    rt_parameters.multigrid.smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
+    rt_parameters.multigrid.smoother.schwarz.patch_variant    = prms.patch_variant;
+    rt_parameters.multigrid.smoother.schwarz.smoother_variant = prms.smoother_variant;
+    rt_parameters.multigrid.smoother.schwarz.manual_coloring  = true;
     const double damping_factor =
       TPSS::lookup_damping_factor(prms.patch_variant, prms.smoother_variant, dim);
-    parameters.schwarz_smoother_data.damping_factor            = damping_factor;
-    parameters.schwarz_smoother_data.number_of_smoothing_steps = prms.n_smoothing_steps;
-    parameters.mg_smoother_post_reversed                       = true;
+    rt_parameters.multigrid.smoother.schwarz.damping_factor = damping_factor;
+    rt_parameters.multigrid.smoother.n_smoothing_steps      = prms.n_smoothing_steps;
+    rt_parameters.multigrid.mg_smoother_post_reversed       = true;
   }
 
   std::string
@@ -172,7 +195,7 @@ struct Test
   partial()
   {
     Timings        timings_vmult, timings_smooth, timings_mg, timings_total;
-    PoissonProblem poisson_problem{parameters};
+    PoissonProblem poisson_problem{rt_parameters, parameters};
     poisson_problem.create_triangulation(parameters.n_refines);
     poisson_problem.distribute_dofs();
 
@@ -311,7 +334,7 @@ struct Test
   void
   full()
   {
-    PoissonProblem     poisson_problem{parameters};
+    PoissonProblem     poisson_problem{rt_parameters, parameters};
     std::ostringstream oss;
     const bool         is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
     poisson_problem.pcout            = std::make_shared<ConditionalOStream>(oss, is_first_proc);
