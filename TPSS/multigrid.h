@@ -46,16 +46,21 @@ struct CoarseGridParameter
   static std::string
   str_solver_variant(const SolverVariant variant);
 
-  double      accuracy         = 1.e-4;
-  std::string iterative_solver = "none"; // see SolverSelector
+  SolverVariant solver_variant   = SolverVariant::None;
+  double        accuracy         = 1.e-4;
+  std::string   iterative_solver = "none"; // see SolverSelector
+
+  std::string
+  to_string() const;
 };
 
 struct MGParameter
 {
-  std::string       cycle_variant = "V-cycle"; // TODO use enum
-  SmootherParameter smoother;
-  int               coarse_level              = 0;
-  bool              mg_smoother_post_reversed = false;
+  std::string         cycle_variant = "V-cycle"; // TODO use enum
+  SmootherParameter   pre_smoother;
+  SmootherParameter   post_smoother;
+  CoarseGridParameter coarse_grid;
+  int                 coarse_level = 0;
 
   std::string
   to_string() const;
@@ -68,6 +73,19 @@ CoarseGridParameter::str_solver_variant(const CoarseGridParameter::SolverVariant
 {
   const std::string str_variant[] = {"None", "Accurate Iterative Solver"};
   return str_variant[(int)variant];
+}
+
+std::string
+CoarseGridParameter::to_string() const
+{
+  std::ostringstream oss;
+  oss << Util::parameter_to_fstring("Coarse grid solver:", str_solver_variant(solver_variant));
+  if(solver_variant == SolverVariant::IterativeAcc)
+  {
+    oss << Util::parameter_to_fstring("Iterative solver:", iterative_solver);
+    oss << Util::parameter_to_fstring("Accuracy:", accuracy);
+  }
+  return oss.str();
 }
 
 std::string
@@ -96,7 +114,12 @@ MGParameter::to_string() const
 {
   std::ostringstream oss;
   oss << Util::parameter_to_fstring("Multigrid:", cycle_variant);
-  oss << smoother.to_string() << std::endl;
+  oss << Util::parameter_to_fstring("/// Pre-smoother", "");
+  oss << pre_smoother.to_string();
+  oss << Util::parameter_to_fstring("/// Post-smoother", "");
+  oss << post_smoother.to_string();
+  oss << Util::parameter_to_fstring("/// Coarse grid solver", "");
+  oss << coarse_grid.to_string();
   return oss.str();
 }
 
