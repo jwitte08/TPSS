@@ -1,0 +1,24 @@
+#!/bin/bash
+
+export BUILD_DIR="@CMAKE_BINARY_DIR@" # @...@ replaced by CMake
+echo "Build directory: ${BUILD_DIR}"
+
+#: TPSS compile time parameters
+export SMO='ACP'
+echo "Smoother: ${SMO}"
+export DIM=3
+echo "Number of dimensions: ${DIM}"
+export DEG=3
+echo "Finite element degree: ${DEG}"
+
+#: mpi
+export NP=1
+echo "Number of mpi procs: ${NP}"
+export MPI_OPTS='--bind-to core --map-by core -display-devel-map -report-bindings'
+echo "MPI options: ${MPI_OPTS}"
+
+#: threads
+export OMP_NUM_THREADS=1
+echo "Number of threads (OMP): ${OMP_NUM_THREADS}"
+export DEAL_II_NUM_THREADS=${OMP_NUM_THREADS}
+echo "Number of threads (deal.II): $DEAL_II_NUM_THREADS"

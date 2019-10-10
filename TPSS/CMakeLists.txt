@@ -51,6 +51,11 @@ configure_file(
   ${CMAKE_SOURCE_DIR}/scripts/ct_parameter.py.in
   ${CMAKE_BINARY_DIR}/scripts/ct_parameter.py
   )
+configure_file(
+  ${CMAKE_SOURCE_DIR}/scripts/simlap_env.sh.in
+  ${CMAKE_BINARY_DIR}/scripts/simlap_env.sh
+  @ONLY
+  )
 
 #: find a python3 interpreter
 find_package ( PythonInterp 3 REQUIRED )
