@@ -56,13 +56,20 @@ def main():
     distortions = options.distortion
     n_smoothing_steps = options.smoothing_steps
     refinement_cycle_pairs = options.refinement_cycle_pair
-
+    def gen_mpirun():
+        yield "mpirun"
+        np_env = str(os.environ['NP']).split()
+        for opt in np_env:
+            yield str(opt)
+    mpirun = list(gen_mpirun())
+    
     for n_refines, n_cycles in refinement_cycle_pairs:
         for n_steps in n_smoothing_steps:
             for dist in distortions:
                 for damp in dampings:
                     exec = os.path.join(EXEC_DIR_, 'poisson_distorted')
                     program = [exec, str(dist), str(damp), str(n_steps), str(n_refines), str(n_cycles)]
+                    program = mpirun + program
                     print("program: {}".format(program))
                     subprocess.run(program)
     return 0
