@@ -52,9 +52,13 @@ configure_file(
   ${CMAKE_BINARY_DIR}/scripts/ct_parameter.py
   )
 configure_file(
-  ${CMAKE_SOURCE_DIR}/scripts/simlap_env.sh.in
-  ${CMAKE_BINARY_DIR}/scripts/simlap_env.sh
+  ${CMAKE_SOURCE_DIR}/scripts/env.sh.in
+  ${CMAKE_BINARY_DIR}/env.sh
   @ONLY
+  )
+configure_file(
+  ${CMAKE_SOURCE_DIR}/scripts/poisson_distorted.py.in
+  ${CMAKE_BINARY_DIR}/scripts/poisson_distorted.py
   )
 
 #: find a python3 interpreter
