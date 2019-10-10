@@ -83,11 +83,12 @@ struct Test
     rt_parameters.multigrid.coarse_grid.iterative_solver = prms.solver_variant;
     rt_parameters.multigrid.coarse_grid.accuracy         = prms.coarse_grid_accuracy;
     rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
-    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = prms.patch_variant;
-    rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = prms.smoother_variant;
-    rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring  = true;
-    rt_parameters.multigrid.pre_smoother.schwarz.damping_factor   = damping_factor;
-    rt_parameters.multigrid.pre_smoother.n_smoothing_steps        = prms.n_smoothing_steps;
+    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = prms.patch_variant;
+    rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = prms.smoother_variant;
+    rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
+    rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
+    rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = prms.n_smoothing_steps;
+    rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(8, fe_degree + 1);
     rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
     rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
 

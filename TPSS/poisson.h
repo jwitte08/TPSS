@@ -42,8 +42,7 @@ struct ModelProblem : public Subscriptor
   using GMG_PRECONDITIONER     = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 
   // *** parameters and auxiliary structs
-  RT::Parameter rt_parameters;
-  /* Laplace::Parameter                          parameters; */
+  RT::Parameter                               rt_parameters;
   mutable std::shared_ptr<ConditionalOStream> pcout;
   mutable Laplace::PostProcessData            pp_data;
 
@@ -89,7 +88,6 @@ struct ModelProblem : public Subscriptor
 
   ModelProblem(const RT::Parameter & rt_parameters_in)
     : rt_parameters(rt_parameters_in),
-      /* parameters(parameters_in), */
       pcout(std::make_shared<ConditionalOStream>(std::cout,
                                                  Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) ==
                                                    0)),
