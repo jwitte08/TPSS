@@ -365,7 +365,7 @@ main(int argc, char * argv[])
   Test<CT::DIMENSION_, CT::FE_DEGREE_> tester(prms);
 
   time.restart();
-  pcout << Util::parameter_to_fstring("Testing MF::vmult, TPSS::smooth & MG::vmult", "");
+  pcout << Util::parameter_to_fstring("MF::vmult, TPSS::smooth & MG::vmult", "");
   tester.partial();
   time.stop();
   time.print_last_lap_wall_time_data(pcout);
