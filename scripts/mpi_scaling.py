@@ -35,20 +35,35 @@ def parse_args():
             default='.',
             help='The directory containing the strong scaling results'
             )
+    parser.add_argument(
+            '-mth', '--method',
+            type=str,
+            default='ACP',
+            choices=['ACP', 'MCP', 'MVP'],
+            help='The smoothing variant'
+            )
     args = parser.parse_args()
     return args
 
 
-def main():
+def plot_strong_scaling(str_method, str_section):
+    eligible_names = ['2MDoFs', '16MDoFs', '134MDoFs', '1GDoFs']
+    linestyles = ['solid', 'dotted', 'dashed', 'dashdot', 'loosely dashed']
+    test_to_linestyle = {
+            name: style for name, style in zip(eligible_names, linestyles)
+            }
+    markerstyles = ['.', '^', 'x', 'd', 'x']
+    test_to_marker = {
+            name: style for name, style in zip(eligible_names, markerstyles)
+            }
+    marker_size = 8
+    line_width = 1.5
+
     options = parse_args()
     root_dir = options.root_dir
-
-    #: Find Files
-    str_method = r'MVP'
-    str_section = r'vmult'
     str_xlabel = r'(\d+)procs'
     str_ylabel = r'apply (max)'
-    str_tests = r'(\d+[kMG])DoFs'
+    str_tests = r'\d+[kMG]DoFs'
     pattern_file = r'{}_{}_3D_3deg_{}_{}.time\Z'.format(
             str_section,
             str_method,
@@ -56,23 +71,35 @@ def main():
             str_tests
             )
 
-    orgfiles = list(find_files(root_dir, pattern_file))
+    orgfiles = [
+            os.path.join(root_dir, basename)
+            for basename in find_files(root_dir, pattern_file)
+            ]
+
     def yield_testnames():
         pattern = str_tests
         for file in orgfiles:
             match = re.search(pattern, str(file))
             if match:
                 yield match.group(0)
+
+    def convert_metric_prefix(name):
+        prefix_to_number = {'k': 1e+3, 'M': 1e+6, 'G': 1e+9}
+        match = re.search(r'(\d+)([kMG])', name)
+        assert match, "No valid prefix: {}".format(name)
+        value = float(match.group(1)) * prefix_to_number[match.group(2)]
+        return value
     testnames = set(yield_testnames())
     print('Testnames found: {}'.format(testnames))
-    testnames = set(['2MDoFs', '16MDoFs', '134MDoFs', '1GDoFs'])
+    testnames = testnames.intersection(eligible_names)
+    testnames = sorted(testnames, key=convert_metric_prefix, reverse=False)
     print('Testnames used: {}'.format(testnames))
+
     fieldnames = [str_ylabel]
 
     def yield_orgfiles():
         for testname in testnames:
             def yield_per_test():
-#                orgfiles = find_files(root_dir, pattern_file)
                 for file in orgfiles:
                     fname = str(file)
                     if (fname.find(testname) != -1):
@@ -105,14 +132,12 @@ def main():
             yield xy
 
     #: Create (sub)plot
-    ax = plt.subplot(111)
-    plt.suptitle("Strong Scaling of {} ({})".format(str_method, str_section))
     plt.loglog()
     plt.grid(True)
 
     #: Insert data
     xydata = list(yield_xydata())
-    for xy in xydata:
+    for xy, name in zip(xydata, testnames):
         x, y = zip(*xy)
 
         def yield_perfect():
@@ -121,19 +146,70 @@ def main():
             for i in range(n):
                 yield first * (0.5**i)
         y_perf = list(yield_perfect())
-        plt.plot(x, y)
+        plt.plot(x, y,
+                 label=name,
+                 color='black',
+                 marker=test_to_marker[name],
+                 markersize=marker_size,
+                 linewidth=line_width
+                 )
+        # linestyle=test_to_linestyle[name],
+
         plt.plot(x, y_perf, color='grey', linestyle='dotted', linewidth='0.8')
 
-    #: Label axes
-    xy, *rest = xydata
-    xticks, _ = zip(*xy)
+    #: Legend
+    # plt.legend()
+    return xydata  # todo
+
+
+def set_xticks(xydata):
+    xticks = set()
+    for xy in xydata:
+        x, y = zip(*xy)
+        xticks = xticks.union(set(x))
+    xticks = sorted(xticks)
     xticklabels = [str(value) for value in xticks]
     plt.xticks(ticks=xticks, labels=xticklabels)
-    ax.tick_params(axis='x', which='minor', bottom=False)
+    plt.tick_params(axis='x', which='minor', bottom=False)
 
-    #: Legend
 
+def main():
+    options = parse_args()
+    method = options.method
+    fig = plt.figure()
+
+    ax11 = plt.subplot(221)
+    section = r'vmult'
+    plt.title("{}".format(section))
+    xydata = plot_strong_scaling(str_method=method, str_section=section)
+    plt.ylabel("Wall time [s]")
+
+    plt.subplot(222, sharex=ax11, sharey=ax11)
+    section = r'smooth'
+    plt.title("{}".format(section))
+    xydata = plot_strong_scaling(str_method=method, str_section=section)
+
+    ax21 = plt.subplot(223, sharex=ax11)
+    section = r'mg'
+    plt.title("{}".format(section))
+    xydata = plot_strong_scaling(str_method=method, str_section=section)
+    plt.ylabel("Wall time [s]")
+    plt.xlabel("Number of cores")
+
+    plt.subplot(224, sharex=ax11, sharey=ax21)
+    section = r'solve'
+    plt.title("{}".format(section))
+    xydata = plot_strong_scaling(str_method=method, str_section=section)
+    plt.xlabel("Number of cores")
+
+    set_xticks(xydata)
+    plt.suptitle("Strong Scaling ({})".format(method))
+    handles, labels = ax11.get_legend_handles_labels()
+    n_labels = len(labels)
+    fig.legend(handles, labels, loc='lower left', ncol=n_labels, mode="expand")
+    fig.tight_layout()
     plt.show()
+
     return 0
 
 
