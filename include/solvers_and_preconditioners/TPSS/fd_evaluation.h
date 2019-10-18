@@ -19,7 +19,7 @@ using namespace dealii;
 // TODO merge Base and Derivation ?
 // TODO no need for n_comp template !
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
-class FDPatchEvaluationBase
+class FDEvaluationBase
 {
 public:
   static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
@@ -76,21 +76,21 @@ public:
   const unsigned int       n_cells_per_direction;
 
 protected:
-  FDPatchEvaluationBase(const SubdomainHandler<dim, Number> & sd_handler,
+  FDEvaluationBase(const SubdomainHandler<dim, Number> & sd_handler,
                         const unsigned int                    dofh_id = 0,
                         const unsigned int                    quad_id = 0);
 
-  FDPatchEvaluationBase(const SubdomainHandler<dim, Number> & sd_handler,
+  FDEvaluationBase(const SubdomainHandler<dim, Number> & sd_handler,
                         const TPSS::PatchVariant              patch_variant,
                         const unsigned int                    dofh_id = 0,
                         const unsigned int                    quad_id = 0);
 
-  ~FDPatchEvaluationBase();
+  ~FDEvaluationBase();
 
-  FDPatchEvaluationBase(const FDPatchEvaluationBase & other) = delete;
+  FDEvaluationBase(const FDEvaluationBase & other) = delete;
 
-  FDPatchEvaluationBase &
-  operator=(const FDPatchEvaluationBase & other) = delete;
+  FDEvaluationBase &
+  operator=(const FDEvaluationBase & other) = delete;
 
   static void submit_cell_matrix(Table<2, VectorizedArray<Number>> &       subdomain_matrix,
                                  const Table<2, VectorizedArray<Number>> & cell_matrix,
@@ -188,7 +188,7 @@ protected:
  */
 // TODO merge Base and Derivation ?
 template<int dim, int fe_degree, int n_q_points_1d, typename Number>
-class FDEEvaluation : public FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, 1, Number>
+class FDEvaluation : public FDEvaluationBase<dim, fe_degree, n_q_points_1d, 1, Number>
 {
 public:
   using CellAssembler =
@@ -198,14 +198,14 @@ public:
   static constexpr unsigned int n_dofs_per_cell = Utilities::pow(fe_order, dim);
 
 private:
-  using Base = FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, 1, Number>;
+  using Base = FDEvaluationBase<dim, fe_degree, n_q_points_1d, 1, Number>;
   static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
 
 public:
-  FDEEvaluation(const SubdomainHandler<dim, Number> & sd_handler_in,
+  FDEvaluation(const SubdomainHandler<dim, Number> & sd_handler_in,
                 const unsigned int                    dofh_index = 0,
                 const unsigned int                    quad_index = 0)
-    : FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, 1, Number>(sd_handler_in,
+    : FDEvaluationBase<dim, fe_degree, n_q_points_1d, 1, Number>(sd_handler_in,
                                                                       dofh_index,
                                                                       quad_index)
   {
@@ -236,12 +236,12 @@ public:
     this->values_filled = true;
   }
 
-  ~FDEEvaluation() = default;
+  ~FDEvaluation() = default;
 
-  FDEEvaluation(const FDEEvaluation & other) = delete;
+  FDEvaluation(const FDEvaluation & other) = delete;
 
-  FDEEvaluation &
-  operator=(const FDEEvaluation & other) = delete;
+  FDEvaluation &
+  operator=(const FDEvaluation & other) = delete;
 
   void
   compute_unit_mass(const ArrayView<VectorizedArray<Number>> & matrix) const;
@@ -269,7 +269,7 @@ public:
 
   template<typename CellOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action(const FDEEvaluation & eval_ansatz, CellOperation && cell_operation) const
+  patch_action(const FDEvaluation & eval_ansatz, CellOperation && cell_operation) const
   {
     const auto patch_variant = Base::patch_variant;
     if(patch_variant == TPSS::PatchVariant::cell)
@@ -311,7 +311,7 @@ public:
 
   template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action(const FDEEvaluation &      eval_ansatz,
+  patch_action(const FDEvaluation &      eval_ansatz,
                const CellOperation &      cell_operation,
                const FaceOperation &      face_operation,
                const InterfaceOperation & interface_operation) const
@@ -401,7 +401,7 @@ private:
 
   template<int n_cells_per_direction, typename CellOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action_impl(const FDEEvaluation & eval_ansatz, CellOperation && cell_operation) const
+  patch_action_impl(const FDEvaluation & eval_ansatz, CellOperation && cell_operation) const
   {
     using MatrixType                            = Table<2, VectorizedArray<Number>>;
     constexpr unsigned int n_dofs_per_direction = fe_order * n_cells_per_direction;
@@ -459,7 +459,7 @@ private:
 
   template<typename CellOperation, typename FaceOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action_dgcp_impl(const FDEEvaluation & eval_ansatz,
+  patch_action_dgcp_impl(const FDEvaluation & eval_ansatz,
                          const CellOperation & cell_operation,
                          const FaceOperation & face_operation) const
   {
@@ -549,7 +549,7 @@ private:
 
   template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action_dgvp_impl(const FDEEvaluation &      eval_ansatz,
+  patch_action_dgvp_impl(const FDEvaluation &      eval_ansatz,
                          const CellOperation &      cell_operation,
                          const FaceOperation &      face_operation,
                          const InterfaceOperation & interface_operation) const
@@ -611,12 +611,12 @@ private:
 
 // ++++++++++++++++++++++++++++++   inline functions   ++++++++++++++++++++++++++++++
 
-// ______________________________   FDPatchEvaluationBase   ______________________________
+// ______________________________   FDEvaluationBase   ______________________________
 
 
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
-inline FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::FDPatchEvaluationBase(
+inline FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::FDEvaluationBase(
   const SubdomainHandler<dim, Number> & sd_handler_in,
   const unsigned int                    dofh_id,
   const unsigned int                    quad_id)
@@ -634,8 +634,8 @@ inline FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::FDP
 }
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
-inline FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::
-  ~FDPatchEvaluationBase()
+inline FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::
+  ~FDEvaluationBase()
 {
   try
   {
@@ -659,7 +659,7 @@ inline FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
 inline void
-FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(
+FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(
   const unsigned int patch)
 {
   AssertIndexRange(patch, n_subdomains);
@@ -686,7 +686,7 @@ FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
 inline const VectorizedArray<Number> &
-FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::get_JxW(
+FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::get_JxW(
   const int qpoint_no,
   const int direction,
   const int cell_no) const
@@ -700,7 +700,7 @@ FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::get_JxW(
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
 inline const VectorizedArray<Number> &
-FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::get_h(const int direction,
+FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::get_h(const int direction,
                                                                             const int cell_no) const
 {
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
@@ -710,7 +710,7 @@ FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::get_h(cons
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
 inline const VectorizedArray<Number> &
-FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_value(
+FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_value(
   const int dof,
   const int qpoint_no,
   const int direction,
@@ -727,7 +727,7 @@ FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_valu
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
 inline const VectorizedArray<Number> &
-FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_value_face(
+FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_value_face(
   const int dof,
   const int face_no,
   const int direction,
@@ -744,7 +744,7 @@ FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_valu
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
 inline const VectorizedArray<Number> &
-FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_gradient(
+FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_gradient(
   const int dof,
   const int qpoint_no,
   const int direction,
@@ -760,7 +760,7 @@ FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_grad
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
 inline const VectorizedArray<Number> &
-FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_gradient_face(
+FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_gradient_face(
   const int dof,
   const int face_no,
   const int direction,
@@ -774,11 +774,11 @@ FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::shape_grad
            cell_no * n_cells_per_direction * fe_order);
 }
 
-// ______________________________   FDEEvaluation   ______________________________
+// ______________________________   FDEvaluation   ______________________________
 
 template<int dim, int fe_degree, int n_q_points_1d, typename Number>
 inline void
-FDEEvaluation<dim, fe_degree, n_q_points_1d, Number>::compute_unit_mass(
+FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::compute_unit_mass(
   const ArrayView<VectorizedArray<Number>> & matrix) const
 {
   AssertDimension(matrix.size(), fe_order * fe_order);

@@ -1,5 +1,5 @@
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
-void FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::submit_cell_matrix(
+void FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::submit_cell_matrix(
   Table<2, VectorizedArray<Number>> &       subdomain_matrix,
   const Table<2, VectorizedArray<Number>> & cell_matrix,
   const unsigned int                        cell_no_row,
@@ -21,7 +21,7 @@ void FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::submi
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
 void
-FDPatchEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::evaluate(
+FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::evaluate(
   const bool do_gradients)
 {
   /*** scale the reference weights in each direction to obtain JxW in 1D ***/

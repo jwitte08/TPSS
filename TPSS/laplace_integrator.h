@@ -214,7 +214,7 @@ public:
       }
     };
 
-    auto && evaluator = FDEEvaluation<dim, fe_degree, fe_degree + 1, Number>{data};
+    auto && evaluator = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>{data};
     assemble_subspace_inverses_impl(evaluator);
   }
 

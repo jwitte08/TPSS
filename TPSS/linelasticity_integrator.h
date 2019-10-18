@@ -120,7 +120,7 @@ class MatrixIntegrator
 public:
   using value_type    = Number;
   using transfer_type = typename TPSS::PatchTransferBlock<dim, fe_degree, fe_degree + 1, Number>;
-  using EvaluatorType = FDEEvaluation<dim, fe_degree, fe_degree + 1, Number>;
+  using EvaluatorType = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
   using VectorizedMatrixType = Table<2, VectorizedArray<Number>>;
 
 private:
