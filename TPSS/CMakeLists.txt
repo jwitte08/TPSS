@@ -84,7 +84,7 @@ SET( SOURCE_FILES
   # Tpatch_transfer_02.cc
   # Ttensors_01.cc
   # Tblock_matrix_diagonal_01.cc
-  # Tlaplace_check_iterations.cc
+  Tlaplace_check_iterations.cc
   # Tlaplace_geometry.cc
   # Tlaplace_integrator_cp.cc
   # Tlaplace_integrator_mf.cc
