@@ -21,8 +21,7 @@ void FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::submit_cel
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
 void
-FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::evaluate(
-  const bool do_gradients)
+FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::evaluate(const bool do_gradients)
 {
   /*** scale the reference weights in each direction to obtain JxW in 1D ***/
   if(!weights_filled)
