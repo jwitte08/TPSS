@@ -126,7 +126,6 @@ protected:
   unsigned int                                  n_batches         = -1;
   const std::pair<unsigned int, unsigned int> * batch_count       = nullptr;
   const std::array<unsigned int, 3> *           batch_triple      = nullptr;
-  bool                                          is_interior_patch = false;
 
   /**
    * lexicographical ordering: face_no_1d < direction
@@ -588,15 +587,9 @@ FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(const un
   AssertIndexRange(patch, n_subdomains);
   patch_id                = patch;
   const auto & patch_info = sd_handler.get_patch_info();
-  is_interior_patch       = patch_info.is_interior_patch[patch];
   std::copy_n(patch_info.at_boundary_mask.data() + GeometryInfo<dim>::faces_per_cell * patch,
               GeometryInfo<dim>::faces_per_cell,
               bdry_mask_id.begin());
-  Assert(is_interior_patch ? std::all_of(bdry_mask_id.cbegin(),
-                                         bdry_mask_id.cend(),
-                                         [](auto && m) { return m == 0; }) :
-                             true,
-         ExcInternalError());
 
   const auto & mf_connect = sd_handler.get_matrixfree_connect();
   n_batches               = mf_connect.set_pointers_and_count(patch_id, batch_triple, batch_count);

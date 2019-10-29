@@ -81,12 +81,6 @@ public:
   std::vector<unsigned int> patch_starts;
 
   /**
-   * A boolean array that stores the information if a (macro) patch is physically interior.
-   */
-  // TODO this field is redundant compared to at_boundary_mask
-  std::vector<unsigned char> is_interior_patch;
-
-  /**
    * A boolean array that stores the information if a (macro) patch is incomplete.
    */
   std::vector<unsigned char> is_incomplete_patch;
@@ -484,7 +478,7 @@ struct MatrixFreeConnect
  * determined by the PartitionData @p subdomain_partition_data and @p
  * patch_starts stored in the PatchInfo. In addition, we extract
  * physical informations on subdomains and store them in the
- * PatchInfo, e.g. @p is_interior_patch or @p at_boundary_mask fields.
+ * PatchInfo, e.g. @p at_boundary_mask fields.
  *
  * Partitions per color are set as follows:
  * 1st partition = interior incomplete
@@ -542,15 +536,6 @@ public:
   unsigned int
   n_lanes_filled(const unsigned int patch_id) const;
 
-  // bool
-  // is_incomplete (const unsigned int patch_id) const;
-
-  // bool
-  // is_interior_range (const std::pair<unsigned int, unsigned int>& range) const;
-
-  // bool
-  // is_interior (const unsigned int patch_id, const unsigned int color = -1) const;
-
   /**
    * Returns the collection of macro cells describing the macro patch
    * @p patch_id subject to a lexicographical ordering.
@@ -599,7 +584,6 @@ inline void
 PatchInfo<dim>::clear()
 {
   patch_starts.clear();
-  is_interior_patch.clear();
   is_incomplete_patch.clear();
   at_boundary_mask.clear();
   subdomain_partition_data.clear();
