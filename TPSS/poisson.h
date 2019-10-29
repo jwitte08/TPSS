@@ -15,11 +15,11 @@
 #include <deal.II/fe/fe_system.h>
 
 #include "laplace_problem.h"
+#include "rt_parameter.h"
 #include "utilities.h"
 #include "vectorization_helper.h"
 
 using namespace dealii;
-using namespace Laplace;
 
 
 namespace Poisson
@@ -42,7 +42,7 @@ struct ModelProblem : public Subscriptor
   using GMG_PRECONDITIONER     = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 
   // *** parameters and auxiliary structs
-  Laplace::Parameter                          parameters;
+  RT::Parameter                               rt_parameters;
   mutable std::shared_ptr<ConditionalOStream> pcout;
   mutable Laplace::PostProcessData            pp_data;
 
@@ -86,8 +86,8 @@ struct ModelProblem : public Subscriptor
   std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
   PreconditionIdentity                preconditioner_id;
 
-  ModelProblem(const Laplace::Parameter & parameters_in)
-    : parameters(parameters_in),
+  ModelProblem(const RT::Parameter & rt_parameters_in)
+    : rt_parameters(rt_parameters_in),
       pcout(std::make_shared<ConditionalOStream>(std::cout,
                                                  Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) ==
                                                    0)),
@@ -125,14 +125,16 @@ struct ModelProblem : public Subscriptor
   void
   print_informations()
   {
-    print_parameter("Geometry:", Parameter::str_geometry_variant[(int)parameters.geometry_variant]);
+    // print_parameter("Geometry:",
+    // Parameter::str_geometry_variant[(int)parameters.geometry_variant]);
     AssertThrow(fe, ExcMessage("Finite element is not initialized."));
     print_parameter("Finite element:", fe->get_name());
-    print_parameter("Iterative solver:",
-                    Parameter::str_solver_variant[(int)parameters.solver_variant]);
-    print_parameter("Solver reduction:", parameters.solver_reduction);
-    print_parameter("Preconditioner:",
-                    parameters.str_precondition_variant(parameters.precondition_variant));
+    // print_parameter("Iterative solver:",
+    //                 Parameter::str_solver_variant[(int)parameters.solver_variant]);
+    // print_parameter("Solver reduction:", parameters.solver_reduction);
+    // print_parameter("Preconditioner:",
+    //                 parameters.str_precondition_variant(parameters.precondition_variant));
+    *pcout << rt_parameters.to_string();
     *pcout << std::endl;
   }
 
@@ -143,7 +145,7 @@ struct ModelProblem : public Subscriptor
     typename MatrixFree<dim, Number2>::AdditionalData additional_data;
     const auto                                        p_scheme =
       static_cast<typename MatrixFree<dim, Number2>::AdditionalData::TasksParallelScheme>(
-        parameters.mf_tasks_scheme_id);
+        0 /*none*/);
 
     additional_data.tasks_parallel_scheme = p_scheme;
     additional_data.mapping_update_flags =
@@ -169,21 +171,23 @@ struct ModelProblem : public Subscriptor
                       const std::shared_ptr<const MatrixFree<dim, Number2>> mf_storage)
   {
     typename SubdomainHandler<dim, Number2>::AdditionalData fdss_additional_data;
-    fdss_additional_data.level            = level;
-    fdss_additional_data.n_threads        = parameters.n_threads;
-    fdss_additional_data.patch_variant    = parameters.schwarz_smoother_data.patch_variant;
-    fdss_additional_data.smoother_variant = parameters.schwarz_smoother_data.smoother_variant;
-    fdss_additional_data.print_details    = parameters.schwarz_smoother_data.print_details;
-    if(parameters.schwarz_smoother_data.manual_coloring)
+    fdss_additional_data.level         = level;
+    fdss_additional_data.level         = level;
+    fdss_additional_data.patch_variant = rt_parameters.multigrid.pre_smoother.schwarz.patch_variant;
+    fdss_additional_data.smoother_variant =
+      rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant;
+    fdss_additional_data.print_details = rt_parameters.multigrid.pre_smoother.schwarz.print_details;
+    if(rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring)
     {
       fdss_additional_data.coloring_func = std::ref(red_black_coloring);
     }
     fdss_additional_data.n_q_points_surrogate =
-      parameters.schwarz_smoother_data.n_q_points_surrogate;
+      rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate;
     fdss_additional_data.normalize_surrogate_patch =
-      parameters.schwarz_smoother_data.normalize_surrogate_patch;
-    fdss_additional_data.use_arc_length = parameters.schwarz_smoother_data.use_arc_length;
-    const auto patch_storage            = std::make_shared<SubdomainHandler<dim, Number2>>();
+      rt_parameters.multigrid.pre_smoother.schwarz.normalize_surrogate_patch;
+    fdss_additional_data.use_arc_length =
+      rt_parameters.multigrid.pre_smoother.schwarz.use_arc_length;
+    const auto patch_storage = std::make_shared<SubdomainHandler<dim, Number2>>();
     patch_storage->reinit(mf_storage, fdss_additional_data);
     return patch_storage;
   }
@@ -211,18 +215,18 @@ struct ModelProblem : public Subscriptor
     this->level    = static_cast<unsigned int>(-1);
     auto mesh_info = std::make_pair<bool, std::string>(false, "");
 
-    //: create (subdivided) hyper rectangle
-    {
-      const double left = 0.0, right = 1.0;
-      GridGenerator::subdivided_hyper_cube(triangulation, 1, left, right);
-      // const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
-      triangulation.refine_global(n_refinements);
-      mesh_info.first = true; // TODO
-    }
-
-    const bool mesh_is_valid = mesh_info.first;
-    if(!mesh_is_valid)
+    if(false) // TODO check estimated dofs
       return false;
+
+    MeshParameter mesh_prms = rt_parameters.mesh;
+    mesh_prms.n_refinements = n_refinements;
+    if(rt_parameters.mesh.geometry_variant == MeshParameter::GeometryVariant::Cube)
+      *pcout << create_unit_cube(triangulation, mesh_prms);
+    else if(rt_parameters.mesh.geometry_variant == MeshParameter::GeometryVariant::CubeDistorted)
+      *pcout << create_distorted_cube(triangulation, mesh_prms);
+    else
+      AssertThrow(false, ExcNotImplemented());
+
     this->level = triangulation.n_global_levels() - 1;
     pp_data.n_cells_global.push_back(triangulation.n_global_active_cells());
     return true;
@@ -315,7 +319,7 @@ struct ModelProblem : public Subscriptor
   prepare_multigrid()
   {
     // *** setup multigrid data
-    const unsigned mg_level_min = parameters.coarse_level;
+    const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
     const unsigned mg_level_max = this->level;
     pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
 
@@ -331,7 +335,7 @@ struct ModelProblem : public Subscriptor
     mg_transfer.build(dof_handler);
 
     // *** initialize Schwarz smoother S_l
-    const auto &                              schwarz_data = parameters.schwarz_smoother_data;
+    const auto & schwarz_data = rt_parameters.multigrid.pre_smoother.schwarz;
     typename SCHWARZ_SMOOTHER::AdditionalData dummy_data;
     mg_schwarz_smoother.initialize(mg_matrices,
                                    dummy_data); // insert A_l in MGSmootherRelaxation
@@ -353,7 +357,8 @@ struct ModelProblem : public Subscriptor
 
       // *** setup Schwarz smoother
       typename SCHWARZ_SMOOTHER::AdditionalData smoother_data;
-      smoother_data.number_of_smoothing_steps = schwarz_data.number_of_smoothing_steps;
+      smoother_data.number_of_smoothing_steps =
+        rt_parameters.multigrid.pre_smoother.n_smoothing_steps;
       mg_schwarz_smoother.smoothers[level].initialize(
         mg_matrices[level],
         schwarz_preconditioner,
@@ -363,7 +368,7 @@ struct ModelProblem : public Subscriptor
     mg_smoother_pre = &mg_schwarz_smoother;
 
     // *** initialize post Schwarz smoother
-    if(parameters.mg_smoother_post_reversed)
+    if(rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing)
     {
       const auto mg_schwarz_post =
         std::make_shared<MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR>>();
@@ -395,12 +400,11 @@ struct ModelProblem : public Subscriptor
 
     // *** initialize coarse grid solver
     coarse_control_exact.set_max_steps(mg_matrices[mg_level_min].m());
-    // coarse_control_exact.set_reduction(1.e-12);
-    coarse_control_exact.set_tolerance(1.e-12);
+    coarse_control_exact.set_tolerance(rt_parameters.multigrid.coarse_grid.accuracy);
     coarse_control_exact.log_history(false);
     coarse_control_exact.log_result(false);
     coarse_solver.set_control(coarse_control_exact);
-    coarse_solver.select("cg");
+    coarse_solver.select(rt_parameters.multigrid.coarse_grid.iterative_solver);
     auto mg_coarse =
       std::make_shared<MGCoarseGridIterativeSolver<VECTOR,
                                                    decltype(coarse_solver),
@@ -460,15 +464,15 @@ struct ModelProblem : public Subscriptor
   void
   solve(const PreconditionerType & preconditioner)
   {
-    solver_control.set_max_steps(parameters.solver_max_iterations);
-    solver_control.set_reduction(parameters.solver_reduction);
-    solver_control.set_tolerance(1.e-16);
+    solver_control.set_max_steps(rt_parameters.solver.n_iterations_max);
+    solver_control.set_reduction(rt_parameters.solver.rel_tolerance);
+    solver_control.set_tolerance(rt_parameters.solver.abs_tolerance);
     solver_control.log_history(true);
     solver_control.log_result(true);
     solver_control.enable_history_data();
 
     iterative_solver.set_control(solver_control);
-    iterative_solver.select(Laplace::Parameter::str_solver_variant[(int)parameters.solver_variant]);
+    iterative_solver.select(rt_parameters.solver.variant);
     iterative_solver.solve(system_matrix, system_u, system_rhs, preconditioner);
 
     const auto n_frac_and_reduction_rate = compute_fractional_steps(solver_control);
@@ -477,7 +481,7 @@ struct ModelProblem : public Subscriptor
     pp_data.solve_time.push_back(-2712.1989);
 
     print_parameter("Average reduction (solver):", n_frac_and_reduction_rate.second);
-    print_parameter("N of fractional steps (solver):", n_frac_and_reduction_rate.first);
+    print_parameter("Number of iterations (solver):", n_frac_and_reduction_rate.first);
   }
 
   double
@@ -522,11 +526,16 @@ struct ModelProblem : public Subscriptor
     pp_data = Laplace::PostProcessData{};
     TimerOutput time(MPI_COMM_WORLD, *pcout, TimerOutput::summary, TimerOutput::wall_times);
 
-    for(unsigned cycle = 0; cycle < parameters.n_cycles; ++cycle)
+    for(unsigned cycle = 0; cycle < rt_parameters.n_cycles; ++cycle)
     {
+      print_parameter("//////////////////////////////", "//////////////////////////////");
+      print_parameter("Poisson run cycle:", cycle);
+      *pcout << std::endl;
+
       {
         TimerOutput::Scope time_section(time, "Create triangulation");
-        const bool         is_tria_valid = create_triangulation(parameters.n_refines + cycle);
+        const unsigned     n_refinements = rt_parameters.mesh.n_refinements + cycle;
+        const bool         is_tria_valid = create_triangulation(n_refinements);
         if(!is_tria_valid)
           continue;
       }
@@ -542,9 +551,9 @@ struct ModelProblem : public Subscriptor
       }
 
       print_informations();
-      switch(parameters.precondition_variant)
+      switch(rt_parameters.solver.precondition_variant)
       {
-        case Laplace::Parameter::PreconditionVariant::ID:
+        case SolverParameter::PreconditionVariant::None:
         {
           {
             TimerOutput::Scope time_section(time, "Solve linear system");
@@ -553,10 +562,10 @@ struct ModelProblem : public Subscriptor
           }
           break;
         }
-        case Laplace::Parameter::PreconditionVariant::MG:
+        case SolverParameter::PreconditionVariant::GMG:
         {
-          parameters.schwarz_smoother_data.print(*pcout);
-          *pcout << std::endl;
+          // parameters.schwarz_smoother_data.print(*pcout);
+          // *pcout << std::endl;
           TimerOutput::Scope time_section(time, "Setup MG preconditioner");
           prepare_preconditioner_mg();
           pp_data.n_colors_system.push_back(n_colors_system());

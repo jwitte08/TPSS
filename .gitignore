@@ -14,3 +14,4 @@ run.r1.*
 *.csv
 *.org
 *.tmp
+__pycache__

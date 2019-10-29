@@ -51,6 +51,15 @@ configure_file(
   ${CMAKE_SOURCE_DIR}/scripts/ct_parameter.py.in
   ${CMAKE_BINARY_DIR}/scripts/ct_parameter.py
   )
+configure_file(
+  ${CMAKE_SOURCE_DIR}/scripts/env.sh.in
+  ${CMAKE_BINARY_DIR}/env.sh
+  @ONLY
+  )
+configure_file(
+  ${CMAKE_SOURCE_DIR}/scripts/poisson_distorted.py.in
+  ${CMAKE_BINARY_DIR}/scripts/poisson_distorted.py
+  )
 
 #: find a python3 interpreter
 find_package ( PythonInterp 3 REQUIRED )
@@ -75,7 +84,7 @@ SET( SOURCE_FILES
   # Tpatch_transfer_02.cc
   # Ttensors_01.cc
   # Tblock_matrix_diagonal_01.cc
-  # Tlaplace_check_iterations.cc
+  Tlaplace_check_iterations.cc
   # Tlaplace_geometry.cc
   # Tlaplace_integrator_cp.cc
   # Tlaplace_integrator_mf.cc
@@ -94,6 +103,7 @@ SET( SOURCE_FILES
   # cell_coloring.cc
   test_mesh.cc
   poisson.cc
+  poisson_distorted.cc
   )
 
 foreach ( sourcefile ${SOURCE_FILES} )

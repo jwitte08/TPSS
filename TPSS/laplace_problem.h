@@ -1176,7 +1176,7 @@ struct MatrixOperator : public Subscriptor
         mesh_prms.n_refinements = n_refines;
         mesh_prms.n_repetitions = parameters.n_cell_repetitions;
         mesh_prms.distortion    = parameters.distortion_factor;
-        mesh_prms.variant       = MeshParameter::GeometryVariant::CubeDistorted;
+        mesh_prms.geometry_variant       = MeshParameter::GeometryVariant::CubeDistorted;
         std::pair<bool, std::string> mesh_info;
         mesh_info.first  = true; // TODO specify valid range of n_dofs
         mesh_info.second = create_distorted_cube(triangulation, mesh_prms);

@@ -86,7 +86,7 @@ struct Test
   void
   assemble_fast_diagonal_submatrices()
   {
-    using EVALUATOR = FDEEvaluation<dim, fe_degree, fe_degree + 1, double>;
+    using EVALUATOR = FDEvaluation<dim, fe_degree, fe_degree + 1, double>;
     // NOTE additional integration data can be transmitted by the integrator, here it is just a
     // dummy
     using INTEGRATION_DATA = typename Laplace::FD::MatrixIntegrator<dim, fe_degree, double>;

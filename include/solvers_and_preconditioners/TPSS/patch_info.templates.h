@@ -746,7 +746,7 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
   }
   AssertDimension(info.patch_starts.size(), subdomain_partition_data.n_subdomains());
 
-  /*** setup up the is_interior flag for the given PartitionData ***/
+  // TODO treat all macro_cells at the patch boundary instead of one representative
   const auto get_mask = [](auto &&            macro_cell,
                            const unsigned int direction,
                            const unsigned int face_no_1d) /* -> unsigned short*/ {
@@ -774,7 +774,6 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
     return bitset_mask;
   };
 
-  info.is_interior_patch.reserve(subdomain_partition_data.n_subdomains());
   info.is_incomplete_patch.reserve(subdomain_partition_data.n_subdomains());
   info.at_boundary_mask.reserve(subdomain_partition_data.n_subdomains() *
                                 GeometryInfo<dim>::faces_per_cell);
@@ -784,21 +783,20 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       const auto patch_range = subdomain_partition_data.get_patch_range(0, color);
       for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
       {
-        info.is_interior_patch.emplace_back(true);
         info.is_incomplete_patch.emplace_back(true);
         const auto cell_collection{std::move(get_cell_collection(patch_id))};
 
         for(unsigned int mm = 0; mm < GeometryInfo<dim>::faces_per_cell; ++mm)
           info.at_boundary_mask.emplace_back(0);
 
-        // DEBUG
-        for(unsigned int d = 0; d < dim; ++d)
-        {
-          AssertDimension(static_cast<unsigned long>(0),
-                          get_mask(cell_collection.front(), d, 0).to_ulong());
-          AssertDimension(static_cast<unsigned long>(0),
-                          get_mask(cell_collection.back(), d, 1).to_ulong());
-        }
+        // // DEBUG
+        // for(unsigned int d = 0; d < dim; ++d)
+        // {
+        //   AssertDimension(static_cast<unsigned long>(0),
+        //                   get_mask(cell_collection.front(), d, 0).to_ulong());
+        //   AssertDimension(static_cast<unsigned long>(0),
+        //                   get_mask(cell_collection.back(), d, 1).to_ulong());
+        // }
       }
     }
 
@@ -806,7 +804,6 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       const auto patch_range = subdomain_partition_data.get_patch_range(1, color);
       for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
       {
-        info.is_interior_patch.emplace_back(false);
         info.is_incomplete_patch.emplace_back(true);
         std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> local_data;
         const auto cell_collection{std::move(get_cell_collection(patch_id))};
@@ -833,21 +830,20 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       const auto patch_range = subdomain_partition_data.get_patch_range(2, color);
       for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
       {
-        info.is_interior_patch.emplace_back(true);
         info.is_incomplete_patch.emplace_back(false);
         const auto cell_collection{std::move(get_cell_collection(patch_id))};
 
         for(unsigned int mm = 0; mm < GeometryInfo<dim>::faces_per_cell; ++mm)
           info.at_boundary_mask.emplace_back(0);
 
-        // DEBUG
-        for(unsigned int d = 0; d < dim; ++d)
-        {
-          AssertDimension(static_cast<unsigned long>(0),
-                          get_mask(cell_collection.front(), d, 0).to_ulong());
-          AssertDimension(static_cast<unsigned long>(0),
-                          get_mask(cell_collection.back(), d, 1).to_ulong());
-        }
+        // // DEBUG
+        // for(unsigned int d = 0; d < dim; ++d)
+        // {
+        //   AssertDimension(static_cast<unsigned long>(0),
+        //                   get_mask(cell_collection.front(), d, 0).to_ulong());
+        //   AssertDimension(static_cast<unsigned long>(0),
+        //                   get_mask(cell_collection.back(), d, 1).to_ulong());
+        // }
       }
     }
 
@@ -855,7 +851,6 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       const auto patch_range = subdomain_partition_data.get_patch_range(3, color);
       for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
       {
-        info.is_interior_patch.emplace_back(false);
         info.is_incomplete_patch.emplace_back(false);
         std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> local_data;
         const auto cell_collection{std::move(get_cell_collection(patch_id))};
@@ -871,7 +866,6 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       }
     }
   }
-  AssertDimension(info.is_interior_patch.size(), subdomain_partition_data.n_subdomains());
   AssertDimension(info.is_incomplete_patch.size(), subdomain_partition_data.n_subdomains());
   AssertDimension(info.at_boundary_mask.size(),
                   subdomain_partition_data.n_subdomains() * GeometryInfo<dim>::faces_per_cell);
@@ -1061,7 +1055,6 @@ void
 PatchWorker<dim, number>::clear_patch_info(PatchInfo<dim> & info)
 {
   info.patch_starts.clear();
-  info.is_interior_patch.clear();
   info.is_incomplete_patch.clear();
   info.at_boundary_mask.clear();
   info.subdomain_partition_data.clear();

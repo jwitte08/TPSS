@@ -129,7 +129,8 @@ public:
     }
 
     void
-    operator()(const Evaluator &                   fd_eval,
+    operator()(const Evaluator &,
+               const Evaluator &                   fd_eval,
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no) const;
@@ -141,7 +142,8 @@ public:
   struct CellLaplace
   {
     void
-    operator()(const Evaluator &                   fd_eval,
+    operator()(const Evaluator &,
+               const Evaluator &                   fd_eval,
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no) const;
@@ -151,7 +153,8 @@ public:
   struct FaceLaplace
   {
     void
-    operator()(const Evaluator &                   fd_eval,
+    operator()(const Evaluator &,
+               const Evaluator &                   fd_eval,
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no,
@@ -159,7 +162,8 @@ public:
                const std::bitset<macro_size>       bdry_mask) const;
 
     void
-    operator()(const Evaluator &                   fd_eval,
+    operator()(const Evaluator &,
+               const Evaluator &                   fd_eval,
                Table<2, VectorizedArray<Number>> & cell_matrix01,
                Table<2, VectorizedArray<Number>> & cell_matrix10,
                const int                           direction) const;
@@ -214,7 +218,7 @@ public:
       }
     };
 
-    auto && evaluator = FDEEvaluation<dim, fe_degree, fe_degree + 1, Number>{data};
+    auto && evaluator = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>{data};
     assemble_subspace_inverses_impl(evaluator);
   }
 
@@ -234,7 +238,8 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::CellMass<Evaluator>::
-operator()(const Evaluator &                   fd_eval,
+operator()(const Evaluator &,
+           const Evaluator &                   fd_eval,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no) const
@@ -253,7 +258,8 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::CellLaplace<Evaluator>::
-operator()(const Evaluator &                   fd_eval,
+operator()(const Evaluator &,
+           const Evaluator &                   fd_eval,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no) const
@@ -296,7 +302,8 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::FaceLaplace<Evaluator>::
-operator()(const Evaluator &                   fd_eval,
+operator()(const Evaluator &,
+           const Evaluator &                   fd_eval,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no,
@@ -340,7 +347,8 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::FaceLaplace<Evaluator>::
-operator()(const Evaluator &                   fd_eval,
+operator()(const Evaluator &,
+           const Evaluator &                   fd_eval,
            Table<2, VectorizedArray<Number>> & cell_matrix01,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
            const int                           direction) const

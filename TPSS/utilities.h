@@ -41,7 +41,19 @@ git_version_to_fstring()
   oss << parameter_to_fstring("Git - deal.II branch: ", DEAL_II_GIT_BRANCH);
   oss << parameter_to_fstring("Git - TPSS version: ", GIT_COMMIT_HASH);
   oss << parameter_to_fstring("Git - TPSS branch: ", GIT_BRANCH);
-  oss << std::endl;
+  return oss.str();
+}
+
+std::string
+generic_info_to_fstring()
+{
+  std::ostringstream oss;
+  oss << Util::git_version_to_fstring();
+  oss << Util::parameter_to_fstring("Date:", Utilities::System::get_date());
+  oss << Util::parameter_to_fstring("Number of MPI processes:",
+                                    Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD));
+  oss << Util::parameter_to_fstring("Vectorization level:",
+                                    Utilities::System::get_current_vectorization_level());
   return oss.str();
 }
 
@@ -58,6 +70,14 @@ si_metric_prefix(std::size_t measurement)
     div = measurement / Utilities::pow(base, ++iexp);
 
   oss << div << prefixes[iexp];
+  return oss.str();
+}
+
+std::string
+damping_to_fstring(double factor)
+{
+  std::ostringstream oss;
+  oss << factor;
   return oss.str();
 }
 
