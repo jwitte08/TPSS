@@ -880,7 +880,7 @@ void
 PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> & mf_connect)
 {
   Assert(patch_info != nullptr, ExcNotInitialized());
-  mf_connect.stride_triple = patch_size * macro_size;
+  // mf_connect.stride_triple = patch_size * macro_size;
 
   const auto &       mf_storage     = *(mf_connect.mf_storage);
   const unsigned int n_cell_batches = mf_storage.n_cell_batches();
@@ -916,152 +916,158 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
         cindex_to_bindex_bcomp_pair[cindex] = std::make_pair(bid, comp);
       }
 
-  /**
-   * map (batch-index,batch-comp) pairs to its corresponding
-   * CellIterator within a patch by storing them in the same order we
-   * stride through the subdomain_partition_data. Note that within a
-   * patch the cell-number runs faster than the vectorization-lane and
-   * so do the (batch-index, batch-comp) pairs as well!
-   */
-  const auto & patch_starts             = patch_info->patch_starts;
-  const auto & cell_iterators           = patch_info->get_internal_data()->cell_iterators;
-  const auto & subdomain_partition_data = patch_info->subdomain_partition_data;
+  // /**
+  //  * map (batch-index,batch-comp) pairs to its corresponding
+  //  * CellIterator within a patch by storing them in the same order we
+  //  * stride through the subdomain_partition_data. Note that within a
+  //  * patch the cell-number runs faster than the vectorization-lane and
+  //  * so do the (batch-index, batch-comp) pairs as well!
+  //  */
+  // const auto & patch_starts             = patch_info->patch_starts;
+  // const auto & subdomain_partition_data = patch_info->subdomain_partition_data;
+  // const auto & cell_iterators           = patch_info->get_internal_data()->cell_iterators;
 
   /**
-   * NEW ... TODO
+   * For each cell iterator we store the associated macro cell (batch)
+   * and the vectorization lane representing the same cell in the
+   * MatrixFree framework.
    */
-  auto & bindex_and_bcomp = mf_connect.batch_and_lane;
+  const auto & cell_iterators   = patch_info->get_internal_data()->cell_iterators;
+  auto &       bindex_and_bcomp = mf_connect.batch_and_lane;
   bindex_and_bcomp.clear();
-  // mf_connect.patch_info = patch_info;
-  // mf_connect.patch_size = patch_size;
+  bindex_and_bcomp.reserve(cell_iterators.size());
   for(const auto & cell : cell_iterators)
   {
     const auto cindex = cell->index();
     bindex_and_bcomp.emplace_back(cindex_to_bindex_bcomp_pair[cindex]);
   }
+  AssertDimension(bindex_and_bcomp.size(), cell_iterators.size());
 
-  std::vector<std::pair<unsigned int, unsigned int>> mf_cell_indices;
-  for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
-  {
-    { // interior incomplete
-      const auto range = subdomain_partition_data.get_patch_range(0, color);
-      if(range.first < range.second)
-      {
-        auto start   = patch_starts[range.first];
-        auto cell_it = cell_iterators.cbegin() + start;
-        for(unsigned int patch_id = range.first; patch_id < range.second; ++patch_id)
-          for(unsigned int cc = 0; cc < patch_size; ++cc, ++cell_it)
-            mf_cell_indices.emplace_back(cindex_to_bindex_bcomp_pair[(*cell_it)->index()]);
-      }
-    }
-    { // boundary incomplete
-      const auto range = subdomain_partition_data.get_patch_range(1, color);
-      if(range.first < range.second)
-      {
-        auto cell_it = std::next(cell_iterators.cbegin(), patch_starts.at(range.first));
-        for(unsigned int patch_id = range.first; patch_id < range.second; ++patch_id)
-          for(unsigned int cc = 0; cc < patch_size; ++cc, ++cell_it)
-            mf_cell_indices.emplace_back(cindex_to_bindex_bcomp_pair[(*cell_it)->index()]);
-      }
-    }
-    { // interior complete
-      const auto range = subdomain_partition_data.get_patch_range(2, color);
-      if(range.first < range.second)
-      {
-        auto cell_it = std::next(cell_iterators.cbegin(), patch_starts.at(range.first));
-        for(unsigned int patch_id = range.first; patch_id < range.second; ++patch_id)
-          for(unsigned int cc = 0; cc < macro_size * patch_size; ++cc, ++cell_it)
-            mf_cell_indices.emplace_back(cindex_to_bindex_bcomp_pair[(*cell_it)->index()]);
-      }
-    }
-    { // boundary complete
-      const auto range = subdomain_partition_data.get_patch_range(3, color);
-      if(range.first < range.second)
-      {
-        auto cell_it = std::next(cell_iterators.cbegin(), patch_starts.at(range.first));
-        for(unsigned int patch_id = range.first; patch_id < range.second; ++patch_id)
-          for(unsigned int cc = 0; cc < macro_size * patch_size; ++cc, ++cell_it)
-            mf_cell_indices.emplace_back(cindex_to_bindex_bcomp_pair[(*cell_it)->index()]);
-      }
-    }
-  }
-  AssertDimension(mf_cell_indices.size(), cell_iterators.size());
+  // std::vector<std::pair<unsigned int, unsigned int>> mf_cell_indices;
+  // for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
+  // {
+  //   { // interior incomplete
+  //     const auto range = subdomain_partition_data.get_patch_range(0, color);
+  //     if(range.first < range.second)
+  //     {
+  //       auto start   = patch_starts[range.first];
+  //       auto cell_it = cell_iterators.cbegin() + start;
+  //       for(unsigned int patch_id = range.first; patch_id < range.second; ++patch_id)
+  //         for(unsigned int cc = 0; cc < patch_size; ++cc, ++cell_it)
+  //           mf_cell_indices.emplace_back(cindex_to_bindex_bcomp_pair[(*cell_it)->index()]);
+  //     }
+  //   }
+  //   { // boundary incomplete
+  //     const auto range = subdomain_partition_data.get_patch_range(1, color);
+  //     if(range.first < range.second)
+  //     {
+  //       auto cell_it = std::next(cell_iterators.cbegin(), patch_starts.at(range.first));
+  //       for(unsigned int patch_id = range.first; patch_id < range.second; ++patch_id)
+  //         for(unsigned int cc = 0; cc < patch_size; ++cc, ++cell_it)
+  //           mf_cell_indices.emplace_back(cindex_to_bindex_bcomp_pair[(*cell_it)->index()]);
+  //     }
+  //   }
+  //   { // interior complete
+  //     const auto range = subdomain_partition_data.get_patch_range(2, color);
+  //     if(range.first < range.second)
+  //     {
+  //       auto cell_it = std::next(cell_iterators.cbegin(), patch_starts.at(range.first));
+  //       for(unsigned int patch_id = range.first; patch_id < range.second; ++patch_id)
+  //         for(unsigned int cc = 0; cc < macro_size * patch_size; ++cc, ++cell_it)
+  //           mf_cell_indices.emplace_back(cindex_to_bindex_bcomp_pair[(*cell_it)->index()]);
+  //     }
+  //   }
+  //   { // boundary complete
+  //     const auto range = subdomain_partition_data.get_patch_range(3, color);
+  //     if(range.first < range.second)
+  //     {
+  //       auto cell_it = std::next(cell_iterators.cbegin(), patch_starts.at(range.first));
+  //       for(unsigned int patch_id = range.first; patch_id < range.second; ++patch_id)
+  //         for(unsigned int cc = 0; cc < macro_size * patch_size; ++cc, ++cell_it)
+  //           mf_cell_indices.emplace_back(cindex_to_bindex_bcomp_pair[(*cell_it)->index()]);
+  //     }
+  //   }
+  // }
+  // AssertDimension(mf_cell_indices.size(), cell_iterators.size());
 
-  const unsigned int n_patches          = subdomain_partition_data.n_subdomains();
-  auto &             batch_starts       = mf_connect.batch_starts;
-  auto &             batch_count_per_id = mf_connect.batch_count_per_id;
-  auto &             bcomp_vcomp_cindex = mf_connect.bcomp_vcomp_cindex;
-  batch_starts.clear();
-  batch_count_per_id.clear();
-  bcomp_vcomp_cindex.clear();
-  batch_starts.reserve(n_patches);
-  batch_count_per_id.reserve(n_patches);
-  bcomp_vcomp_cindex.reserve(macro_size * n_patches);
+  // const unsigned int n_patches          = subdomain_partition_data.n_subdomains();
+  // auto &             batch_starts       = mf_connect.batch_starts;
+  // auto &             batch_count_per_id = mf_connect.batch_count_per_id;
+  // auto &             bcomp_vcomp_cindex = mf_connect.bcomp_vcomp_cindex;
+  // batch_starts.clear();
+  // batch_count_per_id.clear();
+  // bcomp_vcomp_cindex.clear();
+  // batch_starts.reserve(n_patches);
+  // batch_count_per_id.reserve(n_patches);
+  // bcomp_vcomp_cindex.reserve(macro_size * n_patches);
 
-  /**
-   * Last, we gather batch-indices that occur more than once within a patch. That is
-   * each batch-index is mapped to its associated (batch-comp, cell-comp, cell index)
-   * triples. The count of those triples and the batch-index itself is stored in batch_count_per_id.
-   * Similar to the patch_starts the batch_starts point to the first batch-index(batch_count_per_id)
-   * of patch represented by patch-index.
-   */
-  auto mf_cell_index = mf_cell_indices.cbegin();
-  for(unsigned int patch_id = 0; patch_id < n_patches; ++patch_id)
-  {
-    batch_starts.emplace_back(batch_count_per_id.size());
-    std::vector<std::pair<unsigned int, std::array<unsigned int, 3>>> map_bindex_to_triple;
+  // /**
+  //  * Last, we gather batch-indices that occur more than once within a patch. That is
+  //  * each batch-index is mapped to its associated (batch-comp, cell-comp, cell index)
+  //  * triples. The count of those triples and the batch-index itself is stored in
+  //  batch_count_per_id.
+  //  * Similar to the patch_starts the batch_starts point to the first
+  //  batch-index(batch_count_per_id)
+  //  * of patch represented by patch-index.
+  //  */
+  // auto mf_cell_index = mf_cell_indices.cbegin();
+  // for(unsigned int patch_id = 0; patch_id < n_patches; ++patch_id)
+  // {
+  //   batch_starts.emplace_back(batch_count_per_id.size());
+  //   std::vector<std::pair<unsigned int, std::array<unsigned int, 3>>> map_bindex_to_triple;
 
-    // *** duplicate triples along the artificial lanes
-    if(n_lanes_filled(patch_id) < macro_size) // INCOMPLETE
-    {
-      Assert(n_lanes_filled(patch_id) == 1, ExcMessage("TODO"));
-      for(unsigned int cidx = 0; cidx < patch_size; ++cidx, ++mf_cell_index)
-        for(unsigned int vcomp = 0; vcomp < macro_size; ++vcomp)
-          map_bindex_to_triple.emplace_back(mf_cell_index->first,
-                                            std::array<unsigned int, 3>{
-                                              {mf_cell_index->second, vcomp, cidx}});
-    }
-    else // COMPLETE
-      for(unsigned int vcomp = 0; vcomp < macro_size; ++vcomp)
-        for(unsigned int cidx = 0; cidx < patch_size; ++cidx, ++mf_cell_index)
-          map_bindex_to_triple.emplace_back(mf_cell_index->first,
-                                            std::array<unsigned int, 3>{
-                                              {mf_cell_index->second, vcomp, cidx}});
-    AssertDimension(patch_size * macro_size, map_bindex_to_triple.size());
+  //   // *** duplicate triples along the artificial lanes
+  //   if(n_lanes_filled(patch_id) < macro_size) // INCOMPLETE
+  //   {
+  //     Assert(n_lanes_filled(patch_id) == 1, ExcMessage("TODO"));
+  //     for(unsigned int cidx = 0; cidx < patch_size; ++cidx, ++mf_cell_index)
+  //       for(unsigned int vcomp = 0; vcomp < macro_size; ++vcomp)
+  //         map_bindex_to_triple.emplace_back(mf_cell_index->first,
+  //                                           std::array<unsigned int, 3>{
+  //                                             {mf_cell_index->second, vcomp, cidx}});
+  //   }
+  //   else // COMPLETE
+  //     for(unsigned int vcomp = 0; vcomp < macro_size; ++vcomp)
+  //       for(unsigned int cidx = 0; cidx < patch_size; ++cidx, ++mf_cell_index)
+  //         map_bindex_to_triple.emplace_back(mf_cell_index->first,
+  //                                           std::array<unsigned int, 3>{
+  //                                             {mf_cell_index->second, vcomp, cidx}});
+  //   AssertDimension(patch_size * macro_size, map_bindex_to_triple.size());
 
-    /*** gather triples associated to the same batch-index and store their counts ***/
-    std::sort(map_bindex_to_triple.begin(),
-              map_bindex_to_triple.end(),
-              [](const auto & trip1, const auto & trip2) { return trip1.first < trip2.first; });
-    auto mapped_triple = map_bindex_to_triple.cbegin();
-    while(mapped_triple != map_bindex_to_triple.cend())
-    {
-      const unsigned int batch_id{mapped_triple->first};
-      unsigned int       count{0};
-      auto               it = mapped_triple;
-      while(it != map_bindex_to_triple.cend())
-      {
-        bcomp_vcomp_cindex.emplace_back(it->second);
-        ++count;
-        ++it;
-        ++mapped_triple;
-        it = std::find_if(it, map_bindex_to_triple.cend(), [batch_id](const auto & pair) {
-          return batch_id == pair.first;
-        });
-      }
-      batch_count_per_id.emplace_back(batch_id, count);
-    }
+  //   /*** gather triples associated to the same batch-index and store their counts ***/
+  //   std::sort(map_bindex_to_triple.begin(),
+  //             map_bindex_to_triple.end(),
+  //             [](const auto & trip1, const auto & trip2) { return trip1.first < trip2.first; });
+  //   auto mapped_triple = map_bindex_to_triple.cbegin();
+  //   while(mapped_triple != map_bindex_to_triple.cend())
+  //   {
+  //     const unsigned int batch_id{mapped_triple->first};
+  //     unsigned int       count{0};
+  //     auto               it = mapped_triple;
+  //     while(it != map_bindex_to_triple.cend())
+  //     {
+  //       bcomp_vcomp_cindex.emplace_back(it->second);
+  //       ++count;
+  //       ++it;
+  //       ++mapped_triple;
+  //       it = std::find_if(it, map_bindex_to_triple.cend(), [batch_id](const auto & pair) {
+  //         return batch_id == pair.first;
+  //       });
+  //     }
+  //     batch_count_per_id.emplace_back(batch_id, count);
+  //   }
 
-    const auto &   sum_counts = [](const auto val, const auto & p) { return val + p.second; };
-    const unsigned n_counts_accumulated = std::accumulate(
-      batch_count_per_id.cbegin() + batch_starts.back(), batch_count_per_id.cend(), 0, sum_counts);
-    (void)n_counts_accumulated;
-    AssertDimension(patch_size * macro_size, n_counts_accumulated);
-  } // patch loop
-  AssertDimension(batch_starts.size(), patch_starts.size());
-  if(!batch_starts.empty())
-    batch_starts.emplace_back(batch_count_per_id.size());
-  Assert(batch_starts.empty() == patch_starts.empty(), ExcMessage("Invalid starts."));
+  //   const auto &   sum_counts = [](const auto val, const auto & p) { return val + p.second; };
+  //   const unsigned n_counts_accumulated = std::accumulate(
+  //     batch_count_per_id.cbegin() + batch_starts.back(), batch_count_per_id.cend(), 0,
+  //     sum_counts);
+  //   (void)n_counts_accumulated;
+  //   AssertDimension(patch_size * macro_size, n_counts_accumulated);
+  // } // patch loop
+  // AssertDimension(batch_starts.size(), patch_starts.size());
+  // if(!batch_starts.empty())
+  //   batch_starts.emplace_back(batch_count_per_id.size());
+  // Assert(batch_starts.empty() == patch_starts.empty(), ExcMessage("Invalid starts."));
 
   // // DEBUG
   // for(auto e : batch_starts)
@@ -1088,10 +1094,10 @@ template<int dim, typename number>
 void
 PatchWorker<dim, number>::clear_mf_connect(MatrixFreeConnect<dim, number> & mf_connect)
 {
-  mf_connect.bcomp_vcomp_cindex.clear();
-  mf_connect.batch_count_per_id.clear();
-  mf_connect.batch_starts.clear();
-  mf_connect.stride_triple = -1;
+  // mf_connect.bcomp_vcomp_cindex.clear();
+  // mf_connect.batch_count_per_id.clear();
+  // mf_connect.batch_starts.clear();
+  // mf_connect.stride_triple = -1;
   mf_connect.batch_and_lane.clear();
 }
 

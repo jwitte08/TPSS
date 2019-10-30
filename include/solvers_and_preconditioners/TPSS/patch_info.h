@@ -418,58 +418,59 @@ struct PatchInfo<dim>::InternalData
 template<int dim, typename number>
 struct MatrixFreeConnect
 {
-  /**
-   * For a given macro patch, given by @p patch_id, the number of batches
-   * @p n_batches (not trivial, if there exist cells in batch that occur in more
-   * than one micro patch, or vice versa) is returned. The iterator range of (bid, count)-pairs
-   * is then given by [@p id_count_pair, @p id_count_pair + @p n_batches). Moreover,
-   * the starting triple @p triple is set.
-   */
-  unsigned int
-  set_pointers_and_count(const unsigned int                             patch_id,
-                         const std::array<unsigned int, 3> *&           triple,
-                         const std::pair<unsigned int, unsigned int> *& id_count_pair) const;
+  // /**
+  //  * For a given macro patch, given by @p patch_id, the number of batches
+  //  * @p n_batches (not trivial, if there exist cells in batch that occur in more
+  //  * than one micro patch, or vice versa) is returned. The iterator range of (bid, count)-pairs
+  //  * is then given by [@p id_count_pair, @p id_count_pair + @p n_batches). Moreover,
+  //  * the starting triple @p triple is set.
+  //  */
+  // unsigned int
+  // set_pointers_and_count(const unsigned int                             patch_id,
+  //                        const std::array<unsigned int, 3> *&           triple,
+  //                        const std::pair<unsigned int, unsigned int> *& id_count_pair) const;
+
   /**
    * The underlying MatrixFree object used to map matrix-free infrastructure
    * to the patch distribution stored in PatchInfo
    */
   const dealii::MatrixFree<dim, number> * mf_storage = nullptr;
 
-  /**
-   * In the MatrixFree framework cells are clustered into so-called (cell-)batches
-   * due to vectorization. Every batch is associated to an integer, similar to the
-   * integer-identification of vectorized patches by means of the @p subdomain_partition_data
-   * Filled and used by the PatchWorker this vector in conjunction with @p batch_count_per_id
-   * and @p batch_starts provides a unique mapping between cells for each
-   * patch (PatchWorker) and cells within batches (MatrixFree).
-   * Given a macro patch, represented by the integer @p patch_id, the half-open range
-   * [@p batch_starts[patch_id], @p batch_starts[patch_id+1]) identifies a range of pairs,
-   * stored in @p batch_count_per_id, to
-   * shape the macro patch associated to @patch_id. It happens that some of those batches
-   * contain more than one cell. This information is stored in the @p batch_count_per_id
-   * pairs, with the batch_id being the first and the corresponding count of cells the second
-   * member. Each pair is associated to @p count triples in @p bcomp_vcomp_cindex. The first member
-   * of the triple is the vectorization component within a batch, the second is the vectorization
-   * component within a patch and the third is the local cell index (lexicographically ordered)
-   * within a patch. The flat data field @p bcomp_vcomp_cindex is strided through by the @p patch_id
-   * with steps of size (@p patch_size * @p vectorization_length).
-   */
-  std::vector<std::array<unsigned int, 3>> bcomp_vcomp_cindex;
+  // /**
+  //  * In the MatrixFree framework cells are clustered into so-called (cell-)batches
+  //  * due to vectorization. Every batch is associated to an integer, similar to the
+  //  * integer-identification of vectorized patches by means of the @p subdomain_partition_data
+  //  * Filled and used by the PatchWorker this vector in conjunction with @p batch_count_per_id
+  //  * and @p batch_starts provides a unique mapping between cells for each
+  //  * patch (PatchWorker) and cells within batches (MatrixFree).
+  //  * Given a macro patch, represented by the integer @p patch_id, the half-open range
+  //  * [@p batch_starts[patch_id], @p batch_starts[patch_id+1]) identifies a range of pairs,
+  //  * stored in @p batch_count_per_id, to
+  //  * shape the macro patch associated to @patch_id. It happens that some of those batches
+  //  * contain more than one cell. This information is stored in the @p batch_count_per_id
+  //  * pairs, with the batch_id being the first and the corresponding count of cells the second
+  //  * member. Each pair is associated to @p count triples in @p bcomp_vcomp_cindex. The first member
+  //  * of the triple is the vectorization component within a batch, the second is the vectorization
+  //  * component within a patch and the third is the local cell index (lexicographically ordered)
+  //  * within a patch. The flat data field @p bcomp_vcomp_cindex is strided through by the @p patch_id
+  //  * with steps of size (@p patch_size * @p vectorization_length).
+  //  */
+  // std::vector<std::array<unsigned int, 3>> bcomp_vcomp_cindex;
 
-  /**
-   * For details see bcomp_vcomp_cindex.
-   */
-  std::vector<std::pair<unsigned int, unsigned int>> batch_count_per_id;
+  // /**
+  //  * For details see bcomp_vcomp_cindex.
+  //  */
+  // std::vector<std::pair<unsigned int, unsigned int>> batch_count_per_id;
 
-  /**
-   * For details see bcomp_vcomp_cindex.
-   */
-  std::vector<std::size_t> batch_starts;
+  // /**
+  //  * For details see bcomp_vcomp_cindex.
+  //  */
+  // std::vector<std::size_t> batch_starts;
 
-  /**
-   * Sets the stride with respect to @p bcomp_vcomp_cindex.
-   */
-  int stride_triple = -1;
+  // /**
+  //  * Sets the stride with respect to @p bcomp_vcomp_cindex.
+  //  */
+  // int stride_triple = -1;
 
   /**
    * The pairs storing the batch index and vectorization lane
@@ -738,27 +739,27 @@ PatchInfo<dim>::PartitionData::check_compatibility(const PartitionData & other) 
 
 // --------------------------------   MatrixFreeConnect   --------------------------------
 
-template<int dim, typename number>
-inline unsigned int
-MatrixFreeConnect<dim, number>::set_pointers_and_count(
-  const unsigned int                             patch_id,
-  const std::array<unsigned int, 3> *&           triple,
-  const std::pair<unsigned int, unsigned int> *& id_count_pair) const
-{
-  Assert(stride_triple > 0, dealii::ExcNotInitialized());
-  AssertDimension(stride_triple % dealii::VectorizedArray<number>::n_array_elements, 0);
-  triple        = bcomp_vcomp_cindex.data() + stride_triple * patch_id;
-  id_count_pair = batch_count_per_id.data() + batch_starts[patch_id];
-  unsigned int n_batches{
-    static_cast<unsigned int>(batch_starts[patch_id + 1] - batch_starts[patch_id])};
+// template<int dim, typename number>
+// inline unsigned int
+// MatrixFreeConnect<dim, number>::set_pointers_and_count(
+//   const unsigned int                             patch_id,
+//   const std::array<unsigned int, 3> *&           triple,
+//   const std::pair<unsigned int, unsigned int> *& id_count_pair) const
+// {
+//   Assert(stride_triple > 0, dealii::ExcNotInitialized());
+//   AssertDimension(stride_triple % dealii::VectorizedArray<number>::n_array_elements, 0);
+//   triple        = bcomp_vcomp_cindex.data() + stride_triple * patch_id;
+//   id_count_pair = batch_count_per_id.data() + batch_starts[patch_id];
+//   unsigned int n_batches{
+//     static_cast<unsigned int>(batch_starts[patch_id + 1] - batch_starts[patch_id])};
 
-  const auto &   sum_counts = [](const auto val, const auto & p) { return val + p.second; };
-  const unsigned n_triples_accumulated =
-    std::accumulate(id_count_pair, id_count_pair + n_batches, 0, sum_counts);
-  (void)n_triples_accumulated;
-  AssertDimension(stride_triple, n_triples_accumulated);
-  return n_batches;
-}
+//   const auto &   sum_counts = [](const auto val, const auto & p) { return val + p.second; };
+//   const unsigned n_triples_accumulated =
+//     std::accumulate(id_count_pair, id_count_pair + n_batches, 0, sum_counts);
+//   (void)n_triples_accumulated;
+//   AssertDimension(stride_triple, n_triples_accumulated);
+//   return n_batches;
+// }
 
 // --------------------------------   PatchWorker   --------------------------------
 
