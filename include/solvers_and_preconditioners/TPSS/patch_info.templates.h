@@ -893,8 +893,16 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
   const unsigned int n_cells_stored          = proc_has_cells_on_level ? tria.n_cells(level) : 0;
 
   /**
-   * map each cell-index to its MatrixFree counterpart, namely the
-   * bcomp'th lane of the batch given by the batch-index bindex
+   * Each process enumerates its owned, ghosted & artificial
+   * cells. The cell index is accessible via
+   * TriaIterator::index(level) on each level. The maximal cell index
+   * is bounded by the number of cells, Triangulation::n_cells(level).
+   *
+   * In the MatrixFree framework cells are stored as batches due to
+   * vectorization. In the following, we map cells identified by its
+   * cell index to their counterpart in the MatrixFree object
+   * identified by the pair of batch index (bindex) and vectorization
+   * lane (bcomp).
    */
   std::vector<std::pair<unsigned int, unsigned int>> cindex_to_bindex_bcomp_pair;
   cindex_to_bindex_bcomp_pair.resize(n_cells_stored); // we don't care about the accurate size
@@ -902,11 +910,8 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
     for(unsigned int comp = 0; comp < macro_size; ++comp)
       if(comp < mf_storage.n_components_filled(bid))
       {
-        // TODO pull request of 'get_cell_index'
-        // TODO intermediate state
         const auto         cell = mf_storage.get_cell_iterator(bid, comp, /*dof_handler_index*/ 0);
         const unsigned int cindex = cell->index();
-        // const unsigned int cindex{mf_storage.get_cell_index(bid, comp)};
         AssertIndexRange(cindex, n_cells_stored);
         cindex_to_bindex_bcomp_pair[cindex] = std::make_pair(bid, comp);
       }
@@ -921,6 +926,19 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
   const auto & patch_starts             = patch_info->patch_starts;
   const auto & cell_iterators           = patch_info->get_internal_data()->cell_iterators;
   const auto & subdomain_partition_data = patch_info->subdomain_partition_data;
+
+  /**
+   * NEW ... TODO
+   */
+  auto & bindex_and_bcomp = mf_connect.batch_and_lane;
+  bindex_and_bcomp.clear();
+  // mf_connect.patch_info = patch_info;
+  // mf_connect.patch_size = patch_size;
+  for(const auto & cell : cell_iterators)
+  {
+    const auto cindex = cell->index();
+    bindex_and_bcomp.emplace_back(cindex_to_bindex_bcomp_pair[cindex]);
+  }
 
   std::vector<std::pair<unsigned int, unsigned int>> mf_cell_indices;
   for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
@@ -1074,6 +1092,7 @@ PatchWorker<dim, number>::clear_mf_connect(MatrixFreeConnect<dim, number> & mf_c
   mf_connect.batch_count_per_id.clear();
   mf_connect.batch_starts.clear();
   mf_connect.stride_triple = -1;
+  mf_connect.batch_and_lane.clear();
 }
 
 } // end namespace TPSS

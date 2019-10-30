@@ -470,7 +470,14 @@ struct MatrixFreeConnect
    * Sets the stride with respect to @p bcomp_vcomp_cindex.
    */
   int stride_triple = -1;
-};
+
+  /**
+   * The pairs storing the batch index and vectorization lane
+   * (MatrixFree framework) for the corresponding cell stored in the
+   * field @p cell_iterators of the InternalData within PatchInfo.
+   */
+  std::vector<std::pair<unsigned int, unsigned int>> batch_and_lane;
+}; // namespace TPSS
 
 /**
  * A worker class re-interpreting the raw patch data in PatchInfo with
@@ -504,6 +511,8 @@ public:
   PatchWorker(PatchInfo<dim> & patch_info);
 
   PatchWorker(const PatchInfo<dim> & patch_info);
+
+  PatchWorker(const PatchInfo<dim> & patch_info, const MatrixFreeConnect<dim, number> & mf_connect);
 
   PatchWorker(const PatchWorker &) = delete;
 
@@ -546,6 +555,38 @@ public:
   std::vector<ArrayView<const CellIterator>>
   get_cell_collection_views(unsigned int patch_id) const;
 
+  /**
+   * Returns the collection of batch-index-and-lane pairs describing
+   * the macro patch @p patch_id.
+   */
+  std::vector<std::array<std::pair<unsigned int, unsigned int>, macro_size>>
+  get_batch_collection(unsigned int patch_id) const
+  {
+    Assert(patch_info != nullptr, ExcNotInitialized());
+    Assert(mf_connect != nullptr, ExcMessage("No MatrixFreeConnect set. Check constructor."));
+    AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
+
+    const auto & patch_starts = patch_info->patch_starts;
+    std::vector<std::array<std::pair<unsigned int, unsigned int>, macro_size>> collection(
+      patch_size);
+    const auto & batch_and_lane = mf_connect->batch_and_lane;
+    auto         batch_pair     = batch_and_lane.cbegin() + patch_starts[patch_id];
+    if(n_lanes_filled(patch_id) < macro_size) // incomplete
+    {
+      Assert(n_lanes_filled(patch_id) == 1, ExcMessage("TODO"));
+      for(unsigned int cell_no = 0; cell_no < patch_size; ++batch_pair, ++cell_no)
+        std::fill(collection[cell_no].begin(), collection[cell_no].end(), *batch_pair);
+    }
+    else // complete
+    {
+      for(unsigned int m = 0; m < macro_size; ++m)
+        for(unsigned int cell_no = 0; cell_no < patch_size; ++batch_pair, ++cell_no)
+          collection[cell_no][m] = *batch_pair;
+    }
+
+    return collection;
+  }
+
   const typename PatchInfo<dim>::PartitionData &
   get_partition_data() const;
 
@@ -571,8 +612,9 @@ private:
   has_valid_state(const typename PatchInfo<dim>::PartitionData & subdomain_partition_data,
                   const unsigned int                             color);
 
-  const PatchInfo<dim> * const patch_info;
-  const unsigned int           patch_size = 0;
+  const PatchInfo<dim> * const                 patch_info;
+  const unsigned int                           patch_size = 0;
+  const MatrixFreeConnect<dim, number> * const mf_connect = nullptr;
 };
 
 //  ++++++++++++++++++++++++++++++   inline functions   ++++++++++++++++++++++++++++++
@@ -736,6 +778,23 @@ PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
 }
 
 template<int dim, typename number>
+PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> &                 patch_info_in,
+                                      const MatrixFreeConnect<dim, number> & mf_connect_in)
+  : patch_info(&patch_info_in),
+    patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant)),
+    mf_connect(&mf_connect_in)
+{
+  AssertThrow(patch_info_in.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
+              ExcInvalidState());
+  typename PatchInfo<dim>::PartitionData subdomain_partition_data;
+  compute_partition_data(subdomain_partition_data, patch_info_in.get_internal_data());
+  const bool partition_data_is_valid =
+    subdomain_partition_data.check_compatibility(patch_info_in.subdomain_partition_data);
+  (void)partition_data_is_valid;
+  Assert(partition_data_is_valid, ExcMessage("The PartitionData does not fit the InternalData."));
+}
+
+template<int dim, typename number>
 PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
   : patch_info(&patch_info_in),
     patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant))
@@ -821,7 +880,6 @@ inline std::vector<
   std::array<typename PatchWorker<dim, number>::CellIterator, PatchWorker<dim, number>::macro_size>>
 PatchWorker<dim, number>::get_cell_collection(unsigned int patch) const
 {
-  using namespace dealii;
   Assert(patch_info != nullptr, ExcNotInitialized());
   AssertIndexRange(patch, patch_info->subdomain_partition_data.n_subdomains());
 
