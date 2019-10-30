@@ -103,6 +103,7 @@ SET( SOURCE_FILES
   # cell_coloring.cc
   test_mesh.cc
   poisson.cc
+  test_poisson.cc
   poisson_distorted.cc
   )
 
