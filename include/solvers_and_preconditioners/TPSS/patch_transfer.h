@@ -169,11 +169,8 @@ private:
    * Variables uniquely determine a (macro) patch and the corresponding linkage
    * to the MatrixFree infrastructure.
    */
-  const unsigned int                            dofh_index;
-  unsigned int                                  patch_id;
-  unsigned int                                  n_batches;
-  const std::pair<unsigned int, unsigned int> * batch_count;
-  const std::array<unsigned int, 3> *           batch_triple;
+  const unsigned int dofh_index;
+  unsigned int       patch_id;
 
   PatchWorker<dim, Number> patch_worker;
   // TODO pass meaningful constraints from the MatrixFree/SubdomainHandler
@@ -449,9 +446,6 @@ inline PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::PatchTr
                                            cell_to_patch_indices.size()),
     dofh_index(dofh_index_in),
     patch_id(-1),
-    n_batches(-1),
-    batch_count(nullptr),
-    batch_triple(nullptr),
     patch_worker(sd_handler_in.get_patch_info())
 {
   static_assert(n_comp == 1, "Handles only one scalar DoFHandler.");
@@ -466,9 +460,6 @@ PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(const u
 {
   AssertIndexRange(patch, n_subdomains);
   patch_id = patch;
-
-  const auto & mf_connect = sd_handler.get_matrixfree_connect();
-  n_batches               = mf_connect.set_pointers_and_count(patch_id, batch_triple, batch_count);
 }
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
