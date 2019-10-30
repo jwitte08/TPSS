@@ -302,7 +302,7 @@ MappingInfo<dim, number>::initialize_storage(const PatchInfo<dim> &             
                           dof_handler.get_fe(),
                           cell_quadrature,
                           dealii::update_quadrature_points | dealii::update_JxW_values |
-                            dealii::update_jacobians | dealii::update_inverse_jacobians);
+                            dealii::update_jacobians);
   PatchWorker<dim, number> patch_worker{patch_info, mf_connect};
 
   mapping_data_starts.reserve(n_subdomains);

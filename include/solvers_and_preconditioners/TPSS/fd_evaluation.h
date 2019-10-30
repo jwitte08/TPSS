@@ -122,10 +122,7 @@ protected:
   const MatrixFree<dim, Number> &                                           mf_storage;
   const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> & shape_info;
 
-  unsigned int                                  patch_id     = -1;
-  unsigned int                                  n_batches    = -1;
-  const std::pair<unsigned int, unsigned int> * batch_count  = nullptr;
-  const std::array<unsigned int, 3> *           batch_triple = nullptr;
+  unsigned int patch_id = -1;
 
   /**
    * lexicographical ordering: face_no_1d < direction
@@ -590,9 +587,6 @@ FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(const un
   std::copy_n(patch_info.at_boundary_mask.data() + GeometryInfo<dim>::faces_per_cell * patch,
               GeometryInfo<dim>::faces_per_cell,
               bdry_mask_id.begin());
-
-  const auto & mf_connect = sd_handler.get_matrixfree_connect();
-  n_batches               = mf_connect.set_pointers_and_count(patch_id, batch_triple, batch_count);
 
   h_inverses = mapping_info.template h_inverses_begin(patch);
   h_lengths  = mapping_info.template h_lengths_begin(patch);
