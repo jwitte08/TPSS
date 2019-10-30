@@ -774,7 +774,7 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
     return bitset_mask;
   };
 
-  info.is_incomplete_patch.reserve(subdomain_partition_data.n_subdomains());
+  info.n_lanes_filled.reserve(subdomain_partition_data.n_subdomains());
   info.at_boundary_mask.reserve(subdomain_partition_data.n_subdomains() *
                                 GeometryInfo<dim>::faces_per_cell);
   for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
@@ -783,7 +783,8 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       const auto patch_range = subdomain_partition_data.get_patch_range(0, color);
       for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
       {
-        info.is_incomplete_patch.emplace_back(true);
+        // TODO
+        info.n_lanes_filled.emplace_back(1);
         const auto cell_collection{std::move(get_cell_collection(patch_id))};
 
         for(unsigned int mm = 0; mm < GeometryInfo<dim>::faces_per_cell; ++mm)
@@ -804,7 +805,8 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       const auto patch_range = subdomain_partition_data.get_patch_range(1, color);
       for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
       {
-        info.is_incomplete_patch.emplace_back(true);
+        // TODO
+        info.n_lanes_filled.emplace_back(1);
         std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> local_data;
         const auto cell_collection{std::move(get_cell_collection(patch_id))};
 
@@ -830,7 +832,8 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       const auto patch_range = subdomain_partition_data.get_patch_range(2, color);
       for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
       {
-        info.is_incomplete_patch.emplace_back(false);
+        // TODO
+        info.n_lanes_filled.emplace_back(macro_size);
         const auto cell_collection{std::move(get_cell_collection(patch_id))};
 
         for(unsigned int mm = 0; mm < GeometryInfo<dim>::faces_per_cell; ++mm)
@@ -851,7 +854,8 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       const auto patch_range = subdomain_partition_data.get_patch_range(3, color);
       for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
       {
-        info.is_incomplete_patch.emplace_back(false);
+        // TODO
+        info.n_lanes_filled.emplace_back(macro_size);
         std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> local_data;
         const auto cell_collection{std::move(get_cell_collection(patch_id))};
 
@@ -866,7 +870,7 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       }
     }
   }
-  AssertDimension(info.is_incomplete_patch.size(), subdomain_partition_data.n_subdomains());
+  AssertDimension(info.n_lanes_filled.size(), subdomain_partition_data.n_subdomains());
   AssertDimension(info.at_boundary_mask.size(),
                   subdomain_partition_data.n_subdomains() * GeometryInfo<dim>::faces_per_cell);
 }
@@ -990,12 +994,15 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
     std::vector<std::pair<unsigned int, std::array<unsigned int, 3>>> map_bindex_to_triple;
 
     // *** duplicate triples along the artificial lanes
-    if(patch_info->is_incomplete_patch[patch_id]) // INCOMPLETE
+    if(n_lanes_filled(patch_id) < macro_size) // INCOMPLETE
+    {
+      Assert(n_lanes_filled(patch_id) == 1, ExcMessage("TODO"));
       for(unsigned int cidx = 0; cidx < patch_size; ++cidx, ++mf_cell_index)
         for(unsigned int vcomp = 0; vcomp < macro_size; ++vcomp)
           map_bindex_to_triple.emplace_back(mf_cell_index->first,
                                             std::array<unsigned int, 3>{
                                               {mf_cell_index->second, vcomp, cidx}});
+    }
     else // COMPLETE
       for(unsigned int vcomp = 0; vcomp < macro_size; ++vcomp)
         for(unsigned int cidx = 0; cidx < patch_size; ++cidx, ++mf_cell_index)
@@ -1055,7 +1062,6 @@ void
 PatchWorker<dim, number>::clear_patch_info(PatchInfo<dim> & info)
 {
   info.patch_starts.clear();
-  info.is_incomplete_patch.clear();
   info.at_boundary_mask.clear();
   info.subdomain_partition_data.clear();
 }

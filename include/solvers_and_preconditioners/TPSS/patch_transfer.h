@@ -178,11 +178,6 @@ private:
   PatchWorker<dim, Number> patch_worker;
   // TODO pass meaningful constraints from the MatrixFree/SubdomainHandler
   AffineConstraints<Number> constraints;
-  /**
-   * Read-write-operations differ if not all vectorization lanes are meaningfully
-   * filled.
-   */
-  bool is_incomplete_patch;
 };
 
 /**
@@ -457,8 +452,7 @@ inline PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::PatchTr
     n_batches(-1),
     batch_count(nullptr),
     batch_triple(nullptr),
-    patch_worker(sd_handler_in.get_patch_info()),
-    is_incomplete_patch(false)
+    patch_worker(sd_handler_in.get_patch_info())
 {
   static_assert(n_comp == 1, "Handles only one scalar DoFHandler.");
   AssertThrow(n_dofs != static_cast<unsigned int>(-1),
@@ -471,8 +465,7 @@ inline void
 PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(const unsigned int patch)
 {
   AssertIndexRange(patch, n_subdomains);
-  patch_id            = patch;
-  is_incomplete_patch = sd_handler.get_patch_info().is_incomplete_patch[patch];
+  patch_id = patch;
 
   const auto & mf_connect = sd_handler.get_matrixfree_connect();
   n_batches               = mf_connect.set_pointers_and_count(patch_id, batch_triple, batch_count);

@@ -81,9 +81,9 @@ public:
   std::vector<unsigned int> patch_starts;
 
   /**
-   * A boolean array that stores the information if a (macro) patch is incomplete.
+   * An array that stores how many vectorization lanes of a macro patch contain meaningful data
    */
-  std::vector<unsigned char> is_incomplete_patch;
+  std::vector<unsigned int> n_lanes_filled;
 
   /**
    * A flat array that stores the information if each face within a
@@ -584,7 +584,6 @@ inline void
 PatchInfo<dim>::clear()
 {
   patch_starts.clear();
-  is_incomplete_patch.clear();
   at_boundary_mask.clear();
   subdomain_partition_data.clear();
 
@@ -777,14 +776,13 @@ PatchWorker<dim, number>::n_physical_subdomains() const
                                                           const unsigned int color) {
     const auto & partition_data = patch_info->subdomain_partition_data;
     const auto & range          = partition_data.get_patch_range(partition, color);
-    if(patch_info->is_incomplete_patch[range.first])
-    {
-      unsigned int n_subdomains = 0;
-      for(unsigned id = range.first; id < range.second; ++id)
-        n_subdomains += n_lanes_filled(id);
-      return n_subdomains;
-    }
-    return (range.second - range.first) * macro_size;
+
+    // TODO
+    unsigned int n_subdomains = 0;
+    for(unsigned id = range.first; id < range.second; ++id)
+      n_subdomains += n_lanes_filled(id);
+    return n_subdomains;
+    // return (range.second - range.first) * macro_size;
   };
 
   unsigned     n_subdomains   = 0;
@@ -804,13 +802,10 @@ template<int dim, typename number>
 inline unsigned int
 PatchWorker<dim, number>::n_lanes_filled(const unsigned int patch_id) const
 {
-  using namespace dealii;
   Assert(patch_info != nullptr, ExcNotInitialized());
   AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
 
-  if(patch_info->is_incomplete_patch[patch_id])
-    return 1;
-  return macro_size;
+  return patch_info->n_lanes_filled[patch_id];
 }
 
 template<int dim, typename number>
@@ -834,8 +829,9 @@ PatchWorker<dim, number>::get_cell_collection(unsigned int patch) const
   const auto & cell_iterators = patch_info->get_internal_data()->cell_iterators;
   const auto & patch_starts   = patch_info->patch_starts;
   auto         cell_it        = cell_iterators.cbegin() + patch_starts[patch];
-  if(patch_info->is_incomplete_patch[patch]) // incomplete
+  if(n_lanes_filled(patch) < macro_size) // incomplete
   {
+    Assert(n_lanes_filled(patch) == 1, ExcMessage("TODO"));
     for(unsigned int cell_no = 0; cell_no < patch_size; ++cell_it, ++cell_no)
       std::fill(cell_collect[cell_no].begin(), cell_collect[cell_no].end(), *cell_it);
   }
@@ -857,13 +853,11 @@ PatchWorker<dim, number>::get_cell_collection_views(unsigned int patch_id) const
   AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
 
   std::vector<ArrayView<const CellIterator>> views;
-  const auto &      cell_iterators = patch_info->get_internal_data()->cell_iterators;
-  const auto &      patch_starts   = patch_info->patch_starts;
-  const auto        begin          = cell_iterators.data() + patch_starts[patch_id];
-  const bool        is_incomplete  = patch_info->is_incomplete_patch[patch_id];
-  const std::size_t n_lanes_filled = is_incomplete ? 1 : macro_size;
+  const auto & cell_iterators = patch_info->get_internal_data()->cell_iterators;
+  const auto & patch_starts   = patch_info->patch_starts;
+  const auto   begin          = cell_iterators.data() + patch_starts[patch_id];
 
-  for(unsigned int m = 0; m < n_lanes_filled; ++m)
+  for(unsigned int m = 0; m < n_lanes_filled(patch_id); ++m)
   {
     const auto first = begin + m * patch_size;
     views.emplace_back(ArrayView<const CellIterator>(first, patch_size));
