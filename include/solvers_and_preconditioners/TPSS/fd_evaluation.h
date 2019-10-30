@@ -122,10 +122,10 @@ protected:
   const MatrixFree<dim, Number> &                                           mf_storage;
   const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> & shape_info;
 
-  unsigned int                                  patch_id          = -1;
-  unsigned int                                  n_batches         = -1;
-  const std::pair<unsigned int, unsigned int> * batch_count       = nullptr;
-  const std::array<unsigned int, 3> *           batch_triple      = nullptr;
+  unsigned int                                  patch_id     = -1;
+  unsigned int                                  n_batches    = -1;
+  const std::pair<unsigned int, unsigned int> * batch_count  = nullptr;
+  const std::array<unsigned int, 3> *           batch_triple = nullptr;
 
   /**
    * lexicographical ordering: face_no_1d < direction

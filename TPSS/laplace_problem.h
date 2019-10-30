@@ -1169,14 +1169,14 @@ struct MatrixOperator : public Subscriptor
         //   };
 
         Assert(
-          parameters.n_cell_repetitions == (1 << parameters.n_refines_distort),
+          static_cast<int>(parameters.n_cell_repetitions) == (1 << parameters.n_refines_distort),
           ExcMessage(
             "New implementation which sets the root by means of the cell repetitions instead of a N of refinements."));
         MeshParameter mesh_prms;
-        mesh_prms.n_refinements = n_refines;
-        mesh_prms.n_repetitions = parameters.n_cell_repetitions;
-        mesh_prms.distortion    = parameters.distortion_factor;
-        mesh_prms.geometry_variant       = MeshParameter::GeometryVariant::CubeDistorted;
+        mesh_prms.n_refinements    = n_refines;
+        mesh_prms.n_repetitions    = parameters.n_cell_repetitions;
+        mesh_prms.distortion       = parameters.distortion_factor;
+        mesh_prms.geometry_variant = MeshParameter::GeometryVariant::CubeDistorted;
         std::pair<bool, std::string> mesh_info;
         mesh_info.first  = true; // TODO specify valid range of n_dofs
         mesh_info.second = create_distorted_cube(triangulation, mesh_prms);

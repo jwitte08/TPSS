@@ -43,7 +43,6 @@ test(const TestParameter & prm = TestParameter{})
   const bool mesh_is_cartesian = (prm.geometry_variant == Parameter::GeometryVariant::Cube);
   const bool mesh_is_distorted =
     (prm.geometry_variant == Parameter::GeometryVariant::CubeDistorted);
-  const bool mesh_is_circular   = (prm.geometry_variant == Parameter::GeometryVariant::Ball);
   IP::pre_factor                = !mesh_is_cartesian ? 4. : 1.;
   parameters.n_cycles           = mesh_is_distorted ? 1 : 15;
   parameters.n_refines          = mesh_is_distorted ? (prm.n_mg_levels_distort - 1) : 2;
@@ -59,10 +58,10 @@ test(const TestParameter & prm = TestParameter{})
     TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim);
   const double local_damping_factor = prm.damping_factor / outer_damping_factor;
 
-  parameters.coarse_level                                    = mesh_is_distorted ? 0 : 1; // TODO distorted?
-  parameters.schwarz_smoother_data.patch_variant             = CT::PATCH_VARIANT_;
-  parameters.schwarz_smoother_data.smoother_variant          = CT::SMOOTHER_VARIANT_;
-  parameters.schwarz_smoother_data.manual_coloring           = true;
+  parameters.coarse_level                           = mesh_is_distorted ? 0 : 1; // TODO distorted?
+  parameters.schwarz_smoother_data.patch_variant    = CT::PATCH_VARIANT_;
+  parameters.schwarz_smoother_data.smoother_variant = CT::SMOOTHER_VARIANT_;
+  parameters.schwarz_smoother_data.manual_coloring  = true;
   parameters.schwarz_smoother_data.number_of_smoothing_steps = prm.n_smoothing_steps;
   parameters.compute_damping_factor                          = false;
   parameters.schwarz_smoother_data.damping_factor            = outer_damping_factor;
@@ -76,7 +75,7 @@ test(const TestParameter & prm = TestParameter{})
   // *** SOLVER>
   parameters.solver_reduction      = prm.cg_reduction;
   parameters.solver_max_iterations = 100;
-  if (CT::PATCH_VARIANT_ == TPSS::PatchVariant::vertex)
+  if(CT::PATCH_VARIANT_ == TPSS::PatchVariant::vertex)
     parameters.solver_max_iterations = 50;
   // parameters.solver_variant = Parameter::SolverVariant::GMRES;
   if(!parameters.mg_smoother_post_reversed)
