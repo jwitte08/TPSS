@@ -3,57 +3,38 @@ namespace TPSS
 {
 template<int dim, typename number>
 typename MappingInfo<dim, number>::LocalData
-MappingInfo<dim, number>::extract_cartesian_scaling(
-  const std::array<unsigned int, 3> * const     triple_begin,
-  const std::pair<unsigned int, unsigned int> * bid_count_pair,
-  const unsigned int                            n_batches) const
+MappingInfo<dim, number>::extract_cartesian_scaling(dealii::FEValues<dim> &          fe_values,
+                                                    const PatchWorker<dim, number> & patch_worker,
+                                                    const unsigned int               patch_id) const
 {
-  using namespace dealii;
-  Assert(n_batches != 0, ExcInternalError());
   Assert(patch_size != -1, ExcInternalError());
   Assert(n_cells_per_direction != -1, ExcInternalError());
   Assert(this->mf_mapping_info != nullptr, ExcInternalError());
   Assert(this->mf_mapping_data != nullptr, ExcInternalError());
 
-  constexpr auto         regular_vpatch_size = UniversalInfo<dim>::n_cells(PatchVariant::vertex);
-  constexpr unsigned int last_cell_no_vpatch = regular_vpatch_size - 1;
-
-  auto                                         batch_triple = triple_begin;
+  constexpr auto regular_vpatch_size = UniversalInfo<dim>::n_cells(PatchVariant::vertex);
   typename MappingInfo<dim, number>::LocalData local_data(n_cells_per_direction);
-  for(unsigned int nn = 0; nn < n_batches; ++nn) // check if UNIFORM
+  const auto & cell_collection  = patch_worker.get_cell_collection(patch_id);
+  const auto & first_macro_cell = cell_collection[0];
+  for(unsigned int lane = 0; lane < macro_size; ++lane)
   {
-    const auto         batch_id  = bid_count_pair[nn].first;
-    const auto         n_triples = bid_count_pair[nn].second;
-    const unsigned int offsets   = mf_mapping_data->data_index_offsets[batch_id];
-    const Tensor<2, dim, VectorizedArray<number>> * jacobian_invT =
-      (&mf_mapping_data->jacobians[0][offsets]);
+    fe_values.reinit(first_macro_cell[lane]);
+    for(unsigned int d = 0; d < dim; ++d)
+      local_data.h_inverses[d][0][lane] = 1. / fe_values.jacobian(0)[d][d];
+  }
 
-    for(unsigned int triple_no = 0; triple_no < n_triples; ++batch_triple, ++triple_no)
+  if(cell_collection.size() == regular_vpatch_size)
+  {
+    const auto & last_macro_cell = cell_collection.back();
+    for(unsigned int lane = 0; lane < macro_size; ++lane)
     {
-      const auto & cell_no = batch_triple->at(2); // cell number within patch
-      const auto & vcomp   = batch_triple->at(1); // lane within macro patch
-      const auto & bcomp   = batch_triple->at(0); // lane within batch
-
-      if(cell_no == 0) // first cell has scalings in x-, y-, z- directions for the first cell
-        // per direction
-        for(unsigned int d = 0; d < dim; ++d)
-          local_data.h_inverses[d][0][vcomp] = jacobian_invT[0][d][d][bcomp];
-      else if(cell_no == last_cell_no_vpatch) // last cell has
-        // scalings in x-, y-,
-        // z- directions for
-        // the second cell per
-        // direction (NOTE
-        // this is on purpose
-        // only performed for
-        // vertex patches)
-        for(unsigned int d = 0; d < dim; ++d)
-          local_data.h_inverses[d][1][vcomp] = jacobian_invT[0][d][d][bcomp];
+      fe_values.reinit(last_macro_cell[lane]);
+      for(unsigned int d = 0; d < dim; ++d)
+        local_data.h_inverses[d][1][lane] = 1. / fe_values.jacobian(0)[d][d];
     }
   }
-  AssertDimension(std::distance(triple_begin, batch_triple),
-                  (patch_size == 1) ?
-                    macro_size :
-                    (patch_size == regular_vpatch_size) ? regular_vpatch_size * macro_size : false);
+  else
+    Assert(cell_collection.size() == 1, ExcMessage("TODO other patch types"));
 
   return local_data;
 }
@@ -280,11 +261,6 @@ MappingInfo<dim, number>::initialize_storage(const PatchInfo<dim> &             
   else
     AssertThrow(!patch_info.empty(), ExcMessage("invalid PatchInfo"));
 
-  // TODO we fail assert on single-cell meshes
-  Assert(!mf_connect.batch_starts.empty(), ExcNotInitialized());
-  Assert(!mf_connect.batch_count_per_id.empty(), ExcNotInitialized());
-  Assert(!mf_connect.bcomp_vcomp_cindex.empty(), ExcNotInitialized());
-
   // *** check if patch_info's PartitionData is valid
   const auto   patch_variant  = patch_info.get_additional_data().patch_variant;
   const auto & partition_data = patch_info.subdomain_partition_data;
@@ -325,47 +301,41 @@ MappingInfo<dim, number>::initialize_storage(const PatchInfo<dim> &             
   FEValues<dim>            fe_values(mapping,
                           dof_handler.get_fe(),
                           cell_quadrature,
-                          dealii::update_quadrature_points | dealii::update_JxW_values);
+                          dealii::update_quadrature_points | dealii::update_JxW_values |
+                            dealii::update_jacobians | dealii::update_inverse_jacobians);
+  PatchWorker<dim, number> patch_worker{patch_info, mf_connect};
 
   mapping_data_starts.reserve(n_subdomains);
   for(unsigned int color = 0; color < partition_data.n_colors(); ++color)
     for(unsigned int part = 0; part < partition_data.n_partitions(color); ++part)
     {
-      const auto                          range = partition_data.get_patch_range(part, color);
-      const std::array<unsigned int, 3> * batch_triple             = nullptr;
-      const std::pair<unsigned int, unsigned int> * bid_count_pair = nullptr;
+      const auto range = partition_data.get_patch_range(part, color);
       for(unsigned int patch_id = range.first; patch_id < range.second; ++patch_id)
       {
-        const unsigned int n_batches =
-          mf_connect.set_pointers_and_count(patch_id, batch_triple, bid_count_pair);
-
-        PatchType patch_type = PatchType::cartesian;
-        for(unsigned int nn = 0; nn < n_batches; ++nn) // check if UNIFORM
-        {
-          const auto batch_id  = bid_count_pair[nn].first;
-          const auto cell_type = mf_mapping_info->get_cell_type(batch_id);
-          // std::cout << "cell_type[" << patch_id << "]: " << cell_type << std::endl;
-          patch_type = patch_type < cell_type ? cell_type : patch_type;
-        }
+        PatchType    patch_type       = PatchType::cartesian;
+        const auto & batch_collection = patch_worker.get_batch_collection(patch_id);
+        for(const auto & macro_pair : batch_collection)
+          for(const auto & batch_pair : macro_pair)
+          {
+            const auto batch_id  = batch_pair.first;
+            const auto cell_type = mf_mapping_info->get_cell_type(batch_id);
+            // std::cout << "cell_type[" << patch_id << "]: " << cell_type << std::endl;
+            patch_type = patch_type < cell_type ? cell_type : patch_type;
+          }
         // std::cout << "patch_type[" << patch_id << "]: " << patch_type << std::endl;
 
-        // TODO data compression ?!
-        /*** we can extract the scalings from the jacobians stored matrix-free mapping data ***/
+        // we can directly extract scalings from the jacobians
         if(patch_type == PatchType::cartesian)
         {
-          mf_connect.set_pointers_and_count(patch_id, batch_triple, bid_count_pair);
-          const auto local_data =
-            extract_cartesian_scaling(batch_triple, bid_count_pair, n_batches);
-
+          const auto & local_data = extract_cartesian_scaling(fe_values, patch_worker, patch_id);
           mapping_data_starts.emplace_back(internal_data.h_inverses.size());
           submit_local_data(local_data);
-        } // patch_type == cartesian
+        }
 
-        // *** we have to compute average scalings to gain a tensor product structure
+        //  we have to compute average scalings to gain a tensor product structure
         else
         {
-          PatchWorker<dim, number> patch_worker{patch_info};
-          auto && local_data = compute_average_scaling(fe_values, patch_worker, patch_id);
+          const auto & local_data = compute_average_scaling(fe_values, patch_worker, patch_id);
           mapping_data_starts.emplace_back(internal_data.h_inverses.size());
           submit_local_data(local_data);
         }

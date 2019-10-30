@@ -56,9 +56,9 @@ public:
 
 private:
   LocalData
-  extract_cartesian_scaling(const std::array<unsigned int, 3> * const     batch_triple,
-                            const std::pair<unsigned int, unsigned int> * bid_count_pair,
-                            const unsigned int                            n_batches) const;
+  extract_cartesian_scaling(dealii::FEValues<dim> &          fe_values,
+                            const PatchWorker<dim, number> & patch_worker,
+                            const unsigned int               patch_id) const;
 
   LocalData
   compute_average_scaling(dealii::FEValues<dim> &          fe_values,
