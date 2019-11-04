@@ -651,83 +651,74 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
   const auto & additional_data = info.get_additional_data();
   const auto   patch_size      = UniversalInfo<dim>::n_cells(additional_data.patch_variant);
   const auto * internal_data   = info.get_internal_data();
-  auto &       patch_starts    = info.patch_starts;
+  (void)internal_data;
+  auto & patch_starts = info.patch_starts;
   patch_starts.clear();
 
-  const unsigned int stride_incomp  = patch_size;
-  const unsigned int stride_comp    = patch_size * macro_size;
-  unsigned int       start_interior = 0;
-  unsigned int       start_boundary = 0;
+  const unsigned int stride_incomp = patch_size;
+  const unsigned int stride_comp   = patch_size * macro_size;
+  unsigned int       start         = 0;
   for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
   {
-    start_boundary += internal_data->n_interior_subdomains[color] * patch_size;
-
     { // interior incomplete
       const auto patch_range = subdomain_partition_data.get_patch_range(0, color);
-      for(unsigned int pp = patch_range.first; pp < patch_range.second;
-          ++pp, start_interior += stride_incomp)
-        patch_starts.emplace_back(start_interior);
+      for(unsigned int pp = patch_range.first; pp < patch_range.second; ++pp)
+      {
+        patch_starts.emplace_back(start);
+        start += stride_incomp;
+      }
     }
-    // std::cout << "interior start: " << start_interior << std::endl ;
-
-    { // boundary incomplete
-      const auto patch_range = subdomain_partition_data.get_patch_range(1, color);
-      for(unsigned int pp = patch_range.first; pp < patch_range.second;
-          ++pp, start_boundary += stride_incomp)
-        patch_starts.emplace_back(start_boundary);
-    }
-    // std::cout << "boundary start: " << start_boundary  << std::endl ;
 
     { // interior complete
       const auto patch_range = subdomain_partition_data.get_patch_range(2, color);
-      for(unsigned int pp = patch_range.first; pp < patch_range.second;
-          ++pp, start_interior += stride_comp)
-        patch_starts.emplace_back(start_interior);
+      for(unsigned int pp = patch_range.first; pp < patch_range.second; ++pp)
+      {
+        patch_starts.emplace_back(start);
+        start += stride_comp;
+      }
     }
-    // std::cout << "interior start: " << start_interior  << std::endl ;
-    start_interior += internal_data->n_boundary_subdomains[color] * patch_size;
+  }
+  AssertDimension(start, internal_data->cell_iterators.size());
+  AssertDimension(info.patch_starts.size(), subdomain_partition_data.n_subdomains());
 
+  info.n_lanes_filled.clear();
+  info.n_lanes_filled.reserve(subdomain_partition_data.n_subdomains());
+  for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
+  {
+    { // interior incomplete
+      const auto patch_range = subdomain_partition_data.get_patch_range(0, color);
+      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
+        info.n_lanes_filled.emplace_back(1);
+    }
+    { // boundary incomplete
+      const auto patch_range = subdomain_partition_data.get_patch_range(1, color);
+      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
+        std::cout << "BDRY INCP" << std::endl;
+    }
+    { // interior incomplete
+      const auto patch_range = subdomain_partition_data.get_patch_range(2, color);
+      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
+        info.n_lanes_filled.emplace_back(macro_size);
+    }
     { // boundary complete
       const auto patch_range = subdomain_partition_data.get_patch_range(3, color);
-      for(unsigned int pp = patch_range.first; pp < patch_range.second;
-          ++pp, start_boundary += stride_comp)
-        patch_starts.emplace_back(start_boundary);
+      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
+        std::cout << "BDRY CP" << std::endl;
     }
-    // std::cout << "boundary start: " << start_boundary  << std::endl ;
-
-    AssertDimension(start_interior, start_boundary);
   }
-  AssertDimension(info.patch_starts.size(), subdomain_partition_data.n_subdomains());
+  AssertDimension(info.n_lanes_filled.size(), subdomain_partition_data.n_subdomains());
 
   // TODO treat all macro_cells at the patch boundary instead of one representative
   const auto get_mask = [](auto &&            macro_cell,
                            const unsigned int direction,
-                           const unsigned int face_no_1d) /* -> unsigned short*/ {
-    // std::cout << "macro cell indices: ";
-    // for (unsigned int vv = 0; vv < macro_size; ++vv)
-    //   std::cout << macro_cell[vv]->index() << " ";
-    // std::cout << std::endl;
-    // std::cout << "faces: ";
-    // for (unsigned int ff = 0; ff < GeometryInfo<dim>::faces_per_cell; ++ff)
-    //   for (unsigned int vv = 0; vv < macro_size; ++vv)
-    // 	std::cout << macro_cell[vv]->face(ff)->at_boundary() << " ";
-    // std::cout << std::endl;
-
+                           const unsigned int face_no_1d) /* -> unsigned int*/ {
     std::bitset<macro_size> bitset_mask;
     for(unsigned int vv = 0; vv < macro_size; ++vv)
       bitset_mask[vv] = macro_cell[vv]->face(2 * direction + face_no_1d)->at_boundary();
-
-    // std::cout << "bitset mask: direction/face_no  " << direction << "/" << face_no_1d << ":  ";
-    // for (unsigned int vv = 0; vv < macro_size; ++vv)
-    //   std::cout << bitset_mask[vv] << " ";
-    // std::cout << std::endl;
-    // std::cout << std::endl;
-
-    //    return static_cast<unsigned short> (bitset_mask.to_ulong ());
     return bitset_mask;
   };
 
-  info.n_lanes_filled.reserve(subdomain_partition_data.n_subdomains());
+  info.at_boundary_mask.clear();
   info.at_boundary_mask.reserve(subdomain_partition_data.n_subdomains() *
                                 GeometryInfo<dim>::faces_per_cell);
   for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
@@ -736,48 +727,16 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       const auto patch_range = subdomain_partition_data.get_patch_range(0, color);
       for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
       {
-        // TODO
-        info.n_lanes_filled.emplace_back(1);
+        //: face_no < direction
+        std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> masks;
         const auto cell_collection{std::move(get_cell_collection(patch_id))};
-
-        for(unsigned int mm = 0; mm < GeometryInfo<dim>::faces_per_cell; ++mm)
-          info.at_boundary_mask.emplace_back(0);
-
-        // // DEBUG
-        // for(unsigned int d = 0; d < dim; ++d)
-        // {
-        //   AssertDimension(static_cast<unsigned long>(0),
-        //                   get_mask(cell_collection.front(), d, 0).to_ulong());
-        //   AssertDimension(static_cast<unsigned long>(0),
-        //                   get_mask(cell_collection.back(), d, 1).to_ulong());
-        // }
-      }
-    }
-
-    { // boundary incomplete
-      const auto patch_range = subdomain_partition_data.get_patch_range(1, color);
-      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
-      {
-        // TODO
-        info.n_lanes_filled.emplace_back(1);
-        std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> local_data;
-        const auto cell_collection{std::move(get_cell_collection(patch_id))};
-
         for(unsigned int d = 0; d < dim; ++d)
         {
-          local_data[d * 2]     = get_mask(cell_collection.front(), d, 0 /*face_no*/);
-          local_data[d * 2 + 1] = get_mask(cell_collection.back(), d, 1 /*face_no*/);
+          masks[d * 2]     = get_mask(cell_collection.front(), d, /*face_no*/ 0);
+          masks[d * 2 + 1] = get_mask(cell_collection.back(), d, /*face_no*/ 1);
         }
-
-        for(auto && mask : local_data)
-        {
-          info.at_boundary_mask.emplace_back(static_cast<unsigned short>(mask.to_ulong()));
-          Assert(info.at_boundary_mask.back() == (Utilities::pow(2, macro_size) - 1) ||
-                   info.at_boundary_mask.back() == 0,
-                 ExcDimensionMismatch2(info.at_boundary_mask.back(),
-                                       0,
-                                       (Utilities::pow(2, macro_size) - 1)));
-        }
+        for(const auto & mask : masks)
+          info.at_boundary_mask.emplace_back(static_cast<unsigned int>(mask.to_ulong()));
       }
     }
 
@@ -786,44 +745,22 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
       for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
       {
         // TODO
-        info.n_lanes_filled.emplace_back(macro_size);
+        // info.n_lanes_filled.emplace_back(macro_size);
+        // const auto cell_collection{std::move(get_cell_collection(patch_id))};
+
+        //: face_no < direction
+        std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> masks;
         const auto cell_collection{std::move(get_cell_collection(patch_id))};
-
-        for(unsigned int mm = 0; mm < GeometryInfo<dim>::faces_per_cell; ++mm)
-          info.at_boundary_mask.emplace_back(0);
-
-        // // DEBUG
-        // for(unsigned int d = 0; d < dim; ++d)
-        // {
-        //   AssertDimension(static_cast<unsigned long>(0),
-        //                   get_mask(cell_collection.front(), d, 0).to_ulong());
-        //   AssertDimension(static_cast<unsigned long>(0),
-        //                   get_mask(cell_collection.back(), d, 1).to_ulong());
-        // }
-      }
-    }
-
-    { // boundary complete
-      const auto patch_range = subdomain_partition_data.get_patch_range(3, color);
-      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
-      {
-        // TODO
-        info.n_lanes_filled.emplace_back(macro_size);
-        std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> local_data;
-        const auto cell_collection{std::move(get_cell_collection(patch_id))};
-
         for(unsigned int d = 0; d < dim; ++d)
         {
-          local_data[d * 2]     = get_mask(cell_collection.front(), d, 0 /*face_no*/);
-          local_data[d * 2 + 1] = get_mask(cell_collection.back(), d, 1 /*face_no*/);
+          masks[d * 2]     = get_mask(cell_collection.front(), d, /*face_no*/ 0);
+          masks[d * 2 + 1] = get_mask(cell_collection.back(), d, /*face_no*/ 1);
         }
-
-        for(auto && mask : local_data)
-          info.at_boundary_mask.emplace_back(static_cast<unsigned short>(mask.to_ulong()));
+        for(const auto & mask : masks)
+          info.at_boundary_mask.emplace_back(static_cast<unsigned int>(mask.to_ulong()));
       }
     }
   }
-  AssertDimension(info.n_lanes_filled.size(), subdomain_partition_data.n_subdomains());
   AssertDimension(info.at_boundary_mask.size(),
                   subdomain_partition_data.n_subdomains() * GeometryInfo<dim>::faces_per_cell);
 }

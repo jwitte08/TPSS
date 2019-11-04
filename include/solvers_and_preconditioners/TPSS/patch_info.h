@@ -87,7 +87,7 @@ public:
    * reinterpreted as std::bitset of length @p macro_size.
    * Lexicographical:   face number   <   patch id
    */
-  std::vector<unsigned short> at_boundary_mask;
+  std::vector<unsigned int> at_boundary_mask;
 
   /**
    * Container storing the partitioning into colored batches of
@@ -922,12 +922,13 @@ PatchWorker<dim, number>::compute_partition_data(
     partitions.resize(5);
     const unsigned int n_interior_subdomains = (internal_data->n_interior_subdomains)[color];
     const unsigned int n_boundary_subdomains = (internal_data->n_boundary_subdomains)[color];
+    const unsigned int n_subdomains          = n_interior_subdomains + n_boundary_subdomains;
 
-    partitions[0] = n_subdomains_before;
-    partitions[1] = partitions[0] + (n_interior_subdomains % macro_size); // interior incomplete
-    partitions[2] = partitions[1] + (n_boundary_subdomains % macro_size); // boundary incomplete
-    partitions[3] = partitions[2] + (n_interior_subdomains / macro_size); // interior complete
-    partitions[4] = partitions[3] + (n_boundary_subdomains / macro_size); // boundary complete
+    partitions[0]       = n_subdomains_before;
+    partitions[1]       = partitions[0] + (n_subdomains % macro_size); // total incomplete
+    partitions[2]       = partitions[1] + 0;                           // empty
+    partitions[3]       = partitions[2] + (n_subdomains / macro_size); // total complete
+    partitions[4]       = partitions[3] + 0;                           // empty
     n_subdomains_before = partitions.back();
 
     has_valid_state(partition_data, color);
@@ -945,7 +946,7 @@ PatchWorker<dim, number>::has_valid_state(
   AssertDimension(partitions[color].size(), 5);
   for(unsigned int pid = 0; pid < partitions[color].size() - 1; ++pid)
     Assert(partitions[color][pid] >= 0 && partitions[color][pid] <= partitions[color][pid + 1],
-           dealii::ExcInvalidState());
+           ExcMessage("Invalid partitioning."));
 }
 
 
