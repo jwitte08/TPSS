@@ -21,7 +21,6 @@
 
 namespace TPSS
 {
-// TODO patch_info should contain TriaIterators to TriaAccessors not DoFAccessor ?!
 template<int dim>
 class PatchInfo
 {
@@ -31,6 +30,8 @@ public:
 
   struct AdditionalData;
 
+  struct GhostPatch;
+
   struct PartitionData;
 
   struct InternalData;
@@ -39,10 +40,7 @@ public:
 
   PatchInfo(const PatchInfo<dim> &) = delete;
 
-  ~PatchInfo()
-  {
-    clear();
-  }
+  ~PatchInfo();
 
   PatchInfo<dim> &
   operator=(const PatchInfo<dim> &) = delete;
@@ -54,10 +52,7 @@ public:
   clear();
 
   bool
-  empty() const
-  {
-    return internal_data.empty();
-  }
+  empty() const;
 
   /**
    * Read access to the internal data.
@@ -92,10 +87,6 @@ public:
    * reinterpreted as std::bitset of length @p macro_size.
    * Lexicographical:   face number   <   patch id
    */
-  // TODO instead on patch-level we need masks on cell-level ... (not
-  // generic!!)  TODO replace this field. we can extract the
-  // information given the cell collections, i.e
-  // std::vector<CellIterators>
   std::vector<unsigned short> at_boundary_mask;
 
   /**
@@ -108,47 +99,6 @@ public:
    * An array to store timer output.
    */
   std::vector<TimeInfo> time_data;
-
-  struct GhostPatch
-  {
-    GhostPatch(const unsigned int proc, const CellId & cell_id)
-    {
-      submit_id(proc, cell_id);
-    }
-
-    void
-    submit_id(const unsigned int proc, const CellId & cell_id)
-    {
-      const auto member = proc_to_cell_ids.find(proc);
-      if(member != proc_to_cell_ids.cend())
-      {
-        member->second.emplace_back(cell_id);
-        Assert(!(member->second.empty()), ExcMessage("at least one element"));
-      }
-      else
-      {
-        const auto status = proc_to_cell_ids.emplace(proc, std::vector<CellId>{cell_id});
-        (void)status;
-        Assert(status.second, ExcMessage("failed to insert key-value-pair"));
-      }
-    }
-
-    std::string
-    str() const
-    {
-      std::ostringstream oss;
-      oss << "{";
-      const auto size = proc_to_cell_ids.size();
-      unsigned   i    = 0;
-      for(auto key_value = proc_to_cell_ids.cbegin(); key_value != proc_to_cell_ids.cend();
-          ++key_value, ++i)
-        oss << "(" << key_value->first << ", " << vector_to_string(key_value->second)
-            << ((i + 1) < size ? "), " : ")}");
-      return oss.str();
-    }
-
-    std::map<unsigned, std::vector<CellId>> proc_to_cell_ids;
-  };
 
 private:
   static std::vector<types::global_dof_index>
@@ -178,13 +128,13 @@ private:
    * Gathering the locally owned and ghost cells attached to a common
    * vertex as the collection of cell iterators (patch). The
    * successive distribution of the collections with ghost cells
-   * currently follows the logic:
+   * follows the logic:
    *
-   * 1.) owns one mpi-proc more than half of the cells (locally owned)
-   * of the vertex patch the mpi-proc takes the ownership
+   * 1.) if one mpi-proc owns more than half of the cells (locally owned)
+   * of the vertex patch the mpi-proc takes ownership
    *
    * 2.) for the remaining ghost patches the mpi-proc with the cell of
-   * the lowest CellId (see dealii::Triangulation) takes the ownership
+   * the lowest CellId (see dealii::Triangulation) takes ownership
    */
   std::vector<std::vector<CellIterator>>
   gather_vertex_patches(const DoFHandler<dim> & dof_handler,
@@ -247,11 +197,17 @@ private:
   ConditionalOStream pcout{std::cout, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0};
 
   /**
-   * Storing the actual data shaping patches.
+   * A struct storing CellIterators shaping patches
    */
-  InternalData   internal_data;
+  InternalData internal_data;
+
+  /**
+   * Specific information like coloring schemes, etc.
+   */
   AdditionalData additional_data;
 };
+
+
 
 template<int dim>
 struct PatchInfo<dim>::AdditionalData
@@ -275,6 +231,24 @@ struct PatchInfo<dim>::AdditionalData
   bool print_details = false; // DEBUG
 };
 
+
+
+template<int dim>
+struct PatchInfo<dim>::GhostPatch
+{
+  GhostPatch(const unsigned int proc, const CellId & cell_id);
+
+  void
+  submit_id(const unsigned int proc, const CellId & cell_id);
+
+  std::string
+  str() const;
+
+  std::map<unsigned, std::vector<CellId>> proc_to_cell_ids;
+};
+
+
+
 /**
  * This helper struct stores the information on the distribution of
  * CellIterator collections (=patch) into partitions of the same
@@ -295,10 +269,7 @@ struct PatchInfo<dim>::PartitionData
 
   PartitionData(const PartitionData &) = default;
 
-  ~PartitionData()
-  {
-    clear();
-  };
+  ~PartitionData();
 
   PartitionData &
   operator=(const PartitionData &) = default;
@@ -353,6 +324,8 @@ struct PatchInfo<dim>::PartitionData
   std::vector<std::vector<unsigned int>> partitions;
 };
 
+
+
 /**
  * This helper struct contains all data to construct (macro) patches
  * and the distribution into partitions of certain properties for each
@@ -368,10 +341,7 @@ struct PatchInfo<dim>::InternalData
 
   InternalData(const InternalData &) = delete;
 
-  ~InternalData()
-  {
-    clear();
-  };
+  ~InternalData();
 
   InternalData &
   operator=(const InternalData &) = delete;
@@ -380,17 +350,10 @@ struct PatchInfo<dim>::InternalData
   clear();
 
   bool
-  empty() const
-  {
-    return cell_iterators.empty();
-  }
+  empty() const;
 
   bool
-  empty_on_all() const
-  {
-    const auto n_iterators_mpimax = Utilities::MPI::max(cell_iterators.size(), MPI_COMM_WORLD);
-    return (n_iterators_mpimax == 0);
-  }
+  empty_on_all() const;
 
   unsigned int level = -1;
 
@@ -415,70 +378,26 @@ struct PatchInfo<dim>::InternalData
   std::vector<CellIterator> cell_iterators;
 };
 
+
+
 template<int dim, typename number>
 struct MatrixFreeConnect
 {
-  // /**
-  //  * For a given macro patch, given by @p patch_id, the number of batches
-  //  * @p n_batches (not trivial, if there exist cells in batch that occur in more
-  //  * than one micro patch, or vice versa) is returned. The iterator range of (bid, count)-pairs
-  //  * is then given by [@p id_count_pair, @p id_count_pair + @p n_batches). Moreover,
-  //  * the starting triple @p triple is set.
-  //  */
-  // unsigned int
-  // set_pointers_and_count(const unsigned int                             patch_id,
-  //                        const std::array<unsigned int, 3> *&           triple,
-  //                        const std::pair<unsigned int, unsigned int> *& id_count_pair) const;
-
   /**
    * The underlying MatrixFree object used to map matrix-free infrastructure
    * to the patch distribution stored in PatchInfo
    */
   const dealii::MatrixFree<dim, number> * mf_storage = nullptr;
 
-  // /**
-  //  * In the MatrixFree framework cells are clustered into so-called (cell-)batches
-  //  * due to vectorization. Every batch is associated to an integer, similar to the
-  //  * integer-identification of vectorized patches by means of the @p subdomain_partition_data
-  //  * Filled and used by the PatchWorker this vector in conjunction with @p batch_count_per_id
-  //  * and @p batch_starts provides a unique mapping between cells for each
-  //  * patch (PatchWorker) and cells within batches (MatrixFree).
-  //  * Given a macro patch, represented by the integer @p patch_id, the half-open range
-  //  * [@p batch_starts[patch_id], @p batch_starts[patch_id+1]) identifies a range of pairs,
-  //  * stored in @p batch_count_per_id, to
-  //  * shape the macro patch associated to @patch_id. It happens that some of those batches
-  //  * contain more than one cell. This information is stored in the @p batch_count_per_id
-  //  * pairs, with the batch_id being the first and the corresponding count of cells the second
-  //  * member. Each pair is associated to @p count triples in @p bcomp_vcomp_cindex. The first member
-  //  * of the triple is the vectorization component within a batch, the second is the vectorization
-  //  * component within a patch and the third is the local cell index (lexicographically ordered)
-  //  * within a patch. The flat data field @p bcomp_vcomp_cindex is strided through by the @p patch_id
-  //  * with steps of size (@p patch_size * @p vectorization_length).
-  //  */
-  // std::vector<std::array<unsigned int, 3>> bcomp_vcomp_cindex;
-
-  // /**
-  //  * For details see bcomp_vcomp_cindex.
-  //  */
-  // std::vector<std::pair<unsigned int, unsigned int>> batch_count_per_id;
-
-  // /**
-  //  * For details see bcomp_vcomp_cindex.
-  //  */
-  // std::vector<std::size_t> batch_starts;
-
-  // /**
-  //  * Sets the stride with respect to @p bcomp_vcomp_cindex.
-  //  */
-  // int stride_triple = -1;
-
   /**
-   * The pairs storing the batch index and vectorization lane
-   * (MatrixFree framework) for the corresponding cell stored in the
-   * field @p cell_iterators of the InternalData within PatchInfo.
+   * The batch index and vectorization lane pairs identifying cells
+   * stored in the underlying MatrixFree object and corresponding to
+   * cells stored in the field @p cell_iterators.
    */
   std::vector<std::pair<unsigned int, unsigned int>> batch_and_lane;
-}; // namespace TPSS
+};
+
+
 
 /**
  * A worker class re-interpreting the raw patch data in PatchInfo with
@@ -520,19 +439,8 @@ public:
   PatchWorker &
   operator=(const PatchWorker &) = delete;
 
-  void
-  clear_mf_connect(MatrixFreeConnect<dim, number> & mf_connect);
-
   /**
-   * We fill the MatrixFreeConnect class which creates a link between the
-   * MatrixFree infrastructure and the vectorized patch distribution, that has
-   * been initialized by this class.
-   */
-  void
-  connect_to_matrixfree(MatrixFreeConnect<dim, number> & mf_connect);
-
-  /**
-   * Based on the data on the flat and unvectorized patch distribution
+   * Based on the data of the flat and unvectorized patch distribution
    * in PatchInfo::InternalData we are able to partition subdomains
    * into predicated groups.
    */
@@ -540,11 +448,15 @@ public:
   compute_partition_data(typename PatchInfo<dim>::PartitionData &      partition_data,
                          const typename PatchInfo<dim>::InternalData * internal_data);
 
-  unsigned int
-  n_physical_subdomains() const;
+  void
+  connect_to_matrixfree(MatrixFreeConnect<dim, number> & mf_connect);
 
-  unsigned int
-  n_lanes_filled(const unsigned int patch_id) const;
+  /**
+   * Returns the collection of batch-index-and-lane pairs describing
+   * the macro cell collection @p patch_id in MatrixFree speak.
+   */
+  std::vector<std::array<std::pair<unsigned int, unsigned int>, macro_size>>
+  get_batch_collection(unsigned int patch_id) const;
 
   /**
    * Returns the collection of macro cells describing the macro patch
@@ -556,52 +468,20 @@ public:
   std::vector<ArrayView<const CellIterator>>
   get_cell_collection_views(unsigned int patch_id) const;
 
-  /**
-   * Returns the collection of batch-index-and-lane pairs describing
-   * the macro patch @p patch_id.
-   */
-  std::vector<std::array<std::pair<unsigned int, unsigned int>, macro_size>>
-  get_batch_collection(unsigned int patch_id) const
-  {
-    Assert(patch_info != nullptr, ExcNotInitialized());
-    Assert(mf_connect != nullptr, ExcMessage("No MatrixFreeConnect set. Check constructor."));
-    AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
-
-    const auto & patch_starts = patch_info->patch_starts;
-    std::vector<std::array<std::pair<unsigned int, unsigned int>, macro_size>> collection(
-      patch_size);
-    const auto & batch_and_lane = mf_connect->batch_and_lane;
-    auto         batch_pair     = batch_and_lane.cbegin() + patch_starts[patch_id];
-    if(n_lanes_filled(patch_id) < macro_size) // incomplete
-    {
-      Assert(n_lanes_filled(patch_id) == 1, ExcMessage("TODO"));
-      for(unsigned int cell_no = 0; cell_no < patch_size; ++batch_pair, ++cell_no)
-        std::fill(collection[cell_no].begin(), collection[cell_no].end(), *batch_pair);
-    }
-    else // complete
-    {
-      for(unsigned int m = 0; m < macro_size; ++m)
-        for(unsigned int cell_no = 0; cell_no < patch_size; ++batch_pair, ++cell_no)
-          collection[cell_no][m] = *batch_pair;
-    }
-
-    return collection;
-  }
-
   const typename PatchInfo<dim>::PartitionData &
   get_partition_data() const;
 
+  unsigned int
+  n_physical_subdomains() const;
+
+  unsigned int
+  n_lanes_filled(const unsigned int patch_id) const;
+
 private:
-  // void
-  // initialize(const PatchInfo<dim> & patch_info);
-
-  void
-  clear_patch_info(PatchInfo<dim> & info);
-
   /**
    * This method partitions the (unvectorized) patches, contained in
    * PatchInfo, into interior/boundary, incomplete/complete groups,
-   * containing vectorized patches.
+   * of vectorized patches, so-called macro patches.
    */
   void
   partition_patches(PatchInfo<dim> & patch_info);
@@ -613,14 +493,20 @@ private:
   has_valid_state(const typename PatchInfo<dim>::PartitionData & subdomain_partition_data,
                   const unsigned int                             color);
 
-  const PatchInfo<dim> * const                 patch_info;
-  const unsigned int                           patch_size = 0;
+  const PatchInfo<dim> * const patch_info;
+
+  const unsigned int patch_size = 0;
+
   const MatrixFreeConnect<dim, number> * const mf_connect = nullptr;
 };
 
-//  ++++++++++++++++++++++++++++++   inline functions   ++++++++++++++++++++++++++++++
-
 // --------------------------------   PatchInfo   --------------------------------
+
+template<int dim>
+PatchInfo<dim>::~PatchInfo()
+{
+  clear();
+}
 
 template<int dim>
 inline void
@@ -636,6 +522,14 @@ PatchInfo<dim>::clear()
 }
 
 template<int dim>
+bool
+PatchInfo<dim>::empty() const
+{
+  return internal_data.empty();
+}
+
+
+template<int dim>
 inline const typename PatchInfo<dim>::InternalData *
 PatchInfo<dim>::get_internal_data() const
 {
@@ -649,19 +543,54 @@ PatchInfo<dim>::get_additional_data() const
   return additional_data;
 }
 
-// --------------------------------   PatchInfo::InternalData   --------------------------------
+// --------------------------------   PatchInfo::GhostPatch   --------------------------------
+
+template<int dim>
+PatchInfo<dim>::GhostPatch::GhostPatch(const unsigned int proc, const CellId & cell_id)
+{
+  submit_id(proc, cell_id);
+}
 
 template<int dim>
 inline void
-PatchInfo<dim>::InternalData::clear()
+PatchInfo<dim>::GhostPatch::submit_id(const unsigned int proc, const CellId & cell_id)
 {
-  level = -1;
-  n_interior_subdomains.clear();
-  n_boundary_subdomains.clear();
-  cell_iterators.clear();
+  const auto member = proc_to_cell_ids.find(proc);
+  if(member != proc_to_cell_ids.cend())
+  {
+    member->second.emplace_back(cell_id);
+    Assert(!(member->second.empty()), ExcMessage("at least one element"));
+  }
+  else
+  {
+    const auto status = proc_to_cell_ids.emplace(proc, std::vector<CellId>{cell_id});
+    (void)status;
+    Assert(status.second, ExcMessage("failed to insert key-value-pair"));
+  }
+}
+
+template<int dim>
+inline std::string
+PatchInfo<dim>::GhostPatch::str() const
+{
+  std::ostringstream oss;
+  oss << "{";
+  const auto size = proc_to_cell_ids.size();
+  unsigned   i    = 0;
+  for(auto key_value = proc_to_cell_ids.cbegin(); key_value != proc_to_cell_ids.cend();
+      ++key_value, ++i)
+    oss << "(" << key_value->first << ", " << vector_to_string(key_value->second)
+        << ((i + 1) < size ? "), " : ")}");
+  return oss.str();
 }
 
 // --------------------------------   PatchInfo::PartitionData   --------------------------------
+
+template<int dim>
+inline PatchInfo<dim>::PartitionData::~PartitionData()
+{
+  clear();
+}
 
 template<int dim>
 inline void
@@ -737,29 +666,39 @@ PatchInfo<dim>::PartitionData::check_compatibility(const PartitionData & other) 
   return (partitions == other.partitions);
 }
 
-// --------------------------------   MatrixFreeConnect   --------------------------------
+// --------------------------------   PatchInfo::InternalData   --------------------------------
 
-// template<int dim, typename number>
-// inline unsigned int
-// MatrixFreeConnect<dim, number>::set_pointers_and_count(
-//   const unsigned int                             patch_id,
-//   const std::array<unsigned int, 3> *&           triple,
-//   const std::pair<unsigned int, unsigned int> *& id_count_pair) const
-// {
-//   Assert(stride_triple > 0, dealii::ExcNotInitialized());
-//   AssertDimension(stride_triple % dealii::VectorizedArray<number>::n_array_elements, 0);
-//   triple        = bcomp_vcomp_cindex.data() + stride_triple * patch_id;
-//   id_count_pair = batch_count_per_id.data() + batch_starts[patch_id];
-//   unsigned int n_batches{
-//     static_cast<unsigned int>(batch_starts[patch_id + 1] - batch_starts[patch_id])};
+template<int dim>
+inline PatchInfo<dim>::InternalData::~InternalData()
+{
+  clear();
+}
 
-//   const auto &   sum_counts = [](const auto val, const auto & p) { return val + p.second; };
-//   const unsigned n_triples_accumulated =
-//     std::accumulate(id_count_pair, id_count_pair + n_batches, 0, sum_counts);
-//   (void)n_triples_accumulated;
-//   AssertDimension(stride_triple, n_triples_accumulated);
-//   return n_batches;
-// }
+template<int dim>
+inline void
+PatchInfo<dim>::InternalData::clear()
+{
+  level = -1;
+  n_interior_subdomains.clear();
+  n_boundary_subdomains.clear();
+  cell_iterators.clear();
+}
+
+template<int dim>
+inline bool
+PatchInfo<dim>::InternalData::empty() const
+{
+  return cell_iterators.empty();
+}
+
+
+template<int dim>
+inline bool
+PatchInfo<dim>::InternalData::empty_on_all() const
+{
+  const auto n_iterators_mpimax = Utilities::MPI::max(cell_iterators.size(), MPI_COMM_WORLD);
+  return (n_iterators_mpimax == 0);
+}
 
 // --------------------------------   PatchWorker   --------------------------------
 
@@ -778,6 +717,7 @@ PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
   Assert(partition_data_is_valid, ExcMessage("The PartitionData does not fit the InternalData."));
 }
 
+
 template<int dim, typename number>
 PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> &                 patch_info_in,
                                       const MatrixFreeConnect<dim, number> & mf_connect_in)
@@ -795,6 +735,7 @@ PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> &                 pat
   Assert(partition_data_is_valid, ExcMessage("The PartitionData does not fit the InternalData."));
 }
 
+
 template<int dim, typename number>
 PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
   : patch_info(&patch_info_in),
@@ -804,7 +745,7 @@ PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
               ExcInvalidState());
 
   /**
-   * If the given patch_info_in is already initialized and in valid state there is no work
+   * If the given patch_info_in is correctly initialized there is no work
    */
   typename PatchInfo<dim>::PartitionData subdomain_partition_data;
   compute_partition_data(subdomain_partition_data, patch_info_in.get_internal_data());
@@ -819,13 +760,16 @@ PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
    * through with respect to the flat data array are set in
    * PatchInfo::patch_starts
    */
-  clear_patch_info(patch_info_in);
+  patch_info_in.patch_starts.clear();
+  patch_info_in.at_boundary_mask.clear();
+  patch_info_in.subdomain_partition_data.clear();
   partition_patches(patch_info_in);
   const auto & partition_data = patch_info_in.subdomain_partition_data;
   Assert(partition_data.n_colors() > 0, ExcMessage("At least one color."));
   for(unsigned color = 0; color < partition_data.n_colors(); ++color)
     has_valid_state(partition_data, color);
 }
+
 
 template<int dim, typename number>
 inline unsigned int
@@ -858,6 +802,7 @@ PatchWorker<dim, number>::n_physical_subdomains() const
   return n_subdomains;
 }
 
+
 template<int dim, typename number>
 inline unsigned int
 PatchWorker<dim, number>::n_lanes_filled(const unsigned int patch_id) const
@@ -868,6 +813,7 @@ PatchWorker<dim, number>::n_lanes_filled(const unsigned int patch_id) const
   return patch_info->n_lanes_filled[patch_id];
 }
 
+
 template<int dim, typename number>
 inline const typename PatchInfo<dim>::PartitionData &
 PatchWorker<dim, number>::get_partition_data() const
@@ -875,6 +821,37 @@ PatchWorker<dim, number>::get_partition_data() const
   Assert(patch_info != nullptr, ExcNotInitialized());
   return patch_info->subdomain_partition_data;
 }
+
+
+template<int dim, typename number>
+inline std::vector<
+  std::array<std::pair<unsigned int, unsigned int>, PatchWorker<dim, number>::macro_size>>
+PatchWorker<dim, number>::get_batch_collection(unsigned int patch_id) const
+{
+  Assert(patch_info != nullptr, ExcNotInitialized());
+  Assert(mf_connect != nullptr, ExcMessage("No MatrixFreeConnect set. Check constructor."));
+  AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
+
+  const auto & patch_starts = patch_info->patch_starts;
+  std::vector<std::array<std::pair<unsigned int, unsigned int>, macro_size>> collection(patch_size);
+  const auto & batch_and_lane = mf_connect->batch_and_lane;
+  auto         batch_pair     = batch_and_lane.cbegin() + patch_starts[patch_id];
+  if(n_lanes_filled(patch_id) < macro_size) // incomplete
+  {
+    Assert(n_lanes_filled(patch_id) == 1, ExcMessage("TODO"));
+    for(unsigned int cell_no = 0; cell_no < patch_size; ++batch_pair, ++cell_no)
+      std::fill(collection[cell_no].begin(), collection[cell_no].end(), *batch_pair);
+  }
+  else // complete
+  {
+    for(unsigned int m = 0; m < macro_size; ++m)
+      for(unsigned int cell_no = 0; cell_no < patch_size; ++batch_pair, ++cell_no)
+        collection[cell_no][m] = *batch_pair;
+  }
+
+  return collection;
+}
+
 
 template<int dim, typename number>
 inline std::vector<
@@ -904,6 +881,7 @@ PatchWorker<dim, number>::get_cell_collection(unsigned int patch) const
   return cell_collect;
 }
 
+
 template<int dim, typename number>
 inline std::vector<ArrayView<const typename PatchWorker<dim, number>::CellIterator>>
 PatchWorker<dim, number>::get_cell_collection_views(unsigned int patch_id) const
@@ -924,6 +902,7 @@ PatchWorker<dim, number>::get_cell_collection_views(unsigned int patch_id) const
 
   return views;
 }
+
 
 template<int dim, typename number>
 inline void
@@ -955,6 +934,7 @@ PatchWorker<dim, number>::compute_partition_data(
   }
 }
 
+
 template<int dim, typename number>
 inline void
 PatchWorker<dim, number>::has_valid_state(
@@ -967,6 +947,7 @@ PatchWorker<dim, number>::has_valid_state(
     Assert(partitions[color][pid] >= 0 && partitions[color][pid] <= partitions[color][pid + 1],
            dealii::ExcInvalidState());
 }
+
 
 } // end namespace TPSS
 
