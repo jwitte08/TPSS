@@ -39,6 +39,8 @@
 
 #include "solvers_and_preconditioners/TPSS/patch_info.h"
 
+#include "mesh.h"
+
 using namespace dealii;
 
 template<int dim>
@@ -99,6 +101,35 @@ struct RedBlackColoring
   using CellIterator   = typename TPSS::PatchInfo<dim>::CellIterator;
   using PatchIterator  = typename TPSS::PatchInfo<dim>::PatchIterator;
   using AdditionalData = typename TPSS::PatchInfo<dim>::AdditionalData;
+
+  std::array<unsigned int, dim> n_subdivisions;
+
+  RedBlackColoring() = delete;
+
+  RedBlackColoring(const MeshParameter & mesh_prms) : n_subdivisions(get_subdivisions(mesh_prms))
+  {
+  }
+
+
+
+  std::array<unsigned int, dim>
+  get_subdivisions(const MeshParameter & mesh_prms)
+  {
+    std::array<unsigned int, dim> n_subdivisions;
+    const bool                    is_hypercube =
+      MeshParameter::GeometryVariant::Cube == mesh_prms.geometry_variant ||
+      MeshParameter::GeometryVariant::CubeDistorted == mesh_prms.geometry_variant;
+    if(is_hypercube)
+    {
+      Assert(mesh_prms.n_repetitions > 0, ExcMessage("At least one (isotropic) repetition."));
+      n_subdivisions.fill(mesh_prms.n_repetitions);
+    }
+    else
+      AssertThrow(false, ExcMessage("TODO"));
+    return n_subdivisions;
+  }
+
+
 
   std::vector<std::vector<PatchIterator>>
   operator()(const std::vector<std::vector<CellIterator>> & patches,

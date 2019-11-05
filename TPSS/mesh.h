@@ -49,10 +49,11 @@ struct MeshParameter
   std::string
   to_string() const;
 
-  GeometryVariant geometry_variant = GeometryVariant::None;
-  int             n_refinements    = -1;
-  int             n_repetitions    = -1;
-  double          distortion       = -1.0;
+  GeometryVariant           geometry_variant = GeometryVariant::None;
+  int                       n_refinements    = -1;
+  int                       n_repetitions    = -1;
+  std::vector<unsigned int> n_subdivisions;
+  double                    distortion = -1.0;
 };
 
 // +++++++++++++++++++++++++++++++++++ DEFINITIONS +++++++++++++++++++++++++++++++++++

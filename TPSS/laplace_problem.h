@@ -332,6 +332,22 @@ struct PostProcessData
   std::vector<double>       H1semi_error;
 };
 
+// TODO intermediate hack compensating obsolete parameters
+MeshParameter
+fake_mesh_parameter(const Parameter & prms)
+{
+  MeshParameter mesh_prms;
+  mesh_prms.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  mesh_prms.n_refinements    = prms.n_refines;
+  mesh_prms.n_repetitions    = prms.n_cell_repetitions;
+  AssertThrow(
+    prms.n_refines_distort == 0,
+    ExcMessage(
+      "Not compatible. n_refines_distort is obsolete and should be varied by number of repetitions."));
+  // if (Parameter::GeometrtyVariant::CubeDistorted == prms.geometry_variant)
+  return mesh_prms;
+}
+
 struct MultigridSignal
 {
   MultigridSignal(const unsigned min_level, const unsigned max_level)
@@ -1019,6 +1035,7 @@ struct MatrixOperator : public Subscriptor
                     parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
       fe(std::make_shared<FE_DGQ<dim>>(fe_degree)),
       mapping(fe_degree),
+      red_black_coloring(fake_mesh_parameter(parameters_in)),
       n_timings_setup(0),
       n_timings_solve(0)
   {

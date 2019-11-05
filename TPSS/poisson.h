@@ -99,6 +99,7 @@ struct ModelProblem : public Subscriptor
       rhs_function(std::make_shared<Laplace::RightHandSide<dim>>()),
       exact_solution(std::make_shared<Laplace::Solution<dim>>()),
       level(static_cast<unsigned int>(-1)),
+      red_black_coloring(rt_parameters_in.mesh),
       mg_smoother_pre(nullptr),
       mg_smoother_post(nullptr)
   {
