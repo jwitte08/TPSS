@@ -493,6 +493,9 @@ private:
   has_valid_state(const typename PatchInfo<dim>::PartitionData & subdomain_partition_data,
                   const unsigned int                             color);
 
+  unsigned int
+  n_lanes_filled_impl(const unsigned int patch_id) const;
+
   const PatchInfo<dim> * const patch_info;
 
   const unsigned int patch_size = 0;
@@ -807,6 +810,17 @@ template<int dim, typename number>
 inline unsigned int
 PatchWorker<dim, number>::n_lanes_filled(const unsigned int patch_id) const
 {
+  AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
+  AssertIndexRange(patch_id, patch_info->n_lanes_filled.size());
+  // return n_lanes_filled_impl(patch_id);
+  return patch_info->n_lanes_filled[patch_id];
+}
+
+
+template<int dim, typename number>
+inline unsigned int
+PatchWorker<dim, number>::n_lanes_filled_impl(const unsigned int patch_id) const
+{
   Assert(patch_info != nullptr, ExcNotInitialized());
   AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
   const auto & patch_starts = patch_info->patch_starts;
@@ -816,12 +830,11 @@ PatchWorker<dim, number>::n_lanes_filled(const unsigned int patch_id) const
   const unsigned int n_physical_cells = end - start;
   AssertDimension(n_physical_cells % patch_size, 0);
   const unsigned int n_physical_subdomains = n_physical_cells / patch_size;
-  AssertDimension(patch_info->n_lanes_filled[patch_id], n_physical_subdomains);
+  // AssertDimension(patch_info->n_lanes_filled[patch_id], n_physical_subdomains);
   Assert(n_physical_subdomains > 0, ExcMessage("No lanes filled."));
 
   return n_physical_subdomains;
 }
-
 
 template<int dim, typename number>
 inline const typename PatchInfo<dim>::PartitionData &
@@ -845,18 +858,14 @@ PatchWorker<dim, number>::get_batch_collection(unsigned int patch_id) const
   std::vector<std::array<std::pair<unsigned int, unsigned int>, macro_size>> collection(patch_size);
   const auto & batch_and_lane = mf_connect->batch_and_lane;
   auto         batch_pair     = batch_and_lane.cbegin() + patch_starts[patch_id];
-  if(n_lanes_filled(patch_id) < macro_size) // incomplete
-  {
-    Assert(n_lanes_filled(patch_id) == 1, ExcMessage("TODO"));
+  const auto   n_lanes_filled = this->n_lanes_filled(patch_id);
+  for(unsigned int lane = 0; lane < n_lanes_filled; ++lane)
     for(unsigned int cell_no = 0; cell_no < patch_size; ++batch_pair, ++cell_no)
-      std::fill(collection[cell_no].begin(), collection[cell_no].end(), *batch_pair);
-  }
-  else // complete
-  {
-    for(unsigned int m = 0; m < macro_size; ++m)
-      for(unsigned int cell_no = 0; cell_no < patch_size; ++batch_pair, ++cell_no)
-        collection[cell_no][m] = *batch_pair;
-  }
+      collection[cell_no][lane] = *batch_pair;
+  //: fill non-physical lanes by mirroring first lane
+  for(unsigned int lane = n_lanes_filled; lane < macro_size; ++lane)
+    for(auto & macro_cell : collection)
+      macro_cell[lane] = macro_cell[0];
 
   return collection;
 }
@@ -867,33 +876,16 @@ inline std::vector<
   std::array<typename PatchWorker<dim, number>::CellIterator, PatchWorker<dim, number>::macro_size>>
 PatchWorker<dim, number>::get_cell_collection(unsigned int patch_id) const
 {
-  // AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
-  // std::vector<std::array<CellIterator, macro_size>> cell_collect(patch_size);
-  // const auto & cell_iterators = patch_info->get_internal_data()->cell_iterators;
-  // const auto & patch_starts   = patch_info->patch_starts;
-  // auto         cell_it        = cell_iterators.cbegin() + patch_starts[patch_id];
-  // if(n_lanes_filled(patch_id) < macro_size) // incomplete
-  // {
-  //   Assert(n_lanes_filled(patch_id) == 1, ExcMessage("TODO"));
-  //   for(unsigned int cell_no = 0; cell_no < patch_size; ++cell_it, ++cell_no)
-  //     std::fill(cell_collect[cell_no].begin(), cell_collect[cell_no].end(), *cell_it);
-  // }
-  // else // complete
-  // {
-  //   for(unsigned int m = 0; m < macro_size; ++m)
-  //     for(unsigned int cell_no = 0; cell_no < patch_size; ++cell_it, ++cell_no)
-  //       cell_collect[cell_no][m] = *cell_it;
-  // }
-
   std::vector<std::array<CellIterator, macro_size>> cell_collect(patch_size);
   const auto &                                      views = get_cell_collection_views(patch_id);
+  const auto                                        n_lanes_filled = this->n_lanes_filled(patch_id);
   for(unsigned int cell_no = 0; cell_no < cell_collect.size(); ++cell_no)
   {
     auto & macro_cell = cell_collect[cell_no];
-    for(unsigned int m = 0; m < n_lanes_filled(patch_id); ++m)
+    for(unsigned int m = 0; m < n_lanes_filled; ++m)
       macro_cell[m] = views[m][cell_no];
     //: fill non-physical lanes by mirroring cells of first lane
-    for(unsigned int lane = n_lanes_filled(patch_id); lane < macro_size; ++lane)
+    for(unsigned int lane = n_lanes_filled; lane < macro_size; ++lane)
       macro_cell[lane] = macro_cell[0];
   }
 
@@ -939,16 +931,18 @@ PatchWorker<dim, number>::compute_partition_data(
   {
     auto & partitions = partition_data.partitions[color];
     partitions.resize(5);
-    const unsigned int n_interior_subdomains = (internal_data->n_interior_subdomains)[color];
-    const unsigned int n_boundary_subdomains = (internal_data->n_boundary_subdomains)[color];
-    const unsigned int n_subdomains          = n_interior_subdomains + n_boundary_subdomains;
+    const unsigned int n_interior_subdomains  = (internal_data->n_interior_subdomains)[color];
+    const unsigned int n_boundary_subdomains  = (internal_data->n_boundary_subdomains)[color];
+    const unsigned int n_subdomains           = n_interior_subdomains + n_boundary_subdomains;
+    const unsigned int n_remaining_subdomains = (n_subdomains % macro_size);
 
-    partitions[0]       = n_subdomains_before;
-    partitions[1]       = partitions[0] + (n_subdomains % macro_size); // total incomplete
-    partitions[2]       = partitions[1] + 0;                           // empty
-    partitions[3]       = partitions[2] + (n_subdomains / macro_size); // total complete
-    partitions[4]       = partitions[3] + 0;                           // empty
-    n_subdomains_before = partitions.back();
+    partitions[0]            = n_subdomains_before;
+    const bool is_incomplete = (n_remaining_subdomains != 0);
+    partitions[1]            = partitions[0] + (is_incomplete ? 1 : 0);     // total incomplete
+    partitions[2]            = partitions[1] + 0;                           // empty
+    partitions[3]            = partitions[2] + (n_subdomains / macro_size); // total complete
+    partitions[4]            = partitions[3] + 0;                           // empty
+    n_subdomains_before      = partitions.back();
 
     has_valid_state(partition_data, color);
   }

@@ -655,17 +655,23 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
   auto & patch_starts = info.patch_starts;
   patch_starts.clear();
 
-  const unsigned int stride_incomp = patch_size;
-  const unsigned int stride_comp   = patch_size * macro_size;
-  unsigned int       start         = 0;
+  const unsigned int stride_comp = patch_size * macro_size;
+  unsigned int       start       = 0;
   for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
   {
     { // interior incomplete
-      const auto patch_range = subdomain_partition_data.get_patch_range(0, color);
+      const auto         patch_range           = subdomain_partition_data.get_patch_range(0, color);
+      const unsigned int n_interior_subdomains = (internal_data->n_interior_subdomains)[color];
+      const unsigned int n_boundary_subdomains = (internal_data->n_boundary_subdomains)[color];
+      const unsigned int n_subdomains          = n_interior_subdomains + n_boundary_subdomains;
+      const unsigned int n_remaining_subdomains = (n_subdomains % macro_size);
       for(unsigned int pp = patch_range.first; pp < patch_range.second; ++pp)
       {
+        const bool one_element = patch_range.first + 1 == patch_range.second;
+        AssertThrow(one_element, ExcMessage("Allowing not more than one incomplete patch."));
         patch_starts.emplace_back(start);
-        start += stride_incomp;
+        const auto stride_incomplete = patch_size * n_remaining_subdomains;
+        start += stride_incomplete;
       }
     }
 
@@ -684,29 +690,21 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
 
   info.n_lanes_filled.clear();
   info.n_lanes_filled.reserve(subdomain_partition_data.n_subdomains());
-  for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
-  {
-    { // interior incomplete
-      const auto patch_range = subdomain_partition_data.get_patch_range(0, color);
-      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
-        info.n_lanes_filled.emplace_back(1);
-    }
-    { // boundary incomplete
-      const auto patch_range = subdomain_partition_data.get_patch_range(1, color);
-      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
-        std::cout << "BDRY INCP" << std::endl;
-    }
-    { // interior incomplete
-      const auto patch_range = subdomain_partition_data.get_patch_range(2, color);
-      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
-        info.n_lanes_filled.emplace_back(macro_size);
-    }
-    { // boundary complete
-      const auto patch_range = subdomain_partition_data.get_patch_range(3, color);
-      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
-        std::cout << "BDRY CP" << std::endl;
-    }
-  }
+  // for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
+  // {
+  //   { // interior incomplete
+  //     const auto patch_range = subdomain_partition_data.get_patch_range(0, color);
+  //     for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
+  //       info.n_lanes_filled.emplace_back(1);
+  //   }
+  //   { // interior incomplete
+  //     const auto patch_range = subdomain_partition_data.get_patch_range(2, color);
+  //     for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
+  //       info.n_lanes_filled.emplace_back(macro_size);
+  //   }
+  // }
+  for(unsigned int patch_id = 0; patch_id < subdomain_partition_data.n_subdomains(); ++patch_id)
+    info.n_lanes_filled.emplace_back(n_lanes_filled_impl(patch_id));
   AssertDimension(info.n_lanes_filled.size(), subdomain_partition_data.n_subdomains());
 
   // TODO treat all macro_cells at the patch boundary instead of one representative
