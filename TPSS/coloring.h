@@ -48,14 +48,15 @@ get_integer_coords(const CellId cell_id)
   // Get child indices
   std::vector<unsigned int> child_indices;
   std::string               cell_id_str = cell_id.to_string();
-  // TODO better solution than this hack
+  // // TODO better solution than this hack
   // std::cout << cell_id_str << std::endl;
-  unsigned pos_of_colon = 0;
-  for(unsigned int pos = 0; pos < cell_id_str.size(); ++pos)
-    if(cell_id_str[pos] == ':')
-      pos_of_colon = pos;
+
+  const auto pos_of_colon = cell_id_str.find(':');
   Assert(pos_of_colon > 0, ExcInternalError());
-  // std::cout << pos_of_colon << std::endl;
+  // const auto pos_of_underscore = cell_id_str.find('_');
+  // Assert(pos_of_underscore != std::string::npos, ExcMessage("No underscore found."));
+  // const auto root_cell_str = cell_id_str.substr(0, pos_of_underscore);
+  // const auto root_cell_idx = std::stoul(root_cell_str);
   while(cell_id_str.size() > (pos_of_colon + 1))
   {
     child_indices.insert(child_indices.begin(), Utilities::string_to_int(&(cell_id_str.back())));
@@ -64,9 +65,13 @@ get_integer_coords(const CellId cell_id)
 
   // Initialize global coordinate with coarse cell coordinate
   Point<dim, unsigned int> global_coord;
-  const unsigned int       coarse_id = cell_id.to_binary<dim>()[0];
+  const unsigned int       root_cell_index = cell_id.to_binary<dim>()[0];
+  AssertThrow(
+    root_cell_index < (1 << dim),
+    ExcMessage(
+      "TODO Algorithm not implemented for root meshes which differ from a single cell or vertex patch."));
   {
-    const std::bitset<dim> bit_indices(coarse_id);
+    const std::bitset<dim> bit_indices(root_cell_index);
     for(unsigned int d = 0; d < dim; ++d)
       global_coord(d) = bit_indices[d];
   }
@@ -154,7 +159,7 @@ struct RedBlackColoring
     colored_patches.resize(n_colors);
     for(PatchIterator patch = patches.cbegin(); patch != patches.cend(); ++patch)
     {
-      // determine shift of the lowest leftmost cell
+      // determine shift of the lower left cell
       const auto & shift = [](const PatchIterator & patch, const unsigned direction) {
         AssertIndexRange(direction, dim);
         const unsigned stride                 = 1 << direction;

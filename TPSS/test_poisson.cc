@@ -21,8 +21,8 @@ struct TestParameter
     CoarseGridParameter::SolverVariant::IterativeAcc;
   double   coarse_grid_accuracy = 1.e-8;
   double   cg_reduction         = 1.e-8;
-  unsigned n_refinements        = 1;
-  unsigned n_repetitions        = 3;
+  unsigned n_refinements        = 2;
+  unsigned n_repetitions        = 2;
 
   std::string
   to_string() const
