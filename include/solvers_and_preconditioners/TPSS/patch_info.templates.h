@@ -679,7 +679,8 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
     }
   }
   AssertDimension(start, internal_data->cell_iterators.size());
-  AssertDimension(info.patch_starts.size(), subdomain_partition_data.n_subdomains());
+  AssertDimension(patch_starts.size(), subdomain_partition_data.n_subdomains());
+  patch_starts.emplace_back(start); // endpoint required by n_lanes_filled()
 
   info.n_lanes_filled.clear();
   info.n_lanes_filled.reserve(subdomain_partition_data.n_subdomains());

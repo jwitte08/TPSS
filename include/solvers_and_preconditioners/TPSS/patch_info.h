@@ -809,8 +809,17 @@ PatchWorker<dim, number>::n_lanes_filled(const unsigned int patch_id) const
 {
   Assert(patch_info != nullptr, ExcNotInitialized());
   AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
+  const auto & patch_starts = patch_info->patch_starts;
+  const auto   start        = patch_starts[patch_id];
+  const auto   end          = patch_starts[patch_id + 1];
+  Assert(start < end, ExcMessage("Empty set."));
+  const unsigned int n_physical_cells = end - start;
+  AssertDimension(n_physical_cells % patch_size, 0);
+  const unsigned int n_physical_subdomains = n_physical_cells / patch_size;
+  AssertDimension(patch_info->n_lanes_filled[patch_id], n_physical_subdomains);
+  Assert(n_physical_subdomains > 0, ExcMessage("No lanes filled."));
 
-  return patch_info->n_lanes_filled[patch_id];
+  return n_physical_subdomains;
 }
 
 
@@ -856,26 +865,36 @@ PatchWorker<dim, number>::get_batch_collection(unsigned int patch_id) const
 template<int dim, typename number>
 inline std::vector<
   std::array<typename PatchWorker<dim, number>::CellIterator, PatchWorker<dim, number>::macro_size>>
-PatchWorker<dim, number>::get_cell_collection(unsigned int patch) const
+PatchWorker<dim, number>::get_cell_collection(unsigned int patch_id) const
 {
-  Assert(patch_info != nullptr, ExcNotInitialized());
-  AssertIndexRange(patch, patch_info->subdomain_partition_data.n_subdomains());
+  // AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
+  // std::vector<std::array<CellIterator, macro_size>> cell_collect(patch_size);
+  // const auto & cell_iterators = patch_info->get_internal_data()->cell_iterators;
+  // const auto & patch_starts   = patch_info->patch_starts;
+  // auto         cell_it        = cell_iterators.cbegin() + patch_starts[patch_id];
+  // if(n_lanes_filled(patch_id) < macro_size) // incomplete
+  // {
+  //   Assert(n_lanes_filled(patch_id) == 1, ExcMessage("TODO"));
+  //   for(unsigned int cell_no = 0; cell_no < patch_size; ++cell_it, ++cell_no)
+  //     std::fill(cell_collect[cell_no].begin(), cell_collect[cell_no].end(), *cell_it);
+  // }
+  // else // complete
+  // {
+  //   for(unsigned int m = 0; m < macro_size; ++m)
+  //     for(unsigned int cell_no = 0; cell_no < patch_size; ++cell_it, ++cell_no)
+  //       cell_collect[cell_no][m] = *cell_it;
+  // }
 
   std::vector<std::array<CellIterator, macro_size>> cell_collect(patch_size);
-  const auto & cell_iterators = patch_info->get_internal_data()->cell_iterators;
-  const auto & patch_starts   = patch_info->patch_starts;
-  auto         cell_it        = cell_iterators.cbegin() + patch_starts[patch];
-  if(n_lanes_filled(patch) < macro_size) // incomplete
+  const auto &                                      views = get_cell_collection_views(patch_id);
+  for(unsigned int cell_no = 0; cell_no < cell_collect.size(); ++cell_no)
   {
-    Assert(n_lanes_filled(patch) == 1, ExcMessage("TODO"));
-    for(unsigned int cell_no = 0; cell_no < patch_size; ++cell_it, ++cell_no)
-      std::fill(cell_collect[cell_no].begin(), cell_collect[cell_no].end(), *cell_it);
-  }
-  else // complete
-  {
-    for(unsigned int m = 0; m < macro_size; ++m)
-      for(unsigned int cell_no = 0; cell_no < patch_size; ++cell_it, ++cell_no)
-        cell_collect[cell_no][m] = *cell_it;
+    auto & macro_cell = cell_collect[cell_no];
+    for(unsigned int m = 0; m < n_lanes_filled(patch_id); ++m)
+      macro_cell[m] = views[m][cell_no];
+    //: fill non-physical lanes by mirroring cells of first lane
+    for(unsigned int lane = n_lanes_filled(patch_id); lane < macro_size; ++lane)
+      macro_cell[lane] = macro_cell[0];
   }
 
   return cell_collect;
