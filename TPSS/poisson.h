@@ -565,11 +565,11 @@ struct ModelProblem : public Subscriptor
         }
         case SolverParameter::PreconditionVariant::GMG:
         {
-          // parameters.schwarz_smoother_data.print(*pcout);
-          // *pcout << std::endl;
-          TimerOutput::Scope time_section(time, "Setup MG preconditioner");
-          prepare_preconditioner_mg();
-          pp_data.n_colors_system.push_back(n_colors_system());
+          {
+            TimerOutput::Scope time_section(time, "Setup MG preconditioner");
+            prepare_preconditioner_mg();
+            pp_data.n_colors_system.push_back(n_colors_system());
+          }
           {
             TimerOutput::Scope time_section(time, "Solve");
             solve(*preconditioner_mg);
