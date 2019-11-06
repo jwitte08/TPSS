@@ -34,6 +34,34 @@ multiindex_to_string(const std::array<unsigned int, order> multiindex)
 }
 
 /*
+ * transforms an (anisotropic) multi-index into the canonical
+ * uni-index with respect to lexicographical order.
+ *
+ * order : the order of the multi-index
+ * sizes  : (anisotropic) size of each independent variable (mode)
+ */
+template<int order>
+unsigned int
+multi_to_uniindex(const std::array<unsigned int, order> & multiindex,
+                  const std::array<unsigned int, order> & sizes)
+{
+  for(unsigned int k = 0; k < multiindex.size(); ++k)
+    AssertIndexRange(multiindex[k], sizes[k]);
+  unsigned int uniindex{0};
+  for(int k = order - 1; k >= 0; --k)
+  {
+    // has no effect on purpose for k == order-1 (uniindex is zero)
+    uniindex *= sizes[k];
+    uniindex += multiindex[k];
+  }
+  const auto n_elem = std::accumulate(sizes.cbegin(), sizes.cend(), 1, std::multiplies<unsigned>());
+  (void)n_elem;
+  AssertIndexRange(uniindex, n_elem);
+
+  return uniindex;
+}
+
+/*
  * transforms an (isotropic) multi-index into the canonical
  * uni-index with respect to lexicographical order.
  *
@@ -42,16 +70,38 @@ multiindex_to_string(const std::array<unsigned int, order> multiindex)
  */
 template<int order>
 unsigned int
-multi_to_uniindex(const std::array<unsigned int, order> multiindex, const unsigned int size)
+multi_to_uniindex(const std::array<unsigned int, order> & multiindex, const unsigned int size)
 {
-  for(unsigned int k = 0; k < multiindex.size(); ++k)
-    AssertIndexRange(multiindex[k], size);
-  unsigned int uniindex{0};
-  for(unsigned int k = 0; k < order; ++k)
-    uniindex += std::pow(size, k) * multiindex[k];
+  std::array<unsigned int, order> sizes;
+  sizes.fill(size);
+  return multi_to_uniindex<order>(multiindex, sizes);
+}
 
-  AssertIndexRange(uniindex, Utilities::pow(size, order));
-  return uniindex;
+/*
+ * transforms an uni-index into the canonical (anisotropic)
+ * multi-index with respect to lexicographical order.
+ *
+ * order : the order of the multi-index
+ * sizes : sizes of each independent variable (mode)
+ */
+template<int order>
+std::array<unsigned int, order>
+uni_to_multiindex(unsigned int index, const std::array<unsigned int, order> & sizes)
+{
+  const auto n_elem = std::accumulate(sizes.cbegin(), sizes.cend(), 1, std::multiplies<unsigned>());
+  (void)n_elem;
+  AssertIndexRange(index, n_elem);
+  std::array<unsigned int, order> multiindex;
+  for(int k = 0; k < order; ++k)
+  {
+    multiindex[k] = index % sizes[k];
+    index         = index / sizes[k];
+  }
+  Assert(index == 0, ExcMessage("Uni-index has remainder after multi-index extraction."));
+  for(unsigned int k = 0; k < multiindex.size(); ++k)
+    AssertIndexRange(multiindex[k], sizes[k]);
+
+  return multiindex;
 }
 
 /*
@@ -65,19 +115,9 @@ template<int order>
 std::array<unsigned int, order>
 uni_to_multiindex(unsigned int index, const unsigned int size)
 {
-  AssertIndexRange(index, Utilities::pow(size, order));
-  std::array<unsigned int, order> multiindex;
-  for(int k = order - 1; k >= 0; --k)
-  {
-    const unsigned int sizek = std::pow(size, k);
-    multiindex[k]            = index / sizek;
-    index                    = index % sizek;
-  }
-  Assert(index == 0, ExcMessage("Uni-index has remainder after multi-index extraction."));
-
-  for(unsigned int k = 0; k < multiindex.size(); ++k)
-    AssertIndexRange(multiindex[k], size);
-  return multiindex;
+  std::array<unsigned int, order> sizes;
+  sizes.fill(size);
+  return uni_to_multiindex<order>(index, sizes);
 }
 
 /*
