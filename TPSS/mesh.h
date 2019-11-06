@@ -19,6 +19,7 @@
 
 #include <deal.II/fe/fe_dgq.h>
 
+#include <deal.II/grid/filtered_iterator.h>
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/grid_out.h>
 #include <deal.II/grid/grid_tools.h>
@@ -29,8 +30,8 @@
 
 #include <fstream>
 
+#include "solvers_and_preconditioners/TPSS/tensors.h"
 #include "utilities.h"
-// #include "solvers_and_preconditioners/TPSS/patch_info.h"
 
 using namespace dealii;
 
@@ -161,6 +162,83 @@ create_distorted_cube(Triangulation<dim> & tria, const MeshParameter & prm)
 
   return oss.str();
 }
+
+
+template<int dim>
+struct IntegerCoordinateRoot
+{
+  IntegerCoordinateRoot() = delete;
+
+  IntegerCoordinateRoot(const MeshParameter & mesh_prms)
+  {
+    root_to_coordinate = map_root_to_coordinate_impl(mesh_prms);
+    // for (auto c = root_to_coordinate.begin(); c != root_to_coordinate.end(); ++c)
+    //   std::cout << c->first << " " << c->second << std::endl;
+  }
+
+  Point<dim, unsigned int>
+  operator()(const unsigned int index) const
+  {
+    // AssertIndexRange(index, root_to_coordinate.size());
+    return root_to_coordinate.at(index);
+  }
+
+  std::map<unsigned int, Point<dim, unsigned>>
+  map_root_to_coordinate_impl(const MeshParameter & mesh_prms) const
+  {
+    const bool is_hypercube =
+      MeshParameter::GeometryVariant::Cube == mesh_prms.geometry_variant ||
+      MeshParameter::GeometryVariant::CubeDistorted == mesh_prms.geometry_variant;
+    if(is_hypercube)
+      return root_to_coordinate_cube(mesh_prms.n_repetitions);
+    else
+      AssertThrow(false, ExcMessage("Not implemented"));
+    return std::map<unsigned int, Point<dim, unsigned>>{};
+  }
+
+  std::map<unsigned int, Point<dim, unsigned>>
+  root_to_coordinate_cube(const unsigned int n_repetitions) const
+  {
+    // TODO hacked! pass triangulation by reference?
+    parallel::distributed::Triangulation<dim> tria(
+      MPI_COMM_WORLD,
+      Triangulation<dim>::limit_level_difference_at_vertices,
+      parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy);
+    GridGenerator::subdivided_hyper_cube(tria, n_repetitions, 0.0, 1.0);
+    const double h                  = 1.0 / n_repetitions;
+    const auto   get_interval_index = [&](const double x) -> unsigned int {
+      for(unsigned index = 0; index < n_repetitions; ++index)
+        if(index * h < x && x < ((index + 1) * h))
+          return index;
+      AssertThrow(false, ExcMessage("No valid interval found."));
+      return -1;
+    };
+
+    // For each root cell determine the lexicographic cell numbering
+    std::map<unsigned int, Point<dim, unsigned>> root_to_coord;
+    for(const auto & cell : tria.active_cell_iterators())
+    {
+      const CellId         cell_id    = cell->id();
+      const unsigned       root_index = cell_id.to_binary<dim>()[0];
+      const auto           center     = cell->center();
+      Point<dim, unsigned> coord;
+      for(int d = 0; d < dim; ++d)
+        coord(d) = get_interval_index(center[d]);
+      const auto check = root_to_coord.insert({root_index, coord});
+      Assert(check.second, ExcMessage("Insertion failed."));
+      // std::cout << "root: " << root_index << " coord: " << coord << " center: " << cell->center()
+      //           << std::endl;
+    }
+    return root_to_coord;
+  }
+
+  /*
+   * Maps indices of root cells to its integer coordinate. The root
+   * mesh is defined in terms of the mesh parameters.
+   */
+  std::map<unsigned int, Point<dim, unsigned>> root_to_coordinate;
+};
+
 
 template<int dim>
 void

@@ -11,15 +11,18 @@
 
 #include "coloring.h"
 #include "laplace_problem.h"
+#include "mesh.h"
 
 using namespace dealii;
 
 struct TestParameter
 {
-  unsigned              n_refinements    = 1;
-  TPSS::PatchVariant    patch_variant    = TPSS::PatchVariant::cell;
-  TPSS::SmootherVariant smoother_variant = TPSS::SmootherVariant::multiplicative;
-  bool                  manual_coloring  = true;
+  unsigned              n_refinements        = 1;
+  unsigned              n_repetitions        = 1;
+  TPSS::PatchVariant    patch_variant        = TPSS::PatchVariant::cell;
+  TPSS::SmootherVariant smoother_variant     = TPSS::SmootherVariant::multiplicative;
+  bool                  manual_coloring      = true;
+  bool                  visualize_subdomains = false;
 };
 
 
@@ -38,11 +41,11 @@ test(const TestParameter & prms)
   std::shared_ptr<FiniteElement<dim>> fe;
 
   //: create triangulation
-  {
-    const double left = 0.0, right = 1.0;
-    GridGenerator::subdivided_hyper_cube(triangulation, 1, left, right);
-    triangulation.refine_global(prms.n_refinements);
-  }
+  MeshParameter mesh_prms;
+  mesh_prms.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  mesh_prms.n_refinements    = prms.n_refinements;
+  mesh_prms.n_repetitions    = prms.n_repetitions;
+  create_unit_cube(triangulation, mesh_prms);
 
   //: distribute dofs
   {
@@ -59,11 +62,10 @@ test(const TestParameter & prms)
   const auto level                 = triangulation.n_levels() - 1;
   additional_data.level            = level;
   additional_data.print_details    = true;
-  RedBlackColoring<dim> user_coloring;
+  RedBlackColoring<dim> user_coloring(mesh_prms);
   additional_data.coloring_func = std::ref(user_coloring);
-  if(dim == 2)
-    if(prms.n_refinements == 4)
-      additional_data.visualize_coloring = std::ref(RedBlackColoring<dim>::visualize_coloring);
+  if(prms.visualize_subdomains)
+    additional_data.visualize_coloring = std::ref(RedBlackColoring<dim>::visualize_coloring);
   patch_info.initialize(&dof_handler, additional_data);
   pcout << " ... done!\n\n";
 
@@ -92,13 +94,18 @@ main(int argc, char * argv[])
 {
   constexpr int                    max_threads = 1;
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, max_threads);
+  TestParameter                    prms;
 
-  TestParameter prms;
+  if(argc > 1)
+    prms.n_refinements = std::atoi(argv[1]);
+  if(argc > 2)
+    prms.n_repetitions = std::atoi(argv[2]);
+  prms.visualize_subdomains = true;
+  test<2, 1>(prms);
+
   for(unsigned n_refinements : {1, 3, 4})
   {
     prms.n_refinements = n_refinements;
-    // if(argc > 1)
-    // 	prms.n_refinements = std::atoi(argv[1]);
     test<2, 1>(prms);
     test<3, 1>(prms);
   }
@@ -110,5 +117,6 @@ main(int argc, char * argv[])
     test<2, 1>(prms);
     test<3, 1>(prms);
   }
+
   return 0;
 }

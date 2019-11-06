@@ -430,53 +430,54 @@ struct MultigridSignal
 //   return global_coord;
 // }
 
-template<int dim>
-std::vector<std::vector<std::vector<typename DoFHandler<dim>::level_cell_iterator>>>
-get_coloring(const DoFHandler<dim> & dof, const unsigned int level)
-{
-  std::vector<std::vector<std::vector<typename DoFHandler<dim>::level_cell_iterator>>> coloring(2);
+// template<int dim>
+// std::vector<std::vector<std::vector<typename DoFHandler<dim>::level_cell_iterator>>>
+// get_coloring(const DoFHandler<dim> & dof, const unsigned int level)
+// {
+//   std::vector<std::vector<std::vector<typename DoFHandler<dim>::level_cell_iterator>>>
+//   coloring(2); IntegerCoordinate<dim> get_integer_coords;
 
-  for(auto & cell : dof.mg_cell_iterators_on_level(level))
-    if(cell->is_locally_owned_on_level())
-    {
-      // This is for cell patches, so each patch is only 1 cell
-      std::vector<typename DoFHandler<dim>::level_cell_iterator> patch;
-      patch.push_back(cell);
+//   for(auto & cell : dof.mg_cell_iterators_on_level(level))
+//     if(cell->is_locally_owned_on_level())
+//     {
+//       // This is for cell patches, so each patch is only 1 cell
+//       std::vector<typename DoFHandler<dim>::level_cell_iterator> patch;
+//       patch.push_back(cell);
 
-      // Get integer coordinates
-      Point<dim, unsigned int> cell_int_coords = get_integer_coords<dim>(cell->id());
+//       // Get integer coordinates
+//       Point<dim, unsigned int> cell_int_coords = get_integer_coords(cell->id());
 
-      // If integer coordinates sum to an even
-      // number give color 0, else give color 1
-      unsigned int color = 0;
-      unsigned int sum   = 0;
-      for(unsigned int d = 0; d < dim; ++d)
-        sum += cell_int_coords(d);
-      if(sum % 2 == 1)
-        color = 1;
+//       // If integer coordinates sum to an even
+//       // number give color 0, else give color 1
+//       unsigned int color = 0;
+//       unsigned int sum   = 0;
+//       for(unsigned int d = 0; d < dim; ++d)
+//         sum += cell_int_coords(d);
+//       if(sum % 2 == 1)
+//         color = 1;
 
-      // Add patch to coloring
-      coloring[color].push_back(patch);
-    }
+//       // Add patch to coloring
+//       coloring[color].push_back(patch);
+//     }
 
-  return coloring;
-}
+//   return coloring;
+// }
 
-template<int dim>
-struct ManualColoringCP
-{
-  using CellIterator = typename TPSS::PatchInfo<dim>::CellIterator;
-  // using AdditionalData = typename TPSS::PatchInfo<dim>::AdditionalData;
+// template<int dim>
+// struct ManualColoringCP
+// {
+//   using CellIterator = typename TPSS::PatchInfo<dim>::CellIterator;
+//   // using AdditionalData = typename TPSS::PatchInfo<dim>::AdditionalData;
 
-  std::vector<std::vector<std::vector<CellIterator>>>
-  operator()(const DoFHandler<dim> *                             dof_handler,
-             const typename TPSS::PatchInfo<dim>::AdditionalData additional_data)
-  {
-    std::vector<std::vector<std::vector<CellIterator>>> colored_patches;
-    colored_patches = get_coloring(*dof_handler, additional_data.level);
-    return colored_patches;
-  }
-};
+//   std::vector<std::vector<std::vector<CellIterator>>>
+//   operator()(const DoFHandler<dim> *                             dof_handler,
+//              const typename TPSS::PatchInfo<dim>::AdditionalData additional_data)
+//   {
+//     std::vector<std::vector<std::vector<CellIterator>>> colored_patches;
+//     colored_patches = get_coloring(*dof_handler, additional_data.level);
+//     return colored_patches;
+//   }
+// };
 
 template<int dim>
 struct CubeWorker
@@ -976,12 +977,12 @@ struct MatrixOperator : public Subscriptor
                                             LinearAlgebra::distributed::Vector<value_type_mg>,
                                             CHEBPREC_COARSE>;
 
-  PreconditionIdentity                                         precondition_identity;
-  MGLevelObject<LEVEL_MATRIX>                                  mg_matrices;
-  MGTransferMatrixFree<dim, value_type_mg>                     mg_transfer;
-  RedBlackColoring<dim>                                        red_black_coloring;
-  ManualColoring<dim>                                          make_manual_coloring;
-  ManualColoringCP<dim>                                        make_manual_coloring_cp;
+  PreconditionIdentity                     precondition_identity;
+  MGLevelObject<LEVEL_MATRIX>              mg_matrices;
+  MGTransferMatrixFree<dim, value_type_mg> mg_transfer;
+  RedBlackColoring<dim>                    red_black_coloring;
+  ManualColoring<dim>                      make_manual_coloring;
+  // ManualColoringCP<dim>                                        make_manual_coloring_cp;
   NonOverlappingVertexPatch<dim>                               make_non_overlapping_vertex_patch;
   MGLevelObject<std::shared_ptr<const SCHWARZ_PRECONDITIONER>> mg_schwarz_precondition;
   MGSmootherPrecondition<LEVEL_MATRIX,

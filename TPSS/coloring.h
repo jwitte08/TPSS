@@ -44,56 +44,52 @@
 using namespace dealii;
 
 template<int dim>
-Point<dim, unsigned int>
-get_integer_coords(const CellId cell_id)
+struct IntegerCoordinate
 {
-  // Get child indices
-  std::vector<unsigned int> child_indices;
-  std::string               cell_id_str = cell_id.to_string();
-  // // TODO better solution than this hack
-  // std::cout << cell_id_str << std::endl;
+  IntegerCoordinate() = delete;
 
-  const auto pos_of_colon = cell_id_str.find(':');
-  Assert(pos_of_colon > 0, ExcInternalError());
-  // const auto pos_of_underscore = cell_id_str.find('_');
-  // Assert(pos_of_underscore != std::string::npos, ExcMessage("No underscore found."));
-  // const auto root_cell_str = cell_id_str.substr(0, pos_of_underscore);
-  // const auto root_cell_idx = std::stoul(root_cell_str);
-  while(cell_id_str.size() > (pos_of_colon + 1))
+  IntegerCoordinate(const MeshParameter & mesh_prms) : integer_coordinate_root(mesh_prms)
   {
-    child_indices.insert(child_indices.begin(), Utilities::string_to_int(&(cell_id_str.back())));
-    cell_id_str.pop_back();
   }
 
-  // Initialize global coordinate with coarse cell coordinate
-  Point<dim, unsigned int> global_coord;
-  const unsigned int       root_cell_index = cell_id.to_binary<dim>()[0];
-  AssertThrow(
-    root_cell_index < (1 << dim),
-    ExcMessage(
-      "TODO Algorithm not implemented for root meshes which differ from a single cell or vertex patch."));
+  Point<dim, unsigned int>
+  operator()(const CellId cell_id) const
   {
-    const std::bitset<dim> bit_indices(root_cell_index);
-    for(unsigned int d = 0; d < dim; ++d)
-      global_coord(d) = bit_indices[d];
-  }
-
-  // Compute local coordinate and add to global
-  for(auto c : child_indices)
-  {
-    Point<dim, unsigned int> local_coord;
+    // Extract child indices from CellId
+    std::vector<unsigned int> child_indices;
+    std::string               cell_id_str  = cell_id.to_string();
+    const auto                pos_of_colon = cell_id_str.find(':');
+    Assert(pos_of_colon > 0, ExcInternalError());
+    while(cell_id_str.size() > (pos_of_colon + 1))
     {
-      const std::bitset<dim> bit_indices(c);
-      for(unsigned int d = 0; d < dim; ++d)
-        local_coord(d) = bit_indices[d];
+      child_indices.insert(child_indices.begin(), Utilities::string_to_int(&(cell_id_str.back())));
+      cell_id_str.pop_back();
     }
 
-    global_coord *= 2;
-    global_coord += local_coord;
+    // Compute integer coordinates of root cells
+    Point<dim, unsigned int> global_coord;
+    const unsigned int       root_cell_index = cell_id.to_binary<dim>()[0];
+    global_coord                             = integer_coordinate_root(root_cell_index);
+
+    // Compute global integer coordinates by traversing through children cells.  We assume the
+    // refinement is uniform, namely dividing each dimension by two.
+    for(auto c : child_indices)
+    {
+      global_coord *= 2;
+      Point<dim, unsigned int> local_coord;
+      {
+        const std::bitset<dim> bit_indices(c);
+        for(unsigned int d = 0; d < dim; ++d)
+          local_coord(d) = bit_indices[d];
+      }
+      global_coord += local_coord;
+    }
+
+    return global_coord;
   }
 
-  return global_coord;
-}
+  const IntegerCoordinateRoot<dim> integer_coordinate_root;
+};
 
 template<int dim>
 struct RedBlackColoring
@@ -102,31 +98,12 @@ struct RedBlackColoring
   using PatchIterator  = typename TPSS::PatchInfo<dim>::PatchIterator;
   using AdditionalData = typename TPSS::PatchInfo<dim>::AdditionalData;
 
-  std::array<unsigned int, dim> n_subdivisions;
+  IntegerCoordinate<dim> get_integer_coordinate;
 
   RedBlackColoring() = delete;
 
-  RedBlackColoring(const MeshParameter & mesh_prms) : n_subdivisions(get_subdivisions(mesh_prms))
+  RedBlackColoring(const MeshParameter & mesh_prms) : get_integer_coordinate(mesh_prms)
   {
-  }
-
-
-
-  std::array<unsigned int, dim>
-  get_subdivisions(const MeshParameter & mesh_prms)
-  {
-    std::array<unsigned int, dim> n_subdivisions;
-    const bool                    is_hypercube =
-      MeshParameter::GeometryVariant::Cube == mesh_prms.geometry_variant ||
-      MeshParameter::GeometryVariant::CubeDistorted == mesh_prms.geometry_variant;
-    if(is_hypercube)
-    {
-      Assert(mesh_prms.n_repetitions > 0, ExcMessage("At least one (isotropic) repetition."));
-      n_subdivisions.fill(mesh_prms.n_repetitions);
-    }
-    else
-      AssertThrow(false, ExcMessage("TODO"));
-    return n_subdivisions;
   }
 
 
@@ -163,7 +140,7 @@ struct RedBlackColoring
       const auto & cell = patch->front();
 
       // Get integer coordinates
-      Point<dim, unsigned int> cell_int_coords = get_integer_coords<dim>(cell->id());
+      Point<dim, unsigned int> cell_int_coords = get_integer_coordinate(cell->id());
 
       // If integer coordinates sum to an even
       // number give color 0, else give color 1
@@ -191,13 +168,13 @@ struct RedBlackColoring
     for(PatchIterator patch = patches.cbegin(); patch != patches.cend(); ++patch)
     {
       // determine shift of the lower left cell
-      const auto & shift = [](const PatchIterator & patch, const unsigned direction) {
+      const auto & shift = [this](const PatchIterator & patch, const unsigned direction) {
         AssertIndexRange(direction, dim);
         const unsigned stride                 = 1 << direction;
         const auto     cell_left              = (*patch)[0];
         const auto     cell_right             = (*patch)[stride];
-        const auto     coord_left             = get_integer_coords<dim>(cell_left->id());
-        const auto     coord_right            = get_integer_coords<dim>(cell_right->id());
+        const auto     coord_left             = get_integer_coordinate(cell_left->id());
+        const auto     coord_right            = get_integer_coordinate(cell_right->id());
         const auto     patch_coord_from_left  = coord_left(direction) / 2;
         const auto     patch_coord_from_right = coord_right(direction) / 2;
         return patch_coord_from_left != patch_coord_from_right;
@@ -209,7 +186,7 @@ struct RedBlackColoring
 
       // (1 << dim) layers of red-black colorings (layer is determined by the shift)
       const auto                     cell        = patch->front();
-      const Point<dim, unsigned int> coordinates = get_integer_coords<dim>(cell->id());
+      const Point<dim, unsigned int> coordinates = get_integer_coordinate(cell->id());
       unsigned int                   sum         = 0;
       for(unsigned int d = 0; d < dim; ++d)
         sum += (coordinates(d) + static_cast<unsigned>(shift_mask[d])) / 2;
