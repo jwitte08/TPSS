@@ -159,6 +159,7 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
   }
 }
 
+
 template<int dim>
 std::vector<std::vector<typename PatchInfo<dim>::CellIterator>>
 PatchInfo<dim>::gather_vertex_patches(const DoFHandler<dim> & dof_handler,
@@ -394,6 +395,7 @@ PatchInfo<dim>::gather_vertex_patches(const DoFHandler<dim> & dof_handler,
   return cell_collections;
 }
 
+
 template<int dim>
 void
 PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_handler,
@@ -541,6 +543,7 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
   }
 }
 
+
 template<int dim>
 std::vector<std::pair<unsigned int, unsigned int>>
 PatchInfo<dim>::reorder_colors(
@@ -590,14 +593,13 @@ PatchInfo<dim>::reorder_colors(
   return count_per_color;
 }
 
+
 template<int dim>
 void
 PatchInfo<dim>::write_visual_data(
   const dealii::DoFHandler<dim> &                            dof_handler,
   const std::vector<std::pair<unsigned int, unsigned int>> & reordered_colors) const
 {
-  using namespace dealii;
-
   constexpr auto     regular_vpatch_size = UniversalInfo<dim>::n_cells(PatchVariant::vertex);
   const auto &       tria                = dof_handler.get_triangulation();
   const unsigned int level               = internal_data.level;
@@ -641,128 +643,56 @@ PatchInfo<dim>::write_visual_data(
   }
 }
 
+
 template<int dim, typename number>
 void
 PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
 {
-  compute_partition_data(info.subdomain_partition_data, info.get_internal_data());
-  const auto & subdomain_partition_data = info.subdomain_partition_data;
+  /*
+   * Initialize the partitioning into subdomain batches (vectorization).
+   */
+  compute_partition_data(info.subdomain_partition_data,
+                         info.get_internal_data(),
+                         &(info.patch_starts));
 
-  const auto & additional_data = info.get_additional_data();
-  const auto   patch_size      = UniversalInfo<dim>::n_cells(additional_data.patch_variant);
-  const auto * internal_data   = info.get_internal_data();
-  (void)internal_data;
-  auto & patch_starts = info.patch_starts;
-  patch_starts.clear();
-
-  const unsigned int stride_comp = patch_size * macro_size;
-  unsigned int       start       = 0;
-  for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
-  {
-    { // interior incomplete
-      const auto         patch_range           = subdomain_partition_data.get_patch_range(0, color);
-      const unsigned int n_interior_subdomains = (internal_data->n_interior_subdomains)[color];
-      const unsigned int n_boundary_subdomains = (internal_data->n_boundary_subdomains)[color];
-      const unsigned int n_subdomains          = n_interior_subdomains + n_boundary_subdomains;
-      const unsigned int n_remaining_subdomains = (n_subdomains % macro_size);
-      for(unsigned int pp = patch_range.first; pp < patch_range.second; ++pp)
-      {
-        const bool one_element = patch_range.first + 1 == patch_range.second;
-        AssertThrow(one_element, ExcMessage("Allowing not more than one incomplete patch."));
-        patch_starts.emplace_back(start);
-        const auto stride_incomplete = patch_size * n_remaining_subdomains;
-        start += stride_incomplete;
-      }
-    }
-
-    { // interior complete
-      const auto patch_range = subdomain_partition_data.get_patch_range(2, color);
-      for(unsigned int pp = patch_range.first; pp < patch_range.second; ++pp)
-      {
-        patch_starts.emplace_back(start);
-        start += stride_comp;
-      }
-    }
-  }
-  AssertDimension(start, internal_data->cell_iterators.size());
-  AssertDimension(patch_starts.size(), subdomain_partition_data.n_subdomains());
-  patch_starts.emplace_back(start); // endpoint required by n_lanes_filled()
-
-  info.n_lanes_filled.clear();
-  info.n_lanes_filled.reserve(subdomain_partition_data.n_subdomains());
-  // for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
-  // {
-  //   { // interior incomplete
-  //     const auto patch_range = subdomain_partition_data.get_patch_range(0, color);
-  //     for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
-  //       info.n_lanes_filled.emplace_back(1);
-  //   }
-  //   { // interior incomplete
-  //     const auto patch_range = subdomain_partition_data.get_patch_range(2, color);
-  //     for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
-  //       info.n_lanes_filled.emplace_back(macro_size);
-  //   }
-  // }
-  for(unsigned int patch_id = 0; patch_id < subdomain_partition_data.n_subdomains(); ++patch_id)
-    info.n_lanes_filled.emplace_back(n_lanes_filled_impl(patch_id));
-  AssertDimension(info.n_lanes_filled.size(), subdomain_partition_data.n_subdomains());
-
-  // TODO treat all macro_cells at the patch boundary instead of one representative
-  const auto get_mask = [](auto &&            macro_cell,
-                           const unsigned int direction,
-                           const unsigned int face_no_1d) /* -> unsigned int*/ {
-    std::bitset<macro_size> bitset_mask;
-    for(unsigned int vv = 0; vv < macro_size; ++vv)
-      bitset_mask[vv] = macro_cell[vv]->face(2 * direction + face_no_1d)->at_boundary();
-    return bitset_mask;
-  };
+  /*
+   * Initialize the boundary identifiers for each face of the subdomain.
+   *
+   * TODO treat each macro_cells at the patch boundary instead of one representative?
+   */
+  const auto get_mask =
+    [](auto && macro_cell, const unsigned int direction, const unsigned int face_no_1d) {
+      std::bitset<macro_size> bitset_mask;
+      const auto              face_no = 2 * direction + face_no_1d;
+      for(unsigned int vv = 0; vv < macro_size; ++vv)
+        bitset_mask[vv] = macro_cell[vv]->face(face_no)->at_boundary();
+      return bitset_mask;
+    };
 
   info.at_boundary_mask.clear();
-  info.at_boundary_mask.reserve(subdomain_partition_data.n_subdomains() *
+  info.at_boundary_mask.reserve(get_partition_data().n_subdomains() *
                                 GeometryInfo<dim>::faces_per_cell);
-  for(unsigned int color = 0; color < subdomain_partition_data.n_colors(); ++color)
+  for(unsigned int color = 0; color < get_partition_data().n_colors(); ++color)
   {
-    { // interior incomplete
-      const auto patch_range = subdomain_partition_data.get_patch_range(0, color);
-      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
+    const auto patch_range = get_patch_range(color);
+    for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
+    {
+      //: face_no < direction
+      std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> masks;
+      const auto cell_collection{std::move(get_cell_collection(patch_id))};
+      for(unsigned int d = 0; d < dim; ++d)
       {
-        //: face_no < direction
-        std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> masks;
-        const auto cell_collection{std::move(get_cell_collection(patch_id))};
-        for(unsigned int d = 0; d < dim; ++d)
-        {
-          masks[d * 2]     = get_mask(cell_collection.front(), d, /*face_no*/ 0);
-          masks[d * 2 + 1] = get_mask(cell_collection.back(), d, /*face_no*/ 1);
-        }
-        for(const auto & mask : masks)
-          info.at_boundary_mask.emplace_back(static_cast<unsigned int>(mask.to_ulong()));
+        masks[d * 2]     = get_mask(cell_collection.front(), d, /*face_no*/ 0);
+        masks[d * 2 + 1] = get_mask(cell_collection.back(), d, /*face_no*/ 1);
       }
-    }
-
-    { // interior complete
-      const auto patch_range = subdomain_partition_data.get_patch_range(2, color);
-      for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
-      {
-        // TODO
-        // info.n_lanes_filled.emplace_back(macro_size);
-        // const auto cell_collection{std::move(get_cell_collection(patch_id))};
-
-        //: face_no < direction
-        std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> masks;
-        const auto cell_collection{std::move(get_cell_collection(patch_id))};
-        for(unsigned int d = 0; d < dim; ++d)
-        {
-          masks[d * 2]     = get_mask(cell_collection.front(), d, /*face_no*/ 0);
-          masks[d * 2 + 1] = get_mask(cell_collection.back(), d, /*face_no*/ 1);
-        }
-        for(const auto & mask : masks)
-          info.at_boundary_mask.emplace_back(static_cast<unsigned int>(mask.to_ulong()));
-      }
+      for(const auto & mask : masks)
+        info.at_boundary_mask.emplace_back(static_cast<unsigned int>(mask.to_ulong()));
     }
   }
   AssertDimension(info.at_boundary_mask.size(),
-                  subdomain_partition_data.n_subdomains() * GeometryInfo<dim>::faces_per_cell);
+                  get_partition_data().n_subdomains() * GeometryInfo<dim>::faces_per_cell);
 }
+
 
 template<int dim, typename number>
 void
@@ -770,27 +700,24 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
 {
   Assert(patch_info != nullptr, ExcNotInitialized());
 
-  const auto &       mf_storage     = *(mf_connect.mf_storage);
-  const unsigned int n_cell_batches = mf_storage.n_cell_batches();
-  const auto &       internal_data  = *(patch_info->get_internal_data());
-  const unsigned     level          = internal_data.level;
-  const auto &       dof_handler    = mf_storage.get_dof_handler();
-  const auto &       tria           = dof_handler.get_triangulation();
-  //: N of locally stored cell iterators (including ghost and artificial)
+  const auto &       mf_storage              = *(mf_connect.mf_storage);
+  const unsigned int n_cell_batches          = mf_storage.n_cell_batches();
+  const auto &       internal_data           = *(patch_info->get_internal_data());
+  const unsigned     level                   = internal_data.level;
+  const auto &       dof_handler             = mf_storage.get_dof_handler();
+  const auto &       tria                    = dof_handler.get_triangulation();
   const bool         proc_has_cells_on_level = (level < tria.n_levels());
-  const unsigned int n_cells_stored          = proc_has_cells_on_level ? tria.n_cells(level) : 0;
+  //: N of locally stored cell iterators (including ghost and artificial)
+  const unsigned int n_cells_stored = proc_has_cells_on_level ? tria.n_cells(level) : 0;
 
   /**
-   * Each process enumerates its owned, ghosted & artificial
-   * cells. The cell index is accessible via
-   * TriaIterator::index(level) on each level. The maximal cell index
-   * is bounded by the number of cells, Triangulation::n_cells(level).
+   * Each process enumerates its owned, ghosted & artificial cells. The cell index is accessible via
+   * TriaIterator::index(level) on each level. The maximal cell index is bounded by the number of
+   * cells, Triangulation::n_cells(level).
    *
-   * In the MatrixFree framework cells are stored as batches due to
-   * vectorization. In the following, we map cells identified by its
-   * cell index to their counterpart in the MatrixFree object
-   * identified by the pair of batch index (bindex) and vectorization
-   * lane (bcomp).
+   * In the MatrixFree framework cells are stored as batches due to vectorization. In the following,
+   * we map cells identified by its cell index to their counterpart in the MatrixFree object
+   * identified by the pair of batch index (bindex) and vectorization lane (bcomp).
    */
   std::vector<std::pair<unsigned int, unsigned int>> cindex_to_bindex_bcomp_pair;
   cindex_to_bindex_bcomp_pair.resize(n_cells_stored); // we don't care about the accurate size
@@ -805,9 +732,8 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
       }
 
   /**
-   * For each cell iterator we store the associated macro cell (batch)
-   * and the vectorization lane representing the same cell in the
-   * MatrixFree framework.
+   * For each cell iterator we store the associated macro cell (batch) and the vectorization lane
+   * representing the same cell in the MatrixFree framework.
    */
   const auto & cell_iterators   = patch_info->get_internal_data()->cell_iterators;
   auto &       bindex_and_bcomp = mf_connect.batch_and_lane;

@@ -275,6 +275,9 @@ struct PatchInfo<dim>::PartitionData
   operator=(const PartitionData &) = default;
 
   void
+  initialize(const unsigned int n_colors);
+
+  void
   clear();
 
   std::size_t
@@ -314,7 +317,7 @@ struct PatchInfo<dim>::PartitionData
    * partition data. This identifies if data might be reused.
    */
   bool
-  check_compatibility(const PartitionData & other) const;
+  is_compatible(const PartitionData & other) const;
 
   /**
    * Actual storage of a set of partitions for each color. Two
@@ -425,6 +428,12 @@ class PatchWorker
 public:
   static constexpr unsigned int macro_size = dealii::VectorizedArray<number>::n_array_elements;
   using CellIterator                       = typename PatchInfo<dim>::CellIterator;
+  enum class RangeVariant
+  {
+    all,
+    complete,
+    incomplete
+  };
 
   PatchWorker() = delete;
 
@@ -444,9 +453,10 @@ public:
    * in PatchInfo::InternalData we are able to partition subdomains
    * into predicated groups.
    */
-  static void
+  void
   compute_partition_data(typename PatchInfo<dim>::PartitionData &      partition_data,
-                         const typename PatchInfo<dim>::InternalData * internal_data);
+                         const typename PatchInfo<dim>::InternalData * internal_data,
+                         std::vector<unsigned int> * patch_starts = nullptr) const;
 
   void
   connect_to_matrixfree(MatrixFreeConnect<dim, number> & mf_connect);
@@ -470,6 +480,27 @@ public:
 
   const typename PatchInfo<dim>::PartitionData &
   get_partition_data() const;
+
+  std::pair<unsigned int, unsigned int>
+  get_patch_range(const unsigned int color,
+                  const RangeVariant range_variant = RangeVariant::all) const
+  {
+    const auto & partition_data   = get_partition_data();
+    const auto   complete_range   = partition_data.get_patch_range(0, color);
+    const auto   incomplete_range = partition_data.get_patch_range(1, color);
+    if(RangeVariant::all == range_variant)
+    {
+      AssertDimension(complete_range.second, incomplete_range.first);
+      return {complete_range.first, incomplete_range.second};
+    }
+    else if(RangeVariant::complete == range_variant)
+      return complete_range;
+    else if(RangeVariant::incomplete == range_variant)
+      return incomplete_range;
+    else
+      AssertThrow(false, ExcMessage("Invalid range variant."));
+    return {0, 0};
+  }
 
   unsigned int
   n_physical_subdomains() const;
@@ -597,6 +628,14 @@ inline PatchInfo<dim>::PartitionData::~PartitionData()
 
 template<int dim>
 inline void
+PatchInfo<dim>::PartitionData::initialize(const unsigned int n_colors)
+{
+  clear();
+  partitions.resize(n_colors);
+}
+
+template<int dim>
+inline void
 PatchInfo<dim>::PartitionData::clear()
 {
   partitions.clear();
@@ -664,7 +703,7 @@ PatchInfo<dim>::PartitionData::get_patch_range(const unsigned int partition,
 
 template<int dim>
 inline bool
-PatchInfo<dim>::PartitionData::check_compatibility(const PartitionData & other) const
+PatchInfo<dim>::PartitionData::is_compatible(const PartitionData & other) const
 {
   return (partitions == other.partitions);
 }
@@ -715,7 +754,7 @@ PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
   typename PatchInfo<dim>::PartitionData subdomain_partition_data;
   compute_partition_data(subdomain_partition_data, patch_info_in.get_internal_data());
   const bool partition_data_is_valid =
-    subdomain_partition_data.check_compatibility(patch_info_in.subdomain_partition_data);
+    subdomain_partition_data.is_compatible(patch_info_in.subdomain_partition_data);
   (void)partition_data_is_valid;
   Assert(partition_data_is_valid, ExcMessage("The PartitionData does not fit the InternalData."));
 }
@@ -733,7 +772,7 @@ PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> &                 pat
   typename PatchInfo<dim>::PartitionData subdomain_partition_data;
   compute_partition_data(subdomain_partition_data, patch_info_in.get_internal_data());
   const bool partition_data_is_valid =
-    subdomain_partition_data.check_compatibility(patch_info_in.subdomain_partition_data);
+    subdomain_partition_data.is_compatible(patch_info_in.subdomain_partition_data);
   (void)partition_data_is_valid;
   Assert(partition_data_is_valid, ExcMessage("The PartitionData does not fit the InternalData."));
 }
@@ -752,7 +791,7 @@ PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
    */
   typename PatchInfo<dim>::PartitionData subdomain_partition_data;
   compute_partition_data(subdomain_partition_data, patch_info_in.get_internal_data());
-  if(subdomain_partition_data.check_compatibility(patch_info_in.subdomain_partition_data))
+  if(subdomain_partition_data.is_compatible(patch_info_in.subdomain_partition_data))
     return;
 
   /**
@@ -810,10 +849,7 @@ template<int dim, typename number>
 inline unsigned int
 PatchWorker<dim, number>::n_lanes_filled(const unsigned int patch_id) const
 {
-  AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
-  AssertIndexRange(patch_id, patch_info->n_lanes_filled.size());
-  // return n_lanes_filled_impl(patch_id);
-  return patch_info->n_lanes_filled[patch_id];
+  return n_lanes_filled_impl(patch_id);
 }
 
 
@@ -830,7 +866,6 @@ PatchWorker<dim, number>::n_lanes_filled_impl(const unsigned int patch_id) const
   const unsigned int n_physical_cells = end - start;
   AssertDimension(n_physical_cells % patch_size, 0);
   const unsigned int n_physical_subdomains = n_physical_cells / patch_size;
-  // AssertDimension(patch_info->n_lanes_filled[patch_id], n_physical_subdomains);
   Assert(n_physical_subdomains > 0, ExcMessage("No lanes filled."));
 
   return n_physical_subdomains;
@@ -919,47 +954,90 @@ template<int dim, typename number>
 inline void
 PatchWorker<dim, number>::compute_partition_data(
   typename PatchInfo<dim>::PartitionData &      partition_data,
-  const typename PatchInfo<dim>::InternalData * internal_data)
+  const typename PatchInfo<dim>::InternalData * internal_data,
+  std::vector<unsigned int> *                   patch_starts) const
 {
   AssertDimension(internal_data->n_interior_subdomains.size(),
                   internal_data->n_boundary_subdomains.size());
   const unsigned int n_colors = internal_data->n_interior_subdomains.size();
-  partition_data.clear();
-  partition_data.partitions.resize(n_colors);
+  partition_data.initialize(n_colors);
   unsigned int n_subdomains_before = 0;
+  unsigned int start               = 0;
+  if(patch_starts)
+    patch_starts->clear();
+
   for(unsigned int color = 0; color < n_colors; ++color)
   {
     auto & partitions = partition_data.partitions[color];
-    partitions.resize(5);
+    partitions.resize(2 + 1);
     const unsigned int n_interior_subdomains  = (internal_data->n_interior_subdomains)[color];
     const unsigned int n_boundary_subdomains  = (internal_data->n_boundary_subdomains)[color];
     const unsigned int n_subdomains           = n_interior_subdomains + n_boundary_subdomains;
     const unsigned int n_remaining_subdomains = (n_subdomains % macro_size);
+    partitions[0]                             = n_subdomains_before;
 
-    partitions[0]            = n_subdomains_before;
-    const bool is_incomplete = (n_remaining_subdomains != 0);
-    partitions[1]            = partitions[0] + (is_incomplete ? 1 : 0);     // total incomplete
-    partitions[2]            = partitions[1] + 0;                           // empty
-    partitions[3]            = partitions[2] + (n_subdomains / macro_size); // total complete
-    partitions[4]            = partitions[3] + 0;                           // empty
-    n_subdomains_before      = partitions.back();
+    // complete range
+    const unsigned int n_complete_batches = (n_subdomains / macro_size);
+    partitions[1]                         = partitions[0] + n_complete_batches; // complete
 
+    // incomplete range
+    const bool         has_incomplete       = (n_remaining_subdomains != 0);
+    const unsigned int n_incomplete_batches = (has_incomplete ? 1 : 0);
+    partitions[2]                           = partitions[1] + n_incomplete_batches; // incomplete
+
+    n_subdomains_before = partitions.back();
     has_valid_state(partition_data, color);
+
+    // partition patches with respect to vectorization
+    if(patch_starts)
+    {
+      const auto &       additional_data = patch_info->get_additional_data();
+      const unsigned int patch_size = UniversalInfo<dim>::n_cells(additional_data.patch_variant);
+
+      // complete range
+      const unsigned int stride_comp    = patch_size * macro_size;
+      const auto         complete_range = partition_data.get_patch_range(0, color);
+      for(unsigned int pp = complete_range.first; pp < complete_range.second; ++pp)
+      {
+        patch_starts->emplace_back(start);
+        start += stride_comp;
+      }
+
+      // incomplete range
+      if(has_incomplete)
+      {
+        patch_starts->emplace_back(start);
+        const auto stride_incomplete = patch_size * n_remaining_subdomains;
+        start += stride_incomplete;
+      }
+    }
+  }
+  if(patch_starts)
+  {
+    AssertDimension(start, internal_data->cell_iterators.size());
+    AssertDimension(patch_starts->size(), partition_data.n_subdomains());
+    patch_starts->emplace_back(start); // endpoint required by n_lanes_filled()
   }
 }
 
 
 template<int dim, typename number>
 inline void
-PatchWorker<dim, number>::has_valid_state(
-  const typename PatchInfo<dim>::PartitionData & subdomain_partition_data,
-  const unsigned int                             color)
+PatchWorker<dim, number>::has_valid_state(const typename PatchInfo<dim>::PartitionData & partitions,
+                                          const unsigned int                             color)
 {
-  const auto & partitions = subdomain_partition_data.partitions;
-  AssertDimension(partitions[color].size(), 5);
-  for(unsigned int pid = 0; pid < partitions[color].size() - 1; ++pid)
-    Assert(partitions[color][pid] >= 0 && partitions[color][pid] <= partitions[color][pid + 1],
-           ExcMessage("Invalid partitioning."));
+  const auto n_partitions = partitions.n_partitions(color);
+  AssertDimension(n_partitions, 2);
+  for(unsigned int p = 0; p < n_partitions; ++p)
+  {
+    const auto range = partitions.get_patch_range(p, color);
+    Assert(range.first >= 0, ExcMessage("Negative range."));
+    Assert(range.first <= range.second, ExcMessage("Lower bound exceeds upper bound."));
+  }
+  const auto     incomplete_range = partitions.get_patch_range(1, color);
+  const unsigned n_elements       = incomplete_range.second - incomplete_range.first;
+  Assert(n_elements == 0 || n_elements == 1,
+         ExcMessage("Incomplete range has more than one batch."));
 }
 
 

@@ -148,8 +148,7 @@ private:
   internal_reinit();
 
   std::shared_ptr<const Utilities::MPI::Partitioner>
-  initialize_vector_partitioner(const DoFHandler<dim> &      dof_handler,
-                                const TPSS::PatchInfo<dim> & patch_info) const;
+  initialize_vector_partitioner(const TPSS::PatchWorker<dim, number> & patch_worker) const;
 
   const dealii::MatrixFree<dim, number> *                mf_storage;
   std::shared_ptr<const dealii::MatrixFree<dim, number>> owned_mf_storage;

@@ -259,17 +259,12 @@ MappingInfo<dim, number>::initialize_storage(const PatchInfo<dim> &             
   if(is_mpi_parallel && patch_info.empty())
     return;
   else
-    AssertThrow(!patch_info.empty(), ExcMessage("invalid PatchInfo"));
+    AssertThrow(!patch_info.empty(), ExcMessage("No data stored in the PatchInfo."));
 
   // *** check if patch_info's PartitionData is valid
-  const auto   patch_variant  = patch_info.get_additional_data().patch_variant;
-  const auto & partition_data = patch_info.subdomain_partition_data;
-  typename std::decay<decltype(partition_data)>::type partition_data_tester;
-  PatchWorker<dim, number>::compute_partition_data(partition_data_tester,
-                                                   patch_info.get_internal_data());
-  Assert(partition_data_tester.check_compatibility(patch_info.subdomain_partition_data),
-         ExcMessage("Passed PatchInfo object is corrupt. Subdomain partitioning does not fit the "
-                    "internal data!"));
+  PatchWorker<dim, number> patch_worker{patch_info, mf_connect};
+  const auto               patch_variant  = patch_info.get_additional_data().patch_variant;
+  const auto &             partition_data = patch_info.subdomain_partition_data;
 
   // *** set input information
   this->mf_storage        = mf_connect.mf_storage;
@@ -303,7 +298,6 @@ MappingInfo<dim, number>::initialize_storage(const PatchInfo<dim> &             
                           cell_quadrature,
                           dealii::update_quadrature_points | dealii::update_JxW_values |
                             dealii::update_jacobians);
-  PatchWorker<dim, number> patch_worker{patch_info, mf_connect};
 
   mapping_data_starts.reserve(n_subdomains);
   for(unsigned int color = 0; color < partition_data.n_colors(); ++color)

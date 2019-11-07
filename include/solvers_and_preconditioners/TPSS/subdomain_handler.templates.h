@@ -67,12 +67,14 @@ SubdomainHandler<dim, number>::internal_reinit()
   for(const auto & info : patch_info.time_data)
     time_data.emplace_back(info.time, info.description, info.unit);
 
-  // *** initialize the MPI-partitioner
-  vector_partitioner = initialize_vector_partitioner(*dof_handler, patch_info);
+  // *** constructor partitions patches with respect to vectorization
+  TPSS::PatchWorker<dim, number> patch_worker{patch_info};
 
   // *** map the patch batches to MatrixFree's cell batches (used for the patch-local transfers)
-  TPSS::PatchWorker<dim, number> patch_worker{patch_info};
   patch_worker.connect_to_matrixfree(mf_connect);
+
+  // *** initialize the MPI-partitioner
+  vector_partitioner = initialize_vector_partitioner(patch_worker);
 
   // *** compute the surrogate patches which pertain the tensor structure
   typename TPSS::MappingInfo<dim, number>::AdditionalData mapping_info_data;
@@ -90,8 +92,7 @@ SubdomainHandler<dim, number>::internal_reinit()
 template<int dim, typename number>
 std::shared_ptr<const Utilities::MPI::Partitioner>
 SubdomainHandler<dim, number>::initialize_vector_partitioner(
-  const DoFHandler<dim> &      dof_handler,
-  const TPSS::PatchInfo<dim> & patch_info) const
+  const TPSS::PatchWorker<dim, number> & patch_worker) const
 {
   const auto &                                       additional_data = get_additional_data();
   const unsigned                                     level           = additional_data.level;
@@ -101,9 +102,9 @@ SubdomainHandler<dim, number>::initialize_vector_partitioner(
     partitioner = get_matrix_free().get_vector_partitioner();
   else
   {
-    const IndexSet owned_indices = std::move(dof_handler.locally_owned_mg_dofs(level));
+    const IndexSet owned_indices = std::move(dof_handler->locally_owned_mg_dofs(level));
     IndexSet       ghost_indices;
-    DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, ghost_indices);
+    DoFTools::extract_locally_relevant_level_dofs(*dof_handler, level, ghost_indices);
     partitioner = std::make_shared<const Utilities::MPI::Partitioner>(owned_indices,
                                                                       ghost_indices,
                                                                       MPI_COMM_WORLD);
