@@ -70,8 +70,12 @@ main(int argc, char * argv[])
   using PoissonProblem =
     typename Poisson::ModelProblem<dim, fe_degree, double, n_patch_dofs_per_direction>;
 
-  const TestParameter testprms;
-  RT::Parameter       rt_parameters;
+  TestParameter testprms;
+  if(argc > 1)
+    testprms.n_refinements = std::atoi(argv[1]);
+  if(argc > 2)
+    testprms.n_repetitions = std::atoi(argv[2]);
+  RT::Parameter rt_parameters;
 
   //: discretization
   rt_parameters.n_cycles              = 1;
