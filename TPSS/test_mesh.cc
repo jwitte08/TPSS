@@ -22,6 +22,7 @@ test_distorted_cube(Triangulation<dim> &  tria,
   const bool         is_rank_0 = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
   ConditionalOStream pcout(std::cout, is_rank_0);
   MeshParameter      prm = prm_in;
+  prm.geometry_variant   = MeshParameter::GeometryVariant::CubeDistorted;
 
   pcout << Util::git_version_to_fstring() << std::endl;
 
