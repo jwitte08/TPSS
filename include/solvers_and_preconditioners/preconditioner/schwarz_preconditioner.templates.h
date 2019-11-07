@@ -8,7 +8,11 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   OperatorType &         operator_in,
   const AdditionalData & additional_data_in)
 {
-  using namespace dealii;
+  // *** assert that each process has the same number of colors
+  const unsigned int n_colors     = subdomain_handler_in->get_partition_data().n_colors();
+  const unsigned int n_colors_max = Utilities::MPI::max(n_colors, MPI_COMM_WORLD);
+  const unsigned int n_colors_min = Utilities::MPI::min(n_colors, MPI_COMM_WORLD);
+  Assert(n_colors_max == n_colors_min, ExcMessage("Not the same number of colors on each proc."));
 
   // *** reset members to uninitialized state
   clear();
@@ -19,10 +23,10 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
                TimeInfo{0., "[SchwarzPrecond] Compute inverses:", "[s]", 0}};
 
   // *** initialization of members
-  subdomain_handler     = subdomain_handler_in;
-  differential_operator = &operator_in;
-  transfer        = std::make_shared<typename OperatorType::transfer_type>(*subdomain_handler);
-  additional_data = additional_data_in;
+  subdomain_handler = subdomain_handler_in;
+  linear_operator   = &operator_in;
+  transfer          = std::make_shared<typename OperatorType::transfer_type>(*subdomain_handler);
+  additional_data   = additional_data_in;
   Assert(additional_data.relaxation > 0., ExcInvalidState());
 
   const auto & sh_data = subdomain_handler->get_additional_data();
@@ -32,6 +36,10 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   smoother_variant = sh_data.smoother_variant;
   Assert(patch_variant == TPSS::PatchVariant::vertex || patch_variant == TPSS::PatchVariant::cell,
          dealii::ExcNotImplemented());
+
+  // *** initialize ghosted vectors
+  initialize_ghost(solution_ghosted);
+  initialize_ghost(residual_ghosted);
 
   // *** compute subproblem inverses
   Timer timer;
@@ -45,14 +53,13 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
     time_data.emplace_back(info.time, info.description, info.unit);
 }
 
+
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   const SchwarzPreconditioner & schwarz_preconditioner_in,
   const AdditionalData &        additional_data_in)
 {
-  using namespace dealii;
-
   // *** reset members to uninitialized state
   clear();
 
@@ -62,18 +69,31 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
                TimeInfo{0., "[SchwarzPrecond] Compute inverses:", "[s]", 0}};
 
   // *** initialization of members
-  subdomain_handler     = schwarz_preconditioner_in.subdomain_handler;
-  transfer              = schwarz_preconditioner_in.transfer;
-  differential_operator = schwarz_preconditioner_in.differential_operator;
-  inverses_owned        = schwarz_preconditioner_in.inverses_owned;
-  subdomain_to_inverse  = inverses_owned.get();
-  additional_data       = additional_data_in;
-  level                 = schwarz_preconditioner_in.level;
-  patch_variant         = schwarz_preconditioner_in.patch_variant;
-  smoother_variant      = schwarz_preconditioner_in.smoother_variant;
-  Assert(additional_data.relaxation > 0., ExcInvalidState());
+  subdomain_handler    = schwarz_preconditioner_in.subdomain_handler;
+  transfer             = schwarz_preconditioner_in.transfer;
+  linear_operator      = schwarz_preconditioner_in.linear_operator;
+  subdomain_to_inverse = schwarz_preconditioner_in.subdomain_to_inverse;
+  additional_data      = additional_data_in;
+  level                = schwarz_preconditioner_in.level;
+  patch_variant        = schwarz_preconditioner_in.patch_variant;
+  smoother_variant     = schwarz_preconditioner_in.smoother_variant;
+  initialize_ghost(solution_ghosted);
+  initialize_ghost(residual_ghosted);
+  Assert(additional_data.relaxation > 0., ExcMessage("Invalid relaxation factor."));
   Assert(patch_variant == TPSS::PatchVariant::vertex || patch_variant == TPSS::PatchVariant::cell,
-         dealii::ExcNotImplemented());
+         ExcMessage("Invalid patch variant."));
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
+  const OperatorType &   linear_operator,
+  const AdditionalData & additional_data)
+{
+  // Does nothing.
+  (void)linear_operator;
+  (void)additional_data;
 }
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
@@ -82,38 +102,36 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::compute_invers
 {
   const auto & partition_data      = subdomain_handler->get_partition_data();
   const auto   n_subdomain_batches = partition_data.n_subdomains();
-  inverses_owned                   = std::make_shared<std::vector<MatrixType>>();
-  inverses_owned->resize(n_subdomain_batches);
-  subdomain_to_inverse = inverses_owned.get();
+  subdomain_to_inverse             = std::make_shared<std::vector<MatrixType>>();
+  subdomain_to_inverse->resize(n_subdomain_batches);
   // TODO this is a naive way to bind member functions
   const auto make_assembling = [this](const SubdomainHandler<dim, value_type> &     data,
                                       std::vector<MatrixType> &                     inverses,
                                       const OperatorType &                          operator_,
                                       const std::pair<unsigned int, unsigned int> & range) {
-    differential_operator->assemble_subspace_inverses(data, inverses, operator_, range);
+    linear_operator->assemble_subspace_inverses(data, inverses, operator_, range);
   };
 
   // *** loop over all patches in parallel (regardless of color and constitution)
-  AssertThrow(subdomain_to_inverse->size() == partition_data.n_subdomains(),
-              ExcMessage("Mismatch."));
   subdomain_handler->template parloop<OperatorType, std::vector<MatrixType>>(
-    std::ref(make_assembling), *inverses_owned, *differential_operator);
+    std::ref(make_assembling), *subdomain_to_inverse, *linear_operator);
   AssertThrow(subdomain_to_inverse->size() == partition_data.n_subdomains(),
               ExcMessage("Mismatch."));
 }
+
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::clear()
 {
   subdomain_handler.reset();
-  differential_operator = nullptr;
-  inverses_owned.reset();
-  subdomain_to_inverse = nullptr;
-  additional_data      = AdditionalData{};
-  level                = static_cast<unsigned int>(-1);
+  linear_operator = nullptr;
+  subdomain_to_inverse.reset();
+  additional_data = AdditionalData{};
+  level           = static_cast<unsigned int>(-1);
   time_data.clear();
 }
+
 
 // template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 // void
@@ -127,6 +145,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::clear()
 //   vmult<LinearAlgebra::distributed::Vector<value_type>>(dst, src);
 // }
 
+
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult(
@@ -134,9 +153,9 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult(
   const VectorType & src) const
 {
   dst = 0.;
-
   vmult_add(dst, src);
 }
+
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
@@ -145,9 +164,9 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Tvmult(
   const VectorType & src) const
 {
   dst = 0.;
-
   Tvmult_add(dst, src);
 }
+
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
@@ -155,8 +174,6 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult_add(
   VectorType &       dst,
   const VectorType & src) const
 {
-  using namespace dealii;
-
   switch(smoother_variant)
   {
     case TPSS::SmootherVariant::additive:
@@ -174,8 +191,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult_add(
       Assert(false, ExcMessage("Smoother variant is not supported!"));
       break;
     }
-  } // end switch (SmootherVariant)
-  dst.compress(dealii::VectorOperation::add);
+  } // end switch
 
   dst *= additional_data.relaxation;
   AssertIsFinite(dst.l2_norm());
@@ -187,18 +203,16 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Tvmult_add(
   VectorType &       dst,
   const VectorType & src) const
 {
-  using namespace dealii;
-
   switch(smoother_variant)
   {
     case TPSS::SmootherVariant::additive:
     {
-      additive_schwarz_operation</*VectorType,*/ /*transpose?*/ true>(dst, src);
+      additive_schwarz_operation</*transpose?*/ true>(dst, src);
       break;
     }
     case TPSS::SmootherVariant::multiplicative:
     {
-      multiplicative_schwarz_operation</*VectorType,*/ /*transpose?*/ true>(dst, src);
+      multiplicative_schwarz_operation</*transpose?*/ true>(dst, src);
       break;
     }
     default:
@@ -207,61 +221,35 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Tvmult_add(
       break;
     }
   } // end switch (SmootherVariant)
-  dst.compress(dealii::VectorOperation::add);
 
   dst *= additional_data.relaxation;
   AssertIsFinite(dst.l2_norm());
 }
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
-void
-SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::update(
-  LinearOperatorBase const * matrix_operator)
-{
-  OperatorType const * differential_operator = dynamic_cast<OperatorType const *>(matrix_operator);
-
-  if(differential_operator)
-  {
-    // TODO differential_operator does update
-    Assert(false, ExcNotImplemented());
-  }
-  else
-    AssertThrow(false, ExcMessage("UnderlyingOperator and MatrixOperator are not compatible!"));
-}
-
-template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 // template<typename VectorType>
 void
-SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_subdomain_inverses_add(
-  VectorType &       solution,
-  const VectorType & residual,
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_solvers(
+  VectorType &       solution_in,
+  const VectorType & residual_in,
   const unsigned int color) const
 {
-  using namespace dealii;
-
-  Assert(this->patch_variant == TPSS::PatchVariant::vertex ||
-           this->patch_variant == TPSS::PatchVariant::cell,
-         dealii::ExcNotImplemented()); // supported: additive, multiplicative
-
   const auto apply_inverses_lambda = [this](const SubdomainHandler<dim, value_type> & data,
                                             VectorType &                              solution,
                                             const VectorType &                        residual,
                                             const std::pair<int, int> & subdomain_range) {
     (void)data;                                                // TODO
-    AlignedVector<VectorizedArray<value_type>> local_residual; // r_loc
-    AlignedVector<VectorizedArray<value_type>> local_solution; // x_loc
+    AlignedVector<VectorizedArray<value_type>> local_residual; // r_j
+    AlignedVector<VectorizedArray<value_type>> local_solution; // u_j
 
     for(int patch_id = subdomain_range.first; patch_id < subdomain_range.second; ++patch_id)
     {
-      // *** restrict global residual (gather): r_loc = R_loc residual
-      // ***                                    where R_loc is restriction operator
+      // restrict global to local residual and initialize local solution u_j
       transfer->reinit(patch_id);
       local_residual = std::move(transfer->gather(residual));
-
-      // *** initialize local solution: x_loc
       transfer->reinit_local_vector(local_solution);
 
-      // *** apply local inverse: x_loc = A_loc^{-1} r_loc
+      // apply local solver u_j = A_loc^{-1} r_j
       const ArrayView<const VectorizedArray<value_type>> local_residual_view =
         make_array_view(local_residual.begin(), local_residual.end());
       const ArrayView<VectorizedArray<value_type>> local_solution_view =
@@ -269,130 +257,121 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_subdomai
       const auto & inverse = (*subdomain_to_inverse)[patch_id];
       inverse.apply_inverse(local_solution_view, local_residual_view);
 
-      // *** apply local relaxation parameter
+      // apply local relaxation parameter
       for(auto & elem : local_solution)
         elem *= make_vectorized_array<value_type>(additional_data.local_relaxation);
 
-      // *** prolongate and add local solution: solution += R_loc^T x_loc
-      // ***                                    where R_loc^T is prolongation operator
+      // prolongate and add local solution u_j, that is u_j += R_j^T u_j
       transfer->scatter_add(solution, local_solution);
     }
   };
 
   // *** initialize ghosted vectors
-  initialize_ghost_vector(solution);
-  initialize_ghost_vector(residual);
-  solution.zero_out_ghosts();
-  residual.update_ghost_values();
+  VectorType * solution;
+  const auto   sol_partitioner = solution_in.get_partitioner();
+  if(sol_partitioner->is_compatible(*(subdomain_handler->get_vector_partitioner())))
+    solution = &solution_in;
+  else // set ghosted vector with write access
+  {
+    solution_ghosted.zero_out_ghosts();
+    solution_ghosted.copy_locally_owned_data_from(solution_in);
+    solution = &solution_ghosted;
+  }
+  const VectorType * residual;
+  const auto         res_partitioner = residual_in.get_partitioner();
+  if(res_partitioner->is_compatible(*(subdomain_handler->get_vector_partitioner())))
+    residual = &residual_in;
+  else // set ghosted vector with read access
+  {
+    residual_ghosted.copy_locally_owned_data_from(residual_in);
+    residual_ghosted.update_ghost_values();
+    residual = &residual_ghosted;
+  }
 
-  // *** loop over all patches of given color !
+  // *** loop over all subdomains of the given color
   subdomain_handler->template loop<const VectorType, VectorType>(std::ref(apply_inverses_lambda),
-                                                                 solution,
-                                                                 residual,
+                                                                 *solution,
+                                                                 *residual,
                                                                  color);
-  solution.compress(VectorOperation::add);
+
+  // *** compress and copy locally owned unknowns (if needed)
+  solution->compress(VectorOperation::add);
+  if(solution == &solution_ghosted)
+    solution_in.copy_locally_owned_data_from(solution_ghosted);
 }
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
-template</*typename VectorType,*/ bool transpose>
+template<bool transpose>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::additive_schwarz_operation(
   VectorType &       solution,
   const VectorType & rhs) const
 {
-  AssertThrow(!transpose, ExcMessage("Transpose operation is not implemented."));
+  AssertThrow(!transpose, ExcMessage("TODO transpose operation is not implemented."));
 
-  Timer timer;
-  timer.restart();
-
+  // we separate the sum over subdomains with respect to colors avoiding race conditions
   const auto & partition_data = subdomain_handler->get_partition_data();
-  for(unsigned int color = 0; color < partition_data.n_colors(); ++color)
-    apply_subdomain_inverses_add(solution, rhs, color);
-
+  const auto   n_colors       = partition_data.n_colors();
+  Timer        timer;
+  timer.restart();
+  for(unsigned int color = 0; color < n_colors; ++color)
+    apply_local_solvers(solution, rhs, color);
   time_data[1].add_time(timer.wall_time());
 }
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
-template</*typename VectorType,*/ bool transpose>
+template<bool transpose>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::multiplicative_schwarz_operation(
   VectorType &       solution,
   const VectorType & rhs) const
 {
-  AssertThrow(!transpose, ExcMessage("Transpose operation is not implemented."));
+  AssertThrow(!transpose, ExcMessage("TODO transpose operation is not implemented."));
 
-  /*** LAMBDA implementation of the multiplicative algorithm dependent ***/
-  const auto get_color_sequence = [this]() {
-    std::vector<unsigned int> color_sequence;
-    const auto & partition_data = subdomain_handler->get_patch_info().subdomain_partition_data;
-    const auto   n_colors       = partition_data.n_colors();
-
-    // *** fill color sequence forwards
-    for(unsigned int color = 0; color < n_colors; ++color)
-      color_sequence.push_back(color); // 0, 1, ..., n_colors-1
-
-    // *** reverse the color sequence
-    const bool revert_colors = transpose || additional_data.reverse;
-    if(revert_colors)
-      std::reverse(color_sequence.begin(), color_sequence.end()); // n_colors-1, ..., 1, 0
-
-    // *** skip first color and traverse backwards through colors
-    if(additional_data.symmetrized && !color_sequence.empty())
-    {
-      const auto temp = color_sequence;
-      auto       c    = ++temp.rbegin(); // skip last color (avoids duplicate!)
-      for(; c != temp.rend(); ++c)
-        color_sequence.push_back(*c);
-      // std::cout << "color_sequence: ";
-      // for (const auto c : color_sequence)
-      //   std::cout << c << "  ";
-      // std::cout << std::endl;
-    }
-
-    AssertDimension(additional_data.symmetrized ? 2 * n_colors - 1 : n_colors,
-                    color_sequence.size());
-
-    return color_sequence;
-  };
-
-  auto       color_sequence = get_color_sequence();
+  const std::vector<unsigned int> color_sequence = get_color_sequence(transpose);
+  AssertThrow(!color_sequence.empty(), ExcMessage("There are no colors."));
+  // std::cout << std::boolalpha << color_sequence.empty() << std::endl;
   VectorType residual{rhs};
   Timer      timer;
 
-  // // DEBUG
-  // std::cout << "color seq: ";
-  // for (const auto c : color_sequence)
-  //   std::cout << c << " ";
-  // std::cout << std::endl;
-
-  // *** apply the patch inverses to the first color
+  // apply inverses of first color (no update of residual needed since the initial solution is zero)
   timer.restart();
-  if(!color_sequence.empty())
-  {
-    apply_subdomain_inverses_add(solution, rhs, color_sequence.front());
-    color_sequence.erase(color_sequence.begin());
-  }
+  apply_local_solvers(solution, rhs, color_sequence.front());
   time_data[1].add_time(timer.wall_time());
 
-  for(const auto color : color_sequence)
+  // iterate over remaining colors
+  const auto colors_without_first =
+    make_array_view(++color_sequence.cbegin(), color_sequence.cend());
+  for(const auto color : colors_without_first)
   {
-    timer.restart();
-
     // *** update residual
-    this->differential_operator->vmult(residual, solution); // residual = A*u_n
-    residual.sadd(-1., 1., rhs);                            // residual = b - A*u_n
-
-    time_data[0].add_time(timer.wall_time());
     timer.restart();
+    this->linear_operator->vmult(residual, solution); // residual = A * u_n
+    residual.sadd(-1., 1., rhs);                      // residual = b - A * u_n
+    time_data[0].add_time(timer.wall_time());
 
     // *** apply inverses of given color
-    apply_subdomain_inverses_add(solution,
-                                 residual,
-                                 color); // solution = solution + A_color^{-1} * residual
-
-    // NOTE a call of apply_inverses includes all colors, such that
-    // we add the time to the opened call in
-    // additive_schwarz_operation
+    timer.restart();
+    apply_local_solvers(solution, residual, color);
+    // NOTE a call of apply_inverses includes all colors, such that we add the time to the opened
+    // call in additive_schwarz_operation
     time_data[1].time += timer.wall_time();
+  }
+}
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::update(
+  LinearOperatorBase const * matrix_operator)
+{
+  OperatorType const * linear_operator = dynamic_cast<OperatorType const *>(matrix_operator);
+
+  if(linear_operator)
+  {
+    AssertThrow(false, ExcMessage("TODO call update() from linear_operator"));
+  }
+  else
+  {
+    AssertThrow(false, ExcMessage("Invalid."));
   }
 }

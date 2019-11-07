@@ -68,11 +68,7 @@ SubdomainHandler<dim, number>::internal_reinit()
     time_data.emplace_back(info.time, info.description, info.unit);
 
   // *** initialize the MPI-partitioner
-  const IndexSet owned_indices = std::move(dof_handler->locally_owned_mg_dofs(level));
-  IndexSet       ghost_indices;
-  DoFTools::extract_locally_relevant_level_dofs(*dof_handler, level, ghost_indices);
-  vector_partitioner =
-    std::make_shared<Utilities::MPI::Partitioner>(owned_indices, ghost_indices, MPI_COMM_WORLD);
+  vector_partitioner = initialize_vector_partitioner(*dof_handler, patch_info);
 
   // *** map the patch batches to MatrixFree's cell batches (used for the patch-local transfers)
   TPSS::PatchWorker<dim, number> patch_worker{patch_info};
@@ -89,6 +85,30 @@ SubdomainHandler<dim, number>::internal_reinit()
   AssertThrow(quadrature_storage.size() == dim, ExcNotImplemented()); // each direction is filled
   for(const auto & quad : quadrature_storage)
     AssertThrow(quad == quadrature_storage[0], ExcMessage("Quadrature storage is not isotropic!"));
+}
+
+template<int dim, typename number>
+std::shared_ptr<const Utilities::MPI::Partitioner>
+SubdomainHandler<dim, number>::initialize_vector_partitioner(
+  const DoFHandler<dim> &      dof_handler,
+  const TPSS::PatchInfo<dim> & patch_info) const
+{
+  const auto &                                       additional_data = get_additional_data();
+  const unsigned                                     level           = additional_data.level;
+  const auto                                         patch_variant = additional_data.patch_variant;
+  std::shared_ptr<const Utilities::MPI::Partitioner> partitioner;
+  if(TPSS::PatchVariant::cell == patch_variant)
+    partitioner = get_matrix_free().get_vector_partitioner();
+  else
+  {
+    const IndexSet owned_indices = std::move(dof_handler.locally_owned_mg_dofs(level));
+    IndexSet       ghost_indices;
+    DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, ghost_indices);
+    partitioner = std::make_shared<const Utilities::MPI::Partitioner>(owned_indices,
+                                                                      ghost_indices,
+                                                                      MPI_COMM_WORLD);
+  }
+  return partitioner;
 }
 
 template<int dim, typename number>
