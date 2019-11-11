@@ -190,7 +190,7 @@ struct MatrixOperator : public Subscriptor
     additional_data.mapping_update_flags_inner_faces    = mapping_update_flags;
     additional_data.mapping_update_flags_boundary_faces = mapping_update_flags;
     if(level != static_cast<unsigned>(-1))
-      additional_data.level_mg_handler = level;
+      additional_data.mg_level = level;
     const auto tasks_scheme =
       static_cast<typename AddData::TasksParallelScheme>(parameters.mf_tasks_scheme_id);
     additional_data.tasks_parallel_scheme = tasks_scheme;

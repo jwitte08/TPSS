@@ -156,7 +156,7 @@ struct ModelProblem : public Subscriptor
     additional_data.mapping_update_flags_boundary_faces =
       (update_gradients | update_JxW_values | update_normal_vectors | update_quadrature_points);
     if(level != static_cast<unsigned>(-1))
-      additional_data.level_mg_handler = level;
+      additional_data.mg_level = level;
     AffineConstraints<double> constraints_dummy;
     constraints_dummy.close();
     const auto   mf_storage = std::make_shared<MatrixFree<dim, Number2>>();

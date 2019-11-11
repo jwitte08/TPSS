@@ -1413,7 +1413,7 @@ struct MatrixOperator : public Subscriptor
     mf_additional_data.mapping_update_flags_inner_faces    = mapping_update_flags;
     mf_additional_data.mapping_update_flags_boundary_faces = mapping_update_flags;
     if(level != static_cast<unsigned>(-1))
-      mf_additional_data.level_mg_handler = level;
+      mf_additional_data.mg_level = level;
     AffineConstraints<double> constraints_dummy;
     constraints_dummy.close();
     const auto mf_storage = std::make_shared<MatrixFree<dim, Number2>>();
