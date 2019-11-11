@@ -32,9 +32,17 @@ public:
 
   struct GhostPatch;
 
-  struct PartitionData;
-
   struct InternalData;
+
+  struct SubdomainData
+  {
+    unsigned int n_interior = 0;
+    unsigned int n_boundary = 0;
+    unsigned int n_interior_ghost = 0;
+    unsigned int n_boundary_ghost = 0;
+  };
+
+  struct PartitionData;
 
   PatchInfo() = default;
 
@@ -101,6 +109,31 @@ public:
   std::vector<TimeInfo> time_data;
 
 private:
+  void
+  count_physical_subdomains()
+  {
+    internal_data.n_physical_subdomains_total.n_interior = 
+    std::accumulate(internal_data.n_physical_subdomains.cbegin(),
+                    internal_data.n_physical_subdomains.cend(),
+                    0,
+		    [](const auto sum, const auto & data){return sum + data.n_interior;});
+  internal_data.n_physical_subdomains_total.n_boundary = 
+    std::accumulate(internal_data.n_physical_subdomains.cbegin(),
+                    internal_data.n_physical_subdomains.cend(),
+                    0,
+		    [](const auto sum, const auto & data){return sum + data.n_boundary;});
+    internal_data.n_physical_subdomains_total.n_interior_ghost = 
+    std::accumulate(internal_data.n_physical_subdomains.cbegin(),
+                    internal_data.n_physical_subdomains.cend(),
+                    0,
+		    [](const auto sum, const auto & data){return sum + data.n_interior_ghost;});
+  internal_data.n_physical_subdomains_total.n_boundary_ghost = 
+    std::accumulate(internal_data.n_physical_subdomains.cbegin(),
+                    internal_data.n_physical_subdomains.cend(),
+                    0,
+		    [](const auto sum, const auto & data){return sum + data.n_boundary_ghost;});
+  }
+
   static std::vector<types::global_dof_index>
   get_face_conflicts(const PatchIterator & patch)
   {
@@ -120,10 +153,6 @@ private:
     return conflicts;
   }
 
-  void
-  initialize_cell_patches(const dealii::DoFHandler<dim> * dof_handler,
-                          const AdditionalData            additional_data);
-
   /**
    * Gathering the locally owned and ghost cells attached to a common
    * vertex as the collection of cell iterators (patch). The
@@ -141,6 +170,10 @@ private:
                         const AdditionalData &  additional_data) const;
 
   void
+  initialize_cell_patches(const dealii::DoFHandler<dim> * dof_handler,
+                          const AdditionalData            additional_data);
+
+  void
   initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_handler,
                             const AdditionalData            additional_data);
 
@@ -156,26 +189,27 @@ private:
     const dealii::DoFHandler<dim> &                            dof_handler,
     const std::vector<std::pair<unsigned int, unsigned int>> & reordered_colors) const;
 
-  template<int size_reg>
+  template<int regular_size>
   void
   submit_patches(const std::vector<PatchIterator> & patch_iterators)
   {
-    // *** submit the interior subdomains first
-    unsigned int               n_interior_subdomains_reg = 0;
-    std::vector<PatchIterator> boundary_patch_reg;
-    for(auto patch : patch_iterators)
+    // First, submit all interior patches and subsequently all boundary patches
+    const auto & internal_submit = [this](const std::vector<PatchIterator> & patch_iterators){
+    unsigned int               n_interior_subdomains_regular = 0;
+    std::vector<PatchIterator> boundary_patch_regular;
+    for(const auto & patch : patch_iterators)
     {
       const bool patch_at_boundary =
         std::any_of(patch->cbegin(), patch->cend(), IteratorFilters::AtBoundary{});
-      if(patch->size() == size_reg) // regular
+      if(patch->size() == regular_size) // regular
       {
         if(patch_at_boundary)
         {
-          boundary_patch_reg.push_back(patch);
+          boundary_patch_regular.push_back(patch);
         }
         else
         {
-          ++n_interior_subdomains_reg;
+          ++n_interior_subdomains_regular;
           for(const auto & cell : *patch)
             internal_data.cell_iterators.emplace_back(cell);
         }
@@ -184,14 +218,46 @@ private:
         Assert(false, ExcNotImplemented());
     }
 
-    // *** submit the boundary subdomains next
-    for(const auto it : boundary_patch_reg)
+    for(const auto it : boundary_patch_regular)
     {
       for(const auto & cell : *it)
         internal_data.cell_iterators.emplace_back(cell);
     }
-    internal_data.n_interior_subdomains.emplace_back(n_interior_subdomains_reg);
-    internal_data.n_boundary_subdomains.emplace_back(boundary_patch_reg.size());
+
+    SubdomainData local_data;
+    local_data.n_interior = n_interior_subdomains_regular;
+    local_data.n_boundary = boundary_patch_regular.size();
+    return local_data;
+				   };
+    // We separate the patch iterators into locally owned subdomains
+    // and those with ghost cells. First, we submit locally owned and
+    // subsequently subdomains with ghosts. Each group is separated
+    // into interior (first) and boundary (second) subdomains,
+    // respectively.
+    std::vector<PatchIterator> owned_patch_iterators, ghost_patch_iterators;
+    for(const auto & patch : patch_iterators)
+      {
+	const bool patch_is_ghost =
+	  std::any_of(patch->cbegin(), patch->cend(), IteratorFilters::LocallyOwnedLevelCell{});
+	if (patch_is_ghost)
+	  ghost_patch_iterators.emplace_back(patch);
+	else
+	  owned_patch_iterators.emplace_back(patch);
+      }
+    AssertDimension (owned_patch_iterators.size() + ghost_patch_iterators.size(),
+		     patch_iterators.size());
+    const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
+    if (!is_mpi_parallel)
+      AssertDimension (ghost_patch_iterators.size(), 0);
+    
+    const auto owned_subdomain_data = internal_submit(owned_patch_iterators);
+    const auto ghost_subdomain_data = internal_submit(ghost_patch_iterators);
+    SubdomainData subdomain_data;
+    subdomain_data.n_interior = owned_subdomain_data.n_interior + ghost_subdomain_data.n_interior;
+    subdomain_data.n_boundary = owned_subdomain_data.n_boundary + ghost_subdomain_data.n_boundary;
+    subdomain_data.n_interior_ghost = ghost_subdomain_data.n_interior;
+    subdomain_data.n_boundary_ghost = ghost_subdomain_data.n_boundary;
+    internal_data.n_physical_subdomains.emplace_back(subdomain_data);
   }
 
   ConditionalOStream pcout{std::cout, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0};
@@ -361,16 +427,6 @@ struct PatchInfo<dim>::InternalData
   unsigned int level = -1;
 
   /**
-   * Number of interior patches for each color.
-   */
-  std::vector<unsigned int> n_interior_subdomains;
-
-  /**
-   * Number of boundary patches for each color.
-   */
-  std::vector<unsigned int> n_boundary_subdomains;
-
-  /**
    * Flat array that stores all CellIterators for the construction of
    * (macro) patches. The successive alignment of CellIterators is
    * such that all interior subdomains are stored first, then the ones
@@ -379,6 +435,16 @@ struct PatchInfo<dim>::InternalData
    * Lexicographical:  cell number  <  lane  <  patch id  <   color
    */
   std::vector<CellIterator> cell_iterators;
+
+  /**
+   * Numbers of physical subdomains for each color.
+   */
+  std::vector<SubdomainData> n_physical_subdomains;
+
+  /**
+   * Numbers of physical subdomains (accumulated over colors)
+   */
+  SubdomainData n_physical_subdomains_total;
 };
 
 
@@ -482,12 +548,33 @@ public:
   get_partition_data() const;
 
   std::pair<unsigned int, unsigned int>
-  get_patch_range(const unsigned int color,
+  get_owned_range(const unsigned int color,
                   const RangeVariant range_variant = RangeVariant::all) const
   {
     const auto & partition_data   = get_partition_data();
     const auto   complete_range   = partition_data.get_patch_range(0, color);
     const auto   incomplete_range = partition_data.get_patch_range(1, color);
+    if(RangeVariant::all == range_variant)
+    {
+      AssertDimension(complete_range.second, incomplete_range.first);
+      return {complete_range.first, incomplete_range.second};
+    }
+    else if(RangeVariant::complete == range_variant)
+      return complete_range;
+    else if(RangeVariant::incomplete == range_variant)
+      return incomplete_range;
+    else
+      AssertThrow(false, ExcMessage("Invalid range variant."));
+    return {0, 0};
+  }
+
+  std::pair<unsigned int, unsigned int>
+  get_ghost_range(const unsigned int color,
+                  const RangeVariant range_variant = RangeVariant::all) const
+  {
+    const auto & partition_data   = get_partition_data();
+    const auto   complete_range   = partition_data.get_patch_range(2, color);
+    const auto   incomplete_range = partition_data.get_patch_range(3, color);
     if(RangeVariant::all == range_variant)
     {
       AssertDimension(complete_range.second, incomplete_range.first);
@@ -721,8 +808,8 @@ inline void
 PatchInfo<dim>::InternalData::clear()
 {
   level = -1;
-  n_interior_subdomains.clear();
-  n_boundary_subdomains.clear();
+  n_physical_subdomains.clear();
+  n_physical_subdomains_total = SubdomainData{};
   cell_iterators.clear();
 }
 
@@ -818,29 +905,31 @@ inline unsigned int
 PatchWorker<dim, number>::n_physical_subdomains() const
 {
   Assert(patch_info != nullptr, ExcNotInitialized());
-  const auto n_physical_subdomains_per_partition = [this](const unsigned int partition,
-                                                          const unsigned int color) {
-    const auto & partition_data = patch_info->subdomain_partition_data;
-    const auto & range          = partition_data.get_patch_range(partition, color);
+  // const auto n_physical_subdomains_per_partition = [this](const unsigned int partition,
+  //                                                         const unsigned int color) {
+  //   const auto & partition_data = patch_info->subdomain_partition_data;
+  //   const auto & range          = partition_data.get_patch_range(partition, color);
 
-    // TODO
-    unsigned int n_subdomains = 0;
-    for(unsigned id = range.first; id < range.second; ++id)
-      n_subdomains += n_lanes_filled(id);
-    return n_subdomains;
-    // return (range.second - range.first) * macro_size;
-  };
+  //   // TODO
+  //   unsigned int n_subdomains = 0;
+  //   for(unsigned id = range.first; id < range.second; ++id)
+  //     n_subdomains += n_lanes_filled(id);
+  //   return n_subdomains;
+  //   // return (range.second - range.first) * macro_size;
+  // };
 
-  unsigned     n_subdomains   = 0;
-  const auto & partition_data = patch_info->subdomain_partition_data;
-  const auto   n_colors       = partition_data.n_colors();
-  for(unsigned color = 0; color < n_colors; ++color)
-  {
-    const auto n_partitions = partition_data.n_partitions(color);
-    for(unsigned partition = 0; partition < n_partitions; ++partition)
-      n_subdomains += n_physical_subdomains_per_partition(partition, color);
-  }
-
+  // unsigned     n_subdomains   = 0;
+  // const auto & partition_data = patch_info->subdomain_partition_data;
+  // const auto   n_colors       = partition_data.n_colors();
+  // for(unsigned color = 0; color < n_colors; ++color)
+  // {
+  //   const auto n_partitions = partition_data.n_partitions(color);
+  //   for(unsigned partition = 0; partition < n_partitions; ++partition)
+  //     n_subdomains += n_physical_subdomains_per_partition(partition, color);
+  // }
+  const auto & subdomain_data = patch_info->internal_data.n_physical_subdomains_total;
+  const unsigned int n_subdomains = subdomain_data.n_interior + subdomain_data.boundary;
+  
   return n_subdomains;
 }
 
@@ -957,9 +1046,7 @@ PatchWorker<dim, number>::compute_partition_data(
   const typename PatchInfo<dim>::InternalData * internal_data,
   std::vector<unsigned int> *                   patch_starts) const
 {
-  AssertDimension(internal_data->n_interior_subdomains.size(),
-                  internal_data->n_boundary_subdomains.size());
-  const unsigned int n_colors = internal_data->n_interior_subdomains.size();
+  const unsigned int n_colors = internal_data->n_physical_subdomains.size();
   partition_data.initialize(n_colors);
   unsigned int n_subdomains_before = 0;
   unsigned int start               = 0;
@@ -967,57 +1054,103 @@ PatchWorker<dim, number>::compute_partition_data(
     patch_starts->clear();
 
   for(unsigned int color = 0; color < n_colors; ++color)
-  {
-    auto & partitions = partition_data.partitions[color];
-    partitions.resize(2 + 1);
-    const unsigned int n_interior_subdomains  = (internal_data->n_interior_subdomains)[color];
-    const unsigned int n_boundary_subdomains  = (internal_data->n_boundary_subdomains)[color];
-    const unsigned int n_subdomains           = n_interior_subdomains + n_boundary_subdomains;
-    const unsigned int n_remaining_subdomains = (n_subdomains % macro_size);
-    partitions[0]                             = n_subdomains_before;
-
-    // complete range
-    const unsigned int n_complete_batches = (n_subdomains / macro_size);
-    partitions[1]                         = partitions[0] + n_complete_batches; // complete
-
-    // incomplete range
-    const bool         has_incomplete       = (n_remaining_subdomains != 0);
-    const unsigned int n_incomplete_batches = (has_incomplete ? 1 : 0);
-    partitions[2]                           = partitions[1] + n_incomplete_batches; // incomplete
-
-    n_subdomains_before = partitions.back();
-    has_valid_state(partition_data, color);
-
-    // partition patches with respect to vectorization
-    if(patch_starts)
     {
-      const auto &       additional_data = patch_info->get_additional_data();
-      const unsigned int patch_size = UniversalInfo<dim>::n_cells(additional_data.patch_variant);
+      auto & partitions = partition_data.partitions[color];
+      partitions.resize(4 + 1);
+      const auto subdomain_data = internal_data->n_physical_subdomains.at(color);
+      const unsigned int n_interior_subdomains  = subdomain_data.n_interior;
+      const unsigned int n_boundary_subdomains  = subdomain_data.n_boundary;
+      partitions[0]                             = n_subdomains_before;
 
-      // complete range
-      const unsigned int stride_comp    = patch_size * macro_size;
-      const auto         complete_range = partition_data.get_patch_range(0, color);
-      for(unsigned int pp = complete_range.first; pp < complete_range.second; ++pp)
-      {
-        patch_starts->emplace_back(start);
-        start += stride_comp;
+      // Partition locally owned subdomains.
+      const unsigned int n_interior_subdomains_owned = subdomain_data.n_interior - subdomain_data.n_interior_ghost;
+      const unsigned int n_boundary_subdomains_owned = subdomain_data.n_boundary - subdomain_data.n_boundary_ghost;
+      const unsigned int n_subdomains_owned           = n_interior_subdomains_owned + n_boundary_subdomains_owned;
+      const unsigned int n_remaining_owned = (n_subdomains_owned % macro_size);
+      { 
+	const unsigned int n_complete_batches = (n_subdomains_owned / macro_size);
+	partitions[1]                         = partitions[0] + n_complete_batches; // complete
+	const bool         has_incomplete       = ((n_subdomains_owned % macro_size) != 0);
+	const unsigned int n_incomplete_batches = (has_incomplete ? 1 : 0);
+	partitions[2]                           = partitions[1] + n_incomplete_batches; // incomplete
       }
 
-      // incomplete range
-      if(has_incomplete)
-      {
-        patch_starts->emplace_back(start);
-        const auto stride_incomplete = patch_size * n_remaining_subdomains;
-        start += stride_incomplete;
+      // Parttition subdomains with ghosts.
+      const unsigned int n_subdomains_ghost = subdomain_data.n_interior_ghost + subdomain_data.n_boundary_ghost;
+      const unsigned int n_remaining_ghost = (n_subdomains_ghost % macro_size);
+      { 
+	const unsigned int n_complete_batches = (n_subdomains_ghost / macro_size);
+	partitions[3]                         = partitions[2] + n_complete_batches; // complete
+	const bool         has_incomplete       = ((n_subdomains_ghost % macro_size) != 0);
+	const unsigned int n_incomplete_batches = (has_incomplete ? 1 : 0);
+	partitions[4]                           = partitions[3] + n_incomplete_batches; // incomplete
       }
+    
+      n_subdomains_before = partitions.back();
+      has_valid_state(partition_data, color);
+
+      // Submit the (vectorized) data access points in @p patch_starts.
+      if(patch_starts)
+	{
+	  const auto &       additional_data = patch_info->get_additional_data();
+	  const unsigned int patch_size = UniversalInfo<dim>::n_cells(additional_data.patch_variant);
+
+	  // First, the data access with respect to locally owned subdomains is set.
+	  {
+	    // complete range
+	    const unsigned int stride_comp    = patch_size * macro_size;
+	    const auto         complete_range = partition_data.get_patch_range(0, color);
+	    for(unsigned int pp = complete_range.first; pp < complete_range.second; ++pp)
+	      {
+		patch_starts->emplace_back(start);
+		start += stride_comp;
+	      }
+
+	    // incomplete range
+	    const auto incomplete_range = partition_data.get_patch_range(1, color);
+	    const unsigned int n_incomplete_batches = incomplete_range.second - incomplete_range.first;
+	    Assert(n_incomplete_batches == 0 || n_incomplete_batches == 1,
+		   ExcMessage("Has more than one incomplete batch."));
+	    if(n_incomplete_batches == 1)
+	      {
+		patch_starts->emplace_back(start);
+		const auto stride_incomplete = patch_size * n_remaining_owned;
+		start += stride_incomplete;
+	      }
+	  }
+
+	  // Analogously, the data access with respect to subdomains with ghost cells is set.
+	  { 
+	    // complete range
+	    const unsigned int stride_comp    = patch_size * macro_size;
+	    const auto         complete_range = partition_data.get_patch_range(2, color);
+	    for(unsigned int pp = complete_range.first; pp < complete_range.second; ++pp)
+	      {
+		patch_starts->emplace_back(start);
+		start += stride_comp;
+	      }
+
+	    // incomplete range
+	    const auto incomplete_range = partition_data.get_patch_range(3, color);
+	    const unsigned int n_incomplete_batches = incomplete_range.second - incomplete_range.first;
+	    Assert(n_incomplete_batches == 0 || n_incomplete_batches == 1,
+		   ExcMessage("Has more than one incomplete batch."));
+	    if(n_incomplete_batches == 1)
+	      {
+		patch_starts->emplace_back(start);
+		const auto stride_incomplete = patch_size * n_remaining_ghost;
+		start += stride_incomplete;
+	      }
+	  }
+	}
     }
-  }
+
   if(patch_starts)
-  {
-    AssertDimension(start, internal_data->cell_iterators.size());
-    AssertDimension(patch_starts->size(), partition_data.n_subdomains());
-    patch_starts->emplace_back(start); // endpoint required by n_lanes_filled()
-  }
+    {
+      AssertDimension(start, internal_data->cell_iterators.size());
+      AssertDimension(patch_starts->size(), partition_data.n_subdomains());
+      patch_starts->emplace_back(start); // endpoint required by n_lanes_filled()
+    }
 }
 
 
@@ -1027,17 +1160,25 @@ PatchWorker<dim, number>::has_valid_state(const typename PatchInfo<dim>::Partiti
                                           const unsigned int                             color)
 {
   const auto n_partitions = partitions.n_partitions(color);
-  AssertDimension(n_partitions, 2);
+  AssertDimension(n_partitions, 4);
   for(unsigned int p = 0; p < n_partitions; ++p)
   {
     const auto range = partitions.get_patch_range(p, color);
     Assert(range.first >= 0, ExcMessage("Negative range."));
     Assert(range.first <= range.second, ExcMessage("Lower bound exceeds upper bound."));
   }
+  { // incomplete + locally owned
   const auto     incomplete_range = partitions.get_patch_range(1, color);
   const unsigned n_elements       = incomplete_range.second - incomplete_range.first;
   Assert(n_elements == 0 || n_elements == 1,
          ExcMessage("Incomplete range has more than one batch."));
+  }
+  { // incomplete + ghost
+  const auto     incomplete_range = partitions.get_patch_range(3, color);
+  const unsigned n_elements       = incomplete_range.second - incomplete_range.first;
+  Assert(n_elements == 0 || n_elements == 1,
+         ExcMessage("Incomplete range has more than one batch."));
+  }
 }
 
 

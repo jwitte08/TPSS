@@ -26,9 +26,9 @@ PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
     AssertThrow(false, dealii::ExcNotImplemented());
 
   const auto n_colors_mpimin =
-    Utilities::MPI::min(internal_data.n_interior_subdomains.size(), MPI_COMM_WORLD);
+    Utilities::MPI::min(internal_data.n_physical_subdomains.size(), MPI_COMM_WORLD);
   const auto n_colors_mpimax =
-    Utilities::MPI::max(internal_data.n_interior_subdomains.size(), MPI_COMM_WORLD);
+    Utilities::MPI::max(internal_data.n_physical_subdomains.size(), MPI_COMM_WORLD);
   (void)n_colors_mpimin, (void)n_colors_mpimax;
   Assert(n_colors_mpimin == n_colors_mpimax,
          ExcMessage("No unified number of colors between mpi-procs."));
@@ -119,27 +119,18 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
   const unsigned int n_colors = colored_iterators.size();
   for(unsigned int color = 0; color < n_colors; ++color)
     submit_patches<regular_size>(colored_iterators[color]);
-
+  count_physical_subdomains();
+  
   time.stop();
   time_data.emplace_back(time.wall_time(), "Submit cell-based patches");
   time.restart();
 
   // *** check if the InternalData is valid
-  AssertDimension(internal_data.n_interior_subdomains.size(),
-                  internal_data.n_boundary_subdomains.size());
   if(color_scheme == TPSS::SmootherVariant::additive)
-    AssertDimension(internal_data.n_boundary_subdomains.size(), 1);
-  const unsigned int n_interior_subdomains =
-    std::accumulate(internal_data.n_interior_subdomains.cbegin(),
-                    internal_data.n_interior_subdomains.cend(),
-                    0);
-  const unsigned int n_boundary_subdomains =
-    std::accumulate(internal_data.n_boundary_subdomains.cbegin(),
-                    internal_data.n_boundary_subdomains.cend(),
-                    0);
-  const unsigned int n_subdomains = n_interior_subdomains + n_boundary_subdomains;
-  (void)n_subdomains;
-  AssertDimension(n_subdomains, internal_data.cell_iterators.size());
+    AssertDimension(internal_data.n_physical_subdomains.size(), 1);
+  const unsigned int n_physical_subdomains = internal_data.n_physical_subdomains_total.n_interior + internal_data.n_physical_subdomains_total.n_boundary;
+  (void)n_physical_subdomains;
+  AssertDimension(n_physical_subdomains, internal_data.cell_iterators.size());
 
   if(additional_data.visualize_coloring)
     additional_data.visualize_coloring(*dof_handler, colored_iterators, "cp_");
@@ -150,11 +141,10 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
     print_row_variable(pcout, 45, "Coloring on level:", additional_data.level);
     print_row_variable(
       pcout, 5, "", 10, "color:", 30, "# of interior patches:", 30, "# of boundary patches:");
-    const auto n_colors   = internal_data.n_interior_subdomains.size();
-    auto       n_interior = internal_data.n_interior_subdomains.cbegin();
-    auto       n_boundary = internal_data.n_boundary_subdomains.cbegin();
-    for(unsigned c = 0; c < n_colors; ++c, ++n_interior, ++n_boundary)
-      print_row_variable(pcout, 5, "", 10, c, 30, *n_interior, 30, *n_boundary);
+    const auto n_colors   = internal_data.n_physical_subdomains.size();
+    auto subdomain_data = internal_data.n_physical_subdomains.cbegin();
+    for(unsigned c = 0; c < n_colors; ++c, ++subdomain_data)
+      print_row_variable(pcout, 5, "", 10, c, 30, subdomain_data->n_interior, 30, subdomain_data->n_boundary);
     pcout << std::endl;
   }
 }
@@ -504,6 +494,7 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
     AssertDimension(colored_iterators[color].size(), reordered_colors[cc].first);
     submit_patches<regular_vpatch_size>(colored_iterators[color]);
   }
+  count_physical_subdomains();
 
   time.stop();
   time_data.emplace_back(time.wall_time(), "Submit vertex patches");
@@ -511,21 +502,12 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
 
   // *** check if the InternalData is valid
   AssertDimension(internal_data.cell_iterators.size() % regular_vpatch_size, 0);
-  AssertDimension(internal_data.n_interior_subdomains.size(),
-                  internal_data.n_boundary_subdomains.size());
   if(color_scheme == TPSS::SmootherVariant::additive)
-    AssertDimension(internal_data.n_boundary_subdomains.size(), 1);
-  const unsigned int n_interior_subdomains =
-    std::accumulate(internal_data.n_interior_subdomains.cbegin(),
-                    internal_data.n_interior_subdomains.cend(),
-                    0);
-  const unsigned int n_boundary_subdomains =
-    std::accumulate(internal_data.n_boundary_subdomains.cbegin(),
-                    internal_data.n_boundary_subdomains.cend(),
-                    0);
-  const unsigned int n_subdomains = n_interior_subdomains + n_boundary_subdomains;
-  (void)n_subdomains;
-  AssertDimension(n_subdomains, internal_data.cell_iterators.size() / regular_vpatch_size);
+    // TODO more colors to avoid race conditions ?
+    AssertDimension(internal_data.n_physical_subdomains.size(), 1);
+  const unsigned int n_physical_subdomains = internal_data.n_physical_subdomains_total.n_interior + internal_data.n_physical_subdomains_total.n_boundary;
+  (void)n_physical_subdomains;
+  AssertDimension(n_physical_subdomains, internal_data.cell_iterators.size() / regular_vpatch_size);
 
   if(additional_data.print_details && color_scheme != TPSS::SmootherVariant::additive)
   {
@@ -534,11 +516,10 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
 
     print_row_variable(
       pcout, 5, "", 10, "color:", 30, "# of interior patches:", 30, "# of boundary patches:");
-    const auto n_colors   = internal_data.n_interior_subdomains.size();
-    auto       n_interior = internal_data.n_interior_subdomains.cbegin();
-    auto       n_boundary = internal_data.n_boundary_subdomains.cbegin();
-    for(unsigned c = 0; c < n_colors; ++c, ++n_interior, ++n_boundary)
-      print_row_variable(pcout, 5, "", 10, c, 30, *n_interior, 30, *n_boundary);
+    const auto n_colors   = internal_data.n_physical_subdomains.size();
+    auto subdomain_data = internal_data.n_physical_subdomains.cbegin();
+    for(unsigned c = 0; c < n_colors; ++c, ++subdomain_data)
+      print_row_variable(pcout, 5, "", 10, c, 30, subdomain_data->n_interior, 30, subdomain_data->n_boundary);
     pcout << std::endl;
   }
 }
@@ -674,7 +655,7 @@ PatchWorker<dim, number>::partition_patches(PatchInfo<dim> & info)
                                 GeometryInfo<dim>::faces_per_cell);
   for(unsigned int color = 0; color < get_partition_data().n_colors(); ++color)
   {
-    const auto patch_range = get_patch_range(color);
+    const auto patch_range = get_partition_data().get_patch_range(color);
     for(unsigned int patch_id = patch_range.first; patch_id < patch_range.second; ++patch_id)
     {
       //: face_no < direction
