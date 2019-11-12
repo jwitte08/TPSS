@@ -116,6 +116,17 @@ struct ModelProblem : public Subscriptor
     return precondition_max->get_subdomain_handler()->get_partition_data().n_colors();
   }
 
+  void
+  print_schwarz_preconditioner_times()
+  {
+    const auto mg_level_max     = mg_schwarz_precondition.max_level();
+    const auto precondition_max = mg_schwarz_precondition[mg_level_max];
+    const auto time_data        = precondition_max->get_time_data();
+    for(const auto & time_info : time_data)
+      print_parameter(time_info.description,
+                      2. * Utilities::MPI::max(time_info.time, MPI_COMM_WORLD));
+  }
+
   template<typename T>
   void
   print_parameter(const std::string & description, const T & value) const
@@ -126,15 +137,8 @@ struct ModelProblem : public Subscriptor
   void
   print_informations()
   {
-    // print_parameter("Geometry:",
-    // Parameter::str_geometry_variant[(int)parameters.geometry_variant]);
     AssertThrow(fe, ExcMessage("Finite element is not initialized."));
     print_parameter("Finite element:", fe->get_name());
-    // print_parameter("Iterative solver:",
-    //                 Parameter::str_solver_variant[(int)parameters.solver_variant]);
-    // print_parameter("Solver reduction:", parameters.solver_reduction);
-    // print_parameter("Preconditioner:",
-    //                 parameters.str_precondition_variant(parameters.precondition_variant));
     *pcout << rt_parameters.to_string();
     *pcout << std::endl;
   }
@@ -581,6 +585,7 @@ struct ModelProblem : public Subscriptor
       }
 
       compute_discretization_errors();
+      print_schwarz_preconditioner_times();
     }
   }
 };

@@ -173,6 +173,25 @@ struct Test
     return oss.str();
   }
 
+  std::string
+  str_memory_stats(std::string tag = "TBA")
+  {
+    std::ostringstream             oss;
+    Utilities::System::MemoryStats memory_stats;
+    Utilities::System::get_memory_stats(memory_stats);
+    unsigned long VmPeak_max =
+      Utilities::MPI::max<unsigned long>(memory_stats.VmPeak, MPI_COMM_WORLD);
+    // oss << "VmPeak(" << tag << "): " << Util::si_metric_prefix(1000*VmPeak_max) << "Byte" <<
+    // std::endl;
+    oss << "VmPeak(" << tag << "): " << VmPeak_max << "KByte" << std::endl;
+    unsigned long VmHWM_max =
+      Utilities::MPI::max<unsigned long>(memory_stats.VmHWM, MPI_COMM_WORLD);
+    // oss << "VmHWM(" << tag << "): " << Util::si_metric_prefix(1000*VmHWM_max) << "Byte" <<
+    // std::endl;
+    oss << "VmHWM(" << tag << "): " << VmHWM_max << "KByte" << std::endl;
+    return oss.str();
+  }
+
   /**
    * test a single operator application, smoothing step and v-cycle
    */
@@ -184,10 +203,12 @@ struct Test
     poisson_problem.print_informations();
     poisson_problem.create_triangulation(rt_parameters.mesh.n_refinements);
     poisson_problem.distribute_dofs();
+    auto & pcout = *(poisson_problem.pcout);
 
     for(unsigned sample = 0; sample < prms.n_samples; ++sample)
     {
-      *(poisson_problem.pcout) << "Compute sample " << sample << " ..." << std::endl;
+      pcout << "Compute sample " << sample << " ..." << std::endl;
+      pcout << str_memory_stats("initial");
       Timer time(MPI_COMM_WORLD, true);
 
       //: setup (total)
@@ -196,12 +217,14 @@ struct Test
       const auto & gmg_preconditioner = poisson_problem.prepare_preconditioner_mg();
       time.stop();
       timings_total.setup.push_back(time.get_last_lap_wall_time_data());
+      pcout << str_memory_stats("setup");
 
       //: solve (total)
       time.restart();
       poisson_problem.solve(gmg_preconditioner);
       time.stop();
       timings_total.apply.push_back(time.get_last_lap_wall_time_data());
+      pcout << str_memory_stats("solve");
 
       {
         Timer time(MPI_COMM_WORLD, true);
@@ -226,6 +249,7 @@ struct Test
         Utilities::MPI::MinMaxAvg t_apply = time.get_last_lap_wall_time_data();
         t_apply                           = t_apply / prms.n_subsamples_vmult;
         timings_vmult.apply.push_back(t_apply);
+        pcout << str_memory_stats("vmult");
       }
 
       {
@@ -262,6 +286,7 @@ struct Test
         Utilities::MPI::MinMaxAvg t_apply = time.get_last_lap_wall_time_data();
         t_apply                           = t_apply / prms.n_subsamples_smooth;
         timings_smooth.apply.push_back(t_apply);
+        pcout << str_memory_stats("smooth");
       }
 
       {
@@ -285,6 +310,7 @@ struct Test
         Utilities::MPI::MinMaxAvg t_apply = time.get_last_lap_wall_time_data();
         t_apply                           = t_apply / prms.n_subsamples_mg;
         timings_mg.apply.push_back(t_apply);
+        pcout << str_memory_stats("mg");
       }
     } // end sample loop
 
