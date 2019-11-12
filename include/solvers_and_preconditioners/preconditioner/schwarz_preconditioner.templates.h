@@ -12,15 +12,18 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   const unsigned int n_colors     = subdomain_handler_in->get_partition_data().n_colors();
   const unsigned int n_colors_max = Utilities::MPI::max(n_colors, MPI_COMM_WORLD);
   const unsigned int n_colors_min = Utilities::MPI::min(n_colors, MPI_COMM_WORLD);
+  (void)n_colors_max, (void)n_colors_min;
   Assert(n_colors_max == n_colors_min, ExcMessage("Not the same number of colors on each proc."));
 
   // *** reset members to uninitialized state
   clear();
 
   // *** set time information
-  time_data = {TimeInfo{0., "[SchwarzPrecond] Update residuals:", "[s]", 0},
-               TimeInfo{0., "[SchwarzPrecond] Apply inverses:", "[s]", 0},
-               TimeInfo{0., "[SchwarzPrecond] Compute inverses:", "[s]", 0}};
+  time_data = {{0., "[SchwarzPrecond] Update residuals:", "[s]", 0},
+               {0., "[SchwarzPrecond] Apply inverses:", "[s]", 0},
+               {0., "[SchwarzPrecond] Compute inverses:", "[s]", 0},
+               {0., "[SchwarzPrecond] Copy Locally Owned:", "[s]", 0},
+               {0., "[SchwarzPrecond] Step:", "[s]", 0}};
 
   // *** initialization of members
   subdomain_handler = subdomain_handler_in;
@@ -63,12 +66,8 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   // *** reset members to uninitialized state
   clear();
 
-  // *** set time information
-  time_data = {TimeInfo{0., "[SchwarzPrecond] Update residuals:", "[s]", 0},
-               TimeInfo{0., "[SchwarzPrecond] Apply inverses:", "[s]", 0},
-               TimeInfo{0., "[SchwarzPrecond] Compute inverses:", "[s]", 0}};
-
   // *** initialization of members
+  time_data            = schwarz_preconditioner_in.time_data;
   subdomain_handler    = schwarz_preconditioner_in.subdomain_handler;
   transfer             = schwarz_preconditioner_in.transfer;
   linear_operator      = schwarz_preconditioner_in.linear_operator;
@@ -117,6 +116,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::compute_invers
     std::ref(make_assembling), *subdomain_to_inverse, *linear_operator);
   AssertThrow(subdomain_to_inverse->size() == partition_data.n_subdomains(),
               ExcMessage("Mismatch."));
+  subdomain_to_inverse->shrink_to_fit();
 }
 
 
@@ -174,6 +174,8 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult_add(
   VectorType &       dst,
   const VectorType & src) const
 {
+  Timer timer;
+  timer.restart();
   switch(smoother_variant)
   {
     case TPSS::SmootherVariant::additive:
@@ -192,6 +194,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult_add(
       break;
     }
   } // end switch
+  time_data.at(4).add_time(timer.wall_time());
 
   dst *= additional_data.relaxation;
   AssertIsFinite(dst.l2_norm());
@@ -266,26 +269,37 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
     }
   };
 
+  Timer timer;
   // *** initialize ghosted vectors
   VectorType * solution;
   const auto   sol_partitioner = solution_in.get_partitioner();
-  if(sol_partitioner->is_compatible(*(subdomain_handler->get_vector_partitioner())))
+  if(sol_partitioner->is_globally_compatible(*(subdomain_handler->get_vector_partitioner())))
+  {
+    // std::cout << "solution is compatible" << std::endl;
     solution = &solution_in;
+  }
   else // set ghosted vector with write access
   {
+    timer.restart();
     solution_ghosted.zero_out_ghosts();
     solution_ghosted.copy_locally_owned_data_from(solution_in);
     solution = &solution_ghosted;
+    time_data.at(3).add_time(timer.wall_time());
   }
   const VectorType * residual;
   const auto         res_partitioner = residual_in.get_partitioner();
-  if(res_partitioner->is_compatible(*(subdomain_handler->get_vector_partitioner())))
+  if(res_partitioner->is_globally_compatible(*(subdomain_handler->get_vector_partitioner())))
+  {
+    // std::cout << "residual is compatible" << std::endl;
     residual = &residual_in;
+  }
   else // set ghosted vector with read access
   {
+    timer.restart();
     residual_ghosted.copy_locally_owned_data_from(residual_in);
     residual_ghosted.update_ghost_values();
     residual = &residual_ghosted;
+    time_data.at(3).add_time(timer.wall_time());
   }
 
   // *** loop over all subdomains of the given color
@@ -297,7 +311,12 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   // *** compress and copy locally owned unknowns (if needed)
   solution->compress(VectorOperation::add);
   if(solution == &solution_ghosted)
+  {
+    // std::cout << "copy locally owned data to solution_in" << std::endl;
+    timer.restart();
     solution_in.copy_locally_owned_data_from(solution_ghosted);
+    time_data.at(3).add_time(timer.wall_time());
+  }
 }
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
