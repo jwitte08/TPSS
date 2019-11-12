@@ -225,6 +225,7 @@ struct IntegerCoordinateRoot
       for(int d = 0; d < dim; ++d)
         coord(d) = get_interval_index(center[d]);
       const auto check = root_to_coord.insert({root_index, coord});
+      (void)check;
       Assert(check.second, ExcMessage("Insertion failed."));
       // std::cout << "root: " << root_index << " coord: " << coord << " center: " << cell->center()
       //           << std::endl;

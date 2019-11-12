@@ -58,7 +58,7 @@ generic_info_to_fstring()
 }
 
 std::string
-si_metric_prefix(std::size_t measurement)
+si_metric_prefix(unsigned long measurement)
 {
   std::array<std::string, 7> prefixes = {"", "k", "M", "G", "T", "P", "E"};
   std::ostringstream         oss;
