@@ -12,8 +12,8 @@
 #include <deal.II/integrators/grad_div.h>
 #include <deal.II/integrators/l2.h>
 #include <deal.II/integrators/laplace.h>
+#include "equation_data.h"
 #include "laplace_integrator.h"
-#include "linelasticity_eqdata.h"
 
 using namespace dealii;
 

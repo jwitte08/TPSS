@@ -52,6 +52,7 @@
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
 
 #include "coloring.h"
+#include "equation_data.h"
 #include "laplace_integrator.h"
 #include "mesh.h"
 #include "postprocess.h"
@@ -740,108 +741,6 @@ public:
 };
 
 template<int dim>
-class SolutionBase
-{
-protected:
-  static const std::size_t n_source_centers = 3;
-  static const Point<dim>  source_centers[n_source_centers];
-  static const double      width;
-};
-
-template<>
-const Point<1> SolutionBase<1>::source_centers[SolutionBase<1>::n_source_centers] = {Point<1>(0.0),
-                                                                                     Point<1>(0.25),
-                                                                                     Point<1>(0.6)};
-
-template<>
-const Point<2> SolutionBase<2>::source_centers[SolutionBase<2>::n_source_centers] =
-  {Point<2>(0.0, +0.0), Point<2>(0.25, 0.85), Point<2>(+0.6, 0.4)};
-
-template<>
-const Point<3> SolutionBase<3>::source_centers[SolutionBase<3>::n_source_centers] =
-  {Point<3>(0.0, 0.0, 0.0), Point<3>(0.25, 0.85, 0.85), Point<3>(0.6, 0.4, 0.4)};
-
-template<int dim>
-const double SolutionBase<dim>::width = 1. / 3.;
-
-template<int dim>
-class Solution : public Function<dim>, protected SolutionBase<dim>
-{
-public:
-  Solution() : Function<dim>(), SolutionBase<dim>()
-  {
-  }
-
-  virtual double
-  value(const Point<dim> & p, const unsigned int = 0) const override final
-  {
-    double       val   = 0;
-    const double pi    = dealii::numbers::PI;
-    const double width = SolutionBase<dim>::width;
-    for(unsigned int i = 0; i < SolutionBase<dim>::n_source_centers; ++i)
-    {
-      const dealii::Tensor<1, dim> x_minus_xi = p - SolutionBase<dim>::source_centers[i];
-      val += std::exp(-x_minus_xi.norm_square() / (width * width));
-    }
-    val /= dealii::Utilities::fixed_power<dim>(std::sqrt(2 * pi) * width);
-    return val;
-  }
-
-  virtual Tensor<1, dim>
-  gradient(const Point<dim> & p, const unsigned int = 0) const override final
-  {
-    dealii::Tensor<1, dim> grad;
-    const double           pi    = dealii::numbers::PI;
-    const double           width = SolutionBase<dim>::width;
-    for(unsigned int i = 0; i < SolutionBase<dim>::n_source_centers; ++i)
-    {
-      const dealii::Tensor<1, dim> x_minus_xi = p - SolutionBase<dim>::source_centers[i];
-      grad +=
-        -2. / (width * width) * std::exp(-x_minus_xi.norm_square() / (width * width)) * x_minus_xi;
-    }
-    return (grad / dealii::Utilities::fixed_power<dim>(std::sqrt(2 * pi) * width));
-  }
-
-  virtual double
-  laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
-  {
-    double       lapl  = 0;
-    const double pi    = dealii::numbers::PI;
-    const double width = SolutionBase<dim>::width;
-    for(unsigned int i = 0; i < SolutionBase<dim>::n_source_centers; ++i)
-    {
-      const auto x_minus_xi = p - SolutionBase<dim>::source_centers[i];
-      lapl += (2. / (width * width) * (x_minus_xi * x_minus_xi) - static_cast<double>(dim)) *
-              std::exp(-x_minus_xi.norm_square() / (width * width));
-    }
-    lapl *= 2. / (width * width) / dealii::Utilities::fixed_power<dim>(std::sqrt(2 * pi) * width);
-    return lapl;
-  }
-};
-
-constexpr double wave_number = 3.;
-
-template<int dim>
-class RightHandSide : public Function<dim>
-{
-public:
-  RightHandSide() : Function<dim>()
-  {
-  }
-
-  virtual double
-  value(const Point<dim> & p, const unsigned int = 0) const override final
-  {
-    double val = 0;
-    val -= solution_function.laplacian(p);
-    return val;
-  }
-
-private:
-  Solution<dim> solution_function;
-};
-
-template<int dim>
 class SolutionPaperHermite : public Function<dim>
 {
 public:
@@ -907,6 +806,8 @@ RightHandSidePaperHermite<dim>::value(const Point<dim> & p, const unsigned int) 
   SolutionPaperHermite<dim> sol;
   return dim * numbers::PI * wave_number * numbers::PI * wave_number * sol.value(p);
 }
+
+
 
 template<int dim, int fe_degree, typename Number = double, int n_patch_dofs = -1>
 struct MatrixOperator : public Subscriptor

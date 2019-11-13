@@ -10,13 +10,10 @@
 #ifndef POISSONPROBLEM_H_
 #define POISSONPROBLEM_H_
 
-
-
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_tools.h>
 
 #include <deal.II/fe/fe_dgq.h>
-//#include <deal.II/fe/fe_system.h>
 #include <deal.II/fe/mapping.h>
 
 #include <deal.II/lac/solver_cg.h>
@@ -35,9 +32,8 @@
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
 
-#include "laplace_problem.h" // TODO getting rid of
-
 #include "coloring.h"
+#include "equation_data.h"
 #include "laplace_integrator.h"
 #include "mesh.h"
 #include "postprocess.h"
@@ -46,7 +42,6 @@
 #include "vectorization_helper.h"
 
 using namespace dealii;
-
 
 namespace Poisson
 {
@@ -112,6 +107,7 @@ struct ModelProblem : public Subscriptor
   std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
   PreconditionIdentity                preconditioner_id;
 
+
   ModelProblem(const RT::Parameter & rt_parameters_in)
     : rt_parameters(rt_parameters_in),
       pcout(std::make_shared<ConditionalOStream>(std::cout,
@@ -131,6 +127,7 @@ struct ModelProblem : public Subscriptor
   {
   }
 
+
   unsigned
   n_colors_system()
   {
@@ -141,6 +138,7 @@ struct ModelProblem : public Subscriptor
     const auto precondition_max = mg_schwarz_precondition[mg_level_max];
     return precondition_max->get_subdomain_handler()->get_partition_data().n_colors();
   }
+
 
   void
   print_schwarz_preconditioner_times()
@@ -153,12 +151,14 @@ struct ModelProblem : public Subscriptor
                       2. * Utilities::MPI::max(time_info.time, MPI_COMM_WORLD));
   }
 
+
   template<typename T>
   void
   print_parameter(const std::string & description, const T & value) const
   {
     *pcout << Util::parameter_to_fstring(description, value);
   }
+
 
   void
   print_informations()
@@ -168,6 +168,7 @@ struct ModelProblem : public Subscriptor
     *pcout << rt_parameters.to_string();
     *pcout << std::endl;
   }
+
 
   template<typename Number2>
   std::shared_ptr<const MatrixFree<dim, Number2>>
@@ -196,6 +197,7 @@ struct ModelProblem : public Subscriptor
     return mf_storage;
   }
 
+
   template<typename Number2>
   std::shared_ptr<const SubdomainHandler<dim, Number2>>
   build_patch_storage(const unsigned                                        level,
@@ -223,6 +225,7 @@ struct ModelProblem : public Subscriptor
     return patch_storage;
   }
 
+
   template<typename MatrixType>
   std::shared_ptr<SCHWARZ_PRECONDITIONER>
   build_schwarz_preconditioner(std::shared_ptr<const SubdomainHandler<dim, Number>> patch_storage,
@@ -238,6 +241,7 @@ struct ModelProblem : public Subscriptor
     schwarz_preconditioner->initialize(patch_storage, matrix, precondition_data);
     return schwarz_preconditioner;
   }
+
 
   bool
   create_triangulation(const unsigned n_refinements)
@@ -263,12 +267,14 @@ struct ModelProblem : public Subscriptor
     return true;
   }
 
+
   void
   distribute_dofs()
   {
     dof_handler.initialize(triangulation, *fe);
     dof_handler.distribute_mg_dofs();
   }
+
 
   void
   compute_rhs(const MatrixFree<dim, Number> * mf_storage,
@@ -332,6 +338,7 @@ struct ModelProblem : public Subscriptor
     system_rhs.compress(VectorOperation::add);
   }
 
+
   void
   prepare_linear_system(const bool do_compute_rhs = true)
   {
@@ -345,6 +352,7 @@ struct ModelProblem : public Subscriptor
       compute_rhs(mf_storage.get(), *rhs_function, *exact_solution);
     }
   }
+
 
   void
   prepare_multigrid()
@@ -454,6 +462,7 @@ struct ModelProblem : public Subscriptor
                                                     mg_level_max);
   }
 
+
   const GMG_PRECONDITIONER &
   prepare_preconditioner_mg()
   {
@@ -463,6 +472,7 @@ struct ModelProblem : public Subscriptor
     preconditioner_mg = std::make_shared<GMG_PRECONDITIONER>(dof_handler, *multigrid, mg_transfer);
     return *preconditioner_mg;
   }
+
 
   /**
    * compute the average reduction rho over n iterations and the
@@ -491,6 +501,7 @@ struct ModelProblem : public Subscriptor
     return std::make_pair(n_frac, rho);
   }
 
+
   template<typename PreconditionerType>
   void
   solve(const PreconditionerType & preconditioner)
@@ -514,6 +525,7 @@ struct ModelProblem : public Subscriptor
     print_parameter("Average reduction (solver):", n_frac_and_reduction_rate.second);
     print_parameter("Number of iterations (solver):", n_frac_and_reduction_rate.first);
   }
+
 
   double
   compute_l2_error(const MatrixFree<dim, Number> * mf_storage,
@@ -542,6 +554,7 @@ struct ModelProblem : public Subscriptor
     return std::sqrt(global_error);
   }
 
+
   void
   compute_discretization_errors() const
   {
@@ -550,6 +563,7 @@ struct ModelProblem : public Subscriptor
     pp_data.L2_error.push_back(l2_error);
     print_parameter("||u - uh||_L2 =", l2_error);
   }
+
 
   void
   run()
@@ -618,4 +632,4 @@ struct ModelProblem : public Subscriptor
 
 } // end namespace Poisson
 
-#endif /* POISSONPROBLEM_H_ */
+#endif // POISSONPROBLEM_H_

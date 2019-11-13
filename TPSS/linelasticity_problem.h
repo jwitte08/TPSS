@@ -16,8 +16,8 @@
 
 #include <deal.II/fe/fe_system.h>
 
+#include "equation_data.h"
 #include "laplace_problem.h"
-#include "linelasticity_eqdata.h"
 #include "linelasticity_integrator.h"
 #include "vectorization_helper.h"
 
