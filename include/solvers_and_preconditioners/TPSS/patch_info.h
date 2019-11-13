@@ -238,11 +238,16 @@ private:
     // subsequently subdomains with ghosts. Each group is separated
     // into interior (first) and boundary (second) subdomains,
     // respectively.
+    const auto   my_subdomain_id   = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+    const auto & is_ghost_on_level = [my_subdomain_id](const auto & cell) {
+      const bool is_owned      = cell->level_subdomain_id() == my_subdomain_id;
+      const bool is_artificial = cell->level_subdomain_id() == numbers::artificial_subdomain_id;
+      return !is_owned && !is_artificial;
+    };
     std::vector<PatchIterator> owned_patch_iterators, ghost_patch_iterators;
     for(const auto & patch : patch_iterators)
     {
-      const bool patch_is_ghost =
-        std::any_of(patch->cbegin(), patch->cend(), IteratorFilters::LocallyOwnedLevelCell{});
+      const bool patch_is_ghost = std::any_of(patch->cbegin(), patch->cend(), is_ghost_on_level);
       if(patch_is_ghost)
         ghost_patch_iterators.emplace_back(patch);
       else
