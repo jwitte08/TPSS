@@ -54,7 +54,8 @@
 #include "coloring.h"
 #include "laplace_integrator.h"
 #include "mesh.h"
-
+#include "postprocess.h"
+#include "utilities.h"
 
 namespace Laplace
 {
@@ -317,20 +318,6 @@ const std::string Parameter::str_geometry_variant[]    = {"cube",
                                                        "subdivided_cubeoid"};
 const std::string Parameter::str_mg_smoother_variant[] = {"schwarz", "chebyschwarz"};
 const std::string Parameter::str_coarse_grid_variant[] = {"fixed", "chebacc"};
-
-struct PostProcessData
-{
-  std::vector<unsigned int> n_mg_levels;
-  std::vector<unsigned int> n_cells_global;
-  std::vector<unsigned int> n_dofs_global;
-  std::vector<unsigned int> n_colors_system;
-  std::vector<double>       solve_time;
-  std::vector<double>       setup_time;
-  std::vector<double>       n_iterations_system;
-  std::vector<double>       average_reduction_system;
-  std::vector<double>       L2_error;
-  std::vector<double>       H1semi_error;
-};
 
 // TODO intermediate hack compensating obsolete parameters
 MeshParameter

@@ -48,7 +48,7 @@ struct MatrixOperator : public Subscriptor
   Laplace::MatrixOperator<dim, fe_degree, Number, n_patch_dofs> laplace_problem;
   Laplace::Parameter                                            parameters;
   ConditionalOStream &                                          pcout;
-  mutable Laplace::PostProcessData                              pp_data;
+  mutable PostProcessData                                       pp_data;
   SparsityPattern                                               sparsity;
   SparseMatrix<double>                                          sparse_matrix;
 
@@ -686,7 +686,7 @@ struct MatrixOperator : public Subscriptor
   }
 
   void
-  print_convergence_table(const Laplace::PostProcessData & pp_data)
+  print_convergence_table(const PostProcessData & pp_data)
   {
     ConvergenceTable convergence_table;
     AssertDimension(pp_data.L2_error.size(), pp_data.n_dofs_global.size());

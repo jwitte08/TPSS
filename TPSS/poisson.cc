@@ -106,7 +106,7 @@ struct Test
   }
 
   std::string
-  write_ppdata_to_string(const Laplace::PostProcessData & pp_data)
+  write_ppdata_to_string(const PostProcessData & pp_data)
   {
     std::ostringstream oss;
     ConvergenceTable   info_table;
@@ -129,7 +129,7 @@ struct Test
   }
 
   std::string
-  write_timings_to_string(const Timings & timings, const Laplace::PostProcessData & pp_data)
+  write_timings_to_string(const Timings & timings, const PostProcessData & pp_data)
   {
     std::ostringstream oss;
     ConvergenceTable   timings_table;
@@ -318,8 +318,8 @@ struct Test
     const std::string filename = get_filename(poisson_problem);
     if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
     {
-      std::fstream                     fstream;
-      const Laplace::PostProcessData & pp_data = poisson_problem.pp_data;
+      std::fstream            fstream;
+      const PostProcessData & pp_data = poisson_problem.pp_data;
 
       fstream.open("vmult_" + filename + ".time", std::ios_base::out);
       fstream << write_timings_to_string(timings_vmult, pp_data);

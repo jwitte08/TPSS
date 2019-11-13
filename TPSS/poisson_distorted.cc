@@ -103,7 +103,7 @@ struct Test
   }
 
   std::string
-  write_ppdata_to_string(const Laplace::PostProcessData & pp_data)
+  write_ppdata_to_string(const PostProcessData & pp_data)
   {
     std::ostringstream oss;
     ConvergenceTable   info_table;

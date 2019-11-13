@@ -68,7 +68,7 @@ struct MatrixOperator : public Subscriptor
 
   PreconditionIdentity preconditioner_id;
 
-  mutable std::array<Laplace::PostProcessData, n_comps> pp_data;
+  mutable std::array<PostProcessData, n_comps> pp_data;
 
   MatrixOperator(ConditionalOStream & pcout_in, const Laplace::Parameter & parameters_in)
     : laplace_problem(pcout_in, parameters_in),
@@ -372,7 +372,7 @@ struct MatrixOperator : public Subscriptor
   }
 
   void
-  print_convergence_table(const Laplace::PostProcessData & pp_data)
+  print_convergence_table(const PostProcessData & pp_data)
   {
     ConvergenceTable convergence_table;
     AssertThrow(pp_data.L2_error.size() == pp_data.n_dofs_global.size(),

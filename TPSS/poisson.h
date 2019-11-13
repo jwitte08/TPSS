@@ -12,9 +12,35 @@
 
 
 
-#include <deal.II/fe/fe_system.h>
+#include <deal.II/dofs/dof_handler.h>
+#include <deal.II/dofs/dof_tools.h>
 
-#include "laplace_problem.h"
+#include <deal.II/fe/fe_dgq.h>
+//#include <deal.II/fe/fe_system.h>
+#include <deal.II/fe/mapping.h>
+
+#include <deal.II/lac/solver_cg.h>
+#include <deal.II/lac/solver_gmres.h>
+#include <deal.II/lac/solver_selector.h>
+
+#include <deal.II/matrix_free/matrix_free.h>
+
+#include <deal.II/multigrid/mg_coarse.h>
+#include <deal.II/multigrid/mg_matrix.h>
+#include <deal.II/multigrid/mg_smoother.h>
+#include <deal.II/multigrid/mg_tools.h>
+#include <deal.II/multigrid/mg_transfer_matrix_free.h>
+#include <deal.II/multigrid/multigrid.h>
+
+#include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
+#include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
+
+#include "laplace_problem.h" // TODO getting rid of
+
+#include "coloring.h"
+#include "laplace_integrator.h"
+#include "mesh.h"
+#include "postprocess.h"
 #include "rt_parameter.h"
 #include "utilities.h"
 #include "vectorization_helper.h"
@@ -44,7 +70,7 @@ struct ModelProblem : public Subscriptor
   // *** parameters and auxiliary structs
   RT::Parameter                               rt_parameters;
   mutable std::shared_ptr<ConditionalOStream> pcout;
-  mutable Laplace::PostProcessData            pp_data;
+  mutable PostProcessData                     pp_data;
 
   // *** FEM fundamentals
   parallel::distributed::Triangulation<dim> triangulation;
@@ -528,7 +554,7 @@ struct ModelProblem : public Subscriptor
   void
   run()
   {
-    pp_data = Laplace::PostProcessData{};
+    pp_data = PostProcessData{};
     TimerOutput time(MPI_COMM_WORLD, *pcout, TimerOutput::summary, TimerOutput::wall_times);
 
     for(unsigned cycle = 0; cycle < rt_parameters.n_cycles; ++cycle)
