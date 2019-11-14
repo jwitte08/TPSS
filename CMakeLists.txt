@@ -1,38 +1,107 @@
-##
-#  CMake script
-##
+message("                                                            ")
+message("                            TPSS                            ")
+message("            Fast Tensor Product Schwarz Smoothers           ")
+message("                                                            ")
 
-MESSAGE("_________________________________________________________________________________")
-MESSAGE("                                                                                 ")
-MESSAGE("                                   ExaDG                                         ")
-MESSAGE("            High-order Discontinuous Galerkin for the Exa-Scale                  ")
-MESSAGE("_________________________________________________________________________________")
+cmake_minimum_required(VERSION 2.12.0)
 
-
-# this is the standard deal.II search mechanism, including check for Trilinos and p4est
-
-CMAKE_MINIMUM_REQUIRED(VERSION 2.8.8)
-
-FIND_PACKAGE(deal.II 8.4 QUIET
-  HINTS ${deal.II_DIR} ${DEAL_II_DIR} ../ ../../ $ENV{DEAL_II_DIR}
+project(TPSS
+  LANGUAGES CXX
+  DESCRIPTION "Fast Tensor Product Schwarz Smoothers"
   )
-IF(NOT ${deal.II_FOUND})
+
+################################################################################
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/.git")
+  # extract the name of the current git branch
+  execute_process(
+    COMMAND git rev-parse --abbrev-ref HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_BRANCH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+  # extract the abbr. hash of the last commit
+  execute_process(
+    COMMAND git log -1 --format=%h
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_COMMIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+else(EXISTS "${CMAKE_SOURCE_DIR}/.git")
+  set(GIT_BRANCH "")
+  set(GIT_COMMIT_HASH "")
+endif(EXISTS "${CMAKE_SOURCE_DIR}/.git")
+
+message(STATUS "Git status:\n")
+message(STATUS "   current branch: ${GIT_BRANCH}")
+message(STATUS "   commit hash:    ${GIT_COMMIT_HASH}")
+
+configure_file(
+  ${CMAKE_SOURCE_DIR}/scripts/git_version.h.in
+  ${CMAKE_BINARY_DIR}/include/git_version.h
+  )
+
+################################################################################
+
+# fill in (python) scripts with CMake information
+configure_file(
+  ${CMAKE_SOURCE_DIR}/scripts/ct_parameter.py.in
+  ${CMAKE_BINARY_DIR}/scripts/ct_parameter.py
+  )
+configure_file(
+  ${CMAKE_SOURCE_DIR}/scripts/generate_exec.py.in
+  ${CMAKE_BINARY_DIR}/scripts/generate_exec.py
+  )
+configure_file(
+  ${CMAKE_SOURCE_DIR}/scripts/env.sh.in
+  ${CMAKE_BINARY_DIR}/env.sh
+  @ONLY
+  )
+
+################################################################################
+
+find_package (PythonInterp 3 REQUIRED)
+
+# generates the default compile time parameters
+execute_process (
+  COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_BINARY_DIR}/scripts/ct_parameter.py -O ${CMAKE_BINARY_DIR}/include/ct_parameter.h
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+################################################################################
+
+find_package(deal.II 9.1 QUIET
+  HINTS ${deal.II_DIR} ${DEAL_II_DIR} $ENV{DEAL_II_DIR}
+  )
+if(NOT ${deal.II_FOUND})
   MESSAGE(FATAL_ERROR "\n"
     "*** Could not locate deal.II. ***\n\n"
     "You may want to either pass a flag -DDEAL_II_DIR=/path/to/deal.II to cmake\n"
     "or set an environment variable \"DEAL_II_DIR\" that contains this path."
     )
-ENDIF()
-
-IF(NOT DEAL_II_WITH_P4EST)
-  MESSAGE(FATAL_ERROR
-    "\nExaDG requires a deal.II installation built with support for p4est but it appears to be missing!\n"
+endif()
+if(NOT DEAL_II_WITH_P4EST)
+  message(FATAL_ERROR
+    "\nWe require a deal.II installation built with support for p4est but it appears to be missing!\n"
     )
-ENDIF()
-
+endif()
 DEAL_II_INITIALIZE_CACHED_VARIABLES()
 
-MESSAGE("TODO remove this CMAKE level")
-ADD_SUBDIRECTORY(TPSS)
+# currently TPSS is header-only, that is an INTERFACE library in cmake
+add_library(tpss INTERFACE)
+target_compile_features(tpss INTERFACE cxx_std_14)
 
+# set the include directory to be build from (BUILD_INTERFACE)
+# set the install path the includes are "copied" to (INSTALL_INTERFACE)
+# the suffix "_INTERFACE" is only required by interface libraries
+target_include_directories(tpss INTERFACE
+  $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include/TPSS>
+  )
+
+#ADD_SUBDIRECTORY(TPSS) # old
+
+ADD_SUBDIRECTORY(apps)
+
+ADD_SUBDIRECTORY(tests)
 
