@@ -127,6 +127,7 @@ struct ModelProblem : public Subscriptor
   {
   }
 
+  ~ModelProblem() = default;
 
   unsigned
   n_colors_system()

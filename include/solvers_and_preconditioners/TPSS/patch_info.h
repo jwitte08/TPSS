@@ -48,7 +48,7 @@ public:
 
   PatchInfo(const PatchInfo<dim> &) = delete;
 
-  ~PatchInfo();
+  ~PatchInfo() = default;
 
   PatchInfo<dim> &
   operator=(const PatchInfo<dim> &) = delete;
@@ -344,7 +344,7 @@ struct PatchInfo<dim>::PartitionData
 
   PartitionData(const PartitionData &) = default;
 
-  ~PartitionData();
+  ~PartitionData() = default;
 
   PartitionData &
   operator=(const PartitionData &) = default;
@@ -419,7 +419,7 @@ struct PatchInfo<dim>::InternalData
 
   InternalData(const InternalData &) = delete;
 
-  ~InternalData();
+  ~InternalData() = default;
 
   InternalData &
   operator=(const InternalData &) = delete;
@@ -632,11 +632,11 @@ private:
 
 // --------------------------------   PatchInfo   --------------------------------
 
-template<int dim>
-PatchInfo<dim>::~PatchInfo()
-{
-  clear();
-}
+// template<int dim>
+// PatchInfo<dim>::~PatchInfo()
+// {
+//   clear();
+// }
 
 template<int dim>
 inline void
@@ -716,11 +716,11 @@ PatchInfo<dim>::GhostPatch::str() const
 
 // --------------------------------   PatchInfo::PartitionData   --------------------------------
 
-template<int dim>
-inline PatchInfo<dim>::PartitionData::~PartitionData()
-{
-  clear();
-}
+// template<int dim>
+// inline PatchInfo<dim>::PartitionData::~PartitionData()
+// {
+//   clear();
+// }
 
 template<int dim>
 inline void
@@ -806,11 +806,11 @@ PatchInfo<dim>::PartitionData::is_compatible(const PartitionData & other) const
 
 // --------------------------------   PatchInfo::InternalData   --------------------------------
 
-template<int dim>
-inline PatchInfo<dim>::InternalData::~InternalData()
-{
-  clear();
-}
+// template<int dim>
+// inline PatchInfo<dim>::InternalData::~InternalData()
+// {
+//   clear();
+// }
 
 template<int dim>
 inline void

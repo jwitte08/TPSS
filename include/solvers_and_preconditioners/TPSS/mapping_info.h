@@ -114,10 +114,7 @@ struct MappingInfo<dim, number>::InternalData
 
   InternalData(const InternalData &) = delete;
 
-  ~InternalData()
-  {
-    clear();
-  }
+  ~InternalData() = default;
 
   InternalData &
   operator=(const InternalData &) = delete;

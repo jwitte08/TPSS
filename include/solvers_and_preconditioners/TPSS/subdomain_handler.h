@@ -43,10 +43,7 @@ public:
 
   SubdomainHandler(const SubdomainHandler<dim> &) = delete;
 
-  ~SubdomainHandler()
-  {
-    clear();
-  }
+  ~SubdomainHandler() = default;
 
   SubdomainHandler<dim> &
   operator=(const SubdomainHandler<dim> &) = delete;
