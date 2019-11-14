@@ -26,7 +26,7 @@ public:
 
   SchwarzPreconditioner(const SchwarzPreconditioner &) = delete;
 
-  ~SchwarzPreconditioner(){};
+  ~SchwarzPreconditioner() = default;
 
   SchwarzPreconditioner &
   operator=(const SchwarzPreconditioner &) = delete;
@@ -69,27 +69,6 @@ public:
 
   std::shared_ptr<const SubdomainHandler<dim, value_type>>
   get_subdomain_handler() const;
-
-  // TODO
-  template<typename OtherVectorType>
-  void
-  initialize_ghost_vector(const OtherVectorType &)
-  {
-    AssertThrow(false, ExcMessage("VectorType not supported."));
-  }
-
-  // TODO support more VectorTypes
-  void
-  initialize_ghost_vector(const LinearAlgebra::distributed::Vector<value_type> & vec) const
-  {
-    const auto ghost_partitioner = subdomain_handler->get_vector_partitioner();
-    if(vec.get_partitioner().get() == ghost_partitioner.get())
-      return;
-    LinearAlgebra::distributed::Vector<value_type> copy_vec(vec);
-    const_cast<LinearAlgebra::distributed::Vector<value_type> &>(vec).reinit(ghost_partitioner);
-    const_cast<LinearAlgebra::distributed::Vector<value_type> &>(vec).copy_locally_owned_data_from(
-      copy_vec);
-  }
 
   void
   vmult(VectorType & dst, const VectorType & src) const override;
@@ -219,9 +198,9 @@ private:
    *  template<typename MatrixType, typename OperatorType>
    *  void
    *  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & data,
-                                 std::vector<MatrixType> &             inverses,
-                                 const OperatorType &                  linear_operator,
-                                 const std::pair<unsigned int, unsigned int> subdomain_range) const
+   *                             std::vector<MatrixType> &             inverses,
+   *                             const OperatorType &                  linear_operator,
+   *                             const std::pair<unsigned int, unsigned int> subdomain_range) const
    */
   OperatorType * linear_operator = nullptr;
 
