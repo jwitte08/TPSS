@@ -25,6 +25,7 @@ set(testfiles
   # Tmlaplace_check_iterations.cc
   # Tlinelasticity_integrator_mf.cc
   # Tlinelasticity_integrator_fd.cc
+  Tkroneckersvd.cc
   )
 
 add_custom_target(setup_tests)
