@@ -3,9 +3,7 @@ project(Apps
   DESCRIPTION "Numerical applications and model problems using fast tensor product Schwarz smoothers (TPSS)"
   )
 
-message("                                                            ")
-message("             numerical applications and tests               ")
-message("                                                            ")
+message(STATUS "Configuring numerical applications within subdirectory 'apps'")
 
 # configure_file(
 #   ${CMAKE_SOURCE_DIR}/scripts/poisson_distorted.py.in

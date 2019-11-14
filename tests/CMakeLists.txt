@@ -3,9 +3,7 @@ project(Tests
   DESCRIPTION "Collection of tests verifying the implementation of TPSS"
   )
 
-message("                                                            ")
-message("                       tests on TPSS                        ")
-message("                                                            ")
+message(STATUS "Configuring implementation tests within subdirectory 'tests'")
 
 enable_testing()
 

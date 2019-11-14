@@ -32,9 +32,8 @@ else(EXISTS "${CMAKE_SOURCE_DIR}/.git")
   set(GIT_COMMIT_HASH "")
 endif(EXISTS "${CMAKE_SOURCE_DIR}/.git")
 
-message(STATUS "Git status:\n")
-message(STATUS "   current branch: ${GIT_BRANCH}")
-message(STATUS "   commit hash:    ${GIT_COMMIT_HASH}")
+message(STATUS "Current git branch:      ${GIT_BRANCH}")
+message(STATUS "Current git commit hash: ${GIT_COMMIT_HASH}")
 
 configure_file(
   ${CMAKE_SOURCE_DIR}/scripts/git_version.h.in
@@ -69,6 +68,15 @@ execute_process (
 )
 
 ################################################################################
+
+# Set a default build type if none was specified
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Choose the type of build." FORCE)
+  message(STATUS "Setting build type to '${CMAKE_BUILD_TYPE}' as none was specified.")
+  # Set the possible values of build type for cmake-gui
+  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release"
+    "MinSizeRel" "RelWithDebInfo")
+endif()
 
 find_package(deal.II 9.1 QUIET
   HINTS ${deal.II_DIR} ${DEAL_II_DIR} $ENV{DEAL_II_DIR}
