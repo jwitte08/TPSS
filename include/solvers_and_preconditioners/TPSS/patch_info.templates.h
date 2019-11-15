@@ -26,6 +26,10 @@ PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
     AssertThrow(false, dealii::ExcNotImplemented());
   internal_data.cell_iterators.shrink_to_fit();
 
+  /// extract first dof index for each cell iterator stored
+  extract_dof_indices(InternalData& internal_data);
+
+  /// check validity
   const auto n_colors_mpimin =
     Utilities::MPI::min(internal_data.n_physical_subdomains.size(), MPI_COMM_WORLD);
   const auto n_colors_mpimax =
