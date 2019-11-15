@@ -35,6 +35,7 @@ struct TestParameter
   unsigned n_subsamples_vmult   = 100;
   unsigned n_subsamples_smooth  = 20;
   unsigned n_subsamples_mg      = 10;
+  unsigned test_variant         = -1;
 
   std::string
   to_string() const
@@ -415,6 +416,7 @@ struct Test
     Timings        timings_vmult;
     PoissonProblem poisson_problem{rt_parameters};
     auto &         pcout = *(poisson_problem.pcout);
+    poisson_problem.print_informations();
     poisson_problem.create_triangulation(rt_parameters.mesh.n_refinements);
     poisson_problem.distribute_dofs();
 
@@ -501,6 +503,7 @@ struct Test
     Timings        timings_smooth;
     PoissonProblem poisson_problem{rt_parameters};
     auto &         pcout = *(poisson_problem.pcout);
+    poisson_problem.print_informations();
     poisson_problem.create_triangulation(rt_parameters.mesh.n_refinements);
     poisson_problem.distribute_dofs();
     Timer time(MPI_COMM_WORLD, true);
@@ -536,10 +539,16 @@ struct Test
       for(unsigned subsample = 0; subsample < prms.n_subsamples_smooth; ++subsample)
         schwarz_smoother.step(dst, tmp);
       time.stop();
+
+      //: post process
       Utilities::MPI::MinMaxAvg t_apply = time.get_last_lap_wall_time_data();
       t_apply                           = t_apply / prms.n_subsamples_smooth;
       timings_smooth.apply.push_back(t_apply);
       pcout << str_memory_stats("smooth");
+      const auto time_data = schwarz_preconditioner->get_time_data();
+      for(const auto & time_info : time_data)
+        pcout << Util::parameter_to_fstring(time_info.description,
+                                            Utilities::MPI::max(time_info.time, MPI_COMM_WORLD));
     }
 
     //: write performance timings
@@ -586,6 +595,7 @@ struct Test
     Timings        timings_mg;
     PoissonProblem poisson_problem{rt_parameters};
     auto &         pcout = *(poisson_problem.pcout);
+    poisson_problem.print_informations();
     poisson_problem.create_triangulation(rt_parameters.mesh.n_refinements);
     poisson_problem.distribute_dofs();
     poisson_problem.prepare_linear_system();
@@ -657,7 +667,9 @@ main(int argc, char * argv[])
   if(argc > 1)
     prms.n_refinements = std::atoi(argv[1]);
   if(argc > 2)
-    prms.n_samples = std::atoi(argv[2]);
+    prms.test_variant = std::atoi(argv[2]);
+  if(argc > 3)
+    prms.n_samples = std::atoi(argv[3]);
 
   // *** run tests
   Timer              time(MPI_COMM_WORLD, true);
@@ -673,49 +685,61 @@ main(int argc, char * argv[])
   // time.print_last_lap_wall_time_data(pcout);
   // pcout << std::endl;
 
-  // time.start(); // checked: no leak!
-  // tester.vmult_raw();
-  // time.stop();
+  if(prms.test_variant == 0)
+  {
+    // time.start(); // checked: no leak!
+    // tester.vmult_raw();
+    // time.stop();
 
-  time.start();
-  tester.vmult();
-  time.stop();
-  pcout << Util::parameter_to_fstring("Testing vmult()", "");
-  time.print_last_lap_wall_time_data(pcout);
-  pcout << std::endl;
+    time.start();
+    tester.vmult();
+    time.stop();
+    pcout << Util::parameter_to_fstring("Testing vmult()", "");
+    time.print_last_lap_wall_time_data(pcout);
+    pcout << std::endl;
+  }
 
-  // time.start(); // checked: no leak!
-  // tester.smooth_raw();
-  // time.stop();
+  if(prms.test_variant == 1)
+  {
+    // time.start(); // checked: no leak!
+    // tester.smooth_raw();
+    // time.stop();
 
-  time.start();
-  tester.smooth();
-  time.stop();
-  pcout << Util::parameter_to_fstring("Testing smooth()", "");
-  time.print_last_lap_wall_time_data(pcout);
-  pcout << std::endl;
+    time.start();
+    tester.smooth();
+    time.stop();
+    pcout << Util::parameter_to_fstring("Testing smooth()", "");
+    time.print_last_lap_wall_time_data(pcout);
+    pcout << std::endl;
+  }
 
-  // time.start();
-  // tester.mg_raw();
-  // time.stop();
+  if(prms.test_variant == 2)
+  {
+    // time.start();
+    // tester.mg_raw();
+    // time.stop();
 
-  time.start();
-  tester.mg(); // checked: leaks!
-  time.stop();
-  pcout << Util::parameter_to_fstring("Testing mg()", "");
-  time.print_last_lap_wall_time_data(pcout);
-  pcout << std::endl;
+    time.start();
+    tester.mg(); // checked: leaks!
+    time.stop();
+    pcout << Util::parameter_to_fstring("Testing mg()", "");
+    time.print_last_lap_wall_time_data(pcout);
+    pcout << std::endl;
+  }
 
-  // time.start(); // checked: leaks!
-  // tester.full_raw();
-  // time.stop();
+  if(prms.test_variant == 3)
+  {
+    // time.start(); // checked: leaks!
+    // tester.full_raw();
+    // time.stop();
 
-  // time.start();
-  // tester.full(/*compute once or n samples?*/false); // checked: leaks!
-  // time.stop();
-  // pcout << Util::parameter_to_fstring("Testing PoissonProblem::run()", "");
-  // time.print_last_lap_wall_time_data(pcout);
-  // pcout << std::endl;
+    time.start();
+    tester.full(/*compute once or n samples?*/ false); // checked: leaks!
+    time.stop();
+    pcout << Util::parameter_to_fstring("Testing PoissonProblem::run()", "");
+    time.print_last_lap_wall_time_data(pcout);
+    pcout << std::endl;
+  }
 
   pcout << Util::parameter_to_fstring("Total wall time elapsed", "");
   time.print_accumulated_wall_time_data(pcout);
