@@ -460,6 +460,7 @@ public:
 
   types::global_dof_index
   m() const;
+
   types::global_dof_index
   n() const;
 
@@ -564,12 +565,17 @@ Operator<dim, fe_degree, Number>::m() const
   Assert(data.get() != nullptr, ExcNotInitialized());
   return data->get_dof_handler().n_dofs();
 }
+
+
+
 template<int dim, int fe_degree, typename Number>
 types::global_dof_index
 Operator<dim, fe_degree, Number>::n() const
 {
   return m();
 }
+
+
 
 template<int dim, int fe_degree, typename Number>
 void
