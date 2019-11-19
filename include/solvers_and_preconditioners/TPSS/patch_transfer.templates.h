@@ -47,7 +47,13 @@ PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::gather(
         elem[lane] = elem[0];
   }
   else // compressed
-    ;
+  {
+    AssertDimension(dst.size(), patch_to_global_indices.size());
+    auto global_dof = patch_to_global_indices.cbegin();
+    for(auto dst_value = dst.begin(); dst_value != dst.end(); ++global_dof, ++dst_value)
+      for(unsigned int lane = 0; lane < macro_size; ++lane)
+        (*dst_value)[lane] = src((*global_dof)[lane]);
+  }
 
   AssertDimension(dst.size(), n_dofs_per_patch());
   return dst;
@@ -112,15 +118,30 @@ PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::scatter_add(
         std::vector<types::global_dof_index> global_dofs_on_cell;
         global_dofs_on_cell.resize(n_dofs_per_cell);
         cell->get_active_or_mg_dof_indices(global_dofs_on_cell);
+        std::cout << "dofs on cell " << cell_no << ":\n";
+        for(const auto dof : global_dofs_on_cell)
+          std::cout << dof << " ";
+        std::cout << std::endl;
         const unsigned * dof = patch_dofs.begin();
         for(auto out = src_per_cell.begin(); out != src_per_cell.end(); ++out, ++dof)
           *out = src[*dof][lane];
         constraints.distribute_local_to_global(src_per_cell, global_dofs_on_cell, dst);
       }
+      std::cout << "dofs on patch ";
+      AssertDimension(src.size(), patch_to_global_indices.size());
+      for(const auto dof : patch_to_global_indices)
+        std::cout << dof[lane] << " ";
+      std::cout << std::endl;
     }
   }
   else // compressed
-    ;
+  {
+    AssertDimension(src.size(), patch_to_global_indices.size());
+    auto global_dof = patch_to_global_indices.cbegin();
+    for(auto src_value = src.cbegin(); src_value != src.cend(); ++global_dof, ++src_value)
+      for(unsigned int lane = 0; lane < patch_worker.n_lanes_filled(patch_id); ++lane)
+        dst((*global_dof)[lane]) += (*src_value)[lane];
+  }
 }
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>

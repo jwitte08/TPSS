@@ -46,6 +46,7 @@ public:
   using CellIterator                            = typename PatchInfo<dim>::CellIterator;
   static constexpr unsigned int fe_order        = fe_degree + 1;
   static constexpr unsigned int n_dofs_per_cell = Utilities::pow(fe_order, dim);
+  static constexpr unsigned int macro_size      = VectorizedArray<Number>::n_array_elements;
 
   unsigned int
   n_dofs_per_patch() const
@@ -141,6 +142,30 @@ protected:
   const SubdomainHandler<dim, Number> & sd_handler;
 
 private:
+  /*
+   * TODO
+   */
+  void
+  reinit_patch_to_global_indices(const unsigned int patch_id)
+  {
+    AssertIndexRange(patch_id, sd_handler.get_partition_data().n_subdomains());
+    patch_to_global_indices.resize(cell_to_patch_indices.size());
+    std::vector<std::array<types::global_dof_index, macro_size>> first_dofs =
+      patch_worker.get_dof_collection(patch_id);
+    const unsigned n_cells = first_dofs.size();
+    for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
+    {
+      const auto macro_dofs = first_dofs[cell_no];
+      const auto patch_dofs = patch_dofs_on_cell(cell_no);
+      for(unsigned int cell_dof = 0; cell_dof < n_dofs_per_cell; ++cell_dof)
+      {
+        const unsigned int patch_dof = patch_dofs[cell_dof];
+        for(unsigned int lane = 0; lane < macro_size; ++lane)
+          patch_to_global_indices[patch_dof][lane] = macro_dofs[lane] + cell_dof;
+      }
+    }
+  }
+
   /**
    * A bijective map between local cell dofs (lexicographical) for
    * each cell within a patch and the local patch dofs (lexicographical).
@@ -149,6 +174,12 @@ private:
    *    local_cell_dof < cell_no
    */
   std::vector<unsigned int> cell_to_patch_indices;
+
+  /*
+   * A bijective map between the patch-local DoF indices (lexicographical) and
+   * the associated global DoF indices.
+   */
+  std::vector<std::array<types::global_dof_index, macro_size>> patch_to_global_indices;
 
   // TODO
   const bool compressed = false;
@@ -440,6 +471,8 @@ PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(const u
 {
   AssertIndexRange(patch, n_subdomains);
   patch_id = patch;
+  reinit_patch_to_global_indices(patch_id);
+  AssertDimension(patch_to_global_indices.size(), n_dofs_per_patch());
 }
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
