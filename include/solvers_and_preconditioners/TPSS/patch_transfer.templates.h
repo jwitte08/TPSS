@@ -118,20 +118,11 @@ PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::scatter_add(
         std::vector<types::global_dof_index> global_dofs_on_cell;
         global_dofs_on_cell.resize(n_dofs_per_cell);
         cell->get_active_or_mg_dof_indices(global_dofs_on_cell);
-        std::cout << "dofs on cell " << cell_no << ":\n";
-        for(const auto dof : global_dofs_on_cell)
-          std::cout << dof << " ";
-        std::cout << std::endl;
         const unsigned * dof = patch_dofs.begin();
         for(auto out = src_per_cell.begin(); out != src_per_cell.end(); ++out, ++dof)
           *out = src[*dof][lane];
         constraints.distribute_local_to_global(src_per_cell, global_dofs_on_cell, dst);
       }
-      std::cout << "dofs on patch ";
-      AssertDimension(src.size(), patch_to_global_indices.size());
-      for(const auto dof : patch_to_global_indices)
-        std::cout << dof[lane] << " ";
-      std::cout << std::endl;
     }
   }
   else // compressed
