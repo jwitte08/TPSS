@@ -138,6 +138,21 @@ private:
                       });
   }
 
+  void
+  extract_dof_indices(InternalData & internal_data)
+  {
+    Assert(internal_data.level != static_cast<unsigned>(-1),
+           ExcMessage("Only level cells are allowed."));
+    const auto & cell_iterators = internal_data.cell_iterators;
+    auto &       dof_indices    = internal_data.dof_indices;
+    dof_indices.clear();
+    dof_indices.reserve(cell_iterators.size());
+    for(const auto & cell : cell_iterators)
+      dof_indices.emplace_back(cell->mg_dof_index(internal_data.level, 0));
+    AssertDimension(dof_indices.size(), cell_iterators.size());
+    dof_indices.shrink_to_fit();
+  }
+
   static std::vector<types::global_dof_index>
   get_face_conflicts(const PatchIterator & patch)
   {
@@ -454,6 +469,11 @@ struct PatchInfo<dim>::InternalData
    * Numbers of physical subdomains (accumulated over colors)
    */
   SubdomainData n_physical_subdomains_total;
+
+  /*
+   * Array storing for each cell in @p cell_iterators the first dof.
+   */
+  std::vector<types::global_dof_index> dof_indices;
 };
 
 
@@ -552,6 +572,9 @@ public:
 
   std::vector<ArrayView<const CellIterator>>
   get_cell_collection_views(unsigned int patch_id) const;
+
+  std::vector<std::array<types::global_dof_index, macro_size>>
+  get_dof_collection(unsigned int patch_id) const;
 
   const typename PatchInfo<dim>::PartitionData &
   get_partition_data() const;
@@ -1045,6 +1068,35 @@ PatchWorker<dim, number>::get_cell_collection_views(unsigned int patch_id) const
   }
 
   return views;
+}
+
+
+template<int dim, typename number>
+inline std::vector<std::array<types::global_dof_index, PatchWorker<dim, number>::macro_size>>
+PatchWorker<dim, number>::get_dof_collection(unsigned int patch_id) const
+{
+  Assert(patch_info != nullptr, ExcNotInitialized());
+  AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
+
+  std::vector<std::array<types::global_dof_index, macro_size>> collection;
+  const auto & dof_indices  = patch_info->get_internal_data()->dof_indices;
+  const auto & patch_starts = patch_info->patch_starts;
+  const auto   begin        = dof_indices.data() + patch_starts[patch_id];
+
+  collection.resize(patch_size);
+  const unsigned int n_lanes_filled = this->n_lanes_filled(patch_id);
+  for(unsigned int m = 0; m < n_lanes_filled; ++m)
+  {
+    auto dof = begin + m * patch_size;
+    for(auto macro_dof = collection.begin(); macro_dof != collection.end(); ++macro_dof, ++dof)
+      (*macro_dof)[m] = *dof;
+  }
+  //: fill non-physical lanes by mirroring dofs of first lane
+  for(unsigned int m = n_lanes_filled; m < macro_size; ++m)
+    for(auto & macro_dof : collection)
+      macro_dof[m] = macro_dof[0];
+
+  return collection;
 }
 
 

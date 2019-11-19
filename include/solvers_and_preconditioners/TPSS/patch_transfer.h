@@ -4,7 +4,6 @@
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/timer.h>
 #include <deal.II/base/utilities.h>
-#include <deal.II/matrix_free/fe_evaluation.h>
 
 #include "TPSS.h"
 #include "subdomain_handler.h"
@@ -47,11 +46,12 @@ public:
   using CellIterator                            = typename PatchInfo<dim>::CellIterator;
   static constexpr unsigned int fe_order        = fe_degree + 1;
   static constexpr unsigned int n_dofs_per_cell = Utilities::pow(fe_order, dim);
+  static constexpr unsigned int macro_size      = VectorizedArray<Number>::n_array_elements;
 
   unsigned int
   n_dofs_per_patch() const
   {
-    return n_dofs;
+    return cell_to_patch_indices.empty() ? 0 : cell_to_patch_indices.size();
   }
 
   /**
@@ -128,7 +128,7 @@ protected:
   PatchTransferBase &
   operator=(const PatchTransferBase & other) = delete;
 
-  ArrayView<const unsigned>
+  ArrayView<const unsigned int>
   patch_dofs_on_cell(const unsigned int cell_no) const
   {
     const auto begin = cell_to_patch_indices.data() + cell_no * n_dofs_per_cell;
@@ -137,11 +137,35 @@ protected:
   }
 
   /**
-   * Underlying SubdomainHandler that holds a MatrixFreeConnect object.
+   * The underlying SubdomainHandler object.
    */
   const SubdomainHandler<dim, Number> & sd_handler;
 
 private:
+  /*
+   * TODO
+   */
+  void
+  reinit_patch_to_global_indices(const unsigned int patch_id)
+  {
+    AssertIndexRange(patch_id, sd_handler.get_partition_data().n_subdomains());
+    patch_to_global_indices.resize(cell_to_patch_indices.size());
+    std::vector<std::array<types::global_dof_index, macro_size>> first_dofs =
+      patch_worker.get_dof_collection(patch_id);
+    const unsigned n_cells = first_dofs.size();
+    for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
+    {
+      const auto macro_dofs = first_dofs[cell_no];
+      const auto patch_dofs = patch_dofs_on_cell(cell_no);
+      for(unsigned int cell_dof = 0; cell_dof < n_dofs_per_cell; ++cell_dof)
+      {
+        const unsigned int patch_dof = patch_dofs[cell_dof];
+        for(unsigned int lane = 0; lane < macro_size; ++lane)
+          patch_to_global_indices[patch_dof][lane] = macro_dofs[lane] + cell_dof;
+      }
+    }
+  }
+
   /**
    * A bijective map between local cell dofs (lexicographical) for
    * each cell within a patch and the local patch dofs (lexicographical).
@@ -151,28 +175,28 @@ private:
    */
   std::vector<unsigned int> cell_to_patch_indices;
 
-  /**
-   * Internally used to perform the restriction and prolongation operation
-   * cell-wise and lane-wise based on the infrastructure provided by the
-   * MatrixFree read-write-operations. Logically @p restrict or @p prolongate
-   * member functions are const, that is why we require a mutable FEEvaluation.
+  /*
+   * A bijective map between the patch-local DoF indices (lexicographical) and
+   * the associated global DoF indices.
    */
-  mutable FEEvaluation<dim, fe_degree, n_q_points_1d, n_comp, Number> fe_eval;
-  mutable std::mutex                                                  write_mutex;
+  std::vector<std::array<types::global_dof_index, macro_size>> patch_to_global_indices;
 
-  /**
-   * Information required to map patch and cell dof indices.
-   */
-  const unsigned int n_dofs;
+  // TODO
+  const bool compressed = false;
 
-  /**
-   * Variables uniquely determine a (macro) patch and the corresponding linkage
-   * to the MatrixFree infrastructure.
-   */
+  // TODO dofh_index is not used
   const unsigned int dofh_index;
-  unsigned int       patch_id;
 
+  /*
+   * Integer identifying the (macro) patch stored within the underlying SubdomainHandler.
+   */
+  unsigned int patch_id;
+
+  /*
+   * Provides an interface to the information stored within the underlying SubdomainHandler.
+   */
   PatchWorker<dim, Number> patch_worker;
+
   // TODO pass meaningful constraints from the MatrixFree/SubdomainHandler
   AffineConstraints<Number> constraints;
 };
@@ -217,7 +241,7 @@ public:
   operator=(const PatchTransferBlock & other) = delete;
 
   /**
-   * Return the accumulated (over components) number of DoFs per patch.
+   * Return the number of DoFs per patch accumulated over all components.
    */
   unsigned int
   n_dofs_per_patch() const
@@ -230,16 +254,6 @@ public:
                                                       });
     return n_dofs_total;
   }
-
-  // /**
-  //  * Return the number of DoFs per patch corresponding to the
-  //  * DoFHandler with index @p dofh_index.
-  //  */
-  // unsigned int
-  // n_dofs_per_patch (std::size_t dofh_index) const
-  // {
-  //   return transfers[dofh_index]->n_dofs_per_patch();
-  // }
 
   /**
    * Reinitialize information of the (macro) patch with unique id @p patch.
@@ -441,15 +455,12 @@ inline PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::PatchTr
     n_colors(sd_handler_in.get_patch_info().subdomain_partition_data.n_colors()),
     sd_handler(sd_handler_in),
     cell_to_patch_indices(std::move(cell_to_patch_indexing)),
-    fe_eval(sd_handler.get_matrix_free()),
-    n_dofs(cell_to_patch_indices.empty() ? static_cast<unsigned int>(-1) :
-                                           cell_to_patch_indices.size()),
     dofh_index(dofh_index_in),
     patch_id(-1),
     patch_worker(sd_handler_in.get_patch_info())
 {
   static_assert(n_comp == 1, "Handles only one scalar DoFHandler.");
-  AssertThrow(n_dofs != static_cast<unsigned int>(-1),
+  AssertThrow(!cell_to_patch_indices.empty(),
               ExcMessage("The cell to patch index map is uninitialized!"));
   constraints.close();
 }
@@ -460,6 +471,8 @@ PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(const u
 {
   AssertIndexRange(patch, n_subdomains);
   patch_id = patch;
+  reinit_patch_to_global_indices(patch_id);
+  AssertDimension(patch_to_global_indices.size(), n_dofs_per_patch());
 }
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
@@ -468,7 +481,7 @@ PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit_local_v
   AlignedVector<VectorizedArray<Number>> & vec) const
 {
   Assert(patch_id != static_cast<unsigned int>(-1), ExcNotInitialized());
-  vec.resize(n_dofs);
+  vec.resize(n_dofs_per_patch());
 }
 
 // -----------------------------   PatchTransfer   ----------------------------
