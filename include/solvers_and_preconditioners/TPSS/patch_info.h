@@ -139,16 +139,17 @@ private:
   }
 
   void
-  extract_dof_indices(InternalData& internal_data)
+  extract_dof_indices(InternalData & internal_data)
   {
-    Assert (internal_data.level != static_cast<unsigned>(-1), ExcMessage("Only level cells are allowed."));
+    Assert(internal_data.level != static_cast<unsigned>(-1),
+           ExcMessage("Only level cells are allowed."));
     const auto & cell_iterators = internal_data.cell_iterators;
-    auto & dof_indices = internal_data.dof_indices;
+    auto &       dof_indices    = internal_data.dof_indices;
     dof_indices.clear();
     dof_indices.reserve(cell_iterators.size());
-    for (const auto & cell : cell_iterators)
-      dof_indices.emplace_back(cell->mg_dof_index(internal_data.level,0));
-    AssertDimension (dof_indices.size(), cell_iterators.size());
+    for(const auto & cell : cell_iterators)
+      dof_indices.emplace_back(cell->mg_dof_index(internal_data.level, 0));
+    AssertDimension(dof_indices.size(), cell_iterators.size());
     dof_indices.shrink_to_fit();
   }
 
