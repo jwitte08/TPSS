@@ -3,7 +3,7 @@ namespace TPSS
 {
 template<int dim, typename number>
 typename MappingInfo<dim, number>::LocalData
-MappingInfo<dim, number>::extract_cartesian_scaling(dealii::FEValues<dim> &          fe_values,
+MappingInfo<dim, number>::extract_cartesian_scaling(FEValues<dim> &                  fe_values,
                                                     const PatchWorker<dim, number> & patch_worker,
                                                     const unsigned int               patch_id) const
 {
@@ -20,7 +20,7 @@ MappingInfo<dim, number>::extract_cartesian_scaling(dealii::FEValues<dim> &     
   {
     fe_values.reinit(first_macro_cell[lane]);
     for(unsigned int d = 0; d < dim; ++d)
-      local_data.h_inverses[d][0][lane] = 1. / fe_values.jacobian(0)[d][d];
+      local_data.h_lengths[d][0][lane] = fe_values.jacobian(0)[d][d];
   }
 
   if(cell_collection.size() == regular_vpatch_size)
@@ -30,7 +30,7 @@ MappingInfo<dim, number>::extract_cartesian_scaling(dealii::FEValues<dim> &     
     {
       fe_values.reinit(last_macro_cell[lane]);
       for(unsigned int d = 0; d < dim; ++d)
-        local_data.h_inverses[d][1][lane] = 1. / fe_values.jacobian(0)[d][d];
+        local_data.h_lengths[d][1][lane] = fe_values.jacobian(0)[d][d];
     }
   }
   else
@@ -41,7 +41,7 @@ MappingInfo<dim, number>::extract_cartesian_scaling(dealii::FEValues<dim> &     
 
 template<int dim, typename number>
 typename MappingInfo<dim, number>::LocalData
-MappingInfo<dim, number>::compute_average_scaling(dealii::FEValues<dim> &          fe_values,
+MappingInfo<dim, number>::compute_average_scaling(FEValues<dim> &                  fe_values,
                                                   const PatchWorker<dim, number> & patch_worker,
                                                   const unsigned int               patch_id) const
 {
@@ -188,7 +188,7 @@ MappingInfo<dim, number>::compute_average_scaling(dealii::FEValues<dim> &       
 
   if(cell_collection.size() == 1) // CELL PATCHES
     for(unsigned int direction = 0; direction < dim; ++direction)
-      local_data.h_inverses[direction][/*cell_no_1d*/ 0] = 1. / avg_cell_lengths[direction][0];
+      local_data.h_lengths[direction][/*cell_no_1d*/ 0] = avg_cell_lengths[direction][0];
 
   else if(cell_collection.size() == 1 << dim) // VERTEX PATCHES
   {
@@ -205,7 +205,7 @@ MappingInfo<dim, number>::compute_average_scaling(dealii::FEValues<dim> &       
       }
     for(unsigned int direction = 0; direction < dim; ++direction)
       for(unsigned int cell_no_1d = 0; cell_no_1d < /*n_cells_per_direction*/ 2; ++cell_no_1d)
-        local_data.h_inverses[direction][cell_no_1d] = 1. / h[direction][cell_no_1d];
+        local_data.h_lengths[direction][cell_no_1d] = h[direction][cell_no_1d];
 
     // *** normalize patch lengths by volume
     if(additional_data.normalize_patch)
@@ -227,20 +227,12 @@ MappingInfo<dim, number>::compute_average_scaling(dealii::FEValues<dim> &       
       const auto alpha = std::pow(volume_patch / volume_patch_sur, 1. / static_cast<double>(dim));
       for(unsigned int direction = 0; direction < dim; ++direction)
       {
-        const auto & lengths_1d  = h[direction];
-        auto         h_old       = lengths_1d.cbegin();
-        auto &       lengths_inv = local_data.h_inverses[direction];
-        for(auto h_inv = lengths_inv.begin(); h_inv != lengths_inv.end(); ++h_old, ++h_inv)
-          *h_inv = 1. / ((*h_old) * alpha);
+        const auto & lengths_1d = h[direction];
+        auto         h_old      = lengths_1d.cbegin();
+        auto &       h_lengths  = local_data.h_lengths[direction];
+        for(auto h = h_lengths.begin(); h != h_lengths.end(); ++h_old, ++h)
+          *h = ((*h_old) * alpha);
       }
-      // // DEBUG
-      // auto volume_new = make_vectorized_array<double> (1.);
-      // for (unsigned int d=0; d<dim; ++d)
-      // 	{
-      // 	  const auto& lengths_inv = local_data.h_inverses[d];
-      // 	  volume_new *= 1./lengths_inv[0] + 1./lengths_inv[1];
-      // 	}
-      // std::cout << "vol_surrogate(new) = " << varray_to_string(volume_new) << std::endl;
     }
   }
 
@@ -322,7 +314,7 @@ MappingInfo<dim, number>::initialize_storage(const PatchInfo<dim> &             
         if(patch_type == PatchType::cartesian)
         {
           const auto & local_data = extract_cartesian_scaling(fe_values, patch_worker, patch_id);
-          mapping_data_starts.emplace_back(internal_data.h_inverses.size());
+          mapping_data_starts.emplace_back(internal_data.h_lengths.size());
           submit_local_data(local_data);
         }
 
@@ -330,14 +322,13 @@ MappingInfo<dim, number>::initialize_storage(const PatchInfo<dim> &             
         else
         {
           const auto & local_data = compute_average_scaling(fe_values, patch_worker, patch_id);
-          mapping_data_starts.emplace_back(internal_data.h_inverses.size());
+          mapping_data_starts.emplace_back(internal_data.h_lengths.size());
           submit_local_data(local_data);
         }
       } // patch loop
     }   // partition loop
 
-  AssertDimension(internal_data.h_inverses.size(), internal_data.h_lengths.size());
-  AssertDimension(internal_data.h_inverses.size() % (n_cells_per_direction * dim), 0);
+  AssertDimension(internal_data.h_lengths.size() % (n_cells_per_direction * dim), 0);
   mapping_data_initialized = true;
 }
 } // end namespace TPSS

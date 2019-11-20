@@ -20,17 +20,19 @@
 #include "patch_info.h"
 #include "tensors.h"
 
+using namespace dealii;
+
 namespace TPSS
 {
 template<int dim, typename number>
 class MappingInfo
 {
 public:
-  using CellIterator               = typename dealii::DoFHandler<dim>::level_cell_iterator;
-  using GeometryType               = dealii::internal::MatrixFreeFunctions::GeometryType;
+  using CellIterator               = typename DoFHandler<dim>::level_cell_iterator;
+  using GeometryType               = internal::MatrixFreeFunctions::GeometryType;
   using PatchType                  = GeometryType;
-  using VectorizedArrayType        = dealii::VectorizedArray<number>;
-  static constexpr auto macro_size = dealii::VectorizedArray<number>::n_array_elements;
+  using VectorizedArrayType        = VectorizedArray<number>;
+  static constexpr auto macro_size = VectorizedArray<number>::n_array_elements;
 
   struct AdditionalData;
 
@@ -46,22 +48,19 @@ public:
   void
   clear();
 
-  const dealii::VectorizedArray<number> *
-  h_inverses_begin(const unsigned int patch_id) const;
-
-  const dealii::VectorizedArray<number> *
+  const VectorizedArray<number> *
   h_lengths_begin(const unsigned int patch_id) const;
 
   bool mapping_data_initialized = false;
 
 private:
   LocalData
-  extract_cartesian_scaling(dealii::FEValues<dim> &          fe_values,
+  extract_cartesian_scaling(FEValues<dim> &                  fe_values,
                             const PatchWorker<dim, number> & patch_worker,
                             const unsigned int               patch_id) const;
 
   LocalData
-  compute_average_scaling(dealii::FEValues<dim> &          fe_values,
+  compute_average_scaling(FEValues<dim> &                  fe_values,
                           const PatchWorker<dim, number> & patch_worker,
                           const unsigned int               patch_id) const;
 
@@ -70,20 +69,20 @@ private:
 
   // check whether the Jacobian is a scaled identity matrix to machine prec
   bool
-  is_uniform_cell(const dealii::Tensor<2, dim, dealii::VectorizedArray<number>> * jacobian,
-                  const double zero_tolerance_double) const;
+  is_uniform_cell(const Tensor<2, dim, VectorizedArray<number>> * jacobian,
+                  const double                                    zero_tolerance_double) const;
 
   // check whether the two Jacobians equal each other up to machine prec
   bool
-  are_jacobians_equal(const dealii::Tensor<2, dim, dealii::VectorizedArray<number>> * jacobian0,
-                      const dealii::Tensor<2, dim, dealii::VectorizedArray<number>> * jacobian,
-                      const double zero_tolerance_double) const;
+  are_jacobians_equal(const Tensor<2, dim, VectorizedArray<number>> * jacobian0,
+                      const Tensor<2, dim, VectorizedArray<number>> * jacobian,
+                      const double                                    zero_tolerance_double) const;
 
-  const dealii::MatrixFree<dim, number> * mf_storage;
-  const dealii::internal::MatrixFreeFunctions::MappingInfo<dim, number, VectorizedArrayType> *
+  const MatrixFree<dim, number> * mf_storage;
+  const internal::MatrixFreeFunctions::MappingInfo<dim, number, VectorizedArrayType> *
     mf_mapping_info = nullptr;
-  const dealii::internal::MatrixFreeFunctions::
-    MappingInfoStorage<dim, dim, number, VectorizedArrayType> * mf_mapping_data = nullptr;
+  const internal::MatrixFreeFunctions::MappingInfoStorage<dim, dim, number, VectorizedArrayType> *
+    mf_mapping_data = nullptr;
 
   unsigned int n_subdomains          = static_cast<unsigned int>(-1);
   int          patch_size            = -1;
@@ -125,12 +124,7 @@ struct MappingInfo<dim, number>::InternalData
   /**
    * lexicographical order: cell_no_1d < direction < patch_id
    */
-  dealii::AlignedVector<dealii::VectorizedArray<number>> h_inverses;
-
-  /**
-   * lexicographical order: cell_no_1d < direction < patch_id
-   */
-  dealii::AlignedVector<dealii::VectorizedArray<number>> h_lengths;
+  AlignedVector<VectorizedArray<number>> h_lengths;
 };
 
 template<int dim, typename number>
@@ -138,8 +132,8 @@ struct MappingInfo<dim, number>::LocalData
 {
   LocalData(int cells_per_direction)
   {
-    for(auto & h : h_inverses)
-      h.resize_fast(static_cast<std::size_t>(cells_per_direction));
+    for(auto & h : h_lengths)
+      h.resize(static_cast<std::size_t>(cells_per_direction));
   }
 
   LocalData(const LocalData &) = default;
@@ -152,14 +146,14 @@ struct MappingInfo<dim, number>::LocalData
   // bool compare_scaling (const LocalData& other, const double zero_tolerance)
   // {
   //   for (unsigned int direction = 0; direction < dim; ++direction)
-  //     for (unsigned int cell = 0; cell < h_inverses[direction].size(); ++cell)
-  // 	for (unsigned int vv = 0; vv < dealii::VectorizedArray<number>::n_array_elements; ++vv)
-  // 	  if (std::fabs (h_inverses[direction][cell][vv] - other.h_inverses[direction][cell][vv]) >
+  //     for (unsigned int cell = 0; cell < h_lengths[direction].size(); ++cell)
+  // 	for (unsigned int vv = 0; vv < VectorizedArray<number>::n_array_elements; ++vv)
+  // 	  if (std::fabs (h_lengths[direction][cell][vv] - other.h_lengths[direction][cell][vv]) >
   // zero_tolerance) 	    return false;
   //   return true;
   // }
 
-  std::array<dealii::AlignedVector<dealii::VectorizedArray<number>>, dim> h_inverses;
+  std::array<AlignedVector<VectorizedArray<number>>, dim> h_lengths;
 };
 
 //  ++++++++++++++++++++++++++++++   inline functions   ++++++++++++++++++++++++++++++
@@ -182,28 +176,18 @@ MappingInfo<dim, number>::clear()
 }
 
 template<int dim, typename number>
-const dealii::VectorizedArray<number> *
+const VectorizedArray<number> *
 MappingInfo<dim, number>::h_lengths_begin(const unsigned int patch_id) const
 {
-  Assert(mapping_data_initialized, dealii::ExcNotInitialized());
+  Assert(mapping_data_initialized, ExcNotInitialized());
   AssertIndexRange(patch_id, n_subdomains);
   return internal_data.h_lengths.begin() + mapping_data_starts[patch_id];
 }
 
 template<int dim, typename number>
-const dealii::VectorizedArray<number> *
-MappingInfo<dim, number>::h_inverses_begin(const unsigned int patch_id) const
-{
-  Assert(mapping_data_initialized, dealii::ExcNotInitialized());
-  AssertIndexRange(patch_id, n_subdomains);
-  return internal_data.h_inverses.begin() + mapping_data_starts[patch_id];
-}
-
-template<int dim, typename number>
 inline bool
-MappingInfo<dim, number>::is_uniform_cell(
-  const dealii::Tensor<2, dim, dealii::VectorizedArray<number>> * jacobian,
-  const double                                                    zero_tolerance_double) const
+MappingInfo<dim, number>::is_uniform_cell(const Tensor<2, dim, VectorizedArray<number>> * jacobian,
+                                          const double zero_tolerance_double) const
 {
   bool         is_uniform = true;
   const auto & jac_0      = jacobian[0];
@@ -221,9 +205,9 @@ MappingInfo<dim, number>::is_uniform_cell(
 template<int dim, typename number>
 inline bool
 MappingInfo<dim, number>::are_jacobians_equal(
-  const dealii::Tensor<2, dim, dealii::VectorizedArray<number>> * jacobian0,
-  const dealii::Tensor<2, dim, dealii::VectorizedArray<number>> * jacobian,
-  const double                                                    zero_tolerance_double) const
+  const Tensor<2, dim, VectorizedArray<number>> * jacobian0,
+  const Tensor<2, dim, VectorizedArray<number>> * jacobian,
+  const double                                    zero_tolerance_double) const
 {
   bool         are_equal = true;
   const auto & jac_0     = jacobian0[0];
@@ -244,14 +228,10 @@ template<int dim, typename number>
 inline void
 MappingInfo<dim, number>::submit_local_data(const MappingInfo<dim, number>::LocalData & local_data)
 {
-  const unsigned int n_cells_per_direction = local_data.h_inverses[0].size();
+  const unsigned int n_cells_per_direction = local_data.h_lengths[0].size();
   for(unsigned int d = 0; d < dim; ++d)
     for(unsigned int cell_no_1d = 0; cell_no_1d < n_cells_per_direction; ++cell_no_1d)
-    {
-      internal_data.h_inverses.push_back(local_data.h_inverses[d][cell_no_1d]);
-      internal_data.h_lengths.push_back(1. / local_data.h_inverses[d][cell_no_1d]);
-    }
-  AssertDimension(internal_data.h_inverses.size(), internal_data.h_lengths.size());
+      internal_data.h_lengths.push_back(local_data.h_lengths[d][cell_no_1d]);
 }
 
 // --------------------------------   InternalData   --------------------------------
@@ -260,7 +240,6 @@ template<int dim, typename number>
 void
 MappingInfo<dim, number>::InternalData::clear()
 {
-  h_inverses.clear();
   h_lengths.clear();
 }
 

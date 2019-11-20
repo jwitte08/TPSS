@@ -14,7 +14,7 @@ set(sourcefiles
   # mlaplace.cc # TODO
   # linelasticity.cc # TODO
   poisson.cc
-  # poisson_distorted.cc # TODO
+  poisson_distorted.cc
   poisson_mpiscaling.cc
   )
 

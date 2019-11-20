@@ -137,11 +137,6 @@ protected:
   /**
    * lexicographical ordering: cell_no_1d < direction
    */
-  const VectorizedArray<Number> * h_inverses = nullptr;
-
-  /**
-   * lexicographical ordering: cell_no_1d < direction
-   */
   const VectorizedArray<Number> * h_lengths = nullptr;
 
   /**
@@ -570,7 +565,6 @@ inline FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::~FDEvalu
   values                = nullptr;
   JxWs                  = nullptr;
   h_lengths             = nullptr;
-  h_inverses            = nullptr;
   quad_weights_unit     = nullptr;
   scratch_pad           = nullptr;
   scratch_pad_remainder = nullptr;
@@ -588,8 +582,7 @@ FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(const un
               GeometryInfo<dim>::faces_per_cell,
               bdry_mask_id.begin());
 
-  h_inverses = mapping_info.template h_inverses_begin(patch);
-  h_lengths  = mapping_info.template h_lengths_begin(patch);
+  h_lengths = mapping_info.template h_lengths_begin(patch);
 
   gradients_filled = false;
 }
