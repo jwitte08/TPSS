@@ -85,6 +85,7 @@ std::string
 Parameter::to_string() const
 {
   std::ostringstream oss;
+  oss << Util::parameter_to_fstring("Compressed mode:", compressed);
   oss << Util::parameter_to_fstring("Number of run cycles:", n_cycles);
   oss << std::endl;
   oss << mesh.to_string() << std::endl;
