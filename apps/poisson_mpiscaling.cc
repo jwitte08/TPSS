@@ -48,8 +48,7 @@ struct TestParameter
   do_test_variant(unsigned variant_no) const
   {
     /// integer characterizes 4 test variants bitwise
-    AssertThrow(0 <= test_variants && test_variants < (1 << 4),
-                ExcMessage("No valid choice of test_variants"));
+    AssertThrow(test_variants < (1 << 4), ExcMessage("No valid choice of test_variants"));
     AssertIndexRange(variant_no, 4);
     std::bitset<4> flags(test_variants);
     // for (auto bit : flags)
