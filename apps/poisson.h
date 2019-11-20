@@ -173,7 +173,7 @@ struct ModelProblem : public Subscriptor
 
   template<typename Number2>
   std::shared_ptr<const MatrixFree<dim, Number2>>
-  build_mf_storage(const unsigned level = static_cast<unsigned>(-1))
+  build_mf_storage(const unsigned level = static_cast<unsigned>(-1)) const
   {
     typename MatrixFree<dim, Number2>::AdditionalData additional_data;
     const auto                                        p_scheme =
@@ -199,13 +199,12 @@ struct ModelProblem : public Subscriptor
   }
 
 
-  template<typename Number2>
-  std::shared_ptr<const SubdomainHandler<dim, Number2>>
-  build_patch_storage(const unsigned                                        level,
-                      const std::shared_ptr<const MatrixFree<dim, Number2>> mf_storage)
+  template<typename NumberIn>
+  std::shared_ptr<const SubdomainHandler<dim, NumberIn>>
+  build_patch_storage(const unsigned                                         level,
+                      const std::shared_ptr<const MatrixFree<dim, NumberIn>> mf_storage)
   {
-    typename SubdomainHandler<dim, Number2>::AdditionalData fdss_additional_data;
-    fdss_additional_data.level         = level;
+    typename SubdomainHandler<dim, NumberIn>::AdditionalData fdss_additional_data;
     fdss_additional_data.level         = level;
     fdss_additional_data.patch_variant = rt_parameters.multigrid.pre_smoother.schwarz.patch_variant;
     fdss_additional_data.smoother_variant =
@@ -221,7 +220,7 @@ struct ModelProblem : public Subscriptor
       rt_parameters.multigrid.pre_smoother.schwarz.normalize_surrogate_patch;
     fdss_additional_data.use_arc_length =
       rt_parameters.multigrid.pre_smoother.schwarz.use_arc_length;
-    const auto patch_storage = std::make_shared<SubdomainHandler<dim, Number2>>();
+    const auto patch_storage = std::make_shared<SubdomainHandler<dim, NumberIn>>();
     patch_storage->reinit(mf_storage, fdss_additional_data);
     return patch_storage;
   }
