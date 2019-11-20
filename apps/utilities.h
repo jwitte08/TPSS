@@ -56,7 +56,7 @@ generic_info_to_fstring()
                                     Utilities::System::get_current_vectorization_level());
   const auto size_of_global_dof_index = sizeof(types::global_dof_index{0});
   oss << Util::parameter_to_fstring("Size of global_dof_index (bits):",
-				    8*size_of_global_dof_index);
+                                    8 * size_of_global_dof_index);
   return oss.str();
 }
 
