@@ -27,8 +27,9 @@ struct TestParameter
   std::string                        solver_variant   = "cg"; // see SolverSelector
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::IterativeAcc;
-  double   coarse_grid_accuracy = 1.e-8;
   double   cg_reduction         = 1.e-8;
+  double   coarse_grid_accuracy = 1.e-8;
+  bool     compressed           = false;
   unsigned n_refinements        = 1;
   unsigned n_smoothing_steps    = 1;
   unsigned n_samples            = 10;
@@ -113,6 +114,9 @@ struct Test
     rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(8, fe_degree + 1);
     rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
     rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
+
+    //: misc
+    rt_parameters.compressed = prms.compressed;
 
     if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
       std::cout << write_header();

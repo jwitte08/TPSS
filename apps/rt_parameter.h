@@ -46,10 +46,11 @@ namespace RT
 {
 struct Parameter
 {
+  bool            compressed = false;
   MeshParameter   mesh;
-  SolverParameter solver;
   MGParameter     multigrid;
   unsigned int    n_cycles = 0;
+  SolverParameter solver;
 
   std::string
   to_string() const;

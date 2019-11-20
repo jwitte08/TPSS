@@ -206,6 +206,7 @@ struct ModelProblem : public Subscriptor
   {
     typename SubdomainHandler<dim, NumberIn>::AdditionalData fdss_additional_data;
     fdss_additional_data.level         = level;
+    fdss_additional_data.compressed    = rt_parameters.compressed;
     fdss_additional_data.patch_variant = rt_parameters.multigrid.pre_smoother.schwarz.patch_variant;
     fdss_additional_data.smoother_variant =
       rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant;
