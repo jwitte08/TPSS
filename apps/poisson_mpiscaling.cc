@@ -162,7 +162,7 @@ struct Test
 
   //: determine filename from test parameters
   std::string
-  get_filename(const unsigned int n_dofs_global)
+  get_filename(const types::global_dof_index n_dofs_global)
   {
     std::ostringstream oss;
     const auto         n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
@@ -322,8 +322,8 @@ struct Test
     } // end sample loop
 
     //: write performance timings
-    const auto        n_dofs_global = poisson_problem.pp_data.n_dofs_global.front();
-    const std::string filename      = get_filename(n_dofs_global);
+    const types::global_dof_index n_dofs_global = poisson_problem.pp_data.n_dofs_global.front();
+    const std::string             filename      = get_filename(n_dofs_global);
     if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
     {
       std::fstream            fstream;
@@ -368,9 +368,9 @@ struct Test
 
     if(is_first_proc)
     {
-      const auto        n_dofs_global = poisson_problem.pp_data.n_dofs_global.front();
-      const std::string filename      = get_filename(n_dofs_global);
-      std::fstream      fstream;
+      const types::global_dof_index n_dofs_global = poisson_problem.pp_data.n_dofs_global.front();
+      const std::string             filename      = get_filename(n_dofs_global);
+      std::fstream                  fstream;
       fstream.open("poisson_" + filename + ".log", std::ios_base::out);
       fstream << oss.str();
       fstream.close();
@@ -421,7 +421,7 @@ struct Test
     poisson_problem.distribute_dofs();
 
     print_row(pcout, 20, "VmPeak", "VmSize", "VmHWM", "VmRSS");
-    unsigned int n_dofs_global = 0;
+    types::global_dof_index n_dofs_global = 0;
     for(unsigned sample = 0; sample < prms.n_samples; ++sample)
     {
       Timer time(MPI_COMM_WORLD, true);
@@ -509,7 +509,7 @@ struct Test
     Timer time(MPI_COMM_WORLD, true);
 
     print_row(pcout, 20, "VmPeak", "VmSize", "VmHWM", "VmRSS");
-    unsigned int n_dofs_global = 0;
+    types::global_dof_index n_dofs_global = 0;
     for(unsigned sample = 0; sample < prms.n_samples; ++sample)
     {
       //: setup
@@ -625,8 +625,8 @@ struct Test
     }
 
     //: write performance timings
-    const auto        n_dofs_global = poisson_problem.pp_data.n_dofs_global.front();
-    const std::string filename      = get_filename(n_dofs_global);
+    const types::global_dof_index n_dofs_global = poisson_problem.pp_data.n_dofs_global.front();
+    const std::string             filename      = get_filename(n_dofs_global);
     if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
     {
       std::fstream            fstream;
