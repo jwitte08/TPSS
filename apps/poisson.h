@@ -271,6 +271,7 @@ struct ModelProblem : public Subscriptor
   void
   distribute_dofs()
   {
+    dof_handler.clear();
     dof_handler.initialize(triangulation, *fe);
     dof_handler.distribute_mg_dofs();
   }
@@ -357,6 +358,17 @@ struct ModelProblem : public Subscriptor
   void
   prepare_multigrid()
   {
+    // *** clear multigrid infrastructure
+    multigrid.reset();
+    mg_matrix_wrapper.reset();
+    mg_coarse_grid.reset();
+    mg_smoother_post = nullptr;
+    mg_smoother_pre  = nullptr;
+    mg_schwarz_smoother_post.reset();
+    mg_schwarz_smoother.clear();
+    mg_schwarz_precondition.resize(0, 0);
+    mg_matrices.clear_elements();
+
     // *** setup multigrid data
     const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
     const unsigned mg_level_max = this->level;
