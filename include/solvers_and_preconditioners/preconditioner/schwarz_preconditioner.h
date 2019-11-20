@@ -209,9 +209,9 @@ private:
    */
   std::shared_ptr<std::vector<MatrixType>> subdomain_to_inverse;
 
-  mutable LinearAlgebra::distributed::Vector<value_type> solution_ghosted;
+  mutable std::shared_ptr<LinearAlgebra::distributed::Vector<value_type>> solution_ghosted;
 
-  mutable LinearAlgebra::distributed::Vector<value_type> residual_ghosted;
+  mutable std::shared_ptr<LinearAlgebra::distributed::Vector<value_type>> residual_ghosted;
 
   unsigned int level = -1;
 

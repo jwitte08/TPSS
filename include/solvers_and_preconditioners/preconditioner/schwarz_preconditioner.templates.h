@@ -40,15 +40,17 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   Assert(patch_variant == TPSS::PatchVariant::vertex || patch_variant == TPSS::PatchVariant::cell,
          dealii::ExcNotImplemented());
 
-  // *** initialize ghosted vectors
-  initialize_ghost(solution_ghosted);
-  initialize_ghost(residual_ghosted);
-
   // *** compute subproblem inverses
   Timer timer;
   timer.restart();
   compute_inverses();
   time_data[2].add_time(timer.wall_time());
+
+  // *** initialize ghosted vectors
+  solution_ghosted = std::make_shared<LinearAlgebra::distributed::Vector<value_type>>();
+  initialize_ghost(*solution_ghosted);
+  residual_ghosted = std::make_shared<LinearAlgebra::distributed::Vector<value_type>>();
+  initialize_ghost(*residual_ghosted);
 
   // *** storing SubdomainHandler's timings
   const auto & sh_time_data = subdomain_handler->get_time_data();
@@ -76,8 +78,8 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   level                = schwarz_preconditioner_in.level;
   patch_variant        = schwarz_preconditioner_in.patch_variant;
   smoother_variant     = schwarz_preconditioner_in.smoother_variant;
-  initialize_ghost(solution_ghosted);
-  initialize_ghost(residual_ghosted);
+  solution_ghosted     = schwarz_preconditioner_in.solution_ghosted;
+  residual_ghosted     = schwarz_preconditioner_in.residual_ghosted;
   Assert(additional_data.relaxation > 0., ExcMessage("Invalid relaxation factor."));
   Assert(patch_variant == TPSS::PatchVariant::vertex || patch_variant == TPSS::PatchVariant::cell,
          ExcMessage("Invalid patch variant."));
@@ -281,9 +283,9 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   else // set ghosted vector with write access
   {
     timer.restart();
-    solution_ghosted.zero_out_ghosts();
-    solution_ghosted.copy_locally_owned_data_from(solution_in);
-    solution = &solution_ghosted;
+    solution_ghosted->zero_out_ghosts();
+    solution_ghosted->copy_locally_owned_data_from(solution_in);
+    solution = solution_ghosted.get();
     time_data.at(3).add_time(timer.wall_time());
   }
   const VectorType * residual;
@@ -296,9 +298,9 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   else // set ghosted vector with read access
   {
     timer.restart();
-    residual_ghosted.copy_locally_owned_data_from(residual_in);
-    residual_ghosted.update_ghost_values();
-    residual = &residual_ghosted;
+    residual_ghosted->copy_locally_owned_data_from(residual_in);
+    residual_ghosted->update_ghost_values();
+    residual = residual_ghosted.get();
     time_data.at(3).add_time(timer.wall_time());
   }
 
@@ -310,11 +312,11 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
 
   // *** compress and copy locally owned unknowns (if needed)
   solution->compress(VectorOperation::add);
-  if(solution == &solution_ghosted)
+  if(solution == solution_ghosted.get())
   {
     // std::cout << "copy locally owned data to solution_in" << std::endl;
     timer.restart();
-    solution_in.copy_locally_owned_data_from(solution_ghosted);
+    solution_in.copy_locally_owned_data_from(*solution_ghosted);
     time_data.at(3).add_time(timer.wall_time());
   }
 }
