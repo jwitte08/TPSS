@@ -181,6 +181,7 @@ struct SubdomainHandler<dim, number>::AdditionalData
   bool         use_arc_length            = true;
   unsigned int n_threads                 = 0;
   unsigned int grain_size                = 0;
+  bool         compressed                = false;
   bool         print_details             = false;
 };
 

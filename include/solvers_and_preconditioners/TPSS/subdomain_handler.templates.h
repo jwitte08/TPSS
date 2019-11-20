@@ -33,8 +33,6 @@ template<int dim, typename number>
 void
 SubdomainHandler<dim, number>::internal_reinit()
 {
-  using namespace dealii;
-
   // *** check if additional_data is reasonable
   Assert(additional_data.level != static_cast<unsigned int>(-1), ExcNotImplemented());
   Assert(additional_data.patch_variant != TPSS::PatchVariant::invalid, ExcInvalidState());
@@ -63,6 +61,7 @@ SubdomainHandler<dim, number>::internal_reinit()
   patch_info_data.level                 = additional_data.level;
   patch_info_data.coloring_func         = additional_data.coloring_func;
   patch_info_data.manual_gathering_func = additional_data.manual_gathering_func;
+  patch_info_data.compressed            = additional_data.compressed;
   patch_info_data.print_details         = additional_data.print_details;
   patch_info.initialize(dof_handler, patch_info_data);
   for(const auto & info : patch_info.time_data)
@@ -88,6 +87,10 @@ SubdomainHandler<dim, number>::internal_reinit()
   AssertThrow(quadrature_storage.size() == dim, ExcNotImplemented()); // each direction is filled
   for(const auto & quad : quadrature_storage)
     AssertThrow(quad == quadrature_storage[0], ExcMessage("Quadrature storage is not isotropic!"));
+
+  // *** if possible compress the data
+  if(additional_data.compressed)
+    patch_info.get_internal_data()->compress();
 }
 
 template<int dim, typename number>

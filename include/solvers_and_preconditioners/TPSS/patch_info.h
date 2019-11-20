@@ -318,6 +318,7 @@ struct PatchInfo<dim>::AdditionalData
                        colored_iterators,
                      const std::string)>
        visualize_coloring;
+  bool compressed    = false;
   bool print_details = false; // DEBUG
 };
 
@@ -442,6 +443,13 @@ struct PatchInfo<dim>::InternalData
   void
   clear();
 
+  /*
+   * Experimental. If we have extracted all informations on dofs and mesh cells
+   * we are able to delete the @p cell_iterators field.
+   */
+  void
+  compress() const;
+
   bool
   empty() const;
 
@@ -458,7 +466,7 @@ struct PatchInfo<dim>::InternalData
    *
    * Lexicographical:  cell number  <  lane  <  patch id  <   color
    */
-  std::vector<CellIterator> cell_iterators;
+  mutable std::vector<CellIterator> cell_iterators;
 
   /**
    * Numbers of physical subdomains for each color.
@@ -655,12 +663,6 @@ private:
 
 // --------------------------------   PatchInfo   --------------------------------
 
-// template<int dim>
-// PatchInfo<dim>::~PatchInfo()
-// {
-//   clear();
-// }
-
 template<int dim>
 inline void
 PatchInfo<dim>::clear()
@@ -738,12 +740,6 @@ PatchInfo<dim>::GhostPatch::str() const
 }
 
 // --------------------------------   PatchInfo::PartitionData   --------------------------------
-
-// template<int dim>
-// inline PatchInfo<dim>::PartitionData::~PartitionData()
-// {
-//   clear();
-// }
 
 template<int dim>
 inline void
@@ -829,12 +825,6 @@ PatchInfo<dim>::PartitionData::is_compatible(const PartitionData & other) const
 
 // --------------------------------   PatchInfo::InternalData   --------------------------------
 
-// template<int dim>
-// inline PatchInfo<dim>::InternalData::~InternalData()
-// {
-//   clear();
-// }
-
 template<int dim>
 inline void
 PatchInfo<dim>::InternalData::clear()
@@ -842,6 +832,13 @@ PatchInfo<dim>::InternalData::clear()
   level = -1;
   n_physical_subdomains.clear();
   n_physical_subdomains_total = SubdomainData{};
+  cell_iterators.clear();
+}
+
+template<int dim>
+inline void
+PatchInfo<dim>::InternalData::compress() const
+{
   cell_iterators.clear();
 }
 

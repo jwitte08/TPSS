@@ -181,8 +181,7 @@ private:
    */
   std::vector<std::array<types::global_dof_index, macro_size>> patch_to_global_indices;
 
-  // TODO
-  const bool compressed = false;
+  const bool compressed;
 
   // TODO dofh_index is not used
   const unsigned int dofh_index;
@@ -455,6 +454,7 @@ inline PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::PatchTr
     n_colors(sd_handler_in.get_patch_info().subdomain_partition_data.n_colors()),
     sd_handler(sd_handler_in),
     cell_to_patch_indices(std::move(cell_to_patch_indexing)),
+    compressed(sd_handler_in.get_additional_data().compressed),
     dofh_index(dofh_index_in),
     patch_id(-1),
     patch_worker(sd_handler_in.get_patch_info())
@@ -471,8 +471,11 @@ PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(const u
 {
   AssertIndexRange(patch, n_subdomains);
   patch_id = patch;
-  reinit_patch_to_global_indices(patch_id);
-  AssertDimension(patch_to_global_indices.size(), n_dofs_per_patch());
+  if(compressed)
+  {
+    reinit_patch_to_global_indices(patch_id);
+    AssertDimension(patch_to_global_indices.size(), n_dofs_per_patch());
+  }
 }
 
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
