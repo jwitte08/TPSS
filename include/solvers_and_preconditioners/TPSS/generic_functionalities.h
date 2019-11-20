@@ -199,6 +199,22 @@ fstring_column(const std::string value, const unsigned size)
 }
 
 
+std::string
+fstring_column(const char value[], const unsigned size)
+{
+  return fstring_column_default<std::string>(value, size);
+}
+
+
+std::string
+fstring_column(const bool value, const unsigned size)
+{
+  std::ostringstream ostream;
+  ostream << std::boolalpha << value;
+  return (extend_string(ostream.str(), size));
+}
+
+
 template<typename T>
 std::string
 fstring_column(const std::vector<T> & vec_value, const unsigned size)
