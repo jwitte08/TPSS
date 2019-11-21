@@ -79,6 +79,8 @@ SubdomainHandler<dim, number>::internal_reinit()
   // TODO different dof handlers !?
   for(unsigned int dofh_index = 1; dofh_index < n_components(); ++dofh_index)
     vector_partitioners[dofh_index] = vector_partitioners[0];
+  AssertThrow(vector_partitioners.size() == n_components(),
+              ExcMessage("Mismatching number of partitioners."));
 
   // *** compute the surrogate patches which pertain the tensor structure
   typename TPSS::MappingInfo<dim, number>::AdditionalData mapping_info_data;

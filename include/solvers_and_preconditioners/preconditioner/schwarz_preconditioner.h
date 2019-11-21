@@ -171,24 +171,46 @@ private:
     AssertThrow(false, ExcMessage("VectorType not supported."));
   }
 
+  /*
+   * Initializes MPI vectors with respect to the MPI partitioners stored in
+   * SubdomainHandler. This method should only be used for 'private' vectors
+   * such that local compatibility checks are sufficient.
+   */
   void
   initialize_ghost(LinearAlgebra::distributed::Vector<value_type> & vec) const
   {
     const auto partitioner = subdomain_handler->get_vector_partitioner();
+    if(vec.partitioners_are_compatible(*partitioner))
+      return;
     vec.reinit(partitioner);
+    // std::cout << "initialize ghost on level " << level << std::endl;
   }
 
+  /*
+   * Initializes MPI vectors with respect to the MPI partitioners stored in
+   * SubdomainHandler. This method should only be used for 'private' vectors
+   * such that local compatibility checks are sufficient.
+   */
   void
   initialize_ghost(LinearAlgebra::distributed::BlockVector<value_type> & vec) const
   {
-    const auto partitioner = subdomain_handler->get_vector_partitioner();
-    /// initialize block structure which has to be finalized by collect_sizes()
+    const auto & partitioners = subdomain_handler->get_vector_partitioners();
+    if(vec.n_blocks() == subdomain_handler->n_components())
+    {
+      bool is_compatible = true;
+      for(unsigned int b = 0; b < vec.n_blocks(); ++b)
+        is_compatible &= vec.block(b).partitioners_are_compatible(*(partitioners[b]));
+      if(is_compatible)
+        return;
+    }
+
     const unsigned int n_components = subdomain_handler->n_components();
     vec.reinit(n_components, /*block_size*/ 0, /*omit_zeroing_entries*/ false);
-    /// initialize mpi structure for each block
     for(unsigned int b = 0; b < n_components; ++b)
-      vec.block(b).reinit(partitioner);
-    /// update the information on the block sizes
+      vec.block(b).reinit(partitioners[b]);
+    /// since the 'block size' has not been set in the reinit() call we have to
+    /// finalize the initialization by updating the vector intrinsic information
+    /// on the block sizes, namely collect_sizes()
     vec.collect_sizes();
   }
 
