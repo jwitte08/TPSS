@@ -16,6 +16,7 @@
 
 #include <deal.II/fe/fe_system.h>
 
+#include "coloring.h"
 #include "equation_data.h"
 #include "laplace_problem.h"
 #include "linelasticity_integrator.h"
@@ -81,6 +82,7 @@ struct ModelProblem : public Subscriptor
   MGLevelObject<LEVEL_MATRIX>                                  mg_matrices;
   std::vector<MGConstrainedDoFs>                               mg_constrained_dofs;
   MGTransferBlockMatrixFree<dim, value_type_mg>                mg_transfer;
+  RedBlackColoring<dim>                                        red_black_coloring;
   MGLevelObject<std::shared_ptr<const SCHWARZ_PRECONDITIONER>> mg_schwarz_precondition;
   MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR> mg_schwarz_smoother;
   std::shared_ptr<const MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR>>
@@ -117,6 +119,7 @@ struct ModelProblem : public Subscriptor
       level(static_cast<unsigned int>(-1)),
       mg_constrained_dofs(dof_handlers.size()),
       mg_transfer(mg_constrained_dofs),
+      red_black_coloring(rt_parameters_in.mesh),
       mg_smoother_pre(nullptr),
       mg_smoother_post(nullptr)
   {
@@ -177,21 +180,23 @@ struct ModelProblem : public Subscriptor
       dof_handler.begin_active(), dof_handler.end(), dof_info, info_box, integrator, assembler);
   }
 
-  template<typename Number2>
-  std::shared_ptr<const MatrixFree<dim, Number2>>
+  template<typename OtherNumber>
+  std::shared_ptr<const MatrixFree<dim, OtherNumber>>
   build_mf_storage(const unsigned int level = static_cast<unsigned>(-1))
   {
-    using AddData = typename MatrixFree<dim, Number2>::AdditionalData;
-
+    using AddData     = typename MatrixFree<dim, OtherNumber>::AdditionalData;
+    using TasksScheme = typename AddData::TasksParallelScheme;
+    /// dummy constraints
     AffineConstraints<double> constraints_dummy;
     constraints_dummy.close();
     std::vector<const AffineConstraints<double> *> constraints_dummies;
     std::fill_n(std::back_inserter(constraints_dummies), n_components, &constraints_dummy);
-    const auto mf_storage = std::make_shared<MatrixFree<dim, Number2>>();
 
+    /// initialize quadrature
     unsigned int n_qpoints = fe_degree + 1;
     QGauss<1>    quadrature(n_qpoints);
 
+    /// prepare additional data
     AddData    additional_data;
     const auto mapping_update_flags = dealii::update_gradients | dealii::update_JxW_values |
                                       dealii::update_quadrature_points | dealii::update_values;
@@ -200,21 +205,46 @@ struct ModelProblem : public Subscriptor
     additional_data.mapping_update_flags_boundary_faces = mapping_update_flags;
     if(level != static_cast<unsigned>(-1))
       additional_data.mg_level = level;
-    const auto tasks_scheme =
-      static_cast<typename AddData::TasksParallelScheme>(parameters.mf_tasks_scheme_id);
+    const auto tasks_scheme               = static_cast<TasksScheme>(0 /*none*/);
     additional_data.tasks_parallel_scheme = tasks_scheme;
 
+    /// initialize matrix-free storage
+    const auto mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
     mf_storage->reinit(
       mapping, get_dof_handlers(), constraints_dummies, quadrature, additional_data);
+
     return mf_storage;
   }
 
-  template<typename Number2>
-  std::shared_ptr<const SubdomainHandler<dim, Number2>>
-  build_patch_storage(const unsigned                                        level,
-                      const std::shared_ptr<const MatrixFree<dim, Number2>> mf_storage)
+  template<typename OtherNumber>
+  std::shared_ptr<const SubdomainHandler<dim, OtherNumber>>
+  build_patch_storage(const unsigned                                            level,
+                      const std::shared_ptr<const MatrixFree<dim, OtherNumber>> mf_storage)
   {
-    const auto & patch_storage = laplace_problem.build_patch_storage(level, mf_storage);
+    // TODO what if pre- and post-smoother data differs?
+    /// prepare additional data
+    typename SubdomainHandler<dim, OtherNumber>::AdditionalData fdss_additional_data;
+    fdss_additional_data.level         = level;
+    fdss_additional_data.compressed    = rt_parameters.compressed;
+    fdss_additional_data.patch_variant = rt_parameters.multigrid.pre_smoother.schwarz.patch_variant;
+    fdss_additional_data.smoother_variant =
+      rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant;
+    fdss_additional_data.print_details = rt_parameters.multigrid.pre_smoother.schwarz.print_details;
+    if(rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring)
+    {
+      fdss_additional_data.coloring_func = std::ref(red_black_coloring);
+    }
+    fdss_additional_data.n_q_points_surrogate =
+      rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate;
+    fdss_additional_data.normalize_surrogate_patch =
+      rt_parameters.multigrid.pre_smoother.schwarz.normalize_surrogate_patch;
+    fdss_additional_data.use_arc_length =
+      rt_parameters.multigrid.pre_smoother.schwarz.use_arc_length;
+
+    /// initialize patch storage
+    const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
+    patch_storage->reinit(mf_storage, fdss_additional_data);
+
     return patch_storage;
   }
 
@@ -246,20 +276,14 @@ struct ModelProblem : public Subscriptor
   void
   distribute_dofs(const bool print_details = false)
   {
-    unsigned int component = 0;
+    /// initialize one scalar dof handler
+    const auto dofh_in = std::make_shared<DoFHandler<dim>>(triangulation);
+    dofh_in->initialize(triangulation, *fe);
+    dofh_in->distribute_mg_dofs();
+
+    /// reset each component of the vector-valued dof handler @p dof_handlers
     for(auto & dofh : dof_handlers)
-    {
-      dofh = std::make_shared<DoFHandler<dim>>(triangulation);
-      dofh->initialize(triangulation, *fe);
-      // dofh->distribute_dofs(*fe); //already done in initialize() call
-      dofh->distribute_mg_dofs();
-      if(print_details)
-      {
-        pcout << " ... distributed dofs of component " << component << std::endl;
-        print_dof_info(*dofh);
-      }
-      ++component;
-    }
+      dofh = dofh_in;
   }
 
   void
@@ -356,27 +380,24 @@ struct ModelProblem : public Subscriptor
   void
   prepare_system(const bool print_details = false, const bool do_compute_rhs = true)
   {
-    // *** system matrix
+    // *** initialize system matrix
     this->mf_storage = build_mf_storage<Number>();
     system_matrix.initialize(mf_storage, equation_data);
     pp_data.n_dofs_global.push_back(system_matrix.m());
 
-    // TODO dirty workaround
+    // *** initialize solution vector
     system_u.reinit(n_components);
+    for(unsigned int comp = 0; comp < n_components; ++comp)
+      mf_storage->initialize_dof_vector(system_u.block(comp), comp);
+    system_u.collect_sizes();
+
+    // *** initialize (& compute) right hand side vector
     system_rhs.reinit(n_components);
     for(unsigned int comp = 0; comp < n_components; ++comp)
-    {
-      mf_storage->initialize_dof_vector(system_u.block(comp), comp);
       mf_storage->initialize_dof_vector(system_rhs.block(comp), comp);
-    }
-    system_u.collect_sizes();
     system_rhs.collect_sizes();
-
-    // *** compute the linear system's right hand side
     if(do_compute_rhs)
       compute_rhs(print_details);
-    if(print_details)
-      pcout << " ... prepared system with " << mf_storage->n_components() << " components\n";
   }
 
   void

@@ -15,12 +15,19 @@ using namespace LinElasticity;
 
 struct TestParameter
 {
+  TPSS::PatchVariant    patch_variant    = CT::PATCH_VARIANT_;
+  TPSS::SmootherVariant smoother_variant = CT::SMOOTHER_VARIANT_;
+
+  double                             cg_reduction         = 1.e-8;
+  double                             coarse_grid_accuracy = 1.e-8;
+  CoarseGridParameter::SolverVariant coarse_grid_variant =
+    CoarseGridParameter::SolverVariant::IterativeAcc;
+  types::global_dof_index dof_limit_min = 1e4;
+  types::global_dof_index dof_limit_max = 1e6;
   EquationData            equation_data;
-  types::global_dof_index dof_limit_min        = 1e4;
-  types::global_dof_index dof_limit_max        = 1e6;
-  double                  cg_reduction         = 1.e-8;
-  unsigned                n_smoothing_steps    = 2;
   double                  local_damping_factor = 1.;
+  unsigned                n_smoothing_steps    = 2;
+  std::string             solver_variant       = "cg";
 };
 
 template<int dim, int fe_degree, typename value_type = double>
@@ -31,11 +38,36 @@ test(const TestParameter & prms = TestParameter{})
     ModelProblem<dim, fe_degree, value_type, /*n_patch_dofs_per_direction*/ -1>;
 
   RT::Parameter rt_parameters;
+  //: discretization
   rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  rt_parameters.mesh.n_repetitions    = 2;
   rt_parameters.mesh.n_refinements    = 1;
-  rt_parameters.dof_limits            = {prms.dof_limit_min, prms.dof_limit_max};
-  rt_parameters.n_cycles              = 10;
+  rt_parameters.mesh.n_repetitions    = 2;
+
+  //: solver
+  rt_parameters.solver.variant              = prms.solver_variant;
+  rt_parameters.solver.rel_tolerance        = prms.cg_reduction;
+  rt_parameters.solver.precondition_variant = SolverParameter::PreconditionVariant::GMG;
+
+  //: multigrid
+  const double damping_factor =
+    TPSS::lookup_damping_factor(prms.patch_variant, prms.smoother_variant, dim);
+  rt_parameters.multigrid.coarse_level                 = 0;
+  rt_parameters.multigrid.coarse_grid.solver_variant   = prms.coarse_grid_variant;
+  rt_parameters.multigrid.coarse_grid.iterative_solver = prms.solver_variant;
+  rt_parameters.multigrid.coarse_grid.accuracy         = prms.coarse_grid_accuracy;
+  rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
+  rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = prms.patch_variant;
+  rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = prms.smoother_variant;
+  rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
+  rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
+  rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = prms.n_smoothing_steps;
+  rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(6, fe_degree + 1);
+  rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
+  rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
+
+  //: misc
+  rt_parameters.dof_limits = {prms.dof_limit_min, prms.dof_limit_max};
+  rt_parameters.n_cycles   = 10;
 
   Laplace::Parameter parameters;
   // *** PDE
