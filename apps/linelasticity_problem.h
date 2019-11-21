@@ -19,16 +19,16 @@
 #include "equation_data.h"
 #include "laplace_problem.h"
 #include "linelasticity_integrator.h"
+#include "mesh.h"
+#include "rt_parameter.h"
 #include "vectorization_helper.h"
 
 using namespace dealii;
 
-
-
 namespace LinElasticity
 {
 template<int dim, int fe_degree, typename Number = double, int n_patch_dofs = -1>
-struct MatrixOperator : public Subscriptor
+struct ModelProblem : public Subscriptor
 {
   static constexpr unsigned int n_components = dim;
   static constexpr unsigned int fe_order     = fe_degree + 1;
@@ -45,12 +45,17 @@ struct MatrixOperator : public Subscriptor
   using SCHWARZ_SMOOTHER       = SchwarzSmoother<dim, LEVEL_MATRIX, SCHWARZ_PRECONDITIONER, VECTOR>;
 
   // *** parameters and auxiliary structs
+  // TODO get rid of
   Laplace::MatrixOperator<dim, fe_degree, Number, n_patch_dofs> laplace_problem;
   Laplace::Parameter                                            parameters;
-  ConditionalOStream &                                          pcout;
-  mutable PostProcessData                                       pp_data;
-  SparsityPattern                                               sparsity;
-  SparseMatrix<double>                                          sparse_matrix;
+
+  RT::Parameter           rt_parameters;
+  ConditionalOStream &    pcout;
+  mutable PostProcessData pp_data;
+
+  // *** Matrix-based Code (testing)
+  SparsityPattern      sparsity;
+  SparseMatrix<double> sparse_matrix;
 
   // *** FEM fundamentals
   parallel::distributed::Triangulation<dim>                  triangulation;
@@ -93,11 +98,13 @@ struct MatrixOperator : public Subscriptor
   std::shared_ptr<const PreconditionMG<dim, VECTOR, decltype(mg_transfer)>> preconditioner_mg;
   PreconditionIdentity                                                      preconditioner_id;
 
-  MatrixOperator(ConditionalOStream &       pcout_in,
-                 const Laplace::Parameter & parameters_in,
-                 const EquationData &       equation_data_in = EquationData{})
+  ModelProblem(ConditionalOStream &       pcout_in,
+               const Laplace::Parameter & parameters_in,
+               const RT::Parameter &      rt_parameters_in,
+               const EquationData &       equation_data_in = EquationData{})
     : laplace_problem(pcout_in, parameters_in, /*generate grid?*/ false),
       parameters(laplace_problem.parameters),
+      rt_parameters(rt_parameters_in),
       pcout(pcout_in),
       triangulation(MPI_COMM_WORLD,
                     Triangulation<dim>::limit_level_difference_at_vertices,
@@ -113,7 +120,7 @@ struct MatrixOperator : public Subscriptor
       mg_smoother_pre(nullptr),
       mg_smoother_post(nullptr)
   {
-    create_triangulation(parameters.n_refines, true);
+    // create_triangulation(parameters.n_refines, true);
   }
 
   std::vector<const DoFHandler<dim> *>
@@ -212,93 +219,28 @@ struct MatrixOperator : public Subscriptor
   }
 
   bool
-  create_triangulation(const unsigned n_refines, const bool print_details = false)
+  create_triangulation(const unsigned n_refinements) //, const bool print_details = false)
   {
-    const unsigned int DOF_LIMIT_MAX_ = parameters.dof_limit_max;
-    const unsigned int DOF_LIMIT_MIN_ = parameters.dof_limit_min;
-
     triangulation.clear();
-    this->level    = -1;
-    auto mesh_info = std::make_pair<bool, std::string>(false, "");
+    this->level = static_cast<unsigned int>(-1);
 
-    if(parameters.geometry_variant == Laplace::Parameter::GeometryVariant::SubdividedCubeoid)
-    {
-      AssertDimension(parameters.n_subdivisions.size(), dim);
-      std::array<unsigned int, dim> n_subdivisions;
-      std::copy_n(parameters.n_subdivisions.cbegin(), dim, n_subdivisions.begin());
-
-      // function
-      const auto create_subdivided_rectangle = [](Triangulation<dim> &          tria,
-                                                  const unsigned int            n_refinements,
-                                                  std::array<unsigned int, dim> n_subdivisions) {
-        constexpr double          h = 1.;
-        std::vector<unsigned int> n_subdivs;
-        std::copy(n_subdivisions.cbegin(), n_subdivisions.cend(), std::back_inserter(n_subdivs));
-        Point<dim> xx0, xx1; // origin
-        for(unsigned int d = 0; d < dim; ++d)
-          xx1[d] = h * n_subdivisions[d];
-        GridGenerator::subdivided_hyper_rectangle(tria, n_subdivs, xx0, xx1);
-        tria.refine_global(n_refinements);
-
-        std::ostringstream oss;
-        oss << "domain: ";
-        for(unsigned int d = 0; d < dim; ++d)
-          oss << "(" << xx0[d] << ", " << xx1[d] << (d != (dim - 1) ? ") x " : ")\n");
-        oss << "mesh: ";
-        for(unsigned int d = 0; d < dim; ++d)
-          oss << (n_subdivisions[d] * (1 << n_refinements)) << (d != (dim - 1) ? " x " : "\n");
-
-        const auto info = std::make_pair<bool, std::string>(true, oss.str());
-        return info;
-      };
-
-      mesh_info = create_subdivided_rectangle(triangulation, n_refines, n_subdivisions);
-    }
-
-    else if(parameters.geometry_variant == Laplace::Parameter::GeometryVariant::Cube)
-    {
-      // function
-      const auto create_hyper_cube = [DOF_LIMIT_MIN_,
-                                      DOF_LIMIT_MAX_](Triangulation<dim> & tria,
-                                                      const unsigned int   n_refinements,
-                                                      const unsigned int   n_repetitions) {
-        constexpr unsigned n_dofs_per_cell_est = dim * Utilities::pow(fe_order, dim);
-        const unsigned     n_cells_per_dim     = n_repetitions * (1 << n_refinements);
-        const unsigned     n_cells_est         = Utilities::pow(n_cells_per_dim, dim);
-        const unsigned     n_dofs_est          = n_cells_est * n_dofs_per_cell_est;
-        if(n_dofs_est < DOF_LIMIT_MIN_ || DOF_LIMIT_MAX_ < n_dofs_est)
-          return std::make_pair<bool, std::string>(false, "mesh exceeds limits!");
-
-        const double left = 0.0, right = 1.0;
-        GridGenerator::subdivided_hyper_cube(tria, n_repetitions, left, right);
-        tria.refine_global(n_refinements);
-
-        std::ostringstream oss;
-        oss << "domain: ";
-        for(unsigned int d = 0; d < dim; ++d)
-          oss << "(" << left << ", " << right << (d != (dim - 1) ? ") x " : ")\n");
-        oss << "mesh: ";
-        for(unsigned int d = 0; d < dim; ++d)
-          oss << n_cells_per_dim << (d != (dim - 1) ? " x " : "\n");
-
-        const auto info = std::make_pair<bool, std::string>(true, oss.str());
-        return info;
-      };
-
-      mesh_info = create_hyper_cube(triangulation, n_refines, parameters.n_cell_repetitions);
-    }
-
-    else
-      AssertThrow(false, ExcNotImplemented());
-
-    const bool triangulation_was_created = mesh_info.first;
-    if(!triangulation_was_created) // invalid mesh
+    if(false) // TODO check estimated dofs
       return false;
 
-    this->level = triangulation.n_levels() - 1;
-    if(print_details)
-      pcout << mesh_info.second << std::endl;
-    return true; // valid mesh
+    MeshParameter mesh_prms = rt_parameters.mesh;
+    mesh_prms.n_refinements = n_refinements;
+
+    /// if the dof limits are exceeded we return without creating the mesh
+    const auto n_dofs_est = n_components * estimate_n_dofs(*fe, mesh_prms);
+    if(rt_parameters.exceeds_dof_limits(n_dofs_est))
+      return false;
+
+    /// create the triangulation and store few informations
+    pcout << create_mesh(triangulation, mesh_prms);
+    this->level = triangulation.n_global_levels() - 1;
+    pp_data.n_cells_global.push_back(triangulation.n_global_active_cells());
+
+    return true;
   }
 
   void
@@ -745,14 +687,14 @@ struct MatrixOperator : public Subscriptor
   void
   run(const bool print_details_in = false)
   {
-    for(unsigned cycle = 0; cycle < parameters.n_cycles; ++cycle)
+    for(unsigned cycle = 0; cycle < rt_parameters.n_cycles; ++cycle)
     {
       // const bool is_last_cycle = cycle == parameters.n_cycles - 1;
       // const bool print_details = print_details_in && is_last_cycle;
       const bool print_details = print_details_in;
 
-      // if(cycle > 0)
-      const bool is_tria_valid = create_triangulation(parameters.n_refines + cycle, print_details);
+      const unsigned n_refinements = rt_parameters.mesh.n_refinements + cycle;
+      const bool     is_tria_valid = create_triangulation(n_refinements);
       if(!is_tria_valid)
         continue;
       pp_data.n_cells_global.push_back(triangulation.n_global_active_cells());
