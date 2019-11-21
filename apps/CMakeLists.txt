@@ -13,6 +13,7 @@ message(STATUS "Configuring numerical applications within subdirectory 'apps'")
 set(sourcefiles
   # mlaplace.cc # TODO
   # linelasticity.cc # TODO
+  linelasticity_diagonly.cc
   poisson.cc
   poisson_distorted.cc
   poisson_mpiscaling.cc

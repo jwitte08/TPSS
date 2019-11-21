@@ -74,6 +74,7 @@ struct MatrixOperator : public Subscriptor
 
   // *** multigrid
   MGLevelObject<LEVEL_MATRIX>                                  mg_matrices;
+  std::vector<MGConstrainedDoFs>                               mg_constrained_dofs;
   MGTransferBlockMatrixFree<dim, value_type_mg>                mg_transfer;
   MGLevelObject<std::shared_ptr<const SCHWARZ_PRECONDITIONER>> mg_schwarz_precondition;
   MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR> mg_schwarz_smoother;
@@ -107,7 +108,8 @@ struct MatrixOperator : public Subscriptor
       analytical_solution(equation_data),
       volume_force(equation_data),
       level(static_cast<unsigned int>(-1)),
-      mg_transfer(dof_handlers.size()),
+      mg_constrained_dofs(dof_handlers.size()),
+      mg_transfer(mg_constrained_dofs),
       mg_smoother_pre(nullptr),
       mg_smoother_post(nullptr)
   {
@@ -452,6 +454,9 @@ struct MatrixOperator : public Subscriptor
     }
 
     // *** initialize multigrid transfer R_l
+    for(unsigned int block = 0; block < mg_constrained_dofs.size(); ++block)
+      mg_constrained_dofs[block].initialize(get_dof_handler(block));
+    mg_transfer.initialize_constraints(mg_constrained_dofs);
     mg_transfer.build(get_dof_handlers());
 
     // *** initialize Schwarz smoother S_l
