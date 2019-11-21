@@ -134,6 +134,29 @@ private:
   void
   compute_inverses();
 
+  template<typename OtherVectorType>
+  void
+  copy_locally_owned_data(OtherVectorType &, const OtherVectorType &) const
+  {
+    AssertThrow(false, ExcMessage("VectorType not supported."));
+  }
+
+  void
+  copy_locally_owned_data(LinearAlgebra::distributed::Vector<value_type> &       dst,
+                          const LinearAlgebra::distributed::Vector<value_type> & src) const
+  {
+    dst.copy_locally_owned_data_from(src);
+  }
+
+  void
+  copy_locally_owned_data(LinearAlgebra::distributed::BlockVector<value_type> &       dst,
+                          const LinearAlgebra::distributed::BlockVector<value_type> & src) const
+  {
+    const unsigned int n_components = subdomain_handler->n_components();
+    for(unsigned int b = 0; b < n_components; ++b)
+      dst.block(b).copy_locally_owned_data_from(src.block(b));
+  }
+
   /**
    * The sequence of colors for the smoothing step. Colors are defined by the PartitionData of @p
    * subdomain_handler and the ordering is determined in terms of the AdditionalData.
@@ -141,7 +164,6 @@ private:
   std::vector<unsigned int>
   get_color_sequence(const bool transpose) const;
 
-  // TODO support more vector types?
   template<typename OtherVectorType>
   void
   initialize_ghost(OtherVectorType &) const
@@ -153,9 +175,57 @@ private:
   initialize_ghost(LinearAlgebra::distributed::Vector<value_type> & vec) const
   {
     const auto partitioner = subdomain_handler->get_vector_partitioner();
-    if(vec.get_partitioner()->is_compatible(*partitioner))
-      return;
     vec.reinit(partitioner);
+  }
+
+  void
+  initialize_ghost(LinearAlgebra::distributed::BlockVector<value_type> & vec) const
+  {
+    const auto partitioner = subdomain_handler->get_vector_partitioner();
+    /// initialize block structure which has to be finalized by collect_sizes()
+    const unsigned int n_components = subdomain_handler->n_components();
+    vec.reinit(n_components, /*block_size*/ 0, /*omit_zeroing_entries*/ false);
+    /// initialize mpi structure for each block
+    for(unsigned int b = 0; b < n_components; ++b)
+      vec.block(b).reinit(partitioner);
+    /// update the information on the block sizes
+    vec.collect_sizes();
+  }
+
+  template<typename OtherVectorType>
+  bool
+  is_globally_compatible(
+    const OtherVectorType &,
+    const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> &) const
+  {
+    AssertThrow(false, ExcMessage("VectorType not supported."));
+    return false;
+  }
+
+  bool
+  is_globally_compatible(
+    const LinearAlgebra::distributed::Vector<value_type> &                  vec1,
+    const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> & partitioners) const
+  {
+    AssertThrow(!partitioners.empty(), ExcMessage("There are no partitioners."));
+    const bool is_compatible = vec1.partitioners_are_globally_compatible(*partitioners.front());
+    return is_compatible;
+  }
+
+  bool
+  is_globally_compatible(
+    const LinearAlgebra::distributed::BlockVector<value_type> &             vec1,
+    const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> & partitioners) const
+  {
+    bool is_compatible = true;
+    AssertThrow(partitioners.size() == subdomain_handler->n_components(),
+                ExcMessage("There are no partitioners."));
+    for(unsigned int b = 0; b < subdomain_handler->n_components(); ++b)
+    {
+      is_compatible =
+        is_compatible && vec1.block(b).partitioners_are_globally_compatible(*(partitioners[b]));
+    }
+    return is_compatible;
   }
 
   /**
@@ -209,9 +279,9 @@ private:
    */
   std::shared_ptr<std::vector<MatrixType>> subdomain_to_inverse;
 
-  mutable std::shared_ptr<LinearAlgebra::distributed::Vector<value_type>> solution_ghosted;
+  mutable std::shared_ptr<VectorType> solution_ghosted;
 
-  mutable std::shared_ptr<LinearAlgebra::distributed::Vector<value_type>> residual_ghosted;
+  mutable std::shared_ptr<VectorType> residual_ghosted;
 
   unsigned int level = -1;
 

@@ -46,10 +46,11 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   compute_inverses();
   time_data[2].add_time(timer.wall_time());
 
+  // TODO initialize only if required
   // *** initialize ghosted vectors
-  solution_ghosted = std::make_shared<LinearAlgebra::distributed::Vector<value_type>>();
+  solution_ghosted = std::make_shared<VectorType>();
   initialize_ghost(*solution_ghosted);
-  residual_ghosted = std::make_shared<LinearAlgebra::distributed::Vector<value_type>>();
+  residual_ghosted = std::make_shared<VectorType>();
   initialize_ghost(*residual_ghosted);
 
   // *** storing SubdomainHandler's timings
@@ -274,8 +275,9 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   Timer timer;
   // *** initialize ghosted vectors
   VectorType * solution;
-  const auto   sol_partitioner = solution_in.get_partitioner();
-  if(sol_partitioner->is_globally_compatible(*(subdomain_handler->get_vector_partitioner())))
+  // const auto   sol_partitioner = solution_in.get_partitioner();
+  // if(sol_partitioner->is_globally_compatible(*(subdomain_handler->get_vector_partitioner())))
+  if(is_globally_compatible(solution_in, subdomain_handler->get_vector_partitioners()))
   {
     // std::cout << "solution is compatible" << std::endl;
     solution = &solution_in;
@@ -284,13 +286,15 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   {
     timer.restart();
     solution_ghosted->zero_out_ghosts();
-    solution_ghosted->copy_locally_owned_data_from(solution_in);
+    // solution_ghosted->copy_locally_owned_data_from(solution_in);
+    copy_locally_owned_data(*solution_ghosted, solution_in);
     solution = solution_ghosted.get();
     time_data.at(3).add_time(timer.wall_time());
   }
   const VectorType * residual;
-  const auto         res_partitioner = residual_in.get_partitioner();
-  if(res_partitioner->is_globally_compatible(*(subdomain_handler->get_vector_partitioner())))
+  // const auto         res_partitioner = residual_in.get_partitioner();
+  // if(res_partitioner->is_globally_compatible(*(subdomain_handler->get_vector_partitioner())))
+  if(is_globally_compatible(residual_in, subdomain_handler->get_vector_partitioners()))
   {
     // std::cout << "residual is compatible" << std::endl;
     residual = &residual_in;
@@ -298,7 +302,8 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   else // set ghosted vector with read access
   {
     timer.restart();
-    residual_ghosted->copy_locally_owned_data_from(residual_in);
+    // residual_ghosted->copy_locally_owned_data_from(residual_in);
+    copy_locally_owned_data(*residual_ghosted, solution_in);
     residual_ghosted->update_ghost_values();
     residual = residual_ghosted.get();
     time_data.at(3).add_time(timer.wall_time());
@@ -316,7 +321,8 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   {
     // std::cout << "copy locally owned data to solution_in" << std::endl;
     timer.restart();
-    solution_in.copy_locally_owned_data_from(*solution_ghosted);
+    // solution_in.copy_locally_owned_data_from(*solution_ghosted);
+    copy_locally_owned_data(solution_in, *solution_ghosted);
     time_data.at(3).add_time(timer.wall_time());
   }
 }

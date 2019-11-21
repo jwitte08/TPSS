@@ -74,7 +74,11 @@ SubdomainHandler<dim, number>::internal_reinit()
   patch_worker.connect_to_matrixfree(mf_connect);
 
   // *** initialize the MPI-partitioner
-  vector_partitioner = initialize_vector_partitioner(patch_worker);
+  vector_partitioners.resize(n_components());
+  vector_partitioners[0] = initialize_vector_partitioner(patch_worker);
+  // TODO different dof handlers !?
+  for(unsigned int dofh_index = 1; dofh_index < n_components(); ++dofh_index)
+    vector_partitioners[dofh_index] = vector_partitioners[0];
 
   // *** compute the surrogate patches which pertain the tensor structure
   typename TPSS::MappingInfo<dim, number>::AdditionalData mapping_info_data;
