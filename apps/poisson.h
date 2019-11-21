@@ -171,13 +171,13 @@ struct ModelProblem : public Subscriptor
   }
 
 
-  template<typename Number2>
-  std::shared_ptr<const MatrixFree<dim, Number2>>
+  template<typename OtherNumber>
+  std::shared_ptr<const MatrixFree<dim, OtherNumber>>
   build_mf_storage(const unsigned level = static_cast<unsigned>(-1)) const
   {
-    typename MatrixFree<dim, Number2>::AdditionalData additional_data;
-    const auto                                        p_scheme =
-      static_cast<typename MatrixFree<dim, Number2>::AdditionalData::TasksParallelScheme>(
+    typename MatrixFree<dim, OtherNumber>::AdditionalData additional_data;
+    const auto                                            p_scheme =
+      static_cast<typename MatrixFree<dim, OtherNumber>::AdditionalData::TasksParallelScheme>(
         0 /*none*/);
 
     additional_data.tasks_parallel_scheme = p_scheme;
@@ -191,7 +191,7 @@ struct ModelProblem : public Subscriptor
       additional_data.mg_level = level;
     AffineConstraints<double> constraints_dummy;
     constraints_dummy.close();
-    const auto   mf_storage = std::make_shared<MatrixFree<dim, Number2>>();
+    const auto   mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
     unsigned int n_qpoints  = fe_degree + 1;
     QGauss<1>    quadrature(n_qpoints);
     mf_storage->reinit(mapping, dof_handler, constraints_dummy, quadrature, additional_data);
@@ -199,12 +199,12 @@ struct ModelProblem : public Subscriptor
   }
 
 
-  template<typename NumberIn>
-  std::shared_ptr<const SubdomainHandler<dim, NumberIn>>
-  build_patch_storage(const unsigned                                         level,
-                      const std::shared_ptr<const MatrixFree<dim, NumberIn>> mf_storage)
+  template<typename OtherNumber>
+  std::shared_ptr<const SubdomainHandler<dim, OtherNumber>>
+  build_patch_storage(const unsigned                                            level,
+                      const std::shared_ptr<const MatrixFree<dim, OtherNumber>> mf_storage)
   {
-    typename SubdomainHandler<dim, NumberIn>::AdditionalData fdss_additional_data;
+    typename SubdomainHandler<dim, OtherNumber>::AdditionalData fdss_additional_data;
     fdss_additional_data.level         = level;
     fdss_additional_data.compressed    = rt_parameters.compressed;
     fdss_additional_data.patch_variant = rt_parameters.multigrid.pre_smoother.schwarz.patch_variant;
@@ -221,7 +221,7 @@ struct ModelProblem : public Subscriptor
       rt_parameters.multigrid.pre_smoother.schwarz.normalize_surrogate_patch;
     fdss_additional_data.use_arc_length =
       rt_parameters.multigrid.pre_smoother.schwarz.use_arc_length;
-    const auto patch_storage = std::make_shared<SubdomainHandler<dim, NumberIn>>();
+    const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
     patch_storage->reinit(mf_storage, fdss_additional_data);
     return patch_storage;
   }

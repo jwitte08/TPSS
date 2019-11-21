@@ -100,7 +100,7 @@ struct Test
     //: multigrid
     const double damping_factor =
       TPSS::lookup_damping_factor(prms.patch_variant, prms.smoother_variant, dim);
-    rt_parameters.multigrid.coarse_level                 = 1;
+    rt_parameters.multigrid.coarse_level                 = 0;
     rt_parameters.multigrid.coarse_grid.solver_variant   = prms.coarse_grid_variant;
     rt_parameters.multigrid.coarse_grid.iterative_solver = prms.solver_variant;
     rt_parameters.multigrid.coarse_grid.accuracy         = prms.coarse_grid_accuracy;
