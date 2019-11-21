@@ -248,23 +248,21 @@ struct ModelProblem : public Subscriptor
   create_triangulation(const unsigned n_refinements)
   {
     triangulation.clear();
-    this->level    = static_cast<unsigned int>(-1);
-    auto mesh_info = std::make_pair<bool, std::string>(false, "");
-
-    if(false) // TODO check estimated dofs
-      return false;
+    this->level = static_cast<unsigned int>(-1);
 
     MeshParameter mesh_prms = rt_parameters.mesh;
     mesh_prms.n_refinements = n_refinements;
-    if(rt_parameters.mesh.geometry_variant == MeshParameter::GeometryVariant::Cube)
-      *pcout << create_unit_cube(triangulation, mesh_prms);
-    else if(rt_parameters.mesh.geometry_variant == MeshParameter::GeometryVariant::CubeDistorted)
-      *pcout << create_distorted_cube(triangulation, mesh_prms);
-    else
-      AssertThrow(false, ExcNotImplemented());
 
+    /// if the dof limits are exceeded we return without creating the mesh
+    const auto n_dofs_est = estimate_n_dofs(*fe, mesh_prms);
+    if(rt_parameters.exceeds_dof_limits(n_dofs_est))
+      return false;
+
+    /// create the triangulation and store few informations
+    *pcout << create_mesh(triangulation, mesh_prms);
     this->level = triangulation.n_global_levels() - 1;
     pp_data.n_cells_global.push_back(triangulation.n_global_active_cells());
+
     return true;
   }
 
