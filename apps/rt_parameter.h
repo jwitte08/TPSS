@@ -54,11 +54,15 @@ namespace RT
 {
 struct Parameter
 {
-  bool            compressed = false;
-  MeshParameter   mesh;
-  MGParameter     multigrid;
-  unsigned int    n_cycles = 0;
-  SolverParameter solver;
+  bool                                                        compressed = false;
+  std::pair<types::global_dof_index, types::global_dof_index> dof_limits = {0, 0};
+  MeshParameter                                               mesh;
+  MGParameter                                                 multigrid;
+  unsigned int                                                n_cycles = 0;
+  SolverParameter                                             solver;
+
+  bool
+  exceeds_dof_limits(types::global_dof_index n_dofs) const;
 
   std::string
   to_string() const;
@@ -130,6 +134,16 @@ SolverParameter::to_string() const
 
 namespace RT
 {
+bool
+Parameter::exceeds_dof_limits(types::global_dof_index n_dofs) const
+{
+  if(dof_limits == std::make_pair<types::global_dof_index, types::global_dof_index>(0, 0))
+    return false;
+  Assert(dof_limits.first < dof_limits.second, ExcMessage("Invalid closed range."));
+  bool exceeds = n_dofs < dof_limits.first || dof_limits.second < n_dofs;
+  return exceeds;
+}
+
 std::string
 Parameter::to_string() const
 {
