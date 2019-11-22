@@ -60,6 +60,7 @@ struct ModelProblem : public Subscriptor
   using PATCH_MATRIX  = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>, n_patch_dofs>;
   using SCHWARZ_PRECONDITIONER = SchwarzPreconditioner<dim, LEVEL_MATRIX, VECTOR, PATCH_MATRIX>;
   using SCHWARZ_SMOOTHER       = SchwarzSmoother<dim, LEVEL_MATRIX, SCHWARZ_PRECONDITIONER, VECTOR>;
+  using MG_SMOOTHER_SCHWARZ    = MGSmootherSchwarz<dim, LEVEL_MATRIX, PATCH_MATRIX, VECTOR>;
   using GMG_PRECONDITIONER     = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 
   // *** parameters and auxiliary structs
@@ -91,6 +92,7 @@ struct ModelProblem : public Subscriptor
   MG_TRANSFER                                                  mg_transfer;
   RedBlackColoring<dim>                                        red_black_coloring;
   MGLevelObject<std::shared_ptr<const SCHWARZ_PRECONDITIONER>> mg_schwarz_precondition;
+  std::shared_ptr<const MG_SMOOTHER_SCHWARZ>                   mg_schwarz_smoother_pre;
   MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR> mg_schwarz_smoother;
   std::shared_ptr<const MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR>>
                                                   mg_schwarz_smoother_post;
@@ -415,7 +417,15 @@ struct ModelProblem : public Subscriptor
         smoother_data); // actual initialization of Schwarz smoother within
                         // MGSmootherRelaxation
     }
-    mg_smoother_pre = &mg_schwarz_smoother;
+    // NEW NEW
+    const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+    typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
+    mgss_data.coloring_func = std::ref(red_black_coloring);
+    mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
+    mgss->initialize(mg_matrices, mgss_data);
+    mg_schwarz_smoother_pre = mgss;
+    mg_smoother_pre         = mg_schwarz_smoother_pre.get();
+    // mg_smoother_pre = &mg_schwarz_smoother;
 
     // *** initialize post Schwarz smoother
     if(rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing)
