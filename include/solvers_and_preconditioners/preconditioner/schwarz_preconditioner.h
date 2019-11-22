@@ -70,6 +70,24 @@ public:
   std::shared_ptr<const SubdomainHandler<dim, value_type>>
   get_subdomain_handler() const;
 
+  bool
+  is_shallow_copyable(
+    const typename SubdomainHandler<dim, value_type>::AdditionalData & other_data) const
+  {
+    const auto & sdhandler   = get_subdomain_handler()->get_additional_data();
+    bool         is_copyable = true;
+    is_copyable &= sdhandler.level == other_data.level;
+    is_copyable &= sdhandler.patch_variant == other_data.patch_variant;
+    is_copyable &= sdhandler.smoother_variant == other_data.smoother_variant;
+    // TODO coloring ?
+    // TODO gathering ?
+    is_copyable &= sdhandler.n_q_points_surrogate == other_data.n_q_points_surrogate;
+    is_copyable &= sdhandler.normalize_surrogate_patch == other_data.normalize_surrogate_patch;
+    is_copyable &= sdhandler.use_arc_length == other_data.use_arc_length;
+    is_copyable &= sdhandler.compressed == other_data.compressed;
+    return is_copyable;
+  }
+
   void
   vmult(VectorType & dst, const VectorType & src) const override;
 
@@ -325,6 +343,17 @@ struct SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Additio
   double local_relaxation = 1.;
   bool   reverse          = false;
   bool   symmetrized      = false;
+
+  bool
+  operator==(const AdditionalData & other_data) const
+  {
+    bool is_equal = true;
+    is_equal &= relaxation == other_data.relaxation;
+    is_equal &= local_relaxation == other_data.local_relaxation;
+    is_equal &= reverse == other_data.reverse;
+    is_equal &= symmetrized == other_data.symmetrized;
+    return is_equal;
+  }
 };
 
 
