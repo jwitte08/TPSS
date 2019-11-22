@@ -15,6 +15,7 @@ set(testfiles
   Ttensors_01.cc
   # Tblock_matrix_diagonal_01.cc
   Tlaplace_check_iterations.cc
+  Tpoisson_check_iterations.cc
   # Tlaplace_geometry.cc
   # Tlaplace_integrator_cp.cc
   # Tlaplace_integrator_mf.cc

@@ -66,6 +66,13 @@ struct Parameter
   exceeds_dof_limits(const types::global_dof_index n_dofs) const;
 
   void
+  reset_solver_variant()
+  {
+    solver.variant =
+      SolverParameter::lookup_solver_variant(multigrid.pre_smoother, multigrid.post_smoother);
+  };
+
+  void
   set_compressed(const bool flag = true);
 
   std::string
