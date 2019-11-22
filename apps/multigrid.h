@@ -65,12 +65,17 @@ struct CoarseGridParameter
     None,
     IterativeAcc
   };
+  enum class PreconditionVariant
+  {
+    None
+  };
   static std::string
   str_solver_variant(const SolverVariant variant);
 
-  SolverVariant solver_variant   = SolverVariant::None;
-  double        accuracy         = 1.e-4;
-  std::string   iterative_solver = "none"; // see SolverSelector
+  double              accuracy             = 1.e-4;
+  std::string         iterative_solver     = "none"; // see SolverSelector
+  PreconditionVariant precondition_variant = PreconditionVariant::None;
+  SolverVariant       solver_variant       = SolverVariant::None;
 
   std::string
   to_string() const;
@@ -80,14 +85,68 @@ struct CoarseGridParameter
 
 struct MGParameter
 {
+  CoarseGridParameter coarse_grid;
+  int                 coarse_level  = 0;
   std::string         cycle_variant = "V-cycle"; // TODO use enum
   SmootherParameter   pre_smoother;
   SmootherParameter   post_smoother;
-  CoarseGridParameter coarse_grid;
-  int                 coarse_level = 0;
 
   std::string
   to_string() const;
+};
+
+
+
+template<typename MatrixType, typename VectorType>
+class CoarseGridSolver : public MGCoarseGridBase<VectorType>
+{
+public:
+  void
+  initialize(const MatrixType & coarse_matrix, const CoarseGridParameter & prms)
+  {
+    if(prms.solver_variant == CoarseGridParameter::SolverVariant::IterativeAcc)
+    {
+      solver_control.set_max_steps(coarse_matrix.m());
+      solver_control.set_tolerance(prms.accuracy);
+      solver_control.log_history(false);
+      solver_control.log_result(false);
+      iterative_solver.set_control(solver_control);
+      iterative_solver.select(prms.iterative_solver);
+      if(prms.precondition_variant == CoarseGridParameter::PreconditionVariant::None)
+      {
+        const auto solver = std::make_shared<MGCoarseGridIterativeSolver<VectorType,
+                                                                         SolverSelector<VectorType>,
+                                                                         MatrixType,
+                                                                         PreconditionIdentity>>();
+        solver->initialize(iterative_solver, coarse_matrix, precondition_id);
+        coarse_grid_solver = solver;
+        return;
+      }
+      else
+        AssertThrow(false, ExcMessage("Invalid PreconditionVariant. TODO."));
+    }
+    else
+      AssertThrow(false, ExcMessage("Invalid SolverVariant. TODO."));
+  }
+
+  void
+  clear()
+  {
+    coarse_grid_solver.reset();
+  }
+
+  void
+  operator()(const unsigned int level, VectorType & dst, const VectorType & src) const override
+  {
+    AssertThrow(coarse_grid_solver, ExcMessage("The coarse grid solver is uninitialized."));
+    coarse_grid_solver->operator()(level, dst, src);
+  }
+
+private:
+  SolverControl                                       solver_control;
+  PreconditionIdentity                                precondition_id;
+  SolverSelector<VectorType>                          iterative_solver;
+  std::shared_ptr<const MGCoarseGridBase<VectorType>> coarse_grid_solver;
 };
 
 
@@ -126,19 +185,15 @@ public:
                       const AdditionalData &                                    additional_data)
   {
     const auto & prms = additional_data.parameters;
+
     /// Fill additional data of SubdomainHandler
     typename SubdomainHandler<dim, OtherNumber>::AdditionalData sdhandler_data =
       fill_schwarz_smoother_data<dim, OtherNumber>(prms.schwarz);
     sdhandler_data.level      = level;
     sdhandler_data.compressed = prms.compressed;
-    // sdhandler_data.patch_variant    = prms.schwarz.patch_variant;
-    // sdhandler_data.smoother_variant = prms.schwarz.smoother_variant;
-    // sdhandler_data.print_details    = prms.schwarz.print_details;
     if(prms.schwarz.manual_coloring)
       sdhandler_data.coloring_func = additional_data.coloring_func;
-    // sdhandler_data.n_q_points_surrogate      = prms.schwarz.n_q_points_surrogate;
-    // sdhandler_data.normalize_surrogate_patch = prms.schwarz.normalize_surrogate_patch;
-    // sdhandler_data.use_arc_length            = prms.schwarz.use_arc_length;
+
     /// Initialize SubdomainHandler
     const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
     patch_storage->reinit(mf_storage, sdhandler_data);
@@ -162,12 +217,12 @@ public:
     typename smoother_type::AdditionalData smoother_data;
     smoother_data.number_of_smoothing_steps = prms.n_smoothing_steps;
 
-    /// initialize the mg matrices within MGSmootherRelaxation (smoothers have
+    /// Initialize mg matrices within MGSmootherRelaxation (smoothers have
     /// to be set in an extra step)
     this->mg_matrices = &mg_matrices;
     Base::initialize(mg_matrices, smoother_data);
 
-    /// initialize the smoothers within MGSmootherRelaxation
+    /// Initialize the smoothers within MGSmootherRelaxation
     const unsigned int mg_level_min = mg_matrices.min_level();
     const unsigned int mg_level_max = mg_matrices.max_level();
     mg_schwarz_precondition.resize(mg_level_min, mg_level_max);
