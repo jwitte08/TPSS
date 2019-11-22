@@ -50,20 +50,36 @@ struct SchwarzSmootherData
     std::string str_smoother_variant[] = {"Undefined", "Additive", "Multiplicative"};
     std::string str_schwarz_operator =
       str_smoother_variant[(int)smoother_variant] + " " + str_patch_variant[(int)patch_variant];
-    const auto bool_to_str = [](const bool b) { return std::string(b ? "true" : "false"); };
 
     print_parameter(pcout, "Schwarz operator", str_schwarz_operator);
     print_parameter(pcout, "Number of smoothing steps", number_of_smoothing_steps);
     print_parameter(pcout, "Damping factor", damping_factor);
     print_parameter(pcout, "Patch-local damping factor", local_damping_factor);
 
-    print_parameter(pcout, "Manual coloring", bool_to_str(manual_coloring));
-    print_parameter(pcout, "Symmetrized Schwarz operator", bool_to_str(symmetrize_smoothing));
-    print_parameter(pcout, "Reversed Schwarz operator", bool_to_str(reverse_smoothing));
+    print_parameter(pcout, "Manual coloring", manual_coloring);
+    print_parameter(pcout, "Symmetrized Schwarz operator", symmetrize_smoothing);
+    print_parameter(pcout, "Reversed Schwarz operator", reverse_smoothing);
 
     print_parameter(pcout, "Number of quad points (surrogate)", n_q_points_surrogate);
-    print_parameter(pcout, "Normalize surrogate patches", bool_to_str(normalize_surrogate_patch));
-    print_parameter(pcout, "Compute arc length (surrogate)", bool_to_str(use_arc_length));
+    print_parameter(pcout, "Normalize surrogate patches", normalize_surrogate_patch);
+    print_parameter(pcout, "Compute arc length (surrogate)", use_arc_length);
+  }
+
+  bool
+  operator==(const SchwarzSmootherData & other) const
+  {
+    bool is_equal = true;
+    is_equal &= patch_variant == other.patch_variant;
+    is_equal &= smoother_variant == other.smoother_variant;
+    is_equal &= damping_factor == other.damping_factor;
+    is_equal &= local_damping_factor == other.local_damping_factor;
+    is_equal &= manual_coloring == other.manual_coloring;
+    is_equal &= n_q_points_surrogate == other.n_q_points_surrogate;
+    is_equal &= use_arc_length == other.use_arc_length;
+    is_equal &= reverse_smoothing == other.reverse_smoothing;
+    is_equal &= symmetrize_smoothing == other.symmetrize_smoothing;
+    is_equal &= print_details == other.print_details;
+    return is_equal;
   }
 
   // ...
