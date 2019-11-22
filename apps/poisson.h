@@ -93,6 +93,7 @@ struct ModelProblem : public Subscriptor
   RedBlackColoring<dim>                                        red_black_coloring;
   MGLevelObject<std::shared_ptr<const SCHWARZ_PRECONDITIONER>> mg_schwarz_precondition;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>                   mg_schwarz_smoother_pre;
+  std::shared_ptr<const MG_SMOOTHER_SCHWARZ>                   mg_schwarz_smoother_post_;
   MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR> mg_schwarz_smoother;
   std::shared_ptr<const MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR>>
                                                   mg_schwarz_smoother_post;
@@ -387,36 +388,37 @@ struct ModelProblem : public Subscriptor
     mg_transfer.build(dof_handler);
 
     // *** initialize Schwarz smoother S_l
-    const auto & schwarz_data = rt_parameters.multigrid.pre_smoother.schwarz;
-    typename SCHWARZ_SMOOTHER::AdditionalData dummy_data;
-    mg_schwarz_smoother.initialize(mg_matrices,
-                                   dummy_data); // insert A_l in MGSmootherRelaxation
+    // const auto & schwarz_data = rt_parameters.multigrid.pre_smoother.schwarz;
+    // typename SCHWARZ_SMOOTHER::AdditionalData dummy_data;
+    // mg_schwarz_smoother.initialize(mg_matrices,
+    //                                dummy_data); // insert A_l in MGSmootherRelaxation
 
-    mg_schwarz_precondition.resize(mg_level_min, mg_level_max); // book-keeping
-    for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
-    {
-      const auto mf_storage_on_level = mg_matrices[level].get_matrix_free();
-      const auto patch_storage = build_patch_storage<value_type_mg>(level, mf_storage_on_level);
+    // mg_schwarz_precondition.resize(mg_level_min, mg_level_max); // book-keeping
+    // for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
+    // {
+    //   const auto mf_storage_on_level = mg_matrices[level].get_matrix_free();
+    //   const auto patch_storage = build_patch_storage<value_type_mg>(level, mf_storage_on_level);
 
-      // *** setup Schwarz preconditioner
-      typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data;
-      precondition_data.relaxation       = schwarz_data.damping_factor;
-      precondition_data.local_relaxation = schwarz_data.local_damping_factor;
-      precondition_data.symmetrized      = schwarz_data.symmetrize_smoothing;
-      const auto schwarz_preconditioner  = std::make_shared<SCHWARZ_PRECONDITIONER>();
-      schwarz_preconditioner->initialize(patch_storage, mg_matrices[level], precondition_data);
-      mg_schwarz_precondition[level] = schwarz_preconditioner; // book-keeping
+    //   // *** setup Schwarz preconditioner
+    //   typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data;
+    //   precondition_data.relaxation       = schwarz_data.damping_factor;
+    //   precondition_data.local_relaxation = schwarz_data.local_damping_factor;
+    //   precondition_data.symmetrized      = schwarz_data.symmetrize_smoothing;
+    //   const auto schwarz_preconditioner  = std::make_shared<SCHWARZ_PRECONDITIONER>();
+    //   schwarz_preconditioner->initialize(patch_storage, mg_matrices[level], precondition_data);
+    //   mg_schwarz_precondition[level] = schwarz_preconditioner; // book-keeping
 
-      // *** setup Schwarz smoother
-      typename SCHWARZ_SMOOTHER::AdditionalData smoother_data;
-      smoother_data.number_of_smoothing_steps =
-        rt_parameters.multigrid.pre_smoother.n_smoothing_steps;
-      mg_schwarz_smoother.smoothers[level].initialize(
-        mg_matrices[level],
-        schwarz_preconditioner,
-        smoother_data); // actual initialization of Schwarz smoother within
-                        // MGSmootherRelaxation
-    }
+    //   // *** setup Schwarz smoother
+    //   typename SCHWARZ_SMOOTHER::AdditionalData smoother_data;
+    //   smoother_data.number_of_smoothing_steps =
+    //     rt_parameters.multigrid.pre_smoother.n_smoothing_steps;
+    //   mg_schwarz_smoother.smoothers[level].initialize(
+    //     mg_matrices[level],
+    //     schwarz_preconditioner,
+    //     smoother_data); // actual initialization of Schwarz smoother within
+    //                     // MGSmootherRelaxation
+    // }
+
     // NEW NEW
     const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
     typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
@@ -424,39 +426,90 @@ struct ModelProblem : public Subscriptor
     mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
     mgss->initialize(mg_matrices, mgss_data);
     mg_schwarz_smoother_pre = mgss;
-    mg_smoother_pre         = mg_schwarz_smoother_pre.get();
+
     // mg_smoother_pre = &mg_schwarz_smoother;
 
     // *** initialize post Schwarz smoother
-    if(rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing)
+    typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data;
+    const auto schwarz_data_post       = rt_parameters.multigrid.post_smoother.schwarz;
+    precondition_data.relaxation       = schwarz_data_post.damping_factor;
+    precondition_data.local_relaxation = schwarz_data_post.local_damping_factor;
+    precondition_data.symmetrized      = schwarz_data_post.symmetrize_smoothing;
+    precondition_data.reverse          = schwarz_data_post.reverse_smoothing;
+    // if(mg_schwarz_smoother_pre->get_preconditioner()->get_additional_data() == precondition_data)
+    if(rt_parameters.multigrid.pre_smoother == rt_parameters.multigrid.post_smoother)
     {
-      const auto mg_schwarz_post =
-        std::make_shared<MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR>>();
-      mg_schwarz_post->initialize(mg_matrices, dummy_data);
-      for(unsigned int level = mg_matrices.min_level(); level < mg_matrices.max_level() + 1;
-          ++level)
+      // *pcout << "Using pre-smoother as post-smoother ... " << std::endl;
+      // *pcout << Util::parameter_to_fstring("/// Post-smoother (OLD)", "");
+      // *pcout << rt_parameters.multigrid.post_smoother.to_string();
+      // rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
+      // *pcout << Util::parameter_to_fstring("/// Post-smoother (NEW)", "");
+      // *pcout << rt_parameters.multigrid.post_smoother.to_string();
+
+      mg_schwarz_smoother_post_ = mg_schwarz_smoother_pre;
+    }
+    else
+    {
+      // const auto mg_schwarz_post =
+      //   std::make_shared<MGSmootherRelaxation<LEVEL_MATRIX, SCHWARZ_SMOOTHER, VECTOR>>();
+      // mg_schwarz_post->initialize(mg_matrices, dummy_data);
+      // for(unsigned level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
+      // {
+      //   const auto & smoother               = mg_schwarz_smoother.smoothers[level];
+      //   const auto & schwarz_preconditioner = smoother.get_preconditioner();
+      //   typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data =
+      //     schwarz_preconditioner.get_additional_data();
+      //   precondition_data.reverse              = true;
+      //   const auto schwarz_preconditioner_copy = std::make_shared<SCHWARZ_PRECONDITIONER>();
+      //   //: shallow copy of schwarz_preconditioner
+      //   schwarz_preconditioner_copy->initialize(schwarz_preconditioner, precondition_data);
+      //   const auto & smoother_data = smoother.get_additional_data();
+      //   mg_schwarz_post->smoothers[level].initialize(mg_matrices[level],
+      //                                                schwarz_preconditioner_copy,
+      //                                                smoother_data);
+      // }
+      // this->mg_schwarz_smoother_post = mg_schwarz_post;
+
+      // bool is_shallow_copyable = true;
+      auto sdhandler_data = fill_schwarz_smoother_data<dim, typename LEVEL_MATRIX::value_type>(
+        rt_parameters.multigrid.post_smoother.schwarz);
+      sdhandler_data.compressed = rt_parameters.multigrid.post_smoother.compressed;
+      sdhandler_data.level      = mg_matrices.max_level();
+      const bool is_shallow_copyable =
+        mg_schwarz_smoother_pre->get_preconditioner(level)->is_shallow_copyable(sdhandler_data);
+      // for(unsigned level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
+      // {
+      //   sdhandler_data.level         = level;
+      //   sdhandler_data.coloring_func = mg_schwarz_smoother_pre->get_subdomain_handler(level)
+      //                                    ->get_additional_data()
+      //                                    .coloring_func;
+      //   is_shallow_copyable &=
+      //     mg_schwarz_smoother_pre->get_preconditioner(level)->is_shallow_copyable(sdhandler_data);
+      // }
+      // std::cout << is_shallow_copyable << std::endl;
+
+      if(is_shallow_copyable)
       {
-        const auto & smoother               = mg_schwarz_smoother.smoothers[level];
-        const auto & schwarz_preconditioner = smoother.get_preconditioner();
-        typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data =
-          schwarz_preconditioner.get_additional_data();
-        precondition_data.reverse              = true;
-        const auto schwarz_preconditioner_copy = std::make_shared<SCHWARZ_PRECONDITIONER>();
-        //: shallow copy of schwarz_preconditioner
-        schwarz_preconditioner_copy->initialize(schwarz_preconditioner, precondition_data);
-        const auto & smoother_data = smoother.get_additional_data();
-        mg_schwarz_post->smoothers[level].initialize(mg_matrices[level],
-                                                     schwarz_preconditioner_copy,
-                                                     smoother_data);
+        const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+        typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
+        mgss_data.coloring_func = std::ref(red_black_coloring);
+        mgss_data.parameters    = rt_parameters.multigrid.post_smoother;
+        mgss->initialize(*mg_schwarz_smoother_pre, mgss_data);
+        mg_schwarz_smoother_post_ = mgss;
       }
-      this->mg_schwarz_smoother_post = mg_schwarz_post;
+      else
+        AssertThrow(false, ExcMessage("TODO ..."));
     }
 
-    // *** set post smoother
-    if(mg_schwarz_smoother_post)
-      mg_smoother_post = mg_schwarz_smoother_post.get();
+    if(rt_parameters.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+      mg_smoother_pre = mg_schwarz_smoother_pre.get();
     else
-      mg_smoother_post = &mg_schwarz_smoother;
+      AssertThrow(false, ExcMessage("TODO .. "));
+
+    if(rt_parameters.multigrid.post_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+      mg_smoother_post = mg_schwarz_smoother_post_.get();
+    else
+      AssertThrow(false, ExcMessage("TODO .. "));
 
     // *** initialize coarse grid solver
     coarse_control_exact.set_max_steps(mg_matrices[mg_level_min].m());
