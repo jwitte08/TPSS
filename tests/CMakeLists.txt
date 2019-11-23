@@ -41,3 +41,24 @@ foreach(test ${testfiles})
   add_dependencies(setup_tests ${target})
 endforeach(test)
 
+set (src_files
+  tensors.cc
+  )
+
+add_custom_target(setup_mytests)
+
+foreach(test ${src_files})
+  string(REPLACE ".cc" "" target ${test})
+  add_executable(${target} EXCLUDE_FROM_ALL ${test})
+  target_include_directories(${target} PUBLIC
+    ${CMAKE_SOURCE_DIR}/apps
+    ${CMAKE_BINARY_DIR}/include
+    )
+  ## Keywords PUBLIC|INTERFACE|PRIVATE aren't possible since DEAL_II_SETUP_TARGET doesn't use keywords.
+  target_link_libraries(${target} tpss gtest gtest_main)
+  DEAL_II_SETUP_TARGET(${target})
+  add_test(NAME ${target} COMMAND ${target})
+  add_dependencies(setup_mytests ${target})
+endforeach(test)
+
+
