@@ -31,6 +31,7 @@ endforeach(src)
 
 ################################################################################
 
+// TODO move tests to test/ folder and mark them as apps tests
 enable_testing()
 
 set(testfiles

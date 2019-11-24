@@ -54,6 +54,7 @@ foreach(test ${src_files})
     ${CMAKE_SOURCE_DIR}/apps
     ${CMAKE_BINARY_DIR}/include
     )
+  target_compile_features(${target} PUBLIC cxx_std_17)
   ## Keywords PUBLIC|INTERFACE|PRIVATE aren't possible since DEAL_II_SETUP_TARGET doesn't use keywords.
   target_link_libraries(${target} tpss gtest gtest_main)
   DEAL_II_SETUP_TARGET(${target})
