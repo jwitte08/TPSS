@@ -4,7 +4,7 @@
  *
  * - transforming multi- into uni-index and vice versa
  *
- * NOTE: In addition, the tests provide a sandbox for more advanced googletest
+ * NOTE: In addition, the tests provide a sandbox for more advanced gtest
  * functionalities.
  *
  *  Created on: Dec 07, 2018
@@ -16,6 +16,8 @@
 #include <gtest/gtest.h>
 
 #include "solvers_and_preconditioners/TPSS/tensors.h"
+
+#include "test_utilities.h"
 
 template<int order>
 void
@@ -71,7 +73,6 @@ TEST(Tensors, MultiIndexAnisotropic)
 {
   constexpr int                   order = 5;
   std::array<unsigned int, order> sizes = {6, 1, 7, 5, 3};
-  // unsigned int sizes[] = {6, 1, 7, 5, 3};
   test_index_map_anisotropic_impl<order>(sizes);
 }
 
@@ -115,7 +116,7 @@ protected:
   static constexpr int order_ = 5;
 };
 
-/// The fixture class (in googletest speak) which is called by TEST_F if no
+/// The fixture class (in gtest speak) which is called by TEST_F if no
 /// value-parameters are queried. With value-parameterization the setup macro is
 /// TEST_P(FixtureClass, TestName).
 class TestMultiIndexIsotropic : public TestMultiIndexBase,
@@ -142,3 +143,100 @@ TEST_P(TestMultiIndexIsotropic, VarySize)
 INSTANTIATE_TEST_SUITE_P(StridedRange, TestMultiIndexIsotropic, testing::Range(1U, 8U, 3U));
 INSTANTIATE_TEST_SUITE_P(Values, TestMultiIndexIsotropic, testing::Values(2U, 5U, 10U));
 INSTANTIATE_TEST_SUITE_P(ValuesIn, TestMultiIndexIsotropic, testing::ValuesIn({3U, 6U, 9U}));
+
+
+
+/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/// Value-parametrized tests with constant expressions
+
+/// Gtest provides a convenience class TestWithParam<T> that is derived from
+/// Test and WithParamInterface<T>, the two base classes we require to drive the
+/// TEST_P() macro.
+
+/// NOTE: It is not possible to vary constant expressions and/or template
+/// parameters as value-parameters, e.g. the tensor order in our model
+/// tests. The GetParam() method is not constexpr such that a run time parameter
+/// is returned.
+struct ArrayWrap
+{
+  ArrayWrap() = default;
+
+  ArrayWrap(std::array<unsigned, 3> && array_in)
+  {
+    sizes.swap(array_in);
+  }
+
+  std::array<unsigned int, 3> sizes = {3U, 7U, 12U};
+};
+
+class TestMultiIndexAnisotropic : public testing::TestWithParam<std::array<unsigned int, 3>>
+{
+protected:
+  void
+  test_index_map_impl()
+  {
+    const auto & prm = GetParam();
+    test_index_map_anisotropic_impl<3>(prm);
+  }
+};
+
+TEST_P(TestMultiIndexAnisotropic, VarySizes)
+{
+  test_index_map_impl();
+}
+
+/// NOTE: One has to pass values via the gtest parameter generators Range,
+/// Values, ValuesIn, Bool and Combine (read the advanced.md documenation).
+INSTANTIATE_TEST_SUITE_P(InitList,
+                         TestMultiIndexAnisotropic,
+                         testing::Values(ArrayWrap({9U, 8U, 7U}).sizes,
+                                         ArrayWrap{}.sizes,
+                                         std::array<unsigned int, 3>{12U, 8U, 9U}));
+
+
+
+/// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/// Type-parametrized tests are setup by the macro TYPED_TEST_P(TestSuiteName,
+/// TestName). Again, the templated fixture class has to be named in terms of
+/// the TestSuiteName. Note the registration of all tests by means of
+/// REGISTER_TYPED_TEST_SUITE_P(TestSuiteName, TestNameA, TestNameB, ...)
+/// followed by the instantiation macro
+/// INSTANTIATE_TYPED_TEST_SUITE_P(InstantiationName, TestSuiteName,
+/// TypeSet). TypeSet is a typedef of testing::Types<TypeA,TypeB,...> with the
+/// type-parameters TypeA, TypeB, ...
+
+/// Empty fixture class. Everything is defined within the test macro.
+template<typename T>
+class TestMultiIndexIsotropicStatic : public testing::Test
+{
+};
+
+
+/// In contrast to previous test macros it is necessary to define the test suite
+/// explicitly.
+TYPED_TEST_SUITE_P(TestMultiIndexIsotropicStatic);
+
+/// The template parameter of the fixture class is accessible as 'TypeParam'.
+TYPED_TEST_P(TestMultiIndexIsotropicStatic, FixSizeVaryOrder)
+{
+  constexpr auto order_ = TypeParam::template value<0>();
+  test_index_map_isotropic_impl<order_>(5);
+}
+
+/// The template parameter of the fixture class is accessible as 'TypeParam'.
+TYPED_TEST_P(TestMultiIndexIsotropicStatic, VarySizeAndOrder)
+{
+  constexpr auto order_ = TypeParam::template value<0>();
+  /// As long as 'unsigned int' is unique within template parameter pack of
+  /// NonTypeParams we are able to access it via type. For more details see the
+  /// documenation of std::get for std::tuple.
+  constexpr auto size_ = TypeParam::template value<unsigned int>();
+  test_index_map_isotropic_impl<order_>(size_);
+}
+
+/// First, register all the tests defined by their names.
+REGISTER_TYPED_TEST_SUITE_P(TestMultiIndexIsotropicStatic, FixSizeVaryOrder, VarySizeAndOrder);
+
+/// The instantiation of the fixture class template is the final step.
+using TestParams = testing::Types<Util::NonTypeParams<1, 1U>, Util::NonTypeParams<6, 4U>>;
+INSTANTIATE_TYPED_TEST_SUITE_P(NonTypeParams, TestMultiIndexIsotropicStatic, TestParams);
