@@ -43,6 +43,7 @@ endforeach(test)
 
 set (src_files
   tensors.cc
+  apps_poisson.cc
   )
 
 add_custom_target(setup_mytests)
