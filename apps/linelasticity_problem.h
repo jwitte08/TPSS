@@ -298,7 +298,7 @@ struct ModelProblem : public Subscriptor
   }
 
   void
-  compute_rhs(const bool print_details = false)
+  compute_rhs(const bool /*print_details*/ = false)
   {
     const auto & data = *mf_storage;
     { // CELL INTEGRALS
@@ -469,7 +469,7 @@ struct ModelProblem : public Subscriptor
   }
 
   void
-  prepare_multigrid(const bool print_details = false)
+  prepare_multigrid(const bool /*print_details*/ = false)
   {
     // *** clear multigrid infrastructure
     multigrid.reset();
