@@ -27,7 +27,6 @@ protected:
     TPSS::PatchVariant    patch_variant    = TPSS::PatchVariant::cell;
     TPSS::SmootherVariant smoother_variant = TPSS::SmootherVariant::additive;
     double                bound            = 0;
-    bool                  dummy            = true;
   };
 
   virtual void
