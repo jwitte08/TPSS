@@ -24,30 +24,10 @@ foreach(src ${sourcefiles})
   string(REPLACE ".cc" "" target ${src})
   add_executable(${target} ${src})
   # include headers constructed at compile time
-  target_include_directories(${target} PUBLIC ${CMAKE_BINARY_DIR}/include)
+  target_include_directories(${target} PUBLIC
+    ${CMAKE_BINARY_DIR}/include
+    ${CMAKE_SOURCE_DIR}/tests
+    )
   target_link_libraries(${target} tpss)
   DEAL_II_SETUP_TARGET(${target})
 endforeach(src)
-
-################################################################################
-
-## TODO move tests to test/ folder and mark them as apps tests
-enable_testing()
-
-set(testfiles
-  # test_coloring.cc # TODO
-  )
-
-add_custom_target(setup_tests_apps)
-
-foreach(test ${testfiles})
-  string(REPLACE ".cc" "" target ${test})
-  add_executable(${target} EXCLUDE_FROM_ALL ${test})
-  # include headers constructed at compile time
-  target_include_directories(${target} PUBLIC ${CMAKE_BINARY_DIR}/include)
-  target_link_libraries(${target} tpss)
-  DEAL_II_SETUP_TARGET(${target})
-  add_test(NAME ${target} COMMAND ${target})
-  add_dependencies(setup_tests_apps ${target})
-endforeach(test)
-
