@@ -10,6 +10,8 @@
 
 #include <deal.II/base/tensor_function.h>
 
+#include "utilities.h"
+
 using namespace dealii;
 
 namespace Laplace
@@ -123,6 +125,16 @@ struct EquationData
 {
   double mu     = 1.;
   double lambda = 1.;
+
+  std::string
+  to_string() const
+  {
+    std::ostringstream oss;
+    oss << Util::parameter_to_fstring("Equation Data:", "");
+    oss << Util::parameter_to_fstring("Lame coefficient (mu):", mu);
+    oss << Util::parameter_to_fstring("Lame coefficient (lambda):", lambda);
+    return oss.str();
+  }
 };
 
 template<int dim>

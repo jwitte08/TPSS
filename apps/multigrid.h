@@ -12,6 +12,8 @@
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/utilities.h>
 
+#include <deal.II/lac/solver_control.h>
+
 #include "solvers_and_preconditioners/TPSS/schwarz_smoother_data.h"
 #include "utilities.h"
 
@@ -72,7 +74,7 @@ struct CoarseGridParameter
   static std::string
   str_solver_variant(const SolverVariant variant);
 
-  double              accuracy             = 1.e-4;
+  double              accuracy             = 1.e-12;
   std::string         iterative_solver     = "none"; // see SolverSelector
   PreconditionVariant precondition_variant = PreconditionVariant::None;
   SolverVariant       solver_variant       = SolverVariant::None;

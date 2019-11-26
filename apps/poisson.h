@@ -120,7 +120,8 @@ struct ModelProblem : public Subscriptor
       level(static_cast<unsigned int>(-1)),
       red_black_coloring(rt_parameters_in.mesh),
       mg_smoother_pre(nullptr),
-      mg_smoother_post(nullptr)
+      mg_smoother_post(nullptr),
+      mg_coarse_grid(nullptr)
   {
   }
 
@@ -129,7 +130,7 @@ struct ModelProblem : public Subscriptor
   unsigned
   n_colors_system()
   {
-    if(!multigrid)
+    if(!mg_schwarz_smoother_pre)
       return 0;
 
     AssertThrow(rt_parameters.multigrid.pre_smoother.variant ==
@@ -172,7 +173,7 @@ struct ModelProblem : public Subscriptor
 
 
   void
-  print_informations()
+  print_informations() const
   {
     AssertThrow(fe, ExcMessage("Finite element is not initialized."));
     print_parameter("Finite element:", fe->get_name());
@@ -403,7 +404,7 @@ struct ModelProblem : public Subscriptor
         mg_schwarz_smoother_post = mg_schwarz_smoother_pre;
       }
 
-      /// initialize (autonomous) post-smoother
+      /// initialize (independent) post-smoother
       else
       {
         auto sdhandler_data = fill_schwarz_smoother_data<dim, typename LEVEL_MATRIX::value_type>(
@@ -465,13 +466,20 @@ struct ModelProblem : public Subscriptor
     prepare_mg_smoothers();
 
     /// set pre-smoother
+    pp_data.n_colors_system.push_back(n_colors_system());
     if(rt_parameters.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+    {
+      AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Schwarz pre-smoother is uninitialized."));
       mg_smoother_pre = mg_schwarz_smoother_pre.get();
+    }
     else
       AssertThrow(false, ExcMessage("TODO .. "));
     /// set post-smoother
     if(rt_parameters.multigrid.post_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+    {
+      AssertThrow(mg_schwarz_smoother_post, ExcMessage("Schwarz post-smoother is uninitialized."));
       mg_smoother_post = mg_schwarz_smoother_post.get();
+    }
     else
       AssertThrow(false, ExcMessage("TODO .. "));
 
@@ -544,13 +552,15 @@ struct ModelProblem : public Subscriptor
     iterative_solver.select(rt_parameters.solver.variant);
     iterative_solver.solve(system_matrix, system_u, system_rhs, preconditioner);
 
-    const auto n_frac_and_reduction_rate = compute_fractional_steps(solver_control);
-    pp_data.average_reduction_system.push_back(n_frac_and_reduction_rate.second);
-    pp_data.n_iterations_system.push_back(n_frac_and_reduction_rate.first);
+    double n_frac                    = 0.;
+    double reduction_rate            = 0.;
+    std::tie(n_frac, reduction_rate) = compute_fractional_steps(solver_control);
+    pp_data.average_reduction_system.push_back(reduction_rate);
+    pp_data.n_iterations_system.push_back(n_frac);
     pp_data.solve_time.push_back(-2712.1989);
 
-    print_parameter("Average reduction (solver):", n_frac_and_reduction_rate.second);
-    print_parameter("Number of iterations (solver):", n_frac_and_reduction_rate.first);
+    print_parameter("Average reduction (solver):", reduction_rate);
+    print_parameter("Number of iterations (solver):", n_frac);
   }
 
 
@@ -622,15 +632,14 @@ struct ModelProblem : public Subscriptor
         prepare_linear_system();
       }
 
-      print_informations();
       switch(rt_parameters.solver.precondition_variant)
       {
         case SolverParameter::PreconditionVariant::None:
         {
           {
+            print_informations();
             TimerOutput::Scope time_section(time, "Solve linear system");
             solve(preconditioner_id);
-            pp_data.n_colors_system.push_back(0);
           }
           break;
         }
@@ -639,9 +648,9 @@ struct ModelProblem : public Subscriptor
           {
             TimerOutput::Scope time_section(time, "Setup MG preconditioner");
             prepare_preconditioner_mg();
-            pp_data.n_colors_system.push_back(n_colors_system());
           }
           {
+            print_informations();
             TimerOutput::Scope time_section(time, "Solve");
             solve(*preconditioner_mg);
           }

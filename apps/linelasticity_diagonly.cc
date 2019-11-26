@@ -19,7 +19,7 @@ struct TestParameter
   TPSS::SmootherVariant smoother_variant = CT::SMOOTHER_VARIANT_;
 
   double                             cg_reduction         = 1.e-8;
-  double                             coarse_grid_accuracy = 1.e-8;
+  double                             coarse_grid_accuracy = 1.e-12;
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::IterativeAcc;
   types::global_dof_index dof_limit_min = 1e4;
@@ -69,41 +69,6 @@ test(const TestParameter & prms = TestParameter{})
   rt_parameters.dof_limits = {prms.dof_limit_min, prms.dof_limit_max};
   rt_parameters.n_cycles   = 10;
 
-  Laplace::Parameter parameters;
-  // *** PDE
-  const EquationData & equation_data = prms.equation_data;
-  parameters.geometry_variant        = Laplace::Parameter::GeometryVariant::Cube;
-
-  // *** DISCRETIZATION
-  parameters.dof_limit_min        = prms.dof_limit_min;
-  parameters.dof_limit_max        = prms.dof_limit_max;
-  parameters.n_refines            = 2;
-  parameters.allow_one_level_only = false;
-  parameters.n_cycles             = 20;
-
-  // *** SOLVER
-  parameters.solver_reduction      = prms.cg_reduction;
-  parameters.solver_max_iterations = 100;
-  // parameters.solver_variant        =
-  parameters.precondition_variant = Laplace::Parameter::PreconditionVariant::MG;
-
-  // *** MULTIGRID
-  parameters.coarse_level                                    = 1;
-  parameters.schwarz_smoother_data.patch_variant             = CT::PATCH_VARIANT_;
-  parameters.schwarz_smoother_data.smoother_variant          = CT::SMOOTHER_VARIANT_;
-  parameters.schwarz_smoother_data.number_of_smoothing_steps = prms.n_smoothing_steps;
-  parameters.schwarz_smoother_data.damping_factor =
-    TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim);
-  parameters.schwarz_smoother_data.local_damping_factor = prms.local_damping_factor;
-  parameters.mg_smoother_post_reversed                  = true;
-  // parameters.mg_coarse_iterations = 100;
-  // parameters.mg_coarse_grid_variant =
-  //   Laplace::Parameter::CoarseGridVariant::ChebyshevAccurate; // IterativeFixed;
-  // parameters.mg_coarse_chebyshev_reduction = 1.e-6;
-
-  // *** POSTPROCESS
-  // parameters.write_fe_output = true;
-
   // *** configure output filenames
   std::ostringstream oss;
   oss << TPSS::getstr_schwarz_variant(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_) + "_";
@@ -118,7 +83,8 @@ test(const TestParameter & prms = TestParameter{})
   std::fstream fstream_log;
   fstream_log.open(filename + ".log", std::ios_base::app);
   ConditionalOStream    pcout(fstream_log, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
-  LinElasticityOperator linelasticity_problem(pcout, parameters, rt_parameters, equation_data);
+  const EquationData &  equation_data = prms.equation_data;
+  LinElasticityOperator linelasticity_problem(pcout, rt_parameters, equation_data);
   linelasticity_problem.run(true);
   fstream_log.close();
 
