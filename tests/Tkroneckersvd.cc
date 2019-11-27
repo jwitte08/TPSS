@@ -37,6 +37,19 @@ void printTable(Table<2,VectorizedArray<double>> tab)
 	}
 	std::cout << "------------------------------------\n";
 }
+template <typename Number>
+bool operator==(Table<2,Number> tab1, Table<2,Number> tab2)
+{
+	AssertDimension(tab1.size()[0],tab2.size()[0]);
+	AssertDimension(tab1.size()[1],tab2.size()[1]);
+	std::size_t m = tab1.size()[0];
+	std::size_t n = tab1.size()[1];
+	for(std::size_t i = 0; i < m; i++)
+		for(std::size_t j = 0; j < n; j++)
+			if(std::abs(tab1(i,j) -  tab2(i,j))>0.0001)
+				return false;
+	return true;
+}
 using namespace dealii;
 int main()
 {
@@ -75,9 +88,7 @@ int main()
 	std::vector<std::array<Table<2,double>,2>>  mat1 =  {kp1,kp2};
 	std::array<std::array<Table<2,double>,2>,3>  approx =  {kp1,kp1,kp1};
 	compute_ksvd<2,double,3>(mat1,approx);
-	printTable(Tensors::sum(Tensors::kronecker_product(approx[0][0],approx[0][1]),Tensors::kronecker_product(approx[1][0],approx[1][1])));
-	printTable(Tensors::sum(Tensors::kronecker_product(t1,t2),Tensors::kronecker_product(t3,t4)));
-
+	
 
 
 
@@ -110,6 +121,14 @@ int main()
 	std::vector<std::array<Table<2,VectorizedArray<double>>,2>>  mat2 =  {kp3,kp4};
 	std::array<std::array<Table<2,VectorizedArray<double>>,2>,3>  approx2 =  {kp3,kp3,kp3};
 	compute_ksvd<2,VectorizedArray<double>,3>(mat2,approx2);
+
+
+	assert(Tensors::sum(Tensors::kronecker_product(approx2[0][0],approx2[0][1]),Tensors::kronecker_product(approx2[1][0],approx2[1][1])) == Tensors::sum(Tensors::kronecker_product(t5,t6),Tensors::kronecker_product(t7,t8)));
+	assert(Tensors::sum(Tensors::kronecker_product(approx[0][0],approx[0][1]),Tensors::kronecker_product(approx[1][0],approx[1][1])) == Tensors::sum(Tensors::kronecker_product(t1,t2),Tensors::kronecker_product(t3,t4)));
+
+	printTable(Tensors::sum(Tensors::kronecker_product(approx[0][0],approx[0][1]),Tensors::kronecker_product(approx[1][0],approx[1][1])));
+	printTable(Tensors::sum(Tensors::kronecker_product(t1,t2),Tensors::kronecker_product(t3,t4)));
+
 	printTable(Tensors::sum(Tensors::kronecker_product(approx2[0][0],approx2[0][1]),Tensors::kronecker_product(approx2[1][0],approx2[1][1])));
 	printTable(Tensors::sum(Tensors::kronecker_product(t5,t6),Tensors::kronecker_product(t7,t8)));
 	
