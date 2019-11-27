@@ -7,6 +7,7 @@ message(STATUS "Configuring implementation tests within subdirectory 'tests'")
 
 enable_testing()
 
+
 ## TODO use gtest
 # set(testfiles
   # # Tpatch_info_01.cc
@@ -31,6 +32,8 @@ set (src_files
   tensors.cc
   apps_poisson.cc
   apps_linelasticity.cc
+  # Tlinelasticity_integrator_mf.cc
+  # Tlinelasticity_integrator_fd.cc
   )
 
 add_custom_target(setup_tests)
@@ -47,5 +50,5 @@ foreach(test ${src_files})
   target_link_libraries(${target} tpss gtest gtest_main pthread)
   DEAL_II_SETUP_TARGET(${target})
   add_test(NAME ${target} COMMAND ${target})
-  add_dependencies(setup_mytests ${target})
+  add_dependencies(setup_tests ${target})
 endforeach(test)
