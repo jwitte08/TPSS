@@ -8,7 +8,6 @@
 #ifndef KRONECKERSVD_H_
 #define KRONECKERSVD_H_
 
-#include <iostream>
 #include <deal.II/base/table.h>
 #include <deal.II/lac/lapack_full_matrix.h>
 
@@ -45,20 +44,68 @@ AlignedVector<Number> vecMscal(const AlignedVector<Number> &in, const Number &sc
 	return ret;
 }
 //Divide AlignedVector by scalar, if vector is zero allow scalar to be zero
+//We check for zero, so for vectorizedarrays we need to do it comonent wise
+template<typename Number>
+AlignedVector<VectorizedArray<Number>> vecMscali(const AlignedVector<VectorizedArray<Number>> &in, const VectorizedArray<Number> &scalar)
+{
+	AlignedVector<VectorizedArray<Number>> ret(in.size());
+
+	constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
+	for(std::size_t lane = 0; lane < macro_size; lane++)
+	{
+		for(std::size_t i=0; i < in.size(); i++)
+		{
+			if(scalar[lane]!=0)
+				ret[i][lane] = in[i][lane]/scalar[lane];
+			else
+			{
+				ret[i][lane] = 0;
+			}
+		}
+	}
+	return ret;
+}
+//Divide AlignedVector by scalar, if vector is zero allow scalar to be zero
 template<typename Number>
 AlignedVector<Number> vecMscali(const AlignedVector<Number> &in, const Number &scalar)
 {
-	AlignedVector<Number> ret = AlignedVector<Number>(in);
+	AlignedVector<Number> ret(in.size());
 	for(std::size_t i=0; i < in.size(); i++)
 	{
 		if(scalar!=0)
 			ret[i] = in[i]/scalar;
 		else
-			Assert(std::abs(vecMvec(in,in)) < 1e-13,ExcZero());
+		{
 			ret[i] = 0;
+		}
 	}
 	return ret;
 }
+//Multiply Matrix by Matrix
+template<typename Number>
+Table<2,Number> matMmat(const Table<2,Number> &in1, const Table<2,Number> &in2)
+{
+	AssertDimension(in1.size()[1],in2.size()[0]);
+	Table<2,Number> ret(in1.size()[0],in2.size()[1]);
+	for(std::size_t i = 0; i < in1.size()[0]; i++)
+		for(std::size_t j = 0; j < in2.size()[1]; j++)
+			for(std::size_t k = 0; k < in2.size()[0]; k++)
+				ret(i,j) += in1(i,k)*in2(k,j);
+	return ret;
+}
+//Multiply transpose of Matrix by Matrix
+template<typename Number>
+Table<2,Number> TmatMmat(const Table<2,Number> &in1, const Table<2,Number> &in2)
+{
+	AssertDimension(in1.size()[0],in2.size()[0]);
+	Table<2,Number> ret(in1.size()[1],in2.size()[1]);
+	for(std::size_t i = 0; i < in1.size()[1]; i++)
+		for(std::size_t j = 0; j < in2.size()[1]; j++)
+			for(std::size_t k = 0; k < in2.size()[0]; k++)
+				ret(i,j) += in1(k,i)*in2(k,j);
+	return ret;
+}
+
 //Flatten Table to AlignedVector
 template <typename Number>
 AlignedVector<Number> vectorizeMatrix(const Table<2,Number> &tab)
@@ -68,7 +115,7 @@ AlignedVector<Number> vectorizeMatrix(const Table<2,Number> &tab)
 	AlignedVector<Number> ret(m*n);
 	for(std::size_t k = 0; k < m; k++)
 		for(std::size_t l = 0; l < n; l++)
-			ret[k*m + l] = tab(k,l);
+			ret[k*n + l] = tab(k,l);
 	return ret;
 }
 //Revert vectorizeMatrix
@@ -79,7 +126,7 @@ Table<2,Number> MatricizeVector(const AlignedVector<Number> &vec, std::size_t m,
 	Table<2,Number>ret(m,n);
 	for(std::size_t k = 0; k < m; k++)
 		for(std::size_t l = 0; l < n; l++)
-			ret(k,l) = vec[k*m+l];
+			ret(k,l) = vec[k*n+l];
 	return ret;
 }
 
@@ -109,16 +156,89 @@ void orthogonalize(std::vector<AlignedVector<Number>> &vectors)
 		vectors.back() = vecPvec(vectors.back(),vecMscal(vectors[j],-vecMvec(vectors.back(),vectors[j])/vecMvec(vectors[j],vectors[j])));
 }
 
+//For vectorizedarray check if > holds for all elements
+template <typename Number>
+bool operator>(VectorizedArray<Number> a, Number b)
+{
 
+	constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
+	for(std::size_t lane = 0; lane < macro_size; lane++)
+		if(a[lane] <= b)
+			return false;
+	return true;
+}
+
+
+//compute svd of bidiagonal matrix
+template <typename Number>
+void bidiagonal_svd(const AlignedVector<Number> &diagonal, const AlignedVector<Number> &upper_diagonal, Table<2, Number> &U, AlignedVector<Number> &singular_values, Table<2, Number> &VT)
+{
+	std::size_t base_len = diagonal.size();
+	AssertDimension(base_len, upper_diagonal.size()+1);
+	AssertDimension(base_len, U.size()[0]);
+	AssertDimension(base_len, U.size()[1]);
+	AssertDimension(base_len, singular_values.size());
+	AssertDimension(base_len, VT.size()[0]);
+	AssertDimension(base_len, VT.size()[1]);
+	LAPACKFullMatrix<Number> bidiag_mat(base_len,base_len);
+	for(std::size_t i = 0; i < base_len; i++)
+	{
+		bidiag_mat(i,i) = diagonal[i];
+		if(i< base_len - 1)
+			bidiag_mat(i,i+1) = upper_diagonal[i];
+	}
+	bidiag_mat.compute_svd();
+	LAPACKFullMatrix<Number> U_ = bidiag_mat.get_svd_u();
+	LAPACKFullMatrix<Number> VT_ = bidiag_mat.get_svd_vt();
+	for(std::size_t i = 0; i < base_len; i++)
+		for(std::size_t j = 0; j < base_len; j++)
+		{
+			U(i,j) = U_(i,j);
+			VT(i,j) = VT_(i,j);
+			singular_values[i] = bidiag_mat.singular_value(i);
+		}	
+}
+//compute lane-wise svd of bidiagonal matrix
+template <typename Number>
+void bidiagonal_svd(const AlignedVector<VectorizedArray<Number>> &diagonal, const AlignedVector<VectorizedArray<Number>> &upper_diagonal, Table<2, VectorizedArray<Number>> &U, AlignedVector<VectorizedArray<Number>> &singular_values, Table<2, VectorizedArray<Number>> &VT)
+{
+	constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
+	std::size_t base_len = diagonal.size();
+	AlignedVector<Number> diag(base_len);
+	AlignedVector<Number> updiag(base_len-1);
+	AlignedVector<Number> sing_values(base_len);
+	Table<2, Number> U_(base_len, base_len);
+	Table<2, Number> VT_(base_len, base_len);
+        for(std::size_t lane = 0; lane < macro_size; lane++)
+	{
+		for(std::size_t i = 0; i < base_len; i++)
+		{
+			diag[i] = diagonal[i][lane];
+			if(i<base_len-1)
+				updiag[i] = upper_diagonal[i][lane];
+		}
+		bidiagonal_svd(diag, updiag, U_,sing_values,VT_);
+		for(std::size_t i = 0; i < base_len; i++)
+		{
+			for(std::size_t j = 0; j < base_len; j++)
+			{
+				U(i,j)[lane] = U_(i,j);
+				VT(i,j)[lane] = VT_(i,j);
+			}
+			singular_values[i][lane] = sing_values[i];
+		}
+	}
+}
+       
 
 /*
   computes the low Kronecker rank approximation, i.e. the ksvd, of a matrix of the form
   M = Σ A_i⊗B_i
   where A_i is called the big matrix and B_i is called the small matrix.
- We first reshuffle M and then compute the first few singular vectors by using the Lanczos algorithm.
- The matricization of these singular vectors then are the low Kronecker approximation.
+  We first reshuffle M and then compute the first few singular vectors by using the Lanczos algorithm.
+  The matricization of these singular vectors then are the low Kronecker approximation.
 
-the matrix M is passed in "in", and the low rank approximation is passed in "out"
+  the matrix M is passed in "in", and the low rank approximation is passed in "out"
 */
 template <int dim, typename Number, int out_rank>
 void compute_ksvd(std::vector<std::array<Table<2,Number>, dim > > in, std::array<std::array<Table<2,Number>,dim>,out_rank> &out)
@@ -137,8 +257,9 @@ void compute_ksvd(std::vector<std::array<Table<2,Number>, dim > > in, std::array
 			small_matrices_vectorized.push_back(vectorizeMatrix(in[i][1]));
 			big_matrices_vectorized.push_back(vectorizeMatrix(in[i][0]));
 		}
-		std::vector<Number> beta = {Number(1)};  //just to define beta.back()                 
-		std::vector<Number> alpha;
+		AlignedVector<Number> beta;  //just to define beta.back()
+		beta.push_back(Number(1));
+		AlignedVector<Number> alpha;
 		std::vector<AlignedVector<Number>> r; 
 		std::vector<AlignedVector<Number>> p = {AlignedVector<Number>(small_m * small_n)}; 
 		p.back()[0] = 1;
@@ -158,44 +279,37 @@ void compute_ksvd(std::vector<std::array<Table<2,Number>, dim > > in, std::array
 			orthogonalize(p);
 		}
 		std::size_t base_len = alpha.size()-1;
-		LAPACKFullMatrix <Number> R(base_len,base_len);
-		LAPACKFullMatrix <Number> U(base_len,big_m*big_n);
-		LAPACKFullMatrix <Number> V(base_len,small_m*small_n);
+		Table <2, Number> U(base_len,big_m*big_n);
+		Table <2, Number> V(base_len,small_m*small_n);
+		AlignedVector<Number> real_beta(base_len - 1); //the algorithm does not use all values of alpha and beta we have in our implementation
+		AlignedVector<Number> real_alpha(base_len);
 		for(std::size_t i = 0; i < base_len; i++)
 		{
-			R(i,i) = alpha[i];
-			
+			real_alpha[i] = alpha[i];
+			if(i<base_len - 1)
+				real_beta[i] = beta[i+2];
 			for(std::size_t j = 0; j < big_m*big_n;j++)
 				U(i,j) = u[i+1][j];
 			for(std::size_t j = 0; j < small_m*small_n;j++)
 				V(i,j) = v[i][j];
-			if(i < base_len - 1)
-				R(i,i+1) = beta[i+2];
 		}
-		R.compute_svd();
-		std::array<Number,out_rank> singular_values;
-		for(std::size_t i = 0; i < out_rank; i++)
-		{
-			if(i < base_len)
-				singular_values[i] = R.singular_value(i);
-			else
-				singular_values[i] = 0;
-			std::cout << singular_values[i]<<"\n";
-		}
-		LAPACKFullMatrix<Number> tildeU = R.get_svd_u();
-		LAPACKFullMatrix<Number> tildeV = R.get_svd_vt();
-		LAPACKFullMatrix<Number> left_singular_vectors(base_len,big_m*big_n);
-		LAPACKFullMatrix<Number> right_singular_vectors(base_len,small_m*small_n);
-		tildeU.Tmmult(left_singular_vectors,U);
-		tildeV.mmult(right_singular_vectors,V);
+		
+		AlignedVector<Number> singular_values(base_len);
+		Table<2,Number> tildeU(base_len,base_len);
+		Table<2,Number> tildeVT(base_len,base_len);
+		
+		bidiagonal_svd(real_alpha, real_beta, tildeU, singular_values, tildeVT);
+		
+		Table<2,Number> left_singular_vectors = TmatMmat(tildeU,U);
+		Table<2,Number> right_singular_vectors = matMmat(tildeVT,V);
 		for(std::size_t i=0; i < out_rank; i++)
 		{
 			for(std::size_t k = 0; k < big_m; k++)
 				for(std::size_t l = 0; l < big_n; l++)
-					out[i][0](k,l) = left_singular_vectors(i,k*big_m+l)*std::sqrt(singular_values[i]);
+					out[i][0](k,l) = left_singular_vectors(i,k*big_n+l)*std::sqrt(singular_values[i]);
 			for(std::size_t k = 0; k < small_m; k++)
 				for(std::size_t l = 0; l < small_n; l++)
-					out[i][1](k,l) = right_singular_vectors(i,k*small_m+l)*std::sqrt(singular_values[i]);
+					out[i][1](k,l) = right_singular_vectors(i,k*small_n+l)*std::sqrt(singular_values[i]);
 		}
 	}
 }
