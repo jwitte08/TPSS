@@ -41,7 +41,8 @@ struct MeshParameter
   {
     None,
     Cube,
-    CubeDistorted
+    CubeDistorted,
+    CuboidSubdivided
   };
 
   static std::string
@@ -62,7 +63,7 @@ struct MeshParameter
 std::string
 MeshParameter::str_geometry_variant(const GeometryVariant variant)
 {
-  const std::string str_variant[] = {"None", "Cube", "CubeDistorted"};
+  const std::string str_variant[] = {"None", "Cube", "CubeDistorted", "CuboidSubdivided"};
   return str_variant[(int)variant];
 }
 
@@ -73,10 +74,16 @@ MeshParameter::to_string() const
   oss << Util::parameter_to_fstring("Geometry:", str_geometry_variant(geometry_variant));
   oss << Util::parameter_to_fstring("Number of refinements:", n_refinements);
   oss << Util::parameter_to_fstring("Number of repetitions:", n_repetitions);
+  oss << Util::parameter_to_fstring("Subdivisions per direction:",
+                                    vector_to_string(n_subdivisions));
   oss << Util::parameter_to_fstring("Distortion factor:", distortion);
   return oss.str();
 }
 
+/*
+ * Creates a unit (hyper-)cube with @ prm.n_repetitions root cells per
+ * direction. The root mesh is uniformly refined based on @p prm.n_refinements.
+ */
 template<int dim>
 std::string
 create_unit_cube(Triangulation<dim> & tria, const MeshParameter & prm)
@@ -84,7 +91,7 @@ create_unit_cube(Triangulation<dim> & tria, const MeshParameter & prm)
   Assert(0 <= prm.n_refinements, ExcMessage("Number of refinements is negative."));
   Assert(0 < prm.n_repetitions, ExcMessage("At least one repitition required"));
   Assert(prm.geometry_variant == MeshParameter::GeometryVariant::Cube,
-         ExcMessage("Check geometry variant"));
+         ExcMessage("Check the geometry variant."));
   tria.clear();
 
   // domain
@@ -117,6 +124,14 @@ create_unit_cube(Triangulation<dim> & tria, const MeshParameter & prm)
   return oss.str();
 }
 
+
+/*
+ * Creates a unit (hyper-)cube with @ prm.n_repetitions root cells per
+ * direction. Interior vertices of the root mesh are distorted into random
+ * direction by @p prm.distortion (in %) of the longest edge attached to the
+ * vertex. Afterwards root mesh cells are uniformly refined based on @p
+ * prm.n_refinements.
+ */
 template<int dim>
 std::string
 create_distorted_cube(Triangulation<dim> & tria, const MeshParameter & prm)
@@ -126,7 +141,7 @@ create_distorted_cube(Triangulation<dim> & tria, const MeshParameter & prm)
   Assert(0 <= prm.n_refinements, ExcMessage("Number of refinements is negative."));
   Assert(0 < prm.n_repetitions, ExcMessage("At least one repitition required"));
   Assert(prm.geometry_variant == MeshParameter::GeometryVariant::CubeDistorted,
-         ExcMessage("Check geometry variant"));
+         ExcMessage("Check the geometry variant."));
   tria.clear();
 
   // domain
@@ -164,6 +179,55 @@ create_distorted_cube(Triangulation<dim> & tria, const MeshParameter & prm)
 }
 
 
+/*
+ * Creates a (hyper-)cuboid with @ prm.n_subdivisions[d] root cells per
+ * direction @p d. Root cells are congruent unit (hyper-)cubes. The root mesh is
+ * uniformly refined based on @p prm.n_refinements.
+ */
+template<int dim>
+std::string
+create_subdivided_cuboid(Triangulation<dim> & tria, const MeshParameter & prm)
+{
+  Assert(0 <= prm.n_refinements, ExcMessage("Number of refinements is negative."));
+  Assert(!prm.n_subdivisions.empty(), ExcMessage("No subdivisions have been set."));
+  Assert(prm.n_subdivisions.size() == dim, ExcMessage("Invalid number of subdivisions."));
+  Assert(prm.geometry_variant == MeshParameter::GeometryVariant::CuboidSubdivided,
+         ExcMessage("Check the geometry variant."));
+  tria.clear();
+
+  // domain
+  std::ostringstream oss;
+  constexpr double   h = 1.;
+  Point<dim>         left, right; // origin
+  for(unsigned int d = 0; d < dim; ++d)
+    right[d] = h * prm.n_subdivisions[d];
+  const auto str_domain = [&]() {
+    std::ostringstream oss;
+    for(unsigned int d = 0; d < dim; ++d)
+      oss << "(" << left[d] << ", " << right[d] << (d != (dim - 1) ? ") x " : ")");
+    return oss.str();
+  };
+  oss << Util::parameter_to_fstring("Domain:", str_domain());
+
+  // create root mesh
+  GridGenerator::subdivided_hyper_rectangle(tria, prm.n_subdivisions, left, right);
+  const auto str_root_mesh = [&]() {
+    std::ostringstream oss;
+    for(unsigned int d = 0; d < dim; ++d)
+      oss << prm.n_subdivisions[d] << (d != (dim - 1) ? " x " : "");
+    return oss.str();
+  };
+  oss << Util::parameter_to_fstring("Root mesh:", str_root_mesh());
+  oss << Util::parameter_to_fstring("Number of root cells:", tria.n_global_active_cells());
+
+  // refine
+  tria.refine_global(prm.n_refinements);
+  oss << Util::parameter_to_fstring("Number of active cells:", tria.n_global_active_cells());
+
+  return oss.str();
+}
+
+
 template<int dim>
 std::string
 create_mesh(Triangulation<dim> & triangulation, const MeshParameter & prms)
@@ -173,6 +237,8 @@ create_mesh(Triangulation<dim> & triangulation, const MeshParameter & prms)
     oss << create_unit_cube(triangulation, prms);
   else if(prms.geometry_variant == MeshParameter::GeometryVariant::CubeDistorted)
     oss << create_distorted_cube(triangulation, prms);
+  else if(prms.geometry_variant == MeshParameter::GeometryVariant::CuboidSubdivided)
+    oss << create_subdivided_cuboid(triangulation, prms);
   else
     AssertThrow(false, ExcMessage("Unsupported geometry variant. Check your run time parameters."));
   return oss.str();
@@ -231,8 +297,12 @@ struct IntegerCoordinateRoot
     const bool is_hypercube =
       MeshParameter::GeometryVariant::Cube == mesh_prms.geometry_variant ||
       MeshParameter::GeometryVariant::CubeDistorted == mesh_prms.geometry_variant;
+    const bool is_subdivided_cuboid =
+      MeshParameter::GeometryVariant::CuboidSubdivided == mesh_prms.geometry_variant;
     if(is_hypercube)
       return root_to_coordinate_cube(mesh_prms.n_repetitions);
+    else if(is_subdivided_cuboid)
+      return root_to_coordinate_subdivided(mesh_prms.n_subdivisions);
     else
       AssertThrow(false, ExcMessage("Not implemented"));
     return std::map<unsigned int, Point<dim, unsigned>>{};
@@ -246,7 +316,12 @@ struct IntegerCoordinateRoot
       MPI_COMM_WORLD,
       Triangulation<dim>::limit_level_difference_at_vertices,
       parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy);
-    GridGenerator::subdivided_hyper_cube(tria, n_repetitions, 0.0, 1.0);
+    MeshParameter prms;
+    prms.n_refinements    = 0;
+    prms.n_repetitions    = n_repetitions;
+    prms.geometry_variant = MeshParameter::GeometryVariant::Cube;
+    create_unit_cube(tria, prms);
+    // GridGenerator::subdivided_hyper_cube(tria, n_repetitions, 0.0, 1.0);
     const double h                  = 1.0 / n_repetitions;
     const auto   get_interval_index = [&](const double x) -> unsigned int {
       for(unsigned index = 0; index < n_repetitions; ++index)
@@ -266,6 +341,48 @@ struct IntegerCoordinateRoot
       Point<dim, unsigned> coord;
       for(int d = 0; d < dim; ++d)
         coord(d) = get_interval_index(center[d]);
+      const auto check = root_to_coord.insert({root_index, coord});
+      (void)check;
+      Assert(check.second, ExcMessage("Insertion failed."));
+      // std::cout << "root: " << root_index << " coord: " << coord << " center: " << cell->center()
+      //           << std::endl;
+    }
+    return root_to_coord;
+  }
+
+  std::map<unsigned int, Point<dim, unsigned>>
+  root_to_coordinate_subdivided(const std::vector<unsigned int> n_subdivisions) const
+  {
+    Assert(n_subdivisions.size() == dim, ExcMessage("Invalid number of subdivisions."));
+    // TODO hacked! pass triangulation by reference?
+    parallel::distributed::Triangulation<dim> tria(
+      MPI_COMM_WORLD,
+      Triangulation<dim>::limit_level_difference_at_vertices,
+      parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy);
+    MeshParameter prms;
+    prms.n_refinements    = 0;
+    prms.n_subdivisions   = n_subdivisions;
+    prms.geometry_variant = MeshParameter::GeometryVariant::CuboidSubdivided;
+    create_subdivided_cuboid(tria, prms);
+    const auto get_interval_index = [&](const double x, const unsigned d) -> unsigned int {
+      const double h = 1.0;
+      for(unsigned index = 0; index < n_subdivisions[d]; ++index)
+        if(index * h < x && x < ((index + 1) * h))
+          return index;
+      AssertThrow(false, ExcMessage("No valid interval found."));
+      return -1;
+    };
+
+    // For each root cell determine the lexicographic cell numbering
+    std::map<unsigned int, Point<dim, unsigned>> root_to_coord;
+    for(const auto & cell : tria.active_cell_iterators())
+    {
+      const CellId         cell_id    = cell->id();
+      const unsigned       root_index = cell_id.to_binary<dim>()[0];
+      const auto           center     = cell->center();
+      Point<dim, unsigned> coord;
+      for(int d = 0; d < dim; ++d)
+        coord(d) = get_interval_index(center[d], d);
       const auto check = root_to_coord.insert({root_index, coord});
       (void)check;
       Assert(check.second, ExcMessage("Insertion failed."));
