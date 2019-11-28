@@ -11,7 +11,6 @@ enable_testing()
 ## TODO use gtest
 # set(testfiles
   # # Tpatch_info_01.cc
-  # Tpatch_info_mpi.cc
   # # Tpatch_transfer_01.cc
   # # Tpatch_transfer_02.cc
   # # Ttensors_01.cc ## obsolete
@@ -34,6 +33,8 @@ set (src_files
   apps_linelasticity.cc
   # Tlinelasticity_integrator_mf.cc
   # Tlinelasticity_integrator_fd.cc
+  # apps_linelasticity_integrator.cc
+  apps_coloring.cc
   )
 
 add_custom_target(setup_tests)
