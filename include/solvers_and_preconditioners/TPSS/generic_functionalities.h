@@ -47,6 +47,14 @@ fill_with_random_values(VectorType & vec)
 }
 
 
+template<typename ElementType>
+void
+fill_with_random_values(ArrayView<ElementType> view)
+{
+  for(auto it = view.begin(); it != view.end(); ++it)
+    *it = (double)rand() / RAND_MAX;
+}
+
 
 template<typename Number>
 std::string
@@ -66,10 +74,13 @@ template<typename T>
 std::string
 vector_to_string(const std::vector<T> & vector)
 {
+  if(vector.empty())
+    return "[]";
+
   std::ostringstream oss;
-  oss << "{";
+  oss << "[";
   for(unsigned i = 0; i < vector.size(); ++i)
-    oss << vector[i] << ((i + 1) < vector.size() ? ", " : "}");
+    oss << vector[i] << ((i + 1) < vector.size() ? ", " : "]");
   return oss.str();
 }
 
