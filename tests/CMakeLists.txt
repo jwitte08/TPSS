@@ -33,7 +33,7 @@ set (src_files
   apps_linelasticity.cc
   # Tlinelasticity_integrator_mf.cc
   # Tlinelasticity_integrator_fd.cc
-  # apps_linelasticity_integrator.cc
+  apps_linelasticity_integrator.cc
   apps_coloring.cc
   )
 

@@ -1120,6 +1120,7 @@ public:
   using value_type = Number;
   using gradient_type =
     typename FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number>::gradient_type;
+  static constexpr unsigned int n_components = dim;
 
 private:
   std::shared_ptr<const MatrixFree<dim, Number>> data;
@@ -1149,8 +1150,8 @@ public:
   types::global_dof_index
   n() const;
 
-  // void
-  // initialize_dof_vector(LinearAlgebra::distributed::BlockVector<Number> & vec) const;
+  void
+  initialize_dof_vector(LinearAlgebra::distributed::BlockVector<Number> & vec) const;
 
   std::shared_ptr<const MatrixFree<dim, Number>>
   get_matrix_free() const;
@@ -1318,13 +1319,17 @@ Operator<dim, fe_degree, Number>::get_time_data() const
 
 
 
-// template<int dim, int fe_degree, typename Number>
-// void
-// Operator<dim, fe_degree, Number>::initialize_dof_vector(
-//   LinearAlgebra::distributed::BlockVector<Number> & vec) const
-// {
-//   data->initialize_dof_vector(vec);
-// }
+template<int dim, int fe_degree, typename Number>
+void
+Operator<dim, fe_degree, Number>::initialize_dof_vector(
+  LinearAlgebra::distributed::BlockVector<Number> & vec) const
+{
+  AssertThrow(data, ExcMessage("Matrix-free storage is uninitialized."));
+  vec.reinit(n_components);
+  for(unsigned int comp = 0; comp < n_components; ++comp)
+    data->initialize_dof_vector(vec.block(comp), comp);
+  vec.collect_sizes();
+}
 
 
 
