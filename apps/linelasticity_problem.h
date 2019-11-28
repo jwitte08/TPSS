@@ -284,6 +284,15 @@ struct ModelProblem : public Subscriptor
     return true;
   }
 
+  /*
+   * Convenience function creating the mesh based on RT::Parameter.
+   */
+  bool
+  create_triangulation()
+  {
+    return create_triangulation(rt_parameters.mesh.n_refinements);
+  }
+
   void
   distribute_dofs(const bool /*print_details*/ = false)
   {
