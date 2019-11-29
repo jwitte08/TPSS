@@ -20,14 +20,14 @@ using namespace dealii;
 
 namespace Tensors
 {
-template<int order>
+template<int order, typename IntType = unsigned int>
 std::string
-multiindex_to_string(const std::array<unsigned int, order> multiindex)
+multiindex_to_string(const std::array<IntType, order> multiindex)
 {
   std::ostringstream osstream;
   osstream << "(";
   static_assert(order > 0, "0-order multiindex is not permitted.");
-  for(unsigned int k = 0; k < multiindex.size() - 1; ++k)
+  for(IntType k = 0; k < multiindex.size() - 1; ++k)
     osstream << multiindex[k] << ", ";
   osstream << multiindex.back() << ")";
   return osstream.str();
@@ -40,21 +40,21 @@ multiindex_to_string(const std::array<unsigned int, order> multiindex)
  * order : the order of the multi-index
  * sizes  : (anisotropic) size of each independent variable (mode)
  */
-template<int order>
-unsigned int
-multi_to_uniindex(const std::array<unsigned int, order> & multiindex,
-                  const std::array<unsigned int, order> & sizes)
+template<int order, typename IntType = unsigned int>
+IntType
+multi_to_uniindex(const std::array<IntType, order> & multiindex,
+                  const std::array<IntType, order> & sizes)
 {
-  for(unsigned int k = 0; k < multiindex.size(); ++k)
+  for(IntType k = 0; k < multiindex.size(); ++k)
     AssertIndexRange(multiindex[k], sizes[k]);
-  unsigned int uniindex{0};
+  IntType uniindex{0};
   for(int k = order - 1; k >= 0; --k)
   {
     // has no effect on purpose for k == order-1 (uniindex is zero)
     uniindex *= sizes[k];
     uniindex += multiindex[k];
   }
-  const auto n_elem = std::accumulate(sizes.cbegin(), sizes.cend(), 1, std::multiplies<unsigned>());
+  const auto n_elem = std::accumulate(sizes.cbegin(), sizes.cend(), 1, std::multiplies<IntType>());
   (void)n_elem;
   AssertIndexRange(uniindex, n_elem);
 
@@ -68,11 +68,11 @@ multi_to_uniindex(const std::array<unsigned int, order> & multiindex,
  * order : the order of the multi-index
  * size  : isotropic size of each index set (mode)
  */
-template<int order>
-unsigned int
-multi_to_uniindex(const std::array<unsigned int, order> & multiindex, const unsigned int size)
+template<int order, typename IntType = unsigned int>
+IntType
+multi_to_uniindex(const std::array<IntType, order> & multiindex, const IntType size)
 {
-  std::array<unsigned int, order> sizes;
+  std::array<IntType, order> sizes;
   sizes.fill(size);
   return multi_to_uniindex<order>(multiindex, sizes);
 }
@@ -84,21 +84,21 @@ multi_to_uniindex(const std::array<unsigned int, order> & multiindex, const unsi
  * order : the order of the multi-index
  * sizes : sizes of each independent variable (mode)
  */
-template<int order>
-std::array<unsigned int, order>
-uni_to_multiindex(unsigned int index, const std::array<unsigned int, order> & sizes)
+template<int order, typename IntType = unsigned int>
+std::array<IntType, order>
+uni_to_multiindex(IntType index, const std::array<IntType, order> & sizes)
 {
-  const auto n_elem = std::accumulate(sizes.cbegin(), sizes.cend(), 1, std::multiplies<unsigned>());
+  const auto n_elem = std::accumulate(sizes.cbegin(), sizes.cend(), 1, std::multiplies<IntType>());
   (void)n_elem;
   AssertIndexRange(index, n_elem);
-  std::array<unsigned int, order> multiindex;
+  std::array<IntType, order> multiindex;
   for(int k = 0; k < order; ++k)
   {
     multiindex[k] = index % sizes[k];
     index         = index / sizes[k];
   }
   Assert(index == 0, ExcMessage("Uni-index has remainder after multi-index extraction."));
-  for(unsigned int k = 0; k < multiindex.size(); ++k)
+  for(IntType k = 0; k < multiindex.size(); ++k)
     AssertIndexRange(multiindex[k], sizes[k]);
 
   return multiindex;
@@ -111,11 +111,11 @@ uni_to_multiindex(unsigned int index, const std::array<unsigned int, order> & si
  * order : the order of the multi-index
  * size  : isotropic size of each index set (mode)
  */
-template<int order>
-std::array<unsigned int, order>
-uni_to_multiindex(unsigned int index, const unsigned int size)
+template<int order, typename IntType = unsigned int>
+std::array<IntType, order>
+uni_to_multiindex(IntType index, const IntType size)
 {
-  std::array<unsigned int, order> sizes;
+  std::array<IntType, order> sizes;
   sizes.fill(size);
   return uni_to_multiindex<order>(index, sizes);
 }
@@ -129,23 +129,21 @@ uni_to_multiindex(unsigned int index, const unsigned int size)
  * mode  : traversing mode of the fibre
  * size  : isotropic size of each index set (mode)
  */
-template<int order>
-std::vector<unsigned int>
-index_fibre(const std::array<unsigned int, order - 1> index,
-            const int                                 mode,
-            const unsigned int                        size)
+template<int order, typename IntType = unsigned int>
+std::vector<IntType>
+index_fibre(const std::array<IntType, order - 1> index, const int mode, const IntType size)
 {
   AssertIndexRange(mode, order);
-  for(unsigned int k = 0; k < index.size(); ++k)
+  for(IntType k = 0; k < index.size(); ++k)
     AssertIndexRange(index[k], size);
-  std::vector<unsigned int>       fibre;
-  std::array<unsigned int, order> multiindex;
+  std::vector<IntType>       fibre;
+  std::array<IntType, order> multiindex;
   // std::cout << Tensors::multiindex_to_string<order-1>(index) << std::endl;
   auto elem = index.cbegin();
   std::generate(multiindex.begin(), multiindex.end(), [&, mode, k = int{0}]() mutable {
     return (k++ != mode) ? *(elem++) : 0U;
   });
-  for(unsigned int i = 0; i < size; ++i)
+  for(IntType i = 0; i < size; ++i)
   {
     multiindex[mode] = i;
     // std::cout << Tensors::multiindex_to_string<order>(multiindex) << std::endl;
@@ -154,11 +152,104 @@ index_fibre(const std::array<unsigned int, order - 1> index,
   return fibre;
 }
 
-template<int dim, typename Number, int size = -1>
+template<int dim, typename Number, int n_rows_1d = -1>
+class TensorProductMatrix : public TensorProductMatrixSymmetricSum<dim, Number, n_rows_1d>
+{
+  enum class State
+  {
+    invalid,
+    basic,
+    skd
+  };
+
+  using SKDMatrix = TensorProductMatrixSymmetricSum<dim, Number, n_rows_1d>;
+  using SKDMatrix::value_type; // = typename SKDMatrix::value_type;
+
+  TensorProductMatrix() = default;
+
+  TensorProductMatrix(const std::vector<Table<2, Number>> & left_or_mass_in,
+                      const std::vector<Table<2, Number>> & right_or_derivative_in,
+                      const State                           state_in = State::basic)
+  {
+    reinit(left_or_mass_in, right_or_derivative_in, state_in);
+  }
+
+  void
+  reinit(const std::vector<Table<2, Number>> & left_or_mass_in,
+         const std::vector<Table<2, Number>> & right_or_derivative_in,
+         const State                           state_in = State::basic)
+  {
+    Assert(
+      left_or_mass_in.size() == right_or_derivative_in.size(),
+      ExcMessage(
+        "The number of left/mass matrices is not equal to the number of right/derivative matrices."));
+    if(state_in == State::basic)
+    {
+      left_owned          = left_or_mass_in;
+      left_or_mass        = make_array_view(left_owned);
+      right_owned         = right_or_derivative_in;
+      right_or_derivative = make_array_view(right_or_derivative);
+      // make_array_view(left_owned.begin(), left_owned.end())
+    }
+    else if(state_in == State::skd)
+    {
+      Assert(left_or_mass_in.size() == dim,
+             ExcMessage("The number of mass/derivative matrices and dimension differ."));
+      std::array<Table<2, Number>, dim> mass_matrices;
+      std::array<Table<2, Number>, dim> derivative_matrices;
+      std::copy(left_or_mass_in.begin(), left_or_mass_in.end(), mass_matrices.begin());
+      std::copy(right_or_derivative_in.begin(),
+                right_or_derivative_in.end(),
+                derivative_matrices.begin());
+      SKDMatrix::reinit(mass_matrices, derivative_matrices);
+      left_or_mass        = make_array_view(SKDMatrix::mass_matrix);
+      right_or_derivative = make_array_view(SKDMatrix::derivative_matrix);
+    }
+    else
+      AssertThrow(false, ExcMessage("Invalid state at initialization."));
+
+    state = state_in;
+  }
+
+protected:
+  /**
+   * An array view pointing to the left or mass matrices, respectively,
+   * depending on the active state.
+   */
+  ArrayView<Table<2, Number>> left_or_mass;
+
+  /**
+   * A vector containing left matrices, that is left factors of the sum over
+   * Kronecker products.
+   */
+  std::vector<Table<2, Number>> left_owned;
+
+  /**
+   * An array view pointing to the right or derivative matrices, respectively,
+   * depending on the active state.
+   */
+  ArrayView<Table<2, Number>> right_or_derivative;
+
+  /**
+   * A vector containing right matrices, that is right factors of the sum over
+   * Kronecker products.
+   */
+  std::vector<Table<2, Number>> right_owned;
+
+  /**
+   * The state switches which functionalities are faciliated:
+   *
+   * basic:  TensorProductMatrix
+   * skd:    TensorProductMatrixSymmetricSum
+   */
+  State state = State::invalid;
+};
+
+template<int dim, typename Number, int n_rows_1d = -1>
 class BlockMatrixDiagonal
 {
 public:
-  using matrix_type = TensorProductMatrixSymmetricSum<dim, Number, size>;
+  using matrix_type = TensorProductMatrixSymmetricSum<dim, Number, n_rows_1d>;
   using value_type  = typename matrix_type::value_type;
 
   /**
@@ -241,7 +332,7 @@ private:
     AssertDimension(src.size(), n());
     AssertDimension(dst.size(), m());
     AssertThrow(src.size() == dst.size(), ExcNotImplemented()); // quadratic !
-    AssertThrow(size == -1 || src.size() % size == 0,
+    AssertThrow(n_rows_1d == -1 || src.size() % n_rows_1d == 0,
                 ExcMessage("Input vector sizes are not a multiple of the static size."));
     AssertThrow(!blocks.empty(), ExcMessage("Blocks are not initialized."));
 
@@ -261,6 +352,165 @@ private:
     AssertThrow(row_end == dst.size() && col_end == src.size(),
                 ExcMessage("Inconsistent slicing."));
   }
+
+  /**
+   * The vector containing the matrix blocks.
+   */
+  AlignedVector<matrix_type> blocks;
+};
+
+template<int dim, typename Number, int n_rows_1d = -1>
+class BlockMatrix
+{
+public:
+  using matrix_type = TensorProductMatrixSymmetricSum<dim, Number, n_rows_1d>;
+  using value_type  = typename matrix_type::value_type;
+
+  /**
+   * Deletes old and resizes to square block structure.
+   */
+  void
+  resize(const std::size_t n_rows)
+  {
+    blocks.clear();
+    blocks.resize(n_rows * n_rows);
+    n_[0] = n_[1] = n_rows;
+  }
+
+  /**
+   * Deletes old and resizes to new block structure.
+   */
+  void
+  resize(const std::size_t n_rows, const std::size_t n_cols)
+  {
+    blocks.clear();
+    blocks.resize(n_rows * n_cols);
+    n_[0] = n_rows;
+    n_[1] = n_cols;
+  }
+
+  matrix_type &
+  get_block(const std::size_t row_index, const std::size_t col_index)
+  {
+    AssertIndexRange(row_index, n_block_rows());
+    AssertIndexRange(col_index, n_block_cols());
+    return blocks[block_index(row_index, col_index)];
+  }
+
+  const matrix_type &
+  get_block(const std::size_t row_index, const std::size_t col_index) const
+  {
+    AssertIndexRange(row_index, n_block_rows());
+    AssertIndexRange(col_index, n_block_cols());
+    return blocks[block_index(row_index, col_index)];
+  }
+
+  unsigned int
+  m() const
+  {
+    const unsigned int n_rows =
+      std::accumulate(blocks.begin(), blocks.end(), 0, [](const auto sum, const auto & matrix) {
+        return sum + matrix.m();
+      });
+    return n_rows;
+  }
+
+  unsigned int
+  n() const
+  {
+    const unsigned int n_columns =
+      std::accumulate(blocks.begin(), blocks.end(), 0, [](const auto sum, const auto & matrix) {
+        return sum + matrix.m();
+      });
+    return n_columns;
+  }
+
+  void
+  vmult(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const
+  {
+    blockwise_action([](const matrix_type &             matrix,
+                        const ArrayView<Number> &       dst,
+                        const ArrayView<const Number> & src) { matrix.vmult(dst, src); },
+                     dst,
+                     src);
+  }
+
+  void
+  apply_inverse(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const
+  {
+    blockwise_action([](const matrix_type &             matrix,
+                        const ArrayView<Number> &       dst,
+                        const ArrayView<const Number> & src) { matrix.apply_inverse(dst, src); },
+                     dst,
+                     src);
+  }
+
+  std::array<std::size_t, 2>
+  size()
+  {
+    return n_;
+  }
+
+  std::size_t
+  n_block_rows()
+  {
+    return n_[0];
+  }
+
+  std::size_t
+  n_block_cols()
+  {
+    return n_[1];
+  }
+
+private:
+  std::size_t
+  block_index(const std::size_t row_index, const std::size_t col_index) const
+  {
+    const std::array<std::size_t, 2> row_and_col = {row_index, col_index};
+    return Tensors::multi_to_uniindex<2>(row_and_col, n_);
+  }
+
+  /**
+   * Applies the function @p action to each matrix of the block
+   * diagonal and the associated vector slices of @p dst and @p src.
+   * The signature of the action function should be equivalent to
+   * action(matrix_type& m, ArrayView<...> dst, ArrayView<const ...> src)
+   */
+  template<typename ActionType>
+  void
+  blockwise_action(const ActionType &              action,
+                   const ArrayView<Number> &       dst,
+                   const ArrayView<const Number> & src) const
+  {
+    AssertDimension(src.size(), n());
+    AssertDimension(dst.size(), m());
+    AssertThrow(src.size() == dst.size(), ExcNotImplemented()); // quadratic !
+    AssertThrow(n_rows_1d == -1 || src.size() % n_rows_1d == 0,
+                ExcMessage("Input vector sizes are not a multiple of the static size."));
+    AssertThrow(!blocks.empty(), ExcMessage("Blocks are not initialized."));
+
+    // *** apply sliced vectors to the associated block matrix
+    std::size_t row_end = 0;
+    std::size_t col_end = 0;
+    for(const auto & matrix : blocks)
+    {
+      const auto row_start = row_end;
+      const auto col_start = col_end;
+      row_end += matrix.m();
+      col_end += matrix.n();
+      const ArrayView<Number>       dst_block(dst.begin() + row_start, matrix.m());
+      const ArrayView<const Number> src_block(src.begin() + col_start, matrix.n());
+      action(matrix, dst_block, src_block);
+    }
+    AssertThrow(row_end == dst.size() && col_end == src.size(),
+                ExcMessage("Inconsistent slicing."));
+  }
+
+  /**
+   * The number of blocks per row and column
+   */
+  std::array<std::size_t, 2> n_ = {0, 0};
 
   /**
    * The vector containing the matrix blocks.
