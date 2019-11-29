@@ -956,8 +956,8 @@ PatchWorker<dim, number>::n_physical_subdomains() const
   //   for(unsigned partition = 0; partition < n_partitions; ++partition)
   //     n_subdomains += n_physical_subdomains_per_partition(partition, color);
   // }
-  const auto &       subdomain_data = patch_info->internal_data.n_physical_subdomains_total;
-  const unsigned int n_subdomains   = subdomain_data.n_interior + subdomain_data.boundary;
+  const auto &       subdomain_data = patch_info->get_internal_data()->n_physical_subdomains_total;
+  const unsigned int n_subdomains   = subdomain_data.n_interior + subdomain_data.n_boundary;
 
   return n_subdomains;
 }
