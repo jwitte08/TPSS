@@ -19,6 +19,13 @@
 
 using namespace dealii;
 
+template<typename T1, typename T2>
+std::ostream &
+operator<<(std::ostream & os, const std::pair<T1, T2> & pair)
+{
+  return os << "(" << pair.first << ", " << pair.second << ")";
+}
+
 std::string
 bool_to_str(const bool b)
 {
@@ -37,13 +44,18 @@ operator/(const Utilities::MPI::MinMaxAvg & mma_in, const double t)
   return mma;
 }
 
+double
+random_value()
+{
+  return static_cast<double>(rand()) / RAND_MAX;
+}
 
 template<typename VectorType>
 void
 fill_with_random_values(VectorType & vec)
 {
   for(auto it = vec.begin(); it != vec.end(); ++it)
-    *it = (double)rand() / RAND_MAX;
+    *it = random_value();
 }
 
 
