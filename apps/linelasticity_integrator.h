@@ -132,8 +132,6 @@ private:
 public:
   using LaplaceIntegrator = typename Laplace::FD::MatrixIntegrator<dim, fe_degree, Number>;
   using CellMass          = typename LaplaceIntegrator::template CellMass<EvaluatorType>;
-  // using CellLaplace       = typename LaplaceIntegrator::template CellLaplace<EvaluatorType>;
-  // using FaceLaplace       = typename LaplaceIntegrator::template FaceLaplace<EvaluatorType>;
 
 private:
   EquationData equation_data;
@@ -152,6 +150,12 @@ public:
   {
     equation_data = equation_data_in;
     is_valid      = true;
+  }
+
+  const EquationData &
+  get_equation_data() const
+  {
+    return equation_data;
   }
 
   template<typename Evaluator>
@@ -1680,10 +1684,11 @@ template<int dim, int fe_degree, typename Number>
 struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
                           public FD::MatrixIntegrator<dim, fe_degree, Number>
 {
-  using MFOperator    = typename MF::Operator<dim, fe_degree, Number>;
-  using FDOperator    = typename FD::MatrixIntegrator<dim, fe_degree, Number>;
-  using value_type    = Number;
-  using transfer_type = typename FDOperator::transfer_type;
+  using MFOperator = typename MF::Operator<dim, fe_degree, Number>;
+  using FDOperator = typename FD::MatrixIntegrator<dim, fe_degree, Number>;
+  using value_type = Number;
+  using FDOperator::get_equation_data;
+  using FDOperator::transfer_type;
 
   CombinedOperator() = default;
 

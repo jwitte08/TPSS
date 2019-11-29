@@ -155,6 +155,13 @@ struct ModelProblem : public Subscriptor
     return *(dof_handlers[component]);
   }
 
+  std::shared_ptr<const SubdomainHandler<dim, value_type_mg>>
+  get_subdomain_handler(const unsigned int level = numbers::invalid_unsigned_int) const
+  {
+    AssertThrow(mg_schwarz_smoother_pre, ExcMessage("MG Schwarz pre-smoother is uninitialized."));
+    return mg_schwarz_smoother_pre->get_subdomain_handler(level);
+  }
+
   void
   assemble_matrix()
   {
