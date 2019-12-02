@@ -155,6 +155,7 @@ index_fibre(const std::array<IntType, order - 1> index, const int mode, const In
 template<int dim, typename Number, int n_rows_1d = -1>
 class TensorProductMatrix : public TensorProductMatrixSymmetricSum<dim, Number, n_rows_1d>
 {
+public:
   enum class State
   {
     invalid,
@@ -163,7 +164,7 @@ class TensorProductMatrix : public TensorProductMatrixSymmetricSum<dim, Number, 
   };
 
   using SKDMatrix = TensorProductMatrixSymmetricSum<dim, Number, n_rows_1d>;
-  using SKDMatrix::value_type; // = typename SKDMatrix::value_type;
+  using SKDMatrix::value_type;
 
   TensorProductMatrix() = default;
 
@@ -183,14 +184,18 @@ class TensorProductMatrix : public TensorProductMatrixSymmetricSum<dim, Number, 
       left_or_mass_in.size() == right_or_derivative_in.size(),
       ExcMessage(
         "The number of left/mass matrices is not equal to the number of right/derivative matrices."));
+    AssertThrow(check_n_rows_1d(left_or_mass_in) && check_n_rows_1d(right_or_derivative_in),
+                ExcMessage(
+                  "Not all univariate matrices inserted are of size (n_rows_1d x n_rows_1d)."));
+
     if(state_in == State::basic)
     {
       left_owned          = left_or_mass_in;
       left_or_mass        = make_array_view(left_owned);
       right_owned         = right_or_derivative_in;
-      right_or_derivative = make_array_view(right_or_derivative);
-      // make_array_view(left_owned.begin(), left_owned.end())
+      right_or_derivative = make_array_view(right_owned);
     }
+
     else if(state_in == State::skd)
     {
       Assert(left_or_mass_in.size() == dim,
@@ -202,8 +207,9 @@ class TensorProductMatrix : public TensorProductMatrixSymmetricSum<dim, Number, 
                 right_or_derivative_in.end(),
                 derivative_matrices.begin());
       SKDMatrix::reinit(mass_matrices, derivative_matrices);
-      left_or_mass        = make_array_view(SKDMatrix::mass_matrix);
-      right_or_derivative = make_array_view(SKDMatrix::derivative_matrix);
+      left_or_mass = make_array_view(SKDMatrix::mass_matrix.begin(), SKDMatrix::mass_matrix.end());
+      right_or_derivative =
+        make_array_view(SKDMatrix::derivative_matrix.begin(), SKDMatrix::derivative_matrix.end());
     }
     else
       AssertThrow(false, ExcMessage("Invalid state at initialization."));
@@ -211,7 +217,75 @@ class TensorProductMatrix : public TensorProductMatrixSymmetricSum<dim, Number, 
     state = state_in;
   }
 
+  unsigned int
+  m() const
+  {
+    if(state == State::skd)
+      return SKDMatrix::m();
+    Assert(left_or_mass.size() > 0, ExcMessage("Not initialized."));
+    const unsigned int m_left  = left(0).size(0);
+    const unsigned int m_right = right(0).size(0);
+    return m_left * m_right;
+  }
+
+  unsigned int
+  n() const
+  {
+    if(state == State::skd)
+      return SKDMatrix::n();
+    Assert(left_or_mass.size() > 0, ExcMessage("Not initialized."));
+    const unsigned int n_left  = left(0).size(1);
+    const unsigned int n_right = right(0).size(1);
+    return n_left * n_right;
+  }
+
+  void
+  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    if(state == State::basic)
+      vmult_impl_basic_static(dst_view, src_view);
+    else if(state == State::skd)
+      SKDMatrix::vmult(dst_view, src_view);
+    else
+      AssertThrow(false, ExcMessage("Not implemented."));
+  }
+
+  Table<2, Number>
+  as_table()
+  {
+    Table<2, Number>      mat(m(), n());
+    AlignedVector<Number> e_j, col_j;
+    e_j.resize(n());
+    col_j.resize(m());
+    for(unsigned int j = 0; j < n(); ++j)
+    {
+      e_j.fill(static_cast<Number>(0.));
+      col_j.fill(static_cast<Number>(0.));
+      e_j[j]                = static_cast<Number>(1.);
+      const auto e_j_view   = make_array_view<const Number>(e_j.begin(), e_j.end());
+      const auto col_j_view = make_array_view<Number>(col_j.begin(), col_j.end());
+      vmult(col_j_view, e_j_view);
+      for(unsigned int i = 0; i < m(); ++i)
+        mat(i, j) = col_j[i];
+    }
+    return mat;
+  }
+
 protected:
+  const Table<2, Number> &
+  left(unsigned int r) const
+  {
+    AssertIndexRange(r, left_or_mass.size());
+    return left_or_mass[r];
+  }
+
+  const Table<2, Number> &
+  right(unsigned int r) const
+  {
+    AssertIndexRange(r, right_or_derivative.size());
+    return right_or_derivative[r];
+  }
+
   /**
    * An array view pointing to the left or mass matrices, respectively,
    * depending on the active state.
@@ -243,6 +317,66 @@ protected:
    * skd:    TensorProductMatrixSymmetricSum
    */
   State state = State::invalid;
+
+private:
+  void
+  vmult_impl_basic_static(const ArrayView<Number> &       dst_view,
+                          const ArrayView<const Number> & src_view) const
+  {
+    AssertDimension(dst_view.size(), m());
+    AssertDimension(src_view.size(), n());
+    std::lock_guard<std::mutex> lock(this->mutex);
+    const unsigned int          mm =
+      n_rows_1d > 0 ? Utilities::fixed_power<dim>(n_rows_1d) : right(0).size(0) * left(0).size(1);
+    tmp_array.resize_fast(mm);
+    constexpr int kernel_size = n_rows_1d > 0 ? n_rows_1d : 0;
+    internal::
+      EvaluatorTensorProduct<internal::evaluate_general, dim, kernel_size, kernel_size, Number>
+                   eval(AlignedVector<Number>{},
+             AlignedVector<Number>{},
+             AlignedVector<Number>{},
+             left(0).size(0),  // TODO size of left and right matrices differs
+             left(0).size(1)); // TODO size of left and right matrices differs
+    Number *       tmp     = tmp_array.begin();
+    const Number * src     = src_view.begin();
+    Number *       dst     = dst_view.data();
+    const Number * left_0  = &(left(0)(0, 0));
+    const Number * right_0 = &(right(0)(0, 0));
+    eval.template apply</*direction*/ 0, /*contract_over_rows*/ false, /*add*/ false>(right_0,
+                                                                                      src,
+                                                                                      tmp);
+    eval.template apply<1, false, false>(left_0, tmp, dst);
+    for(std::size_t r = 1; r < left_or_mass.size(); ++r)
+    {
+      const Number * left_r  = &(left(r)(0, 0));
+      const Number * right_r = &(right(r)(0, 0));
+      eval.template apply<0, false, false>(right_r, src, tmp);
+      eval.template apply<1, false, true>(left_r, tmp, dst);
+    }
+  }
+
+  bool
+  check_n_rows_1d(const std::vector<Table<2, Number>> & tables)
+  {
+    if(n_rows_1d == -1)
+      return true;
+    if(n_rows_1d > 0)
+      return std::all_of(tables.cbegin(), tables.cend(), [](const auto & tab) {
+        return tab.size(0) == static_cast<unsigned>(n_rows_1d) &&
+               tab.size(1) == static_cast<unsigned>(n_rows_1d);
+      });
+    return false;
+  }
+
+  /**
+   * An array for temporary data.
+   */
+  mutable AlignedVector<Number> tmp_array;
+
+  /**
+   * A mutex that guards access to the array @p tmp_array.
+   */
+  mutable Threads::Mutex mutex;
 };
 
 template<int dim, typename Number, int n_rows_1d = -1>
@@ -683,6 +817,46 @@ vectorized_table_to_fullmatrix(const Table<2, VectorizedArray<Number>> & table,
     for(unsigned int j = 0; j < table.n_cols(); ++j)
       matrix(i, j) = (table(i, j))[lane];
   return matrix;
+}
+
+template<typename Number>
+FullMatrix<Number>
+table_to_fullmatrix(const Table<2, VectorizedArray<Number>> & table, const unsigned int lane = 0)
+{
+  return vectorized_table_to_fullmatrix(table, lane);
+}
+
+template<typename Number>
+FullMatrix<Number>
+table_to_fullmatrix(const Table<2, Number> & table, const unsigned int dummy = 0)
+{
+  (void)dummy;
+  FullMatrix<Number> matrix{table.n_rows(), table.n_cols()};
+  for(unsigned int i = 0; i < table.n_rows(); ++i)
+    for(unsigned int j = 0; j < table.n_cols(); ++j)
+      matrix(i, j) = table(i, j);
+  return matrix;
+}
+
+template<typename Number>
+Vector<Number>
+array_view_to_vector(const ArrayView<const Number> & view, const unsigned int dummy = 0)
+{
+  (void)dummy;
+  return Vector<Number>(view.cbegin(), view.cend());
+}
+
+template<typename Number>
+Vector<Number>
+array_view_to_vector(const ArrayView<const VectorizedArray<Number>> & view,
+                     const unsigned int                               lane = 0)
+{
+  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
+  Vector<Number> vec(view.size());
+  std::transform(view.cbegin(), view.cend(), vec.begin(), [lane](const auto & elem) {
+    return elem[lane];
+  });
+  return vec;
 }
 
 } // namespace Tensors
