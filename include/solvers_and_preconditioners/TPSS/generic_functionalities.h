@@ -9,6 +9,8 @@
 #define TESTS_GENERICFUNCTIONALITIES_H_
 
 #include <deal.II/base/conditional_ostream.h>
+#include <deal.II/base/mpi.h>
+#include <deal.II/base/utilities.h>
 #include <deal.II/base/vectorization.h>
 
 #include <iomanip>
