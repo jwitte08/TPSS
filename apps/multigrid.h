@@ -77,7 +77,7 @@ struct CoarseGridParameter
   double              accuracy             = 1.e-12;
   std::string         iterative_solver     = "none"; // see SolverSelector
   PreconditionVariant precondition_variant = PreconditionVariant::None;
-  SolverVariant       solver_variant       = SolverVariant::None;
+  SolverVariant       solver_variant       = SolverVariant::IterativeAcc;
 
   std::string
   to_string() const;

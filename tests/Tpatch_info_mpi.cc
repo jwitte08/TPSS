@@ -105,6 +105,7 @@ main(int argc, char * argv[])
 
   for(unsigned n_refinements : {1, 3, 4})
   {
+    TestParameter prms;
     prms.n_refinements = n_refinements;
     test<2, 1>(prms);
     test<3, 1>(prms);
@@ -113,6 +114,7 @@ main(int argc, char * argv[])
   prms.patch_variant = TPSS::PatchVariant::vertex;
   for(unsigned n_refinements : {1, 3, 4})
   {
+    TestParameter prms;
     prms.n_refinements = n_refinements;
     test<2, 1>(prms);
     test<3, 1>(prms);

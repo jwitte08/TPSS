@@ -6,7 +6,7 @@
  *      Author: witte
  */
 
-#include "Plaplace_fdss.h"
+// #include "Plaplace_fdss.h"
 #include "ct_parameter.h"
 #include "linelasticity_problem.h"
 
@@ -17,13 +17,13 @@ using namespace LinElasticity;
 
 struct TestParameter
 {
-  unsigned int                        n_refines     = 0;
-  bool                                print_details = false;
-  EquationData                        equation_data;
-  TPSS::PatchVariant                  patch_variant    = TPSS::PatchVariant::cell;
-  Laplace::Parameter::GeometryVariant geometry_variant = Laplace::Parameter::GeometryVariant::Cube;
-  bool                                test_diagonal_blocks  = true;
-  bool                                do_offdiagonal_blocks = true;
+  unsigned int                   n_refinements = 0;
+  bool                           print_details = false;
+  EquationData                   equation_data;
+  TPSS::PatchVariant             patch_variant         = TPSS::PatchVariant::cell;
+  MeshParameter::GeometryVariant geometry_variant      = MeshParameter::GeometryVariant::Cube;
+  bool                           test_diagonal_blocks  = true;
+  bool                           do_offdiagonal_blocks = true;
 };
 
 template<typename MatrixType, typename Number = double>
@@ -43,7 +43,7 @@ struct Test
   static constexpr unsigned fe_order   = fe_degree + 1;
   static constexpr unsigned macro_size = VectorizedArray<value_type>::n_array_elements;
 
-  using LinElasticityOperator = typename LinElasticity::MatrixOperator<dim, fe_degree, value_type>;
+  using LinElasticityOperator = typename LinElasticity::ModelProblem<dim, fe_degree, value_type>;
   using VectorizedMatrixType  = Table<2, VectorizedArray<value_type>>;
   using FDMatrixIntegrator    = typename FD::MatrixIntegrator<dim, fe_degree, value_type>;
   using EvaluatorType         = typename FDMatrixIntegrator::EvaluatorType;
@@ -61,24 +61,27 @@ struct Test
   std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> action_matrices;
   std::vector<VectorizedMatrixType>                                   elasticity_blocks10;
 
-  Test(const TestParameter test_parameters)
+  Test(const TestParameter params)
   {
     const bool         is_mpi_process0 = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
-    const bool         print_details   = is_mpi_process0 && test_parameters.print_details;
+    const bool         print_details   = is_mpi_process0 && params.print_details;
     ConditionalOStream pcout(std::cout, print_details);
-    Laplace::Parameter parameters;
-    parameters.allow_one_level_only = true;
-    parameters.n_refines            = test_parameters.n_refines;
-    parameters.geometry_variant =
-      test_parameters.geometry_variant; // Laplace::Parameter::GeometryVariant::SubdividedCubeoid;
-    auto & n_subdivisions = parameters.n_subdivisions;
-    n_subdivisions.resize(dim);
-    std::fill(n_subdivisions.begin(), n_subdivisions.end(), 1);
-    n_subdivisions[0]                              = 2;
-    parameters.schwarz_smoother_data.patch_variant = test_parameters.patch_variant;
+    RT::Parameter      rt_parameters;
+    rt_parameters.mesh.n_refinements = params.n_refinements;
+    rt_parameters.mesh.n_repetitions = 1;
+    rt_parameters.mesh.geometry_variant =
+      params.geometry_variant; // Laplace::Parameter::GeometryVariant::SubdividedCubeoid;
+    // auto & n_subdivisions = rt_parameters.mesh.n_subdivisions;
+    // n_subdivisions.resize(dim);
+    // std::fill(n_subdivisions.begin(), n_subdivisions.end(), 1);
+    // n_subdivisions[0]                              = 2;
+    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = params.patch_variant;
+    rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
 
     linelasticity_problem =
-      std::make_shared<LinElasticityOperator>(pcout, parameters, test_parameters.equation_data);
+      std::make_shared<LinElasticityOperator>(pcout, rt_parameters, params.equation_data);
+    const bool mesh_is_valid = linelasticity_problem->create_triangulation();
+    AssertThrow(mesh_is_valid, ExcMessage("Mesh is not initialized."));
     linelasticity_problem->distribute_dofs();
     linelasticity_problem->prepare_system(false, /*compute_rhs?*/ false);
 
@@ -183,7 +186,7 @@ struct Test
           //   matrices[id] = FDMatrixIntegrator::assemble_strain_mixed(fd_evals, equation_data,
           //   1, 0, id);
           // std::cout << "BLOCK01: " << std::endl;
-          // Tensors::vectorized_table_to_fullmatrix(matrices[id]).print_formatted(std::cout);
+          // table_to_fullmatrix(matrices[id]).print_formatted(std::cout);
           // std::cout << std::endl;
 
           matrices[id] = FDMatrixIntegrator::assemble_strain_mixed(
@@ -194,10 +197,10 @@ struct Test
 
           // // DEBUG
           // std::cout << "transpose of BLOCK10: " << std::endl;
-          // Tensors::vectorized_table_to_fullmatrix(Tensors::transpose(matrices[id])).print_formatted(std::cout);
+          // table_to_fullmatrix(Tensors::transpose(matrices[id])).print_formatted(std::cout);
           // std::cout << std::endl;
           // std::cout << "BLOCK10: " << std::endl;
-          // Tensors::vectorized_table_to_fullmatrix(matrices[id]).print_formatted(std::cout);
+          // table_to_fullmatrix(matrices[id]).print_formatted(std::cout);
           // std::cout << std::endl;
         }
       };
@@ -250,9 +253,7 @@ struct Test
     }
 
     // *** TEST
-    compare_blocks(test_parameters.test_diagonal_blocks,
-                   test_parameters.do_offdiagonal_blocks,
-                   print_details);
+    compare_blocks(params.test_diagonal_blocks, params.do_offdiagonal_blocks, print_details);
   }
 
   void
@@ -261,7 +262,7 @@ struct Test
                  const bool print_details = false) const
   {
     const auto patch_variant =
-      linelasticity_problem->parameters.schwarz_smoother_data.patch_variant;
+      linelasticity_problem->rt_parameters.multigrid.pre_smoother.schwarz.patch_variant;
     if(patch_variant == TPSS::PatchVariant::cell)
       compare_blocks_cp_impl(test_diag, test_offdiag, print_details);
     else if(patch_variant == TPSS::PatchVariant::vertex)
@@ -301,7 +302,7 @@ struct Test
             // const unsigned lane     = cell % macro_size;
             const auto fdmatrix = Tensors::assemble_separableKD(basic_matrices[patch_id][comp],
                                                                 action_matrices[patch_id][comp]);
-            const auto mat      = Tensors::vectorized_table_to_fullmatrix(fdmatrix, lane);
+            const auto mat      = table_to_fullmatrix(fdmatrix, lane);
             if(print_details)
             {
               print_row(
@@ -358,7 +359,7 @@ struct Test
                   fdblock = Tensors::transpose(elasticity_blocks10[patch_id]);
                 else
                   AssertThrow(false, ExcNotImplemented());
-                const auto mat = Tensors::vectorized_table_to_fullmatrix(fdblock, lane);
+                const auto mat = table_to_fullmatrix(fdblock, lane);
                 if(print_details)
                 {
                   print_row(std::cout,
@@ -438,7 +439,7 @@ struct Test
           // const unsigned lane     = cell % macro_size;
           const auto fdmatrix = Tensors::assemble_separableKD(basic_matrices[patch_id][comp],
                                                               action_matrices[patch_id][comp]);
-          const auto mat      = Tensors::vectorized_table_to_fullmatrix(fdmatrix, lane);
+          const auto mat      = table_to_fullmatrix(fdmatrix, lane);
           if(print_details)
           {
             print_row(std::cout, 12, "\n patch_id:", patch_id, "comp:", comp, "lane:", lane, "\n");
@@ -489,7 +490,7 @@ main(int argc, char * argv[])
   {
     TestParameter test_params;
     test_params.print_details = true;
-    test_params.n_refines     = 0;
+    test_params.n_refinements = 0;
     // test_params.geometry_variant = Laplace::Parameter::GeometryVariant::SubdividedCubeoid;
     auto & equation_data = test_params.equation_data;
     // equation_data.lambda = 5.678;
@@ -499,17 +500,17 @@ main(int argc, char * argv[])
     Test<2, 1> test{test_params};
   }
 
-  for(unsigned n_refinements = 0; n_refinements < 3; ++n_refinements)
-  {
-    TestParameter test_params;
-    test_params.n_refines = n_refinements;
-    auto & equation_data  = test_params.equation_data;
-    equation_data.lambda  = 123.4;
-    equation_data.mu      = 5.678;
-    Test<2, 1>{test_params};
-    Test<2, 2>{test_params};
-    Test<2, 5>{test_params};
-  }
+  // for(unsigned n_refinements = 0; n_refinements < 3; ++n_refinements)
+  // {
+  //   TestParameter test_params;
+  //   test_params.n_refinements = n_refinements;
+  //   auto & equation_data  = test_params.equation_data;
+  //   equation_data.lambda  = 123.4;
+  //   equation_data.mu      = 5.678;
+  //   Test<2, 1>{test_params};
+  //   Test<2, 2>{test_params};
+  //   Test<2, 5>{test_params};
+  // }
 
   return 0;
 }

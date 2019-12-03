@@ -155,6 +155,13 @@ struct ModelProblem : public Subscriptor
     return *(dof_handlers[component]);
   }
 
+  std::shared_ptr<const SubdomainHandler<dim, value_type_mg>>
+  get_subdomain_handler(const unsigned int level = numbers::invalid_unsigned_int) const
+  {
+    AssertThrow(mg_schwarz_smoother_pre, ExcMessage("MG Schwarz pre-smoother is uninitialized."));
+    return mg_schwarz_smoother_pre->get_subdomain_handler(level);
+  }
+
   void
   assemble_matrix()
   {
@@ -282,6 +289,15 @@ struct ModelProblem : public Subscriptor
     pp_data.n_cells_global.push_back(triangulation.n_global_active_cells());
 
     return true;
+  }
+
+  /*
+   * Convenience function creating the mesh based on RT::Parameter.
+   */
+  bool
+  create_triangulation()
+  {
+    return create_triangulation(rt_parameters.mesh.n_refinements);
   }
 
   void

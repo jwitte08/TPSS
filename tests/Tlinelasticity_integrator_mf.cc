@@ -6,7 +6,6 @@
  *      Author: witte
  */
 
-#include "Plaplace_fdss.h"
 #include "ct_parameter.h"
 #include "linelasticity_problem.h"
 
@@ -17,26 +16,26 @@ using namespace LinElasticity;
 
 struct TestParameter
 {
-  unsigned int n_refines     = 0;
+  unsigned int n_refinements = 0;
   bool         print_details = false;
 };
 
 template<int dim, int fe_degree, typename value_type = double>
 void
-test(const TestParameter test_parameters)
+test(const TestParameter params)
 {
-  using LinElasticityOperator = typename LinElasticity::MatrixOperator<dim, fe_degree, value_type>;
+  using LinElasticityOperator = typename LinElasticity::ModelProblem<dim, fe_degree, value_type>;
 
   const bool         is_mpi_process0 = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
-  const bool         print_details   = is_mpi_process0 && test_parameters.print_details;
+  const bool         print_details   = is_mpi_process0 && params.print_details;
   ConditionalOStream pcout(std::cout, print_details);
-  Laplace::Parameter parameters;
-  parameters.allow_one_level_only = true;
-  parameters.n_refines            = test_parameters.n_refines;
-  parameters.geometry_variant     = Laplace::Parameter::GeometryVariant::Cube;
+  RT::Parameter      rt_parameters;
+  rt_parameters.mesh.n_refinements    = params.n_refinements;
+  rt_parameters.mesh.n_repetitions    = 1;
+  rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
 
-  LinElasticityOperator linelasticity_problem(pcout, parameters);
-  // linelasticity_problem.create_triangulation_finest();
+  LinElasticityOperator linelasticity_problem(pcout, rt_parameters);
+  linelasticity_problem.create_triangulation();
   linelasticity_problem.distribute_dofs();
   linelasticity_problem.prepare_system(false, /*compute_rhs?*/ false);
   linelasticity_problem.assemble_matrix();
@@ -104,24 +103,16 @@ test(const TestParameter test_parameters)
   }
 
   { // TEST: comparison of vmults
-    auto     temp{linelasticity_problem.system_u};
-    unsigned i = 0;
-    for(auto it = temp.begin(); it != temp.end(); ++it, ++i)
-      *it = (double)rand() / RAND_MAX;
-    const auto           src{temp};
-    const Vector<double> src_copy(src.begin(), src.end());
-    // src_copy.print(std::cout);
+    Vector<double> src(linelasticity_problem.system_u.size());
+    const auto     src_view = make_array_view(src);
+    fill_with_random_values(src_view);
+    const Vector<double> src_copy(src_view.cbegin(), src_view.cend());
 
-    // auto dst_unsorted{src};
-    // mf_operator.vmult(dst_unsorted, src);
-    // // dst_unsorted.print(std::cout);
-    auto dst{src_copy};
+    Vector<double> dst(src_copy.size());
     mf_matrix.vmult(dst, src_copy);
-    // dst.print(std::cout);
 
-    auto dst_sparse{src_copy};
+    Vector<double> dst_sparse(src_copy.size());
     sparse_matrix.vmult(dst_sparse, src_copy);
-    // dst_sparse.print(std::cout);
 
     Vector<double> diff(dst.begin(), dst.end());
     diff -= dst_sparse;
@@ -143,7 +134,7 @@ main(int argc, char * argv[])
   {
     TestParameter test_params;
     test_params.print_details = true;
-    test_params.n_refines     = 1;
+    test_params.n_refinements = 1;
     // test<3, 1>(test_params);
     test<2, 1>(test_params);
   }
@@ -151,7 +142,7 @@ main(int argc, char * argv[])
     TestParameter test_params;
     // for(unsigned n = 1; n < 3; ++n)
     // {
-    //   test_params.n_refines = n;
+    //   test_params.n_refinements = n;
     test<2, 5>(test_params);
     test<3, 2>(test_params);
     // }

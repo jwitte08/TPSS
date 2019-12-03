@@ -132,8 +132,6 @@ private:
 public:
   using LaplaceIntegrator = typename Laplace::FD::MatrixIntegrator<dim, fe_degree, Number>;
   using CellMass          = typename LaplaceIntegrator::template CellMass<EvaluatorType>;
-  // using CellLaplace       = typename LaplaceIntegrator::template CellLaplace<EvaluatorType>;
-  // using FaceLaplace       = typename LaplaceIntegrator::template FaceLaplace<EvaluatorType>;
 
 private:
   EquationData equation_data;
@@ -152,6 +150,12 @@ public:
   {
     equation_data = equation_data_in;
     is_valid      = true;
+  }
+
+  const EquationData &
+  get_equation_data() const
+  {
+    return equation_data;
   }
 
   template<typename Evaluator>
@@ -623,7 +627,7 @@ public:
       // // DEBUG
       // for (unsigned int lane = 0; lane < macro_size; ++lane)
       //   {
-      //     const auto& mass_lane = Tensors::vectorized_table_to_fullmatrix (cell_mass_unit,
+      //     const auto& mass_lane = table_to_fullmatrix (cell_mass_unit,
       // lane);
       //     std::cout << "unit mass sizes: " << mass_lane.m() << ", " << mass_lane.n() <<
       //     std::endl; mass_lane.print_formatted (std::cout);
@@ -666,7 +670,7 @@ public:
         //     //     for (const auto& mass : mass_matrices)
         //     // 	for (unsigned int lane = 0; lane < macro_size; ++lane)
         //     // 	  {
-        //     // 	    const auto& mass_lane = Tensors::vectorized_table_to_fullmatrix (mass,
+        //     // 	    const auto& mass_lane = table_to_fullmatrix (mass,
         //     lane);
         //     // 	    std::cout << lane << "mass sizes: " << mass_lane.m() << ", " <<
         //     mass_lane.n()
@@ -677,7 +681,7 @@ public:
         //     laplace_matrices);
         //     //     for (unsigned int lane = 0; lane < macro_size; ++lane)
         //     //     	{
-        //     //     	  const auto& mat_lane = Tensors::vectorized_table_to_fullmatrix (mat,
+        //     //     	  const auto& mat_lane = table_to_fullmatrix (mat,
         //     lane);
         //     // 	  std::cout << lane << "kdmatrix sizes: " << mat_lane.m() << ", " <<
         //     mat_lane.n()
@@ -1120,6 +1124,7 @@ public:
   using value_type = Number;
   using gradient_type =
     typename FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number>::gradient_type;
+  static constexpr unsigned int n_components = dim;
 
 private:
   std::shared_ptr<const MatrixFree<dim, Number>> data;
@@ -1149,8 +1154,8 @@ public:
   types::global_dof_index
   n() const;
 
-  // void
-  // initialize_dof_vector(LinearAlgebra::distributed::BlockVector<Number> & vec) const;
+  void
+  initialize_dof_vector(LinearAlgebra::distributed::BlockVector<Number> & vec) const;
 
   std::shared_ptr<const MatrixFree<dim, Number>>
   get_matrix_free() const;
@@ -1318,13 +1323,17 @@ Operator<dim, fe_degree, Number>::get_time_data() const
 
 
 
-// template<int dim, int fe_degree, typename Number>
-// void
-// Operator<dim, fe_degree, Number>::initialize_dof_vector(
-//   LinearAlgebra::distributed::BlockVector<Number> & vec) const
-// {
-//   data->initialize_dof_vector(vec);
-// }
+template<int dim, int fe_degree, typename Number>
+void
+Operator<dim, fe_degree, Number>::initialize_dof_vector(
+  LinearAlgebra::distributed::BlockVector<Number> & vec) const
+{
+  AssertThrow(data, ExcMessage("Matrix-free storage is uninitialized."));
+  vec.reinit(n_components);
+  for(unsigned int comp = 0; comp < n_components; ++comp)
+    data->initialize_dof_vector(vec.block(comp), comp);
+  vec.collect_sizes();
+}
 
 
 
@@ -1675,10 +1684,11 @@ template<int dim, int fe_degree, typename Number>
 struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
                           public FD::MatrixIntegrator<dim, fe_degree, Number>
 {
-  using MFOperator    = typename MF::Operator<dim, fe_degree, Number>;
-  using FDOperator    = typename FD::MatrixIntegrator<dim, fe_degree, Number>;
-  using value_type    = Number;
-  using transfer_type = typename FDOperator::transfer_type;
+  using MFOperator = typename MF::Operator<dim, fe_degree, Number>;
+  using FDOperator = typename FD::MatrixIntegrator<dim, fe_degree, Number>;
+  using value_type = Number;
+  using FDOperator::get_equation_data;
+  using FDOperator::transfer_type;
 
   CombinedOperator() = default;
 
