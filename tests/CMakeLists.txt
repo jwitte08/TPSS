@@ -29,11 +29,13 @@ enable_testing()
   # )
 
 set (src_files
+    Tkroneckersvd.cc
   tensors.cc
   apps_poisson.cc
   apps_linelasticity.cc
   # Tlinelasticity_integrator_mf.cc
   # Tlinelasticity_integrator_fd.cc
+
   )
 
 add_custom_target(setup_tests)
