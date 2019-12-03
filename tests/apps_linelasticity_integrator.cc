@@ -197,6 +197,7 @@ protected:
   using LinElasticityProblem     = typename LinElasticity::ModelProblem<dim, fe_degree, double>;
   using BlockVector              = LinearAlgebra::distributed::BlockVector<double>;
   using LevelMatrix              = typename LinElasticityProblem::LEVEL_MATRIX;
+  using VectorizedMatrixType     = Table<2, VectorizedArray<double>>;
   static constexpr unsigned int fe_order   = fe_degree + 1;
   static constexpr unsigned int macro_size = VectorizedArray<double>::n_array_elements;
 
@@ -249,6 +250,24 @@ protected:
       return dof_to_cell;
     }
 
+    std::vector<std::vector<unsigned int>>
+    map_cell_to_dof_indices() const
+    {
+      const auto                             dof_to_cell      = map_dof_to_cell_index();
+      const auto                             n_physical_cells = data->n_physical_cells();
+      std::vector<std::vector<unsigned int>> cell_to_dofs(n_physical_cells);
+      for(auto dof_index = 0U; dof_index < dof_to_cell.size(); ++dof_index)
+        cell_to_dofs[dof_to_cell[dof_index]].push_back(dof_index);
+      // // redundant
+      // for (auto & dof_indices : cell_to_dofs)
+      // 	{
+      // 	  std::sort(dof_indices.begin(), dof_indices.end());
+      // 	  const auto new_end = std::unique(dof_indices.begin(), dof_indices.end());
+      // 	  dof_indices.erase(new_end, dof_indices.end());
+      // 	}
+      return cell_to_dofs;
+    }
+
     std::vector<std::pair<unsigned, unsigned>>
     map_cell_to_patch_index() const
     {
@@ -278,15 +297,14 @@ protected:
 
   struct Assembler
   {
-    using VectorizedMatrixType = Table<2, VectorizedArray<double>>;
-    using FDMatrixIntegrator   = typename FD::MatrixIntegrator<dim, fe_degree, double>;
-    using EvaluatorType        = typename FDMatrixIntegrator::EvaluatorType;
-    using CellMass             = typename FDMatrixIntegrator::CellMass;
-    using CellStrain           = typename FDMatrixIntegrator::template CellStrain<EvaluatorType>;
-    using CellGradMixed        = typename FDMatrixIntegrator::template CellGradMixed<EvaluatorType>;
-    using CellGradDiv          = typename FDMatrixIntegrator::template CellGradDiv<EvaluatorType>;
-    using NitscheStrain        = typename FDMatrixIntegrator::template NitscheStrain<EvaluatorType>;
-    using NitscheGradDiv = typename FDMatrixIntegrator::template NitscheGradDiv<EvaluatorType>;
+    using FDMatrixIntegrator = typename FD::MatrixIntegrator<dim, fe_degree, double>;
+    using EvaluatorType      = typename FDMatrixIntegrator::EvaluatorType;
+    using CellMass           = typename FDMatrixIntegrator::CellMass;
+    using CellStrain         = typename FDMatrixIntegrator::template CellStrain<EvaluatorType>;
+    using CellGradMixed      = typename FDMatrixIntegrator::template CellGradMixed<EvaluatorType>;
+    using CellGradDiv        = typename FDMatrixIntegrator::template CellGradDiv<EvaluatorType>;
+    using NitscheStrain      = typename FDMatrixIntegrator::template NitscheStrain<EvaluatorType>;
+    using NitscheGradDiv     = typename FDMatrixIntegrator::template NitscheGradDiv<EvaluatorType>;
 
 
     std::shared_ptr<const FullMatrix<double>>
@@ -410,10 +428,10 @@ protected:
       elasticity_matrices.resize(partition_data.n_subdomains());
       const auto & equation_data = combi_operator->get_equation_data();
 
+      /// assemble first strain-strain and then grad-div because
+      /// 'assemble_strain_matrices' initializes new matrices
       for(unsigned int color = 0; color < partition_data.n_colors(); ++color)
       {
-        /// assemble first strain-strain and then grad-div as
-        /// 'assemble_strain_matrices' initializes new matrices
         patch_storage
           ->template loop<EquationData,
                           std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>>>(
@@ -465,7 +483,6 @@ protected:
     new_problem->distribute_dofs();
     new_problem->prepare_system(false, /*compute_rhs?*/ false);
     new_problem->prepare_multigrid();
-    // new_problem->assemble_matrix(); ???
     linelasticity_problem = new_problem;
 
     const auto level  = linelasticity_problem->mg_matrices.max_level();
@@ -476,25 +493,81 @@ protected:
     ass.combi_operator = ex.combi_operator;
     ass.data           = ex.data;
     ass.patch_storage  = ex.patch_storage;
+
+    /// fill patch matrix with zeros
+    patch_matrix.resize(dim, dim);
+    std::vector<Table<2, double>> zeros;
+    const auto &                  zero_matrix_factory = [](const unsigned int m) {
+      Table<2, double> zero(m, m);
+      zero.fill(0.);
+      return zero;
+    };
+    zeros.emplace_back(zero_matrix_factory(fe_order));
+    for(auto row = 0U; row < patch_matrix.n_block_rows(); ++row)
+      for(auto col = 0U; col < patch_matrix.n_block_cols(); ++col)
+        patch_matrix.get_block(row, col).reinit(zeros, zeros);
+  }
+
+  void
+  compare_matrix(const FullMatrix<double> & other)
+  {
+    std::ostringstream oss;
+    const auto         patch_matrix_full = table_to_fullmatrix(patch_matrix.as_table());
+    oss << "Patch matrix:\n";
+    patch_matrix_full.print_formatted(oss);
+    oss << "Extracted block of the level matrix:\n";
+    other.print_formatted(oss);
+
+    auto diff(patch_matrix_full);
+    diff.add(-1., other);
+    EXPECT_PRED_FORMAT2(testing::FloatLE,
+                        diff.frobenius_norm(),
+                        std::numeric_limits<double>::epsilon() *
+                          std::min(100., other.frobenius_norm()))
+      << oss.str();
+    // std::cout << oss.str();
   }
 
   void
   test()
   {
-    params.n_refinements = 0;
+    using State = typename Tensors::TensorProductMatrix<dim, double>::State;
     initialize();
 
-    const auto level_matrix = ass.assemble_level_matrix();
-    level_matrix->print_formatted(pcout_owned->get_stream());
-    const auto dof_to_cell_index = ex.map_dof_to_cell_index();
-    for(auto i = 0; i < dof_to_cell_index.size(); ++i)
-      std::cout << dof_to_cell_index[i] << std::endl;
+    const std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> mass_matrices =
+      ass.assemble_mass_matrices();
+    const std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> elasticity_matrices =
+      ass.assemble_elasticity_matrices();
+    const auto level_matrix        = ass.assemble_level_matrix();
     const auto cell_to_patch_index = ex.map_cell_to_patch_index();
-    for(auto i = 0; i < cell_to_patch_index.size(); ++i)
-      std::cout << cell_to_patch_index[i] << std::endl;
+    const auto cell_to_dofs        = ex.map_cell_to_dof_indices();
+    for(auto cell = 0U; cell < cell_to_patch_index.size(); ++cell)
+    {
+      for(auto comp = 0U; comp < dim; ++comp)
+      {
+        auto [patch, lane] = cell_to_patch_index[cell];
+        std::vector<Table<2, double>> mass_comp, elas_comp;
+        const auto &                  mass_tensor_comp = mass_matrices[patch][comp];
+        const auto &                  elas_tensor_comp = elasticity_matrices[patch][comp];
+        std::transform(mass_tensor_comp.cbegin(),
+                       mass_tensor_comp.cend(),
+                       std::back_inserter(mass_comp),
+                       [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
+        std::transform(elas_tensor_comp.cbegin(),
+                       elas_tensor_comp.cend(),
+                       std::back_inserter(elas_comp),
+                       [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
+        patch_matrix.get_block(comp, comp).reinit(mass_comp, elas_comp, State::skd);
+      }
 
-    const auto mass_matrices       = ass.assemble_mass_matrices();
-    const auto elasticity_matrices = ass.assemble_elasticity_matrices();
+      const auto & level_dof_indices = cell_to_dofs[cell];
+      AssertDimension(level_dof_indices.size(), patch_matrix.m());
+      AssertDimension(level_dof_indices.size(), patch_matrix.n());
+      FullMatrix<double> extracted_matrix(patch_matrix.m(), patch_matrix.n());
+      extracted_matrix.extract_submatrix_from(*level_matrix, level_dof_indices, level_dof_indices);
+
+      compare_matrix(extracted_matrix);
+    }
   }
 
   void
@@ -522,6 +595,7 @@ protected:
   std::shared_ptr<const LinElasticityProblem> linelasticity_problem;
   Extractor                                   ex;
   Assembler                                   ass;
+  Tensors::BlockMatrix<dim, double>           patch_matrix;
 };
 
 TYPED_TEST_SUITE_P(TestLinElasticityIntegratorFD);
@@ -532,10 +606,10 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, VaryDimAndDegree)
 
   using Fixture = TestLinElasticityIntegratorFD<TypeParam>;
 
-  Fixture::params.equation_data.lambda = 1.234;
-  Fixture::params.equation_data.mu     = 9.876;
+  Fixture::params.n_refinements        = 0;
+  Fixture::params.equation_data.lambda = 1.; // 1.234;
+  Fixture::params.equation_data.mu     = 1.; // 9.876;
 
-  // Fixture::test_block_vector();
   Fixture::test();
 }
 
