@@ -152,6 +152,50 @@ index_fibre(const std::array<IntType, order - 1> index, const int mode, const In
   return fibre;
 }
 
+/**
+ * Converts a matrix into a two dimensional table. MatrixType has to fulfill
+ * following interface:
+ *
+ * method m() returning number of rows
+ * method n() returning number of cols
+ * typedef value_type
+ * method vmult(ArrayView,ArrayView)
+ */
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+Table<2, Number>
+matrix_to_table(const MatrixType & matrix)
+{
+  Table<2, Number>      table(matrix.m(), matrix.n());
+  AlignedVector<Number> e_j(matrix.n());
+  AlignedVector<Number> col_j(matrix.m());
+  for(unsigned int j = 0; j < matrix.n(); ++j)
+  {
+    e_j.fill(static_cast<Number>(0.));
+    col_j.fill(static_cast<Number>(0.));
+    e_j[j]                = static_cast<Number>(1.);
+    const auto e_j_view   = make_array_view<const Number>(e_j.begin(), e_j.end());
+    const auto col_j_view = make_array_view<Number>(col_j.begin(), col_j.end());
+    matrix.vmult(col_j_view, e_j_view);
+    for(unsigned int i = 0; i < matrix.m(); ++i)
+      table(i, j) = col_j[i];
+  }
+  return table;
+}
+
+template<typename MatrixType1, typename MatrixType2 = MatrixType1>
+void
+insert_block(MatrixType1 &       dst,
+             const MatrixType2 & src,
+             const unsigned int  row_dst = 0,
+             const unsigned int  col_dst = 0)
+{
+  AssertIndexRange(row_dst + src.m(), dst.m() + 1);
+  AssertIndexRange(col_dst + src.n(), dst.n() + 1);
+  for(unsigned i = 0; i < src.m(); ++i)
+    for(unsigned j = 0; j < src.n(); ++j)
+      dst(row_dst + i, col_dst + j) = src(i, j);
+}
+
 template<int dim, typename Number, int n_rows_1d = -1>
 class TensorProductMatrix : public TensorProductMatrixSymmetricSum<dim, Number, n_rows_1d>
 {
@@ -242,33 +286,19 @@ public:
   void
   vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    if(state == State::basic)
-      vmult_impl_basic_static(dst_view, src_view);
-    else if(state == State::skd)
-      SKDMatrix::vmult(dst_view, src_view);
-    else
-      AssertThrow(false, ExcMessage("Not implemented."));
+    vmult_impl</*add*/ false>(dst_view, src_view);
+  }
+
+  void
+  vmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    vmult_impl</*add*/ true>(dst_view, src_view);
   }
 
   Table<2, Number>
-  as_table()
+  as_table() const
   {
-    Table<2, Number>      mat(m(), n());
-    AlignedVector<Number> e_j, col_j;
-    e_j.resize(n());
-    col_j.resize(m());
-    for(unsigned int j = 0; j < n(); ++j)
-    {
-      e_j.fill(static_cast<Number>(0.));
-      col_j.fill(static_cast<Number>(0.));
-      e_j[j]                = static_cast<Number>(1.);
-      const auto e_j_view   = make_array_view<const Number>(e_j.begin(), e_j.end());
-      const auto col_j_view = make_array_view<Number>(col_j.begin(), col_j.end());
-      vmult(col_j_view, e_j_view);
-      for(unsigned int i = 0; i < m(); ++i)
-        mat(i, j) = col_j[i];
-    }
-    return mat;
+    return Tensors::matrix_to_table(*this);
   }
 
 protected:
@@ -319,6 +349,35 @@ protected:
   State state = State::invalid;
 
 private:
+  template<bool add>
+  void
+  vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    if(state == State::basic)
+      vmult_impl_basic_static<add>(dst_view, src_view);
+    else if(state == State::skd)
+    {
+      AlignedVector<Number> initial_dst;
+      if(add)
+      {
+        initial_dst.resize_fast(dst_view.size());
+        std::copy(dst_view.cbegin(), dst_view.cend(), initial_dst.begin());
+      }
+      // const auto initial_dst_view = make_array_view(initial_dst.begin(),initial_dst.end());
+      SKDMatrix::vmult(dst_view, src_view);
+      if(add)
+        std::transform(dst_view.cbegin(),
+                       dst_view.cend(),
+                       initial_dst.begin(),
+                       dst_view.begin(),
+                       [](const auto & elem1, const auto & elem2) { return elem1 + elem2; });
+    }
+    else
+      AssertThrow(false, ExcMessage("Not implemented."));
+  }
+
+
+  template<bool add>
   void
   vmult_impl_basic_static(const ArrayView<Number> &       dst_view,
                           const ArrayView<const Number> & src_view) const
@@ -335,8 +394,10 @@ private:
                    eval(AlignedVector<Number>{},
              AlignedVector<Number>{},
              AlignedVector<Number>{},
-             left(0).size(0),  // TODO size of left and right matrices differs
-             left(0).size(1)); // TODO size of left and right matrices differs
+             std::max(left(0).size(0),
+                      right(0).size(0)), // TODO size of left and right matrices differs
+             std::max(left(0).size(1),
+                      right(0).size(1))); // TODO size of left and right matrices differs
     Number *       tmp     = tmp_array.begin();
     const Number * src     = src_view.begin();
     Number *       dst     = dst_view.data();
@@ -345,7 +406,7 @@ private:
     eval.template apply</*direction*/ 0, /*contract_over_rows*/ false, /*add*/ false>(right_0,
                                                                                       src,
                                                                                       tmp);
-    eval.template apply<1, false, false>(left_0, tmp, dst);
+    eval.template apply<1, false, add>(left_0, tmp, dst);
     for(std::size_t r = 1; r < left_or_mass.size(); ++r)
     {
       const Number * left_r  = &(left(r)(0, 0));
@@ -497,7 +558,7 @@ template<int dim, typename Number, int n_rows_1d = -1>
 class BlockMatrix
 {
 public:
-  using matrix_type = TensorProductMatrixSymmetricSum<dim, Number, n_rows_1d>;
+  using matrix_type = TensorProductMatrix<dim, Number, n_rows_1d>;
   using value_type  = typename matrix_type::value_type;
 
   /**
@@ -539,60 +600,81 @@ public:
     return blocks[block_index(row_index, col_index)];
   }
 
-  unsigned int
+  std::size_t
+  m(const std::size_t row_index) const
+  {
+    AssertIndexRange(row_index, n_block_rows());
+    return get_block(row_index, 0).m();
+  }
+
+  std::size_t
+  n(const std::size_t col_index) const
+  {
+    AssertIndexRange(col_index, n_block_cols());
+    return get_block(0, col_index).n();
+  }
+
+  std::size_t
   m() const
   {
-    const unsigned int n_rows =
-      std::accumulate(blocks.begin(), blocks.end(), 0, [](const auto sum, const auto & matrix) {
-        return sum + matrix.m();
-      });
+    Assert(check_row_sizes(), ExcMessage("Inconsistent number of rows of block matrices."));
+    std::size_t n_rows = 0;
+    for(std::size_t row_index = 0; row_index < n_block_rows(); ++row_index)
+      n_rows += m(row_index);
     return n_rows;
   }
 
-  unsigned int
+  std::size_t
   n() const
   {
-    const unsigned int n_columns =
-      std::accumulate(blocks.begin(), blocks.end(), 0, [](const auto sum, const auto & matrix) {
-        return sum + matrix.m();
-      });
-    return n_columns;
+    Assert(check_col_sizes(), ExcMessage("Inconsistent number of rows of block matrices."));
+    std::size_t n_cols = 0;
+    for(std::size_t col_index = 0; col_index < n_block_cols(); ++col_index)
+      n_cols += n(col_index);
+    return n_cols;
+  }
+
+  Table<2, Number>
+  as_table() const
+  {
+    return Tensors::matrix_to_table(*this);
   }
 
   void
   vmult(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const
   {
-    blockwise_action([](const matrix_type &             matrix,
+    blockwise_action([](const matrix_type &             block,
                         const ArrayView<Number> &       dst,
-                        const ArrayView<const Number> & src) { matrix.vmult(dst, src); },
+                        const ArrayView<const Number> & src) { block.vmult_add(dst, src); },
                      dst,
                      src);
   }
 
-  void
-  apply_inverse(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const
-  {
-    blockwise_action([](const matrix_type &             matrix,
-                        const ArrayView<Number> &       dst,
-                        const ArrayView<const Number> & src) { matrix.apply_inverse(dst, src); },
-                     dst,
-                     src);
-  }
+  // // TODO
+  // void
+  // apply_inverse(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const
+  // {
+  //   blockwise_action([](const matrix_type &             matrix,
+  //                       const ArrayView<Number> &       dst,
+  //                       const ArrayView<const Number> & src) { matrix.apply_inverse(dst, src); },
+  //                    dst,
+  //                    src);
+  // }
 
   std::array<std::size_t, 2>
-  size()
+  size() const
   {
     return n_;
   }
 
   std::size_t
-  n_block_rows()
+  n_block_rows() const
   {
     return n_[0];
   }
 
   std::size_t
-  n_block_cols()
+  n_block_cols() const
   {
     return n_[1];
   }
@@ -619,26 +701,56 @@ private:
   {
     AssertDimension(src.size(), n());
     AssertDimension(dst.size(), m());
-    AssertThrow(src.size() == dst.size(), ExcNotImplemented()); // quadratic !
-    AssertThrow(n_rows_1d == -1 || src.size() % n_rows_1d == 0,
-                ExcMessage("Input vector sizes are not a multiple of the static size."));
-    AssertThrow(!blocks.empty(), ExcMessage("Blocks are not initialized."));
+    Assert(src.size() == dst.size(),
+           ExcMessage("TODO BlockMatrix is not quadratic.")); // quadratic !
+    Assert(n_rows_1d == -1 || src.size() % n_rows_1d == 0,
+           ExcMessage("Input vector sizes are not a multiple of the static size."));
+    Assert(!blocks.empty(), ExcMessage("Blocks are not initialized."));
+    Assert(is_valid(), ExcMessage("Matrix sizes of blocks mismatch."));
+    std::fill(dst.begin(), dst.end(), static_cast<Number>(0.));
 
     // *** apply sliced vectors to the associated block matrix
-    std::size_t row_end = 0;
-    std::size_t col_end = 0;
-    for(const auto & matrix : blocks)
+    std::size_t row_start = 0;
+    for(std::size_t row = 0; row < n_block_rows(); ++row)
     {
-      const auto row_start = row_end;
-      const auto col_start = col_end;
-      row_end += matrix.m();
-      col_end += matrix.n();
-      const ArrayView<Number>       dst_block(dst.begin() + row_start, matrix.m());
-      const ArrayView<const Number> src_block(src.begin() + col_start, matrix.n());
-      action(matrix, dst_block, src_block);
+      std::size_t col_start = 0;
+      for(std::size_t col = 0; col < n_block_cols(); ++col)
+      {
+        const ArrayView<Number>       dst_block(dst.begin() + row_start, m(row));
+        const ArrayView<const Number> src_block(src.begin() + col_start, n(col));
+        action(get_block(row, col), dst_block, src_block);
+        col_start += n(col);
+      }
+      Assert(col_start == src.size(), ExcMessage("Inconsistent slicing."));
+      row_start += m(row);
     }
-    AssertThrow(row_end == dst.size() && col_end == src.size(),
-                ExcMessage("Inconsistent slicing."));
+    Assert(row_start == dst.size(), ExcMessage("Inconsistent slicing."));
+  }
+
+  bool
+  check_row_sizes() const
+  {
+    for(std::size_t row = 0; row < n_block_rows(); ++row)
+      for(std::size_t col = 0; col < n_block_cols(); ++col)
+        if(get_block(row, col).m() != get_block(row, 0).m())
+          return false;
+    return true;
+  }
+
+  bool
+  check_col_sizes() const
+  {
+    for(std::size_t col = 0; col < n_block_cols(); ++col)
+      for(std::size_t row = 0; row < n_block_rows(); ++row)
+        if(get_block(row, col).n() != get_block(0, col).n())
+          return false;
+    return true;
+  }
+
+  bool
+  is_valid() const
+  {
+    return check_row_sizes() && check_col_sizes();
   }
 
   /**
@@ -800,63 +912,6 @@ assemble_separableKD(const std::array<Table<2, Number>, dim> & mass_matrix,
     Assert(false, ExcNotImplemented());
 
   return tpmatrix;
-}
-
-/**
- * Extracts and converts the matrix associated to the lane @p lane
- * of the vectorized matrix @p table into the FullMatrix format.
- */
-template<typename Number>
-FullMatrix<Number>
-vectorized_table_to_fullmatrix(const Table<2, VectorizedArray<Number>> & table,
-                               const unsigned int                        lane = 0)
-{
-  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
-  FullMatrix<Number> matrix{table.n_rows(), table.n_cols()};
-  for(unsigned int i = 0; i < table.n_rows(); ++i)
-    for(unsigned int j = 0; j < table.n_cols(); ++j)
-      matrix(i, j) = (table(i, j))[lane];
-  return matrix;
-}
-
-template<typename Number>
-FullMatrix<Number>
-table_to_fullmatrix(const Table<2, VectorizedArray<Number>> & table, const unsigned int lane = 0)
-{
-  return vectorized_table_to_fullmatrix(table, lane);
-}
-
-template<typename Number>
-FullMatrix<Number>
-table_to_fullmatrix(const Table<2, Number> & table, const unsigned int dummy = 0)
-{
-  (void)dummy;
-  FullMatrix<Number> matrix{table.n_rows(), table.n_cols()};
-  for(unsigned int i = 0; i < table.n_rows(); ++i)
-    for(unsigned int j = 0; j < table.n_cols(); ++j)
-      matrix(i, j) = table(i, j);
-  return matrix;
-}
-
-template<typename Number>
-Vector<Number>
-array_view_to_vector(const ArrayView<const Number> & view, const unsigned int dummy = 0)
-{
-  (void)dummy;
-  return Vector<Number>(view.cbegin(), view.cend());
-}
-
-template<typename Number>
-Vector<Number>
-array_view_to_vector(const ArrayView<const VectorizedArray<Number>> & view,
-                     const unsigned int                               lane = 0)
-{
-  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
-  Vector<Number> vec(view.size());
-  std::transform(view.cbegin(), view.cend(), vec.begin(), [lane](const auto & elem) {
-    return elem[lane];
-  });
-  return vec;
 }
 
 } // namespace Tensors
