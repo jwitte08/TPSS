@@ -297,9 +297,9 @@ bidiagonal_svd(const AlignedVector<VectorizedArray<Number>> & diagonal,
 */
 template<int dim, typename Number, int out_rank>
 void
-compute_ksvd(std::vector<std::array<Table<2, Number>, dim>>            in,
+compute_ksvd(const std::vector<std::array<Table<2, Number>, dim>>            &in,
              std::array<std::array<Table<2, Number>, dim>, out_rank> & out,
-             std::size_t lanczos_iterations = out_rank * out_rank + 10)
+             const std::size_t lanczos_iterations = out_rank * out_rank + 10)
 {
   std::size_t in_rank = in.size();
   std::size_t big_m   = in[0][0].size()[0];
