@@ -4,72 +4,88 @@
 #include "solvers_and_preconditioners/TPSS/kroneckersvd.h"
 #include "solvers_and_preconditioners/TPSS/tensors.h"
 
-
-using namespace dealii;
-
-
 void
 printTable(Table<2, double> tab)
 {
-	std::size_t m = tab.size()[0];
-	std::size_t n = tab.size()[1];
-	std::cout << "-----------------\n";
-	for(std::size_t i = 0; i < m; i++)
-	{
-		for(std::size_t j = 0; j < n; j++)
-			std::cout << ((int)(tab(i, j) * 100 + 0.5)) / 100.0 << "\t";
-		std::cout << "\n";
-	}
-	std::cout << "-----------------\n";
+  std::size_t m = tab.size()[0];
+  std::size_t n = tab.size()[1];
+  std::cout << "-----------------\n";
+  for(std::size_t i = 0; i < m; i++)
+  {
+    for(std::size_t j = 0; j < n; j++)
+      std::cout << ((int)(tab(i, j) * 100 + 0.5)) / 100.0 << "\t";
+    std::cout << "\n";
+  }
+  std::cout << "-----------------\n";
 }
+
+
 void
 printTable(Table<2, VectorizedArray<double>> tab)
 {
-	constexpr std::size_t macro_size = VectorizedArray<double>::n_array_elements;
-	std::size_t           m          = tab.size()[0];
-	std::size_t           n          = tab.size()[1];
-	std::cout << "------------------------------------\n";
-	for(std::size_t lane = 0; lane < macro_size; lane++)
-	{
-		std::cout << "-----------------\n";
-		for(std::size_t i = 0; i < m; i++)
-		{
-			for(std::size_t j = 0; j < n; j++)
-				std::cout << ((int)(tab(i, j)[lane] * 100 + 0.5)) / 100.0 << "\t";
-			std::cout << "\n";
-		}
-		std::cout << "-----------------\n";
-	}
-	std::cout << "------------------------------------\n";
+  constexpr std::size_t macro_size = VectorizedArray<double>::n_array_elements;
+  std::size_t           m          = tab.size()[0];
+  std::size_t           n          = tab.size()[1];
+  std::cout << "------------------------------------\n";
+  for(std::size_t lane = 0; lane < macro_size; lane++)
+  {
+    std::cout << "-----------------\n";
+    for(std::size_t i = 0; i < m; i++)
+    {
+      for(std::size_t j = 0; j < n; j++)
+        std::cout << ((int)(tab(i, j)[lane] * 100 + 0.5)) / 100.0 << "\t";
+      std::cout << "\n";
+    }
+    std::cout << "-----------------\n";
+  }
+  std::cout << "------------------------------------\n";
 }
+
+
 template<typename Number>
 bool
 operator==(Table<2, Number> tab1, Table<2, Number> tab2)
 {
-	AssertDimension(tab1.size()[0], tab2.size()[0]);
-	AssertDimension(tab1.size()[1], tab2.size()[1]);
-	std::size_t m                 = tab1.size()[0];
-	std::size_t n                 = tab1.size()[1];
-	Number      max_table_element = Number(0);
-	for(std::size_t i = 0; i < m; i++)
-		for(std::size_t j = 0; j < n; j++)
-		{
-			if(std::abs(tab1(i, j)) > max_table_element)
-				max_table_element = std::abs(tab1(i, j));
-			if(std::abs(tab2(i, j)) > max_table_element)
-				max_table_element = std::abs(tab2(i, j));
-		}
-	for(std::size_t i = 0; i < m; i++)
-		for(std::size_t j = 0; j < n; j++)
-			if(std::abs(tab1(i, j) - tab2(i, j)) >
-			   std::numeric_limits<Number>::epsilon() * max_table_element)
-			{
-				std::cout << std::abs(tab1(i, j) - tab2(i, j)) << " "
-					  << std::numeric_limits<Number>::epsilon() * max_table_element << "\n";
-				return false;
-			}
-	return true;
+  AssertDimension(tab1.size()[0], tab2.size()[0]);
+  AssertDimension(tab1.size()[1], tab2.size()[1]);
+  std::size_t m                 = tab1.size()[0];
+  std::size_t n                 = tab1.size()[1];
+  Number      max_table_element = Number(0);
+  for(std::size_t i = 0; i < m; i++)
+    for(std::size_t j = 0; j < n; j++)
+    {
+      if(std::abs(tab1(i, j)) > max_table_element)
+        max_table_element = std::abs(tab1(i, j));
+      if(std::abs(tab2(i, j)) > max_table_element)
+        max_table_element = std::abs(tab2(i, j));
+    }
+  for(std::size_t i = 0; i < m; i++)
+    for(std::size_t j = 0; j < n; j++)
+      if(std::abs(tab1(i, j) - tab2(i, j)) >
+         std::numeric_limits<Number>::epsilon() * max_table_element)
+      {
+        std::cout << std::abs(tab1(i, j) - tab2(i, j)) << " "
+                  << std::numeric_limits<Number>::epsilon() * max_table_element << "\n";
+        return false;
+      }
+  return true;
 }
+<<<<<<< HEAD
+=======
+
+
+using namespace dealii;
+
+int
+main()
+{
+  /* Matrices:
+     t1:
+     |1    0    1  |
+     |1    1   0.1 |
+     |1   0.1   -7 |
+     |0    -1   0  |
+>>>>>>> f6cfad0fc79321d8ab229764fb7e7fad639bbc3d
 
 void test_rank_two_kronecker_svd()
 {
