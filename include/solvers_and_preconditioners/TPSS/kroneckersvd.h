@@ -24,6 +24,8 @@ inner_product(const AlignedVector<Number> & in1, const AlignedVector<Number> & i
     ret += in1[i] * in2[i];
   return ret;
 }
+
+
 // Add two AlignedVectors
 template<typename Number>
 AlignedVector<Number>
@@ -35,6 +37,8 @@ vector_addition(const AlignedVector<Number> & in1, const AlignedVector<Number> &
     ret[i] = in1[i] + in2[i];
   return ret;
 }
+
+
 // Multiply AlignedVector with scalar
 template<typename Number>
 AlignedVector<Number>
@@ -46,13 +50,13 @@ vector_scaling(const AlignedVector<Number> & in, const Number & scalar)
   return ret;
 }
 
+
 /*
   Divide AlignedVector by scalar, if vector is zero allow scalar to be zero.
   Alowing this makes it possible to simultaneously execute a Lanczos algorithm
   on matrices with different Kronecker rank. We check for zero, so for
   vectorizedarrays we need to do it comonent wise
 */
-
 template<typename Number>
 AlignedVector<VectorizedArray<Number>>
 vector_inverse_scaling(const AlignedVector<VectorizedArray<Number>> & in,
@@ -77,6 +81,7 @@ vector_inverse_scaling(const AlignedVector<VectorizedArray<Number>> & in,
   return ret;
 }
 
+
 // Divide AlignedVector by scalar, if vector is zero allow scalar to be zero
 template<typename Number>
 AlignedVector<Number>
@@ -95,6 +100,7 @@ vector_inverse_scaling(const AlignedVector<Number> & in, const Number & scalar)
   return ret;
 }
 
+
 // Multiply Matrix by Matrix
 template<typename Number>
 Table<2, Number>
@@ -108,6 +114,7 @@ matrix_multiplication(const Table<2, Number> & in1, const Table<2, Number> & in2
         ret(i, j) += in1(i, k) * in2(k, j);
   return ret;
 }
+
 
 // Multiply transpose of Matrix by Matrix
 template<typename Number>
@@ -123,6 +130,7 @@ matrix_transpose_multiplication(const Table<2, Number> & in1, const Table<2, Num
   return ret;
 }
 
+
 // Flatten Table to AlignedVector
 template<typename Number>
 AlignedVector<Number>
@@ -137,6 +145,7 @@ vectorize_matrix(const Table<2, Number> & tab)
   return ret;
 }
 
+
 // Calculate the product of a Rank 1 matrix, given as dyadic product of two
 // vectors, with a vector: (in⊗inT)vec where ⊗ is the dyadic product
 template<typename Number>
@@ -149,6 +158,7 @@ rank1_vector_multiplication(const AlignedVector<Number> & in,
   Number inTMvec = inner_product(inT, vec);
   return vector_scaling(in, inTMvec);
 }
+
 
 // calculates the product of a rank k matrix, given as k dyadic products of two
 // vectors, with a vector
@@ -164,6 +174,7 @@ rankk_vector_multiplication(const std::vector<AlignedVector<Number>> & in,
   return ret;
 }
 
+
 // transform the last vector of a family of vectors such that the family becomes
 // orthogonal
 template<typename Number>
@@ -177,6 +188,7 @@ orthogonalize(std::vector<AlignedVector<Number>> & vectors)
                                                       inner_product(vectors[j], vectors[j])));
 }
 
+
 // For vectorizedarray check if > holds for all elements
 template<typename Number>
 bool
@@ -189,6 +201,7 @@ operator>(VectorizedArray<Number> a, VectorizedArray<Number> b)
   return true;
 }
 
+
 // For vectorizedarray check if > holds for all elements
 template<typename Number>
 bool
@@ -200,6 +213,7 @@ operator>(VectorizedArray<Number> a, Number b)
       return false;
   return true;
 }
+
 
 namespace std
 {
@@ -214,6 +228,7 @@ public:
   };
 };
 } // namespace std
+
 
 // compute svd of bidiagonal matrix
 template<typename Number>
@@ -249,6 +264,7 @@ bidiagonal_svd(const AlignedVector<Number> & diagonal,
       singular_values[i] = bidiag_mat.singular_value(i);
     }
 }
+
 
 // compute lane-wise svd of bidiagonal matrix
 template<typename Number>
@@ -287,6 +303,7 @@ bidiagonal_svd(const AlignedVector<VectorizedArray<Number>> & diagonal,
   }
 }
 
+
 /*
   Compute the low Kronecker rank approximation, i.e. the ksvd, of a matrix of
   the form M = Σ A_i⊗B_i where A_i is called the big matrix and B_i is called
@@ -296,10 +313,9 @@ bidiagonal_svd(const AlignedVector<VectorizedArray<Number>> & diagonal,
   passed in "in", and the low rank approximation is passed in "out"
 */
 template<int dim, typename Number, int out_rank>
-void
-compute_ksvd(std::vector<std::array<Table<2, Number>, dim>>            in,
-             std::array<std::array<Table<2, Number>, dim>, out_rank> & out,
-             std::size_t lanczos_iterations = out_rank * out_rank + 10)
+void compute_ksvd(std::vector<std::array<Table<2, Number>, dim>>            in,
+                  std::array<std::array<Table<2, Number>, dim>, out_rank> & out,
+                  std::size_t lanczos_iterations = out_rank * out_rank + 10)
 {
   std::size_t in_rank = in.size();
   std::size_t big_m   = in[0][0].size()[0];
