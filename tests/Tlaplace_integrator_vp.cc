@@ -193,7 +193,7 @@ struct Test
       for(unsigned lane = 0; lane < macro_size; ++lane)
       {
         print_row(test_details, 12, "\n patch_id:", patch_id, "lane:", lane, "\n");
-        const auto mat = Tensors::vectorized_table_to_fullmatrix(fdmatrix, lane);
+        const auto mat = table_to_fullmatrix(fdmatrix, lane);
         mat.print_formatted(test_details);
       }
     };

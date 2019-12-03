@@ -70,7 +70,7 @@ public:
       // // DEBUG
       // for (unsigned int lane = 0; lane < macro_size; ++lane)
       //   {
-      //     const auto& mass_lane = Tensors::vectorized_table_to_fullmatrix (cell_mass_unit, lane);
+      //     const auto& mass_lane = table_to_fullmatrix (cell_mass_unit, lane);
       //     std::cout << "unit mass sizes: " << mass_lane.m() << ", " << mass_lane.n() <<
       //     std::endl; mass_lane.print_formatted (std::cout);
       //   }
@@ -104,14 +104,14 @@ public:
         //     for (const auto& mass : mass_matrices)
         // 	for (unsigned int lane = 0; lane < macro_size; ++lane)
         // 	  {
-        // 	    const auto& mass_lane = Tensors::vectorized_table_to_fullmatrix (mass, lane);
+        // 	    const auto& mass_lane = table_to_fullmatrix (mass, lane);
         // 	    std::cout << lane << "mass sizes: " << mass_lane.m() << ", " << mass_lane.n() <<
         // std::endl; 	    mass_lane.print_formatted (std::cout);
         // 	  }
         //     const auto mat = Tensors::assemble_separableKD (mass_matrices, laplace_matrices);
         //     for (unsigned int lane = 0; lane < macro_size; ++lane)
         //     	{
-        //     	  const auto& mat_lane = Tensors::vectorized_table_to_fullmatrix (mat, lane);
+        //     	  const auto& mat_lane = table_to_fullmatrix (mat, lane);
         // 	  std::cout << lane << "kdmatrix sizes: " << mat_lane.m() << ", " << mat_lane.n() <<
         // std::endl;
         //     	  mat_lane.print_formatted (std::cout);

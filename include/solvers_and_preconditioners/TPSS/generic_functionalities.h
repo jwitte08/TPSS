@@ -84,6 +84,67 @@ varray_to_string(const VectorizedArray<Number> & array)
 }
 
 
+/**
+ * Extracts and converts the matrix associated to the lane @p lane
+ * of the vectorized matrix @p table into the FullMatrix format.
+ */
+template<typename Number>
+FullMatrix<Number>
+vectorized_table_to_fullmatrix(const Table<2, VectorizedArray<Number>> & table,
+                               const unsigned int                        lane = 0)
+{
+  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
+  FullMatrix<Number> matrix{table.n_rows(), table.n_cols()};
+  for(unsigned int i = 0; i < table.n_rows(); ++i)
+    for(unsigned int j = 0; j < table.n_cols(); ++j)
+      matrix(i, j) = (table(i, j))[lane];
+  return matrix;
+}
+
+
+template<typename Number>
+FullMatrix<Number>
+table_to_fullmatrix(const Table<2, VectorizedArray<Number>> & table, const unsigned int lane = 0)
+{
+  return vectorized_table_to_fullmatrix(table, lane);
+}
+
+
+template<typename Number>
+FullMatrix<Number>
+table_to_fullmatrix(const Table<2, Number> & table, const unsigned int dummy = 0)
+{
+  (void)dummy;
+  FullMatrix<Number> matrix{table.n_rows(), table.n_cols()};
+  for(unsigned int i = 0; i < table.n_rows(); ++i)
+    for(unsigned int j = 0; j < table.n_cols(); ++j)
+      matrix(i, j) = table(i, j);
+  return matrix;
+}
+
+
+template<typename Number>
+Vector<Number>
+array_view_to_vector(const ArrayView<const Number> & view, const unsigned int dummy = 0)
+{
+  (void)dummy;
+  return Vector<Number>(view.cbegin(), view.cend());
+}
+
+
+template<typename Number>
+Vector<Number>
+array_view_to_vector(const ArrayView<const VectorizedArray<Number>> & view,
+                     const unsigned int                               lane = 0)
+{
+  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
+  Vector<Number> vec(view.size());
+  std::transform(view.cbegin(), view.cend(), vec.begin(), [lane](const auto & elem) {
+    return elem[lane];
+  });
+  return vec;
+}
+
 template<typename T>
 std::string
 vector_to_string(const std::vector<T> & vector)

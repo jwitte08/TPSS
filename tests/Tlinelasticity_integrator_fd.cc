@@ -186,7 +186,7 @@ struct Test
           //   matrices[id] = FDMatrixIntegrator::assemble_strain_mixed(fd_evals, equation_data,
           //   1, 0, id);
           // std::cout << "BLOCK01: " << std::endl;
-          // Tensors::vectorized_table_to_fullmatrix(matrices[id]).print_formatted(std::cout);
+          // table_to_fullmatrix(matrices[id]).print_formatted(std::cout);
           // std::cout << std::endl;
 
           matrices[id] = FDMatrixIntegrator::assemble_strain_mixed(
@@ -197,10 +197,10 @@ struct Test
 
           // // DEBUG
           // std::cout << "transpose of BLOCK10: " << std::endl;
-          // Tensors::vectorized_table_to_fullmatrix(Tensors::transpose(matrices[id])).print_formatted(std::cout);
+          // table_to_fullmatrix(Tensors::transpose(matrices[id])).print_formatted(std::cout);
           // std::cout << std::endl;
           // std::cout << "BLOCK10: " << std::endl;
-          // Tensors::vectorized_table_to_fullmatrix(matrices[id]).print_formatted(std::cout);
+          // table_to_fullmatrix(matrices[id]).print_formatted(std::cout);
           // std::cout << std::endl;
         }
       };
@@ -302,7 +302,7 @@ struct Test
             // const unsigned lane     = cell % macro_size;
             const auto fdmatrix = Tensors::assemble_separableKD(basic_matrices[patch_id][comp],
                                                                 action_matrices[patch_id][comp]);
-            const auto mat      = Tensors::vectorized_table_to_fullmatrix(fdmatrix, lane);
+            const auto mat      = table_to_fullmatrix(fdmatrix, lane);
             if(print_details)
             {
               print_row(
@@ -359,7 +359,7 @@ struct Test
                   fdblock = Tensors::transpose(elasticity_blocks10[patch_id]);
                 else
                   AssertThrow(false, ExcNotImplemented());
-                const auto mat = Tensors::vectorized_table_to_fullmatrix(fdblock, lane);
+                const auto mat = table_to_fullmatrix(fdblock, lane);
                 if(print_details)
                 {
                   print_row(std::cout,
@@ -439,7 +439,7 @@ struct Test
           // const unsigned lane     = cell % macro_size;
           const auto fdmatrix = Tensors::assemble_separableKD(basic_matrices[patch_id][comp],
                                                               action_matrices[patch_id][comp]);
-          const auto mat      = Tensors::vectorized_table_to_fullmatrix(fdmatrix, lane);
+          const auto mat      = table_to_fullmatrix(fdmatrix, lane);
           if(print_details)
           {
             print_row(std::cout, 12, "\n patch_id:", patch_id, "comp:", comp, "lane:", lane, "\n");
