@@ -43,10 +43,7 @@ public:
 
   SubdomainHandler(const SubdomainHandler<dim> &) = delete;
 
-  ~SubdomainHandler()
-  {
-    clear();
-  }
+  ~SubdomainHandler() = default;
 
   SubdomainHandler<dim> &
   operator=(const SubdomainHandler<dim> &) = delete;
@@ -92,9 +89,15 @@ public:
   get_matrix_free() const;
 
   std::shared_ptr<const Utilities::MPI::Partitioner>
-  get_vector_partitioner() const
+  get_vector_partitioner(const unsigned int dofh_index = 0) const
   {
-    return vector_partitioner;
+    return vector_partitioners[dofh_index];
+  }
+
+  const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> &
+  get_vector_partitioners() const
+  {
+    return vector_partitioners;
   }
 
   std::vector<TimeInfo>
@@ -154,10 +157,10 @@ private:
   std::shared_ptr<const dealii::MatrixFree<dim, number>> owned_mf_storage;
   const dealii::DoFHandler<dim> *                        dof_handler;
 
-  TPSS::PatchInfo<dim>                               patch_info;
-  TPSS::MatrixFreeConnect<dim, number>               mf_connect;
-  TPSS::MappingInfo<dim, number>                     mapping_info;
-  std::shared_ptr<const Utilities::MPI::Partitioner> vector_partitioner;
+  TPSS::PatchInfo<dim>                                            patch_info;
+  TPSS::MatrixFreeConnect<dim, number>                            mf_connect;
+  TPSS::MappingInfo<dim, number>                                  mapping_info;
+  std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> vector_partitioners;
 
   // TODO
   std::vector<dealii::Quadrature<1>> quadrature_storage;
@@ -184,6 +187,7 @@ struct SubdomainHandler<dim, number>::AdditionalData
   bool         use_arc_length            = true;
   unsigned int n_threads                 = 0;
   unsigned int grain_size                = 0;
+  bool         compressed                = false;
   bool         print_details             = false;
 };
 
@@ -220,6 +224,7 @@ template<int dim, typename number>
 inline unsigned int
 SubdomainHandler<dim, number>::n_components() const
 {
+  // TODO MatrixFree with DoFHandler with more than one base_element
   AssertThrow(mf_storage != nullptr, ExcNotInitialized());
   return mf_storage->n_components();
 }

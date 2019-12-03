@@ -16,9 +16,10 @@ template<int dim, typename OperatorType, typename PreconditionerType, typename V
 class SchwarzSmoother : public SmootherRichardson<OperatorType, VectorType>
 {
 public:
-  using Base           = SmootherRichardson<OperatorType, VectorType>;
-  using value_type     = typename Base::value_type;
-  using AdditionalData = typename Base::AdditionalData;
+  using Base                = SmootherRichardson<OperatorType, VectorType>;
+  using AdditionalData      = typename Base::AdditionalData;
+  using value_type          = typename Base::value_type;
+  using preconditioner_type = PreconditionerType;
 
   SchwarzSmoother() = default;
 

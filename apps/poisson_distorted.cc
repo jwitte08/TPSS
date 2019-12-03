@@ -6,6 +6,8 @@
  *      Author: witte
  */
 
+#include <deal.II/base/convergence_table.h>
+
 #include "ct_parameter.h"
 #include "poisson.h"
 

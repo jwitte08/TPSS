@@ -25,6 +25,7 @@ bool_to_str(const bool b)
   return std::string(b ? "true" : "false");
 }
 
+
 Utilities::MPI::MinMaxAvg
 operator/(const Utilities::MPI::MinMaxAvg & mma_in, const double t)
 {
@@ -60,6 +61,7 @@ varray_to_string(const VectorizedArray<Number> & array)
   return osstream.str();
 }
 
+
 template<typename T>
 std::string
 vector_to_string(const std::vector<T> & vector)
@@ -71,6 +73,7 @@ vector_to_string(const std::vector<T> & vector)
   return oss.str();
 }
 
+
 template<typename T>
 std::string
 set_to_string(const std::set<T> & set)
@@ -78,6 +81,7 @@ set_to_string(const std::set<T> & set)
   std::vector<T> set_as_vector(set.cbegin(), set.cend());
   return vector_to_string(set_as_vector);
 }
+
 
 class NullStreambuf : public std::streambuf
 {
@@ -91,6 +95,7 @@ protected:
     return (c == traits_type::eof()) ? '\0' : c;
   }
 };
+
 
 class NullOStream : private NullStreambuf, public std::ostream
 {
@@ -106,9 +111,12 @@ public:
   }
 };
 
+
+template<typename FloatType>
 std::string
-to_string_conditional(const double value)
+to_string_conditional(const FloatType value)
 {
+  static_assert(std::is_floating_point<FloatType>::value, "FloatType is not floating point type.");
   std::ostringstream ostream;
   if(1.e-3 < value && value < 1.e+3)
     ostream << std::defaultfloat << value;
@@ -117,6 +125,7 @@ to_string_conditional(const double value)
 
   return ostream.str();
 }
+
 
 std::string
 extend_string(std::string label, const std::size_t size)
@@ -128,6 +137,7 @@ extend_string(std::string label, const std::size_t size)
   return label;
 }
 
+
 template<typename Number>
 std::string
 fstring_column_default(const Number value, const unsigned size)
@@ -137,6 +147,7 @@ fstring_column_default(const Number value, const unsigned size)
   return (extend_string(ostream.str(), size));
 }
 
+
 std::string
 fstring_column(const double value, const unsigned size)
 {
@@ -144,11 +155,21 @@ fstring_column(const double value, const unsigned size)
   return (extend_string(str, size));
 }
 
+
+std::string
+fstring_column(const float value, const unsigned size)
+{
+  auto str{std::move(to_string_conditional(value))};
+  return (extend_string(str, size));
+}
+
+
 std::string
 fstring_column(const int value, const unsigned size)
 {
   return fstring_column_default<int>(value, size);
 }
+
 
 std::string
 fstring_column(const unsigned int value, const unsigned size)
@@ -156,11 +177,13 @@ fstring_column(const unsigned int value, const unsigned size)
   return fstring_column_default<unsigned int>(value, size);
 }
 
+
 std::string
 fstring_column(const long unsigned int value, const unsigned size)
 {
   return fstring_column_default<long unsigned int>(value, size);
 }
+
 
 std::string
 fstring_column(const long long unsigned int value, const unsigned size)
@@ -168,21 +191,40 @@ fstring_column(const long long unsigned int value, const unsigned size)
   return fstring_column_default<long long unsigned int>(value, size);
 }
 
+
 std::string
 fstring_column(const std::string value, const unsigned size)
 {
   return fstring_column_default<std::string>(value, size);
 }
 
-template<typename Number>
+
 std::string
-fstring_column(const std::vector<Number> & vec_value, const unsigned size)
+fstring_column(const char value[], const unsigned size)
+{
+  return fstring_column_default<std::string>(value, size);
+}
+
+
+std::string
+fstring_column(const bool value, const unsigned size)
+{
+  std::ostringstream ostream;
+  ostream << std::boolalpha << value;
+  return (extend_string(ostream.str(), size));
+}
+
+
+template<typename T>
+std::string
+fstring_column(const std::vector<T> & vec_value, const unsigned size)
 {
   std::ostringstream ostrstream;
   for(const auto value : vec_value)
     ostrstream << fstring_column(value, size);
   return ostrstream.str();
 }
+
 
 template<typename OSTREAM>
 struct Printer
@@ -228,17 +270,8 @@ struct Printer
     out << fstring_column(std::forward<Arg>(arg), size);
     print_row_variable_impl(out, args...);
   }
-
-  // template<typename Arg>
-  // void
-  // print_row_vector_impl(OSTREAM & out, const unsigned size, const std::vector<Arg> & arg_vec)
-  // {
-  //   std::ostringstream ostrstream;
-  //   for(const auto arg : arg_vec)
-  //     ostrstream << fstring_column(arg, size);
-  //   out << ostrstream.str() << std::endl;
-  // }
 };
+
 
 template<typename Arg>
 void
@@ -309,12 +342,5 @@ print_row_variable(std::ostream & out, Args &&... args)
 {
   Printer<std::ostream>{}.print_row_variable_impl(out, std::forward<Args>(args)...);
 }
-
-// template<typename Arg>
-// void
-// print_row_vector(ConditionalOStream & out, const unsigned size, const std::vector<Arg> & arg)
-// {
-//   Printer<ConditionalOStream>{}.print_row_vector_impl(out, size, arg);
-// }
 
 #endif /* TESTS_GENERICFUNCTIONALITIES_H_ */

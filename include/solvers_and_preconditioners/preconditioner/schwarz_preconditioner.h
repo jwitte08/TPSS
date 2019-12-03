@@ -26,7 +26,7 @@ public:
 
   SchwarzPreconditioner(const SchwarzPreconditioner &) = delete;
 
-  ~SchwarzPreconditioner(){};
+  ~SchwarzPreconditioner() = default;
 
   SchwarzPreconditioner &
   operator=(const SchwarzPreconditioner &) = delete;
@@ -70,25 +70,22 @@ public:
   std::shared_ptr<const SubdomainHandler<dim, value_type>>
   get_subdomain_handler() const;
 
-  // TODO
-  template<typename OtherVectorType>
-  void
-  initialize_ghost_vector(const OtherVectorType &)
+  bool
+  is_shallow_copyable(
+    const typename SubdomainHandler<dim, value_type>::AdditionalData & other_data) const
   {
-    AssertThrow(false, ExcMessage("VectorType not supported."));
-  }
-
-  // TODO support more VectorTypes
-  void
-  initialize_ghost_vector(const LinearAlgebra::distributed::Vector<value_type> & vec) const
-  {
-    const auto ghost_partitioner = subdomain_handler->get_vector_partitioner();
-    if(vec.get_partitioner().get() == ghost_partitioner.get())
-      return;
-    LinearAlgebra::distributed::Vector<value_type> copy_vec(vec);
-    const_cast<LinearAlgebra::distributed::Vector<value_type> &>(vec).reinit(ghost_partitioner);
-    const_cast<LinearAlgebra::distributed::Vector<value_type> &>(vec).copy_locally_owned_data_from(
-      copy_vec);
+    const auto & sdhandler   = get_subdomain_handler()->get_additional_data();
+    bool         is_copyable = true;
+    is_copyable &= sdhandler.level == other_data.level;
+    is_copyable &= sdhandler.patch_variant == other_data.patch_variant;
+    is_copyable &= sdhandler.smoother_variant == other_data.smoother_variant;
+    // TODO coloring ?
+    // TODO gathering ?
+    is_copyable &= sdhandler.n_q_points_surrogate == other_data.n_q_points_surrogate;
+    is_copyable &= sdhandler.normalize_surrogate_patch == other_data.normalize_surrogate_patch;
+    is_copyable &= sdhandler.use_arc_length == other_data.use_arc_length;
+    is_copyable &= sdhandler.compressed == other_data.compressed;
+    return is_copyable;
   }
 
   void
@@ -155,6 +152,29 @@ private:
   void
   compute_inverses();
 
+  template<typename OtherVectorType>
+  void
+  copy_locally_owned_data(OtherVectorType &, const OtherVectorType &) const
+  {
+    AssertThrow(false, ExcMessage("VectorType not supported."));
+  }
+
+  void
+  copy_locally_owned_data(LinearAlgebra::distributed::Vector<value_type> &       dst,
+                          const LinearAlgebra::distributed::Vector<value_type> & src) const
+  {
+    dst.copy_locally_owned_data_from(src);
+  }
+
+  void
+  copy_locally_owned_data(LinearAlgebra::distributed::BlockVector<value_type> &       dst,
+                          const LinearAlgebra::distributed::BlockVector<value_type> & src) const
+  {
+    const unsigned int n_components = subdomain_handler->n_components();
+    for(unsigned int b = 0; b < n_components; ++b)
+      dst.block(b).copy_locally_owned_data_from(src.block(b));
+  }
+
   /**
    * The sequence of colors for the smoothing step. Colors are defined by the PartitionData of @p
    * subdomain_handler and the ordering is determined in terms of the AdditionalData.
@@ -162,7 +182,6 @@ private:
   std::vector<unsigned int>
   get_color_sequence(const bool transpose) const;
 
-  // TODO support more vector types?
   template<typename OtherVectorType>
   void
   initialize_ghost(OtherVectorType &) const
@@ -170,13 +189,83 @@ private:
     AssertThrow(false, ExcMessage("VectorType not supported."));
   }
 
+  /*
+   * Initializes MPI vectors with respect to the MPI partitioners stored in
+   * SubdomainHandler. This method should only be used for 'private' vectors
+   * such that local compatibility checks are sufficient.
+   */
   void
   initialize_ghost(LinearAlgebra::distributed::Vector<value_type> & vec) const
   {
     const auto partitioner = subdomain_handler->get_vector_partitioner();
-    if(vec.get_partitioner()->is_compatible(*partitioner))
+    if(vec.partitioners_are_compatible(*partitioner))
       return;
     vec.reinit(partitioner);
+    // std::cout << "initialize ghost on level " << level << std::endl;
+  }
+
+  /*
+   * Initializes MPI vectors with respect to the MPI partitioners stored in
+   * SubdomainHandler. This method should only be used for 'private' vectors
+   * such that local compatibility checks are sufficient.
+   */
+  void
+  initialize_ghost(LinearAlgebra::distributed::BlockVector<value_type> & vec) const
+  {
+    const auto & partitioners = subdomain_handler->get_vector_partitioners();
+    if(vec.n_blocks() == subdomain_handler->n_components())
+    {
+      bool is_compatible = true;
+      for(unsigned int b = 0; b < vec.n_blocks(); ++b)
+        is_compatible &= vec.block(b).partitioners_are_compatible(*(partitioners[b]));
+      if(is_compatible)
+        return;
+    }
+
+    const unsigned int n_components = subdomain_handler->n_components();
+    vec.reinit(n_components, /*block_size*/ 0, /*omit_zeroing_entries*/ false);
+    for(unsigned int b = 0; b < n_components; ++b)
+      vec.block(b).reinit(partitioners[b]);
+    /// since the 'block size' has not been set in the reinit() call we have to
+    /// finalize the initialization by updating the vector intrinsic information
+    /// on the block sizes, namely collect_sizes()
+    vec.collect_sizes();
+  }
+
+  template<typename OtherVectorType>
+  bool
+  is_globally_compatible(
+    const OtherVectorType &,
+    const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> &) const
+  {
+    AssertThrow(false, ExcMessage("VectorType not supported."));
+    return false;
+  }
+
+  bool
+  is_globally_compatible(
+    const LinearAlgebra::distributed::Vector<value_type> &                  vec1,
+    const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> & partitioners) const
+  {
+    AssertThrow(!partitioners.empty(), ExcMessage("There are no partitioners."));
+    const bool is_compatible = vec1.partitioners_are_globally_compatible(*partitioners.front());
+    return is_compatible;
+  }
+
+  bool
+  is_globally_compatible(
+    const LinearAlgebra::distributed::BlockVector<value_type> &             vec1,
+    const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> & partitioners) const
+  {
+    bool is_compatible = true;
+    AssertThrow(partitioners.size() == subdomain_handler->n_components(),
+                ExcMessage("There are no partitioners."));
+    for(unsigned int b = 0; b < subdomain_handler->n_components(); ++b)
+    {
+      is_compatible =
+        is_compatible && vec1.block(b).partitioners_are_globally_compatible(*(partitioners[b]));
+    }
+    return is_compatible;
   }
 
   /**
@@ -219,9 +308,9 @@ private:
    *  template<typename MatrixType, typename OperatorType>
    *  void
    *  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & data,
-                                 std::vector<MatrixType> &             inverses,
-                                 const OperatorType &                  linear_operator,
-                                 const std::pair<unsigned int, unsigned int> subdomain_range) const
+   *                             std::vector<MatrixType> &             inverses,
+   *                             const OperatorType &                  linear_operator,
+   *                             const std::pair<unsigned int, unsigned int> subdomain_range) const
    */
   OperatorType * linear_operator = nullptr;
 
@@ -230,9 +319,9 @@ private:
    */
   std::shared_ptr<std::vector<MatrixType>> subdomain_to_inverse;
 
-  mutable LinearAlgebra::distributed::Vector<value_type> solution_ghosted;
+  mutable std::shared_ptr<VectorType> solution_ghosted;
 
-  mutable LinearAlgebra::distributed::Vector<value_type> residual_ghosted;
+  mutable std::shared_ptr<VectorType> residual_ghosted;
 
   unsigned int level = -1;
 
@@ -254,6 +343,17 @@ struct SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Additio
   double local_relaxation = 1.;
   bool   reverse          = false;
   bool   symmetrized      = false;
+
+  bool
+  operator==(const AdditionalData & other_data) const
+  {
+    bool is_equal = true;
+    is_equal &= relaxation == other_data.relaxation;
+    is_equal &= local_relaxation == other_data.local_relaxation;
+    is_equal &= reverse == other_data.reverse;
+    is_equal &= symmetrized == other_data.symmetrized;
+    return is_equal;
+  }
 };
 
 

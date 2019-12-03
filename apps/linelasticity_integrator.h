@@ -188,7 +188,8 @@ public:
     }
 
     void
-    operator()(const Evaluator &                   fd_eval,
+    operator()(const Evaluator & /*fd_eval_ansatz*/,
+               const Evaluator &                   fd_eval,
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no) const;
@@ -230,7 +231,8 @@ public:
     }
 
     void
-    operator()(const Evaluator &                   fd_eval,
+    operator()(const Evaluator & /*fd_eval_ansatz*/,
+               const Evaluator &                   fd_eval,
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no) const;
@@ -249,7 +251,8 @@ public:
     }
 
     void
-    operator()(const Evaluator &                   fd_eval,
+    operator()(const Evaluator & /*fd_eval_ansatz*/,
+               const Evaluator &                   fd_eval,
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no,
@@ -257,7 +260,8 @@ public:
                const std::bitset<macro_size>       bdry_mask) const;
 
     void
-    operator()(const Evaluator &                   fd_eval,
+    operator()(const Evaluator & /*fd_eval_ansatz*/,
+               const Evaluator &                   fd_eval,
                Table<2, VectorizedArray<Number>> & cell_matrix01,
                Table<2, VectorizedArray<Number>> & cell_matrix10,
                const int                           direction) const;
@@ -335,7 +339,8 @@ public:
     }
 
     void
-    operator()(const Evaluator &                   fd_eval,
+    operator()(const Evaluator & /*fd_eval_ansatz*/,
+               const Evaluator &                   fd_eval,
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no,
@@ -343,7 +348,8 @@ public:
                const std::bitset<macro_size>       bdry_mask) const;
 
     void
-    operator()(const Evaluator &                   fd_eval,
+    operator()(const Evaluator & /*fd_eval_ansatz*/,
+               const Evaluator &                   fd_eval,
                Table<2, VectorizedArray<Number>> & cell_matrix01,
                Table<2, VectorizedArray<Number>> & cell_matrix10,
                const int                           direction) const;
@@ -689,7 +695,8 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::CellStrain<Evaluator>::
-operator()(const Evaluator &                   fd_eval,
+operator()(const Evaluator & /*fd_eval_ansatz*/,
+           const Evaluator &                   fd_eval,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no) const
@@ -757,7 +764,8 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::CellGradDiv<Evaluator>::
-operator()(const Evaluator &                   fd_eval,
+operator()(const Evaluator & /*fd_eval_ansatz*/,
+           const Evaluator &                   fd_eval,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no) const
@@ -791,7 +799,8 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::NitscheStrain<Evaluator>::
-operator()(const Evaluator &                   fd_eval,
+operator()(const Evaluator & /*fd_eval_ansatz*/,
+           const Evaluator &                   fd_eval,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no,
@@ -836,7 +845,8 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::NitscheStrain<Evaluator>::
-operator()(const Evaluator &                   fd_eval,
+operator()(const Evaluator & /*fd_eval_ansatz*/,
+           const Evaluator &                   fd_eval,
            Table<2, VectorizedArray<Number>> & cell_matrix01,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
            const int                           direction) const
@@ -936,7 +946,8 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::NitscheGradDiv<Evaluator>::
-operator()(const Evaluator &                   fd_eval,
+operator()(const Evaluator & /*fd_eval_ansatz*/,
+           const Evaluator &                   fd_eval,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no,
@@ -982,7 +993,8 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::NitscheGradDiv<Evaluator>::
-operator()(const Evaluator &                   fd_eval,
+operator()(const Evaluator & /*fd_eval_ansatz*/,
+           const Evaluator &                   fd_eval,
            Table<2, VectorizedArray<Number>> & cell_matrix01,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
            const int                           direction) const

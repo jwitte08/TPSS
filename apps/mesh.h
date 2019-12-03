@@ -165,6 +165,48 @@ create_distorted_cube(Triangulation<dim> & tria, const MeshParameter & prm)
 
 
 template<int dim>
+std::string
+create_mesh(Triangulation<dim> & triangulation, const MeshParameter & prms)
+{
+  std::ostringstream oss;
+  if(prms.geometry_variant == MeshParameter::GeometryVariant::Cube)
+    oss << create_unit_cube(triangulation, prms);
+  else if(prms.geometry_variant == MeshParameter::GeometryVariant::CubeDistorted)
+    oss << create_distorted_cube(triangulation, prms);
+  else
+    AssertThrow(false, ExcMessage("Unsupported geometry variant. Check your run time parameters."));
+  return oss.str();
+}
+
+
+template<int dim>
+types::global_dof_index
+estimate_n_dofs(const FiniteElement<dim> & fe, const MeshParameter & prms)
+{
+  AssertThrow(fe.get_name().find("DG") != std::string::npos,
+              ExcMessage("Only valid for DG elements."));
+
+  /// construct root mesh obtaining the number of root cells
+  parallel::distributed::Triangulation<dim> tria(
+    MPI_COMM_WORLD,
+    Triangulation<dim>::limit_level_difference_at_vertices,
+    parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy);
+  MeshParameter root_prms = prms;
+  root_prms.n_refinements = 0;
+  create_mesh(tria, root_prms);
+  const auto n_root_cells = tria.n_global_active_cells();
+
+  /// assume uniform refinement and estimate the number of dofs
+  const unsigned n_child_cells   = (1 << dim);
+  const unsigned n_cells         = n_root_cells * Utilities::pow(n_child_cells, prms.n_refinements);
+  const unsigned n_dofs_per_cell = Utilities::pow(fe.n_dofs_per_cell(), dim);
+  const types::global_dof_index n_dofs_est = n_cells * n_dofs_per_cell;
+
+  return n_dofs_est;
+}
+
+
+template<int dim>
 struct IntegerCoordinateRoot
 {
   IntegerCoordinateRoot() = delete;

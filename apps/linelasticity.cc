@@ -6,7 +6,6 @@
  *      Author: witte
  */
 
-#include "Plaplace_fdss.h"
 #include "ct_parameter.h"
 #include "linelasticity_problem.h"
 
@@ -27,7 +26,7 @@ main(int argc, char * argv[])
 
   // *** static TEST parameters
   using value_type                              = double;
-  constexpr unsigned dim                        = CT::DIMENSION_;
+  constexpr unsigned dim                        = 2; // CT::DIMENSION_;
   constexpr unsigned fe_degree                  = CT::FE_DEGREE_;
   constexpr int      n_patch_dofs_per_direction = -1;
   // TPSS::UniversalInfo<dim>::n_cells_per_direction(CT::PATCH_VARIANT_) * (fe_degree + 1);
@@ -52,7 +51,6 @@ main(int argc, char * argv[])
 
   // *** SOLVER
   parameters.solver_max_iterations = 500;
-  parameters.solver_variant        = GlobParam::lookup_solver_variant_impl(CT::SMOOTHER_VARIANT_);
   parameters.precondition_variant  = Laplace::Parameter::PreconditionVariant::MG;
 
   // *** MULTIGRID
@@ -61,7 +59,7 @@ main(int argc, char * argv[])
   parameters.schwarz_smoother_data.smoother_variant = CT::SMOOTHER_VARIANT_;
   parameters.schwarz_smoother_data.damping_factor =
     TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim);
-  // parameters.mg_smoother_post_reversed = true;
+  parameters.mg_smoother_post_reversed = true;
   // parameters.mg_coarse_iterations = 100;
   // parameters.mg_coarse_grid_variant =
   //   Laplace::Parameter::CoarseGridVariant::ChebyshevAccurate; // IterativeFixed;

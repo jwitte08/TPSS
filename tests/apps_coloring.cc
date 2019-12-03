@@ -58,7 +58,7 @@ test(const TestParameter & prm = TestParameter{})
   // *** SOLVER
   parameters.solver_reduction      = prm.cg_reduction;
   parameters.solver_max_iterations = 100;
-  parameters.precondition_variant = Parameter::PreconditionVariant::MG;
+  parameters.precondition_variant  = Parameter::PreconditionVariant::MG;
 
   // *** POSTPROCESS
   parameters.compute_errors                      = true;

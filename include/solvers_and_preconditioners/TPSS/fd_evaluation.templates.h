@@ -28,7 +28,7 @@ FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::evaluate(const 
     for(unsigned int d = 0; d < dim; ++d)
       for(unsigned int cell_no_1d = 0; cell_no_1d < n_cells_per_direction; ++cell_no_1d)
       {
-        const auto                      h = h_lengths[d * n_cells_per_direction + cell_no_1d];
+        const auto                      h           = get_h(d, cell_no_1d);
         const VectorizedArray<Number> * unit_weight = this->quad_weights_unit;
         auto                            JxW =
           this->JxWs + n_cells_per_direction * n_q_points_1d * d + n_q_points_1d * cell_no_1d;
@@ -48,7 +48,7 @@ FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::evaluate(const 
     for(unsigned int d = 0; d < dim; ++d)
       for(unsigned int cell_no_1d = 0; cell_no_1d < n_cells_per_direction; ++cell_no_1d)
       {
-        const auto                      h_inv = h_inverses[d * n_cells_per_direction + cell_no_1d];
+        const auto                      h_inv     = 1. / get_h(d, cell_no_1d);
         const VectorizedArray<Number> * unit_grad = shape_info.shape_gradients.begin();
         VectorizedArray<Number> * grad = this->gradients[d] + n_q_points_1d * fe_order * cell_no_1d;
 
@@ -71,8 +71,9 @@ FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::evaluate(const 
       for(unsigned int d = 0; d < dim; ++d)
         for(unsigned int cell_no_1d = 0; cell_no_1d < n_cells_per_direction; ++cell_no_1d)
         {
-          const auto                h_inv = h_inverses[d * n_cells_per_direction + cell_no_1d];
-          VectorizedArray<Number> * grad  = this->gradients_face[d] + fe_order * face_no_1d +
+          const auto h_inv =
+            1. / get_h(d, cell_no_1d); //_inverses[d * n_cells_per_direction + cell_no_1d];
+          VectorizedArray<Number> * grad = this->gradients_face[d] + fe_order * face_no_1d +
                                            fe_order * n_cells_per_direction * cell_no_1d;
 
           for(unsigned int dof = 0; dof < fe_order; ++grad, ++dof)
