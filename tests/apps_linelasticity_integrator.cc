@@ -533,16 +533,18 @@ protected:
 
     /// fill patch matrix with zeros
     patch_matrix.resize(dim, dim);
-    std::vector<Table<2, double>> zeros;
-    const auto &                  zero_matrix_factory = [](const unsigned int m) {
+    std::vector<std::array<Table<2, double>, dim>> zeros;
+    const auto &                                   zero_matrix_factory = [](const unsigned int m) {
       Table<2, double> zero(m, m);
       zero.fill(0.);
-      return zero;
+      std::array<Table<2, double>, dim> zero_tensor;
+      std::fill(zero_tensor.begin(), zero_tensor.end(), zero);
+      return zero_tensor;
     };
     zeros.emplace_back(zero_matrix_factory(fe_order));
     for(auto row = 0U; row < patch_matrix.n_block_rows(); ++row)
       for(auto col = 0U; col < patch_matrix.n_block_cols(); ++col)
-        patch_matrix.get_block(row, col).reinit(zeros, zeros);
+        patch_matrix.get_block(row, col).reinit(zeros);
   }
 
   void
@@ -563,7 +565,7 @@ protected:
                         std::numeric_limits<double>::epsilon() *
                           std::max(100., other.frobenius_norm() / n_entries))
       << oss.str();
-    // *pcout_owned << oss.str();
+    *pcout_owned << oss.str();
   }
 
   void
@@ -589,47 +591,62 @@ protected:
       /// block diagonal
       for(auto comp = 0U; comp < dim; ++comp)
       {
-        std::vector<Table<2, double>> mass_comp, elas_comp;
-        const auto &                  mass_tensor_comp = mass_matrices[patch][comp];
-        const auto &                  elas_tensor_comp = elasticity_matrices[patch][comp];
+        // std::vector<Table<2, double>> mass_comp, elas_comp;
+        const auto & mass_tensor_comp = mass_matrices[patch][comp];
+        const auto & elas_tensor_comp = elasticity_matrices[patch][comp];
+        // std::transform(mass_tensor_comp.cbegin(),
+        //                mass_tensor_comp.cend(),
+        //                std::back_inserter(mass_comp),
+        //                [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
+        // std::transform(elas_tensor_comp.cbegin(),
+        //                elas_tensor_comp.cend(),
+        //                std::back_inserter(elas_comp),
+        //                [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
+        std::vector<std::array<Table<2, double>, dim>> tensors_comp;
+        std::array<Table<2, double>, dim>              masses;
         std::transform(mass_tensor_comp.cbegin(),
                        mass_tensor_comp.cend(),
-                       std::back_inserter(mass_comp),
+                       masses.begin(),
                        [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
+        std::array<Table<2, double>, dim> elases;
         std::transform(elas_tensor_comp.cbegin(),
                        elas_tensor_comp.cend(),
-                       std::back_inserter(elas_comp),
+                       elases.begin(),
                        [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
-        patch_matrix.get_block(comp, comp).reinit(mass_comp, elas_comp, State::skd);
+        tensors_comp.emplace_back(masses);
+        tensors_comp.emplace_back(elases);
+        patch_matrix.get_block(comp, comp).reinit(tensors_comp, State::skd);
       }
 
       /// block off-diagonals
-      const auto & [macro_left, macro_right] = left_and_rights10[patch];
-      std::vector<Table<2, double>> left, right;
-      std::transform(macro_left.cbegin(),
-                     macro_left.cend(),
-                     std::back_inserter(left),
-                     [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
-      std::transform(macro_right.cbegin(),
-                     macro_right.cend(),
-                     std::back_inserter(right),
-                     [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
-      patch_matrix.get_block(1U, 0U).reinit(left, right);
+      {
+        const auto & [macro_left, macro_right] = left_and_rights10[patch];
+        std::vector<std::array<Table<2, double>, dim>> tensors10;
+        std::transform(macro_left.cbegin(),
+                       macro_left.cend(),
+                       macro_right.cbegin(),
+                       std::back_inserter(tensors10),
+                       [lane](const auto & l, const auto & r) {
+                         std::array<Table<2, double>, dim> tensor = {table_to_fullmatrix(l, lane),
+                                                                     table_to_fullmatrix(r, lane)};
+                         return tensor;
+                       });
+        patch_matrix.get_block(1U, 0U).reinit(tensors10);
 
-      std::vector<Table<2, double>> leftT, rightT;
-      std::transform(macro_left.cbegin(),
-                     macro_left.cend(),
-                     std::back_inserter(leftT),
-                     [lane](const auto & table) {
-                       return table_to_fullmatrix(Tensors::transpose(table), lane);
-                     });
-      std::transform(macro_right.cbegin(),
-                     macro_right.cend(),
-                     std::back_inserter(rightT),
-                     [lane](const auto & table) {
-                       return table_to_fullmatrix(Tensors::transpose(table), lane);
-                     });
-      patch_matrix.get_block(0U, 1U).reinit(leftT, rightT);
+        std::vector<std::array<Table<2, double>, dim>> tensors01;
+        std::transform(macro_left.cbegin(),
+                       macro_left.cend(),
+                       macro_right.cbegin(),
+                       std::back_inserter(tensors01),
+                       [lane](const auto & l, const auto & r) {
+                         const auto &                      lT     = Tensors::transpose(l);
+                         const auto &                      rT     = Tensors::transpose(r);
+                         std::array<Table<2, double>, dim> tensor = {table_to_fullmatrix(lT, lane),
+                                                                     table_to_fullmatrix(rT, lane)};
+                         return tensor;
+                       });
+        patch_matrix.get_block(0U, 1U).reinit(tensors01);
+      }
 
       const auto & level_dof_indices = cell_to_dofs[cell];
       AssertDimension(level_dof_indices.size(), patch_matrix.m());
