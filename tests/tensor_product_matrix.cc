@@ -51,7 +51,7 @@ struct TestTensorProductMatrix
     EXPECT_PRED_FORMAT2(testing::FloatLE,
                         diff.l2_norm(),
                         std::numeric_limits<scalar_value_type>::epsilon() *
-                          std::min(100., dst_other.l2_norm()));
+                          std::max(10., dst_other.l2_norm()));
   }
 
   void
@@ -68,10 +68,40 @@ struct TestTensorProductMatrix
     full_matrix.print_formatted(oss);
     oss << "Reference matrix:\n";
     other.print_formatted(oss);
+    const double n_entries = other.m() * other.n();
     EXPECT_PRED_FORMAT2(testing::FloatLE,
-                        diff.frobenius_norm(),
+                        diff.frobenius_norm() / n_entries,
                         std::numeric_limits<scalar_value_type>::epsilon() *
-                          std::min(100., other.frobenius_norm()))
+                          std::max(10., other.frobenius_norm() / n_entries))
+      << oss.str();
+  }
+
+  void
+  compare_inverse_matrix(const FullMatrix<scalar_value_type> & other, const unsigned int lane = 0)
+  {
+    TPM tp_matrix;
+    tp_matrix.reinit(elementary_tensors, state);
+    const auto inverse_matrix = table_to_fullmatrix(tp_matrix.as_inverse_table(), lane);
+    LAPACKFullMatrix<scalar_value_type> lapack_other;
+    lapack_other.reinit(other.m());
+    lapack_other = other;
+    lapack_other.compute_inverse_svd();
+    const auto & lapack_other_as_table = Tensors::lapack_matrix_to_table(lapack_other);
+    const auto   inverse_other         = table_to_fullmatrix(lapack_other_as_table);
+
+    std::ostringstream oss;
+    oss << "Inverse tensor product matrix:\n";
+    inverse_matrix.print_formatted(oss);
+    oss << "Reference inverse matrix:\n";
+    inverse_other.print_formatted(oss);
+    auto diff(inverse_matrix);
+    diff.add(-1., inverse_other);
+    const double n_entries = inverse_other.m() * inverse_other.n();
+    EXPECT_PRED_FORMAT2(testing::FloatLE,
+                        diff.frobenius_norm() / n_entries,
+                        std::numeric_limits<scalar_value_type>::epsilon() *
+                          std::max(10., inverse_other.frobenius_norm() / n_entries))
+      << "@ lane " << lane << ":\n"
       << oss.str();
   }
 
@@ -139,6 +169,7 @@ protected:
       test.state           = State::basic;
       test.compare_vmult(sum_of_products);
       test.compare_matrix(sum_of_products);
+      test.compare_inverse_matrix(sum_of_products);
     };
 
     /// identity
@@ -181,8 +212,6 @@ protected:
                          std::array<Table<2, VectorizedArray<Number>>, dim> tensor = {l, r};
                          return tensor;
                        });
-        // std::copy(left.cbegin(), left.cend(), std::back_inserter(test.left));
-        // std::copy(right.cbegin(), right.cend(), std::back_inserter(test.right));
         std::vector<FullMatrix<Number>> left_full;
         std::vector<FullMatrix<Number>> right_full;
         std::transform(left.cbegin(),
@@ -197,6 +226,7 @@ protected:
         test.state                 = State::basic;
         test.compare_vmult(sum_of_products, lane);
         test.compare_matrix(sum_of_products, lane);
+        test.compare_inverse_matrix(sum_of_products, lane);
       }
     };
 
