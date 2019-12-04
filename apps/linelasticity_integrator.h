@@ -203,14 +203,15 @@ public:
   };
 
   template<typename Evaluator>
-  struct CellGradMixed
+  struct CellDerivative
   {
-    CellGradMixed(const EquationData & equation_data_in, const int dir_u, const int dir_v)
-      : Ddirection_u(dir_u), Ddirection_v(dir_v), mu(equation_data_in.mu)
+    CellDerivative(const int deriv_index_u, const int deriv_index_v)
+      : partial_derivative_index_u(deriv_index_u), partial_derivative_index_v(deriv_index_v)
     {
-      AssertIndexRange(Ddirection_u, dim);
-      AssertIndexRange(Ddirection_v, dim);
-      Assert(Ddirection_u != Ddirection_v, ExcInvalidState());
+      AssertIndexRange(partial_derivative_index_u, dim);
+      AssertIndexRange(partial_derivative_index_v, dim);
+      Assert(partial_derivative_index_u != partial_derivative_index_v,
+             ExcMessage("TODO Only mixed derivatives implemented!"));
     }
 
     void
@@ -220,9 +221,8 @@ public:
                const int                           direction,
                const int                           cell_no) const;
 
-    const int    Ddirection_u;
-    const int    Ddirection_v;
-    const double mu;
+    const int partial_derivative_index_u;
+    const int partial_derivative_index_v;
   };
 
   template<typename Evaluator>
@@ -467,10 +467,10 @@ public:
   }
 
   static std::array<VectorizedMatrixType, dim>
-  assemble_gradmixed_tensor(EvaluatorType &                      eval_ansatz,
-                            EvaluatorType &                      eval_test,
-                            const CellGradMixed<EvaluatorType> & cell_gradmixed_operation,
-                            const unsigned int                   patch_id)
+  assemble_gradmixed_tensor(EvaluatorType &                       eval_ansatz,
+                            EvaluatorType &                       eval_test,
+                            const CellDerivative<EvaluatorType> & cell_gradmixed_operation,
+                            const unsigned int                    patch_id)
   {
     std::array<VectorizedMatrixType, dim> tensor;
 
@@ -490,10 +490,11 @@ public:
                         const int                                     component_v,
                         const unsigned int                            patch_id)
   {
-    AssertThrow(dim == 2, ExcNotImplemented());                         // TODO
-    const int                               Ddirection_u = component_v; // i
-    const int                               Ddirection_v = component_u; // j
-    const CellGradMixed<EvaluatorType>      grad{equation_data, Ddirection_u, Ddirection_v};
+    AssertThrow(dim == 2, ExcNotImplemented());                                       // TODO
+    const int                               partial_derivative_index_u = component_v; // i
+    const int                               partial_derivative_index_v = component_u; // j
+    const CellDerivative<EvaluatorType>     grad{partial_derivative_index_u,
+                                             partial_derivative_index_v};
     const CellVoid<EvaluatorType>           void_op;
     const NitscheStrainMixed<EvaluatorType> nitsche{equation_data, component_u, component_v};
 
@@ -506,7 +507,7 @@ public:
 
     /*** compute the 1D integrals over    (d/dx_j v_i) * (d/dx_i u_j) ***/
     const auto & tensor_grad = eval_v.patch_action(eval_u, grad);
-    /*** compute the  nitsche matrices (point evaluations) given component_u/v ***/
+    /*** compute the nitsche matrices (point evaluations) given component_u/v ***/
     const auto & tensor_nitsche = eval_v.patch_action(eval_u, void_op, nitsche, nitsche);
 
     /*** assemble cell integrals (strain) ***/
@@ -521,6 +522,87 @@ public:
     return block;
   }
 
+  // static TensorProductMatrix<VectorizedArray<Number>>
+  static std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>>
+  assemble_mixed_block(std::vector<std::shared_ptr<EvaluatorType>> & fd_evals,
+                       const EquationData &                          equation_data,
+                       const int                                     component_v,
+                       const int                                     component_u,
+                       const unsigned int                            patch_id)
+  {
+    AssertThrow(dim == 2, ExcNotImplemented()); // TODO
+
+    const CellVoid<EvaluatorType>                                                   void_op;
+    std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>> left_and_right;
+    auto & [left, right] = left_and_right;
+
+    {
+      const int partial_derivative_index_u = component_v; // i
+      const int partial_derivative_index_v = component_u; // j
+      /// compute the univariate matrices subject to the mixed gradients
+      /// (d/dx_j v_i) * (d/dx_i u_j)
+      const CellDerivative<EvaluatorType> derivative_op{partial_derivative_index_u,
+                                                        partial_derivative_index_v};
+      /// compute the complementing matrices subject to the nitsche-strain
+      /// contributions (point evaluations)
+      const NitscheStrainMixed<EvaluatorType> nitsche_op{equation_data, component_u, component_v};
+
+      auto & eval_v = *(fd_evals[component_v]);
+      auto & eval_u = *(fd_evals[component_u]);
+      eval_u.reinit(patch_id);
+      eval_u.evaluate(true);
+      eval_v.reinit(patch_id);
+      eval_v.evaluate(true);
+
+      const auto & tensor_derivative = eval_v.patch_action(eval_u, derivative_op);
+      const auto & tensor_nitsche    = eval_v.patch_action(eval_u, void_op, nitsche_op, nitsche_op);
+
+      /// (mu *  G(1)^T + N(1)) x G(0)
+      const auto & mu_derivativeT = Tensors::scale(equation_data.mu, tensor_derivative[1]);
+      left.emplace_back(Tensors::sum(mu_derivativeT, tensor_nitsche[1]));
+      right.emplace_back(tensor_derivative[0]);
+
+      /// G(1)^T x N(0)
+      left.emplace_back(tensor_derivative[1]);
+      right.emplace_back(tensor_nitsche[0]);
+    }
+
+    {
+      const int partial_derivative_index_v = component_v; // i
+      const int partial_derivative_index_u = component_u; // j
+      /// computes the univariate matrices subject to the mixed divergence
+      /// (d/dx_i v_i) * (d/dx_j u_j) ***/
+      const CellDerivative<EvaluatorType> derivative_op{partial_derivative_index_u,
+                                                        partial_derivative_index_v};
+      /// computes the complementing matrices of the nitsche - grad-div
+      /// contributions (point evaluations)
+      const NitscheGradDivMixed<EvaluatorType> nitsche_op{equation_data, component_u, component_v};
+
+      auto & eval_v = *(fd_evals[component_v]);
+      auto & eval_u = *(fd_evals[component_u]);
+      eval_u.reinit(patch_id);
+      eval_u.evaluate(true);
+      eval_v.reinit(patch_id);
+      eval_v.evaluate(true);
+
+      const auto & tensor_derivative = eval_v.patch_action(eval_u, derivative_op);
+      const auto & tensor_nitsche    = eval_v.patch_action(eval_u, void_op, nitsche_op, nitsche_op);
+
+      /// (lambda * G(1) + N(1)) x G(0)^T
+      const auto & _derivativediv =
+        Tensors::kronecker_product(tensor_derivative[1], tensor_derivative[0]);
+      const auto & lambda_derivative = Tensors::scale(equation_data.lambda, tensor_derivative[1]);
+      left.emplace_back(Tensors::sum(lambda_derivative, tensor_nitsche[1]));
+      right.emplace_back(tensor_derivative[0]);
+
+      /// G(1) x N(0)
+      left.emplace_back(tensor_derivative[1]);
+      right.emplace_back(tensor_nitsche[0]);
+    }
+
+    return left_and_right;
+  }
+
   static VectorizedMatrixType
   assemble_graddiv_mixed(std::vector<std::shared_ptr<EvaluatorType>> & fd_evals,
                          const EquationData &                          equation_data,
@@ -528,10 +610,11 @@ public:
                          const unsigned int                            component_v,
                          const unsigned int                            patch_id)
   {
-    AssertThrow(dim == 2, ExcNotImplemented());                          // TODO
-    const int                                Ddirection_v = component_v; // i
-    const int                                Ddirection_u = component_u; // j
-    const CellGradMixed<EvaluatorType>       grad{equation_data, Ddirection_u, Ddirection_v};
+    AssertThrow(dim == 2, ExcNotImplemented());                                        // TODO
+    const int                                partial_derivative_index_v = component_v; // i
+    const int                                partial_derivative_index_u = component_u; // j
+    const CellDerivative<EvaluatorType>      grad{partial_derivative_index_u,
+                                             partial_derivative_index_v};
     const CellVoid<EvaluatorType>            void_op;
     const NitscheGradDivMixed<EvaluatorType> nitsche{equation_data, component_u, component_v};
 
@@ -558,11 +641,12 @@ public:
 
     return block;
     // AssertThrow(dim == 2, ExcNotImplemented());                    // TODO
-    // const int                          Ddirection_v = component_v; // i
-    // const int                          Ddirection_u = component_u; // j
-    // const CellGradMixed<EvaluatorType> gradmixed{equation_data, Ddirection_u, Ddirection_v};
-    // auto &                             eval_v = *(fd_evals[component_v]);
-    // auto &                             eval_u = *(fd_evals[component_u]);
+    // const int                          partial_derivative_index_v = component_v; // i
+    // const int                          partial_derivative_index_u = component_u; // j
+    // const CellDerivative<EvaluatorType> gradmixed{partial_derivative_index_u,
+    // partial_derivative_index_v}; auto &                             eval_v =
+    // *(fd_evals[component_v]); auto &                             eval_u =
+    // *(fd_evals[component_u]);
 
     // /*** compute the 1D integrals over    (d/dx_i v_i) * (d/dx_j u_j) ***/
     // auto tensor = assemble_gradmixed_tensor(/*u*/ eval_u, /*v*/ eval_v, gradmixed, patch_id);
@@ -730,7 +814,7 @@ operator()(const Evaluator & /*fd_eval_ansatz*/,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::CellGradMixed<Evaluator>::
+MatrixIntegrator<dim, fe_degree, Number>::CellDerivative<Evaluator>::
 operator()(const Evaluator &                   fd_eval_u,
            const Evaluator &                   fd_eval_v,
            Table<2, VectorizedArray<Number>> & cell_matrix,
@@ -743,8 +827,8 @@ operator()(const Evaluator &                   fd_eval_u,
   AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
 
   auto       integral{make_vectorized_array<Number>(0.)};
-  const bool flag_derive_u = (direction == Ddirection_u);
-  const bool flag_derive_v = (direction == Ddirection_v);
+  const bool flag_derive_u = (direction == partial_derivative_index_u);
+  const bool flag_derive_v = (direction == partial_derivative_index_v);
   for(int dof_u = 0; dof_u < fe_order; ++dof_u) // u is ansatz function & v is test function
     for(int dof_v = 0; dof_v < fe_order; ++dof_v)
     {

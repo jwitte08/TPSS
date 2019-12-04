@@ -49,7 +49,7 @@ struct Test
   using EvaluatorType         = typename FDMatrixIntegrator::EvaluatorType;
   using CellMass              = typename FDMatrixIntegrator::CellMass;
   using CellStrain            = typename FDMatrixIntegrator::template CellStrain<EvaluatorType>;
-  using CellGradMixed         = typename FDMatrixIntegrator::template CellGradMixed<EvaluatorType>;
+  using CellDerivative        = typename FDMatrixIntegrator::template CellDerivative<EvaluatorType>;
   using CellGradDiv           = typename FDMatrixIntegrator::template CellGradDiv<EvaluatorType>;
   using NitscheStrain         = typename FDMatrixIntegrator::template NitscheStrain<EvaluatorType>;
   using NitscheGradDiv        = typename FDMatrixIntegrator::template NitscheGradDiv<EvaluatorType>;
