@@ -182,6 +182,64 @@ matrix_to_table(const MatrixType & matrix)
   return table;
 }
 
+/**
+ * Converts a matrix into a two dimensional table. MatrixType has to fulfill
+ * following interface:
+ *
+ * method m() returning number of rows
+ * method n() returning number of cols
+ * typedef value_type
+ * method vmult(ArrayView,ArrayView)
+ */
+template<typename Number = double>
+Table<2, Number>
+lapack_matrix_to_table(const LAPACKFullMatrix<Number> & matrix)
+{
+  Table<2, Number> table(matrix.m(), matrix.n());
+  Vector<Number>   e_j(matrix.n());
+  Vector<Number>   col_j(matrix.m());
+  for(unsigned int j = 0; j < matrix.n(); ++j)
+  {
+    std::fill(e_j.begin(), e_j.end(), 0.);
+    std::fill(col_j.begin(), col_j.end(), 0.);
+    e_j[j] = 1.;
+    matrix.vmult(col_j, e_j);
+    for(unsigned int i = 0; i < matrix.m(); ++i)
+      table(i, j) = col_j[i];
+  }
+  return table;
+}
+
+/**
+ * Converts the inverse of a matrix into a two dimensional table. MatrixType has
+ * to fulfill following interface:
+ *
+ * method m() returning number of rows
+ * method n() returning number of cols
+ * typedef value_type
+ * method apply_inverse(ArrayView,ArrayView)
+ */
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+Table<2, Number>
+inverse_matrix_to_table(const MatrixType & matrix)
+{
+  Table<2, Number>      table(matrix.m(), matrix.n());
+  AlignedVector<Number> e_j(matrix.n());
+  AlignedVector<Number> col_j(matrix.m());
+  for(unsigned int j = 0; j < matrix.n(); ++j)
+  {
+    e_j.fill(static_cast<Number>(0.));
+    col_j.fill(static_cast<Number>(0.));
+    e_j[j]                = static_cast<Number>(1.);
+    const auto e_j_view   = make_array_view<const Number>(e_j.begin(), e_j.end());
+    const auto col_j_view = make_array_view<Number>(col_j.begin(), col_j.end());
+    matrix.apply_inverse(col_j_view, e_j_view);
+    for(unsigned int i = 0; i < matrix.m(); ++i)
+      table(i, j) = col_j[i];
+  }
+  return table;
+}
+
 template<typename MatrixType1, typename MatrixType2 = MatrixType1>
 void
 insert_block(MatrixType1 &       dst,
