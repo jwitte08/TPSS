@@ -34,6 +34,7 @@
 #include <deal.II/multigrid/mg_transfer_matrix_free.h>
 #include <deal.II/multigrid/multigrid.h>
 
+#include "solvers_and_preconditioners/TPSS/block_matrix.h"
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
 
