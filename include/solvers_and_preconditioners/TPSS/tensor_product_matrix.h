@@ -8,12 +8,82 @@
 #ifndef TENSOR_PRODUCT_MATRIX_H_
 #define TENSOR_PRODUCT_MATRIX_H_
 
+#include <deal.II/lac/lapack_full_matrix.h>
+
 #include "tensors.h"
 
 using namespace dealii;
 
 namespace Tensors
 {
+template<typename Number>
+struct VectorizedInverse
+{
+  using scalar_value_type                  = typename ExtractScalarType<Number>::type;
+  static constexpr unsigned int macro_size = get_macro_size<Number>();
+
+  VectorizedInverse() = default;
+
+  VectorizedInverse(const Table<2, Number> & matrix_in)
+  {
+    reinit(matrix_in);
+  }
+
+  void
+  reinit(const Table<2, Number> & matrix_in)
+  {
+    Assert(matrix_in.size(0) == matrix_in.size(1), ExcMessage("Matrix is not square."));
+    const unsigned int n_rows = matrix_in.size(0);
+    auto inverses = std::make_shared<std::array<LAPACKFullMatrix<scalar_value_type>, macro_size>>();
+    for(auto lane = 0U; lane < macro_size; ++lane)
+    {
+      auto & inverse = (*inverses)[lane];
+      inverse.reinit(n_rows);
+      inverse = table_to_fullmatrix(matrix_in, lane);
+      inverse.compute_inverse_svd();
+    }
+    this->inverses = inverses;
+  }
+
+  void
+  apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    apply_inverse_impl(dst_view, src_view);
+  }
+
+  void
+  apply_inverse_impl(const ArrayView<scalar_value_type> &       dst_view,
+                     const ArrayView<const scalar_value_type> & src_view,
+                     const unsigned int                         lane = 0) const
+  {
+    Vector<scalar_value_type> dst(dst_view.size()), src(src_view.cbegin(), src_view.cend());
+    const auto &              inverse = (*inverses)[lane];
+    inverse.vmult(dst, src);
+    std::copy(dst.begin(), dst.end(), dst_view.begin());
+  }
+
+  void
+  apply_inverse_impl(const ArrayView<VectorizedArray<scalar_value_type>> &       dst_view,
+                     const ArrayView<const VectorizedArray<scalar_value_type>> & src_view) const
+  {
+    Vector<scalar_value_type> dst_lane(dst_view.size()), src_lane(src_view.size());
+    for(auto lane = 0U; lane < macro_size; ++lane)
+    {
+      std::transform(src_view.cbegin(),
+                     src_view.cend(),
+                     src_lane.begin(),
+                     [lane](const auto & value) { return value[lane]; });
+      const auto src_view_lane = make_array_view(src_lane);
+      const auto dst_view_lane = make_array_view(dst_lane);
+      apply_inverse_impl(dst_view_lane, src_view_lane);
+      for(auto i = 0U; i < dst_lane.size(); ++i)
+        dst_view[i][lane] = dst_lane[i];
+    }
+  }
+
+  std::shared_ptr<const std::array<LAPACKFullMatrix<scalar_value_type>, macro_size>> inverses;
+};
+
 template<int order, typename Number, int n_rows_1d = -1>
 class TensorProductMatrix : public TensorProductMatrixSymmetricSum<order, Number, n_rows_1d>
 {
@@ -41,12 +111,17 @@ public:
   reinit(const std::vector<std::array<Table<2, Number>, order>> & elementary_tensors,
          const State                                              state_in = State::basic)
   {
-    // AssertThrow(check_n_rows_1d(left_or_mass_in) && check_n_rows_1d(right_or_derivative_in),
-    //             ExcMessage(
-    //               "Not all univariate matrices inserted are of size (n_rows_1d x n_rows_1d)."));
+    Assert(check_static_n_rows_1d(elementary_tensors),
+           ExcMessage("Not all univariate matrices are of size (n_rows_1d x n_rows_1d)."));
+    if(elementary_tensors.empty())
+      return;
 
-    if(state_in == State::basic)
+    state = state_in;
+    if(state == State::basic)
     {
+      for(unsigned i = 0; i < order; ++i)
+        Assert(check_size_1d(elementary_tensors, i),
+               ExcMessage("Mismatching sizes of univariate matrices."));
       left_owned.resize(elementary_tensors.size());
       right_owned.resize(elementary_tensors.size());
       std::transform(elementary_tensors.cbegin(),
@@ -59,19 +134,13 @@ public:
                      [](const auto & tensor) { return tensor[1]; });
       left_or_mass        = make_array_view(left_owned);
       right_or_derivative = make_array_view(right_owned);
+      basic_inverse.reinit(as_table());
     }
 
-    else if(state_in == State::skd)
+    else if(state == State::skd)
     {
       AssertThrow(elementary_tensors.size() == order,
                   ExcMessage("The number of mass/derivative matrices and orderension differ."));
-      // std::array<Table<2, Number>, order> mass_matrices;
-      // std::array<Table<2, Number>, order> derivative_matrices;
-      // std::copy(left_or_mass_in.begin(), left_or_mass_in.end(), mass_matrices.begin());
-      // std::copy(right_or_derivative_in.begin(),
-      //           right_or_derivative_in.end(),
-      //           derivative_matrices.begin());
-      // SKDMatrix::reinit(mass_matrices, derivative_matrices);
       SKDMatrix::reinit(elementary_tensors[0], elementary_tensors[1]);
       left_or_mass = make_array_view(SKDMatrix::mass_matrix.begin(), SKDMatrix::mass_matrix.end());
       right_or_derivative =
@@ -79,8 +148,6 @@ public:
     }
     else
       AssertThrow(false, ExcMessage("Invalid state at initialization."));
-
-    state = state_in;
   }
 
   unsigned int
@@ -117,10 +184,22 @@ public:
     vmult_impl</*add*/ true>(dst_view, src_view);
   }
 
+  void
+  apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    apply_inverse_impl(dst_view, src_view);
+  }
+
   Table<2, Number>
   as_table() const
   {
     return Tensors::matrix_to_table(*this);
+  }
+
+  Table<2, Number>
+  as_inverse_table() const
+  {
+    return Tensors::inverse_matrix_to_table(*this);
   }
 
 protected:
@@ -171,6 +250,30 @@ protected:
   State state = State::invalid;
 
 private:
+  void
+  apply_inverse_impl(const ArrayView<Number> &       dst_view,
+                     const ArrayView<const Number> & src_view) const
+  {
+    if(state == State::basic)
+      apply_inverse_impl_basic_static(dst_view, src_view);
+    else if(state == State::skd)
+    {
+      SKDMatrix::apply_inverse(dst_view, src_view);
+    }
+    else
+      AssertThrow(false, ExcMessage("Not implemented."));
+  }
+
+  void
+  apply_inverse_impl_basic_static(const ArrayView<Number> &       dst_view,
+                                  const ArrayView<const Number> & src_view) const
+  {
+    AssertDimension(dst_view.size(), m());
+    AssertDimension(src_view.size(), n());
+    std::lock_guard<std::mutex> lock(this->mutex);
+    basic_inverse.apply_inverse(dst_view, src_view);
+  }
+
   template<bool add>
   void
   vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
@@ -185,14 +288,15 @@ private:
         initial_dst.resize_fast(dst_view.size());
         std::copy(dst_view.cbegin(), dst_view.cend(), initial_dst.begin());
       }
-      // const auto initial_dst_view = make_array_view(initial_dst.begin(),initial_dst.end());
       SKDMatrix::vmult(dst_view, src_view);
       if(add)
+      {
         std::transform(dst_view.cbegin(),
                        dst_view.cend(),
                        initial_dst.begin(),
                        dst_view.begin(),
                        [](const auto & elem1, const auto & elem2) { return elem1 + elem2; });
+      }
     }
     else
       AssertThrow(false, ExcMessage("Not implemented."));
@@ -238,28 +342,60 @@ private:
     }
   }
 
-  // bool
-  // check_n_rows_1d(const std::vector<Table<2, Number>> & tables)
-  // {
-  //   if(n_rows_1d == -1)
-  //     return true;
-  //   if(n_rows_1d > 0)
-  //     return std::all_of(tables.cbegin(), tables.cend(), [](const auto & tab) {
-  //       return tab.size(0) == static_cast<unsigned>(n_rows_1d) &&
-  //              tab.size(1) == static_cast<unsigned>(n_rows_1d);
-  //     });
-  //   return false;
-  // }
+  bool
+  check_static_n_rows_1d(const std::vector<std::array<Table<2, Number>, order>> & tensors)
+  {
+    if(n_rows_1d == -1)
+      return true;
+    if(n_rows_1d > 0)
+    {
+      std::vector<unsigned int> indices(order);
+      std::iota(indices.begin(), indices.end(), 0);
+      return std::all_of(indices.cbegin(), indices.cend(), [&](const auto & i) {
+        return check_size_1d_impl(tensors, i, n_rows_1d, n_rows_1d);
+      });
+    }
+    return false;
+  }
+
+  bool
+  check_size_1d(const std::vector<std::array<Table<2, Number>, order>> & tensors,
+                const unsigned int                                       tensor_index)
+  {
+    Assert(!tensors.empty(), ExcMessage("No tensors provided."));
+    const unsigned int n_rows = tensors.front()[tensor_index].size(0);
+    const unsigned int n_cols = tensors.front()[tensor_index].size(1);
+    return check_size_1d_impl(tensors, tensor_index, n_rows, n_cols);
+  }
+
+  bool
+  check_size_1d_impl(const std::vector<std::array<Table<2, Number>, order>> & tensors,
+                     const unsigned int                                       tensor_index,
+                     const unsigned int                                       n_rows,
+                     const unsigned int                                       n_cols)
+  {
+    return std::all_of(tensors.cbegin(),
+                       tensors.cend(),
+                       [tensor_index, n_rows, n_cols](const auto & tensor) {
+                         const auto & tab = tensor[tensor_index];
+                         return tab.size(0) == n_rows && tab.size(1) == n_cols;
+                       });
+  }
 
   /**
-   * An array for temporary data.
+   * The naive inverse of the underlying matrix for the basic state.
    */
-  mutable AlignedVector<Number> tmp_array;
+  VectorizedInverse<Number> basic_inverse;
 
   /**
    * A mutex that guards access to the array @p tmp_array.
    */
   mutable Threads::Mutex mutex;
+
+  /**
+   * An array for temporary data.
+   */
+  mutable AlignedVector<Number> tmp_array;
 };
 
 } // namespace Tensors
