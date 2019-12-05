@@ -13,6 +13,7 @@
 #include <deal.II/lac/tensor_product_matrix.h>
 
 #include "TPSS.h"
+#include "generic_functionalities.h"
 
 #include <sstream>
 
