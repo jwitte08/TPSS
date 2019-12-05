@@ -28,7 +28,7 @@ get_macro_size()
   using UnvectorizedNumber = typename ExtractScalarType<Number>::type;
   return (std::is_same<Number, UnvectorizedNumber>::value == true) ?
            1U :
-           VectorizedArray<UnvectorizedNumber>::n_array_elements;
+           dealii::VectorizedArray<UnvectorizedNumber>::n_array_elements;
 }
 
 namespace TPSS
