@@ -46,15 +46,15 @@ struct VectorizedInverse
   }
 
   void
-  apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    apply_inverse_impl(dst_view, src_view);
+    vmult_impl(dst_view, src_view);
   }
 
   void
-  apply_inverse_impl(const ArrayView<scalar_value_type> &       dst_view,
-                     const ArrayView<const scalar_value_type> & src_view,
-                     const unsigned int                         lane = 0) const
+  vmult_impl(const ArrayView<scalar_value_type> &       dst_view,
+             const ArrayView<const scalar_value_type> & src_view,
+             const unsigned int                         lane = 0) const
   {
     Vector<scalar_value_type> dst(dst_view.size()), src(src_view.cbegin(), src_view.cend());
     const auto &              inverse = (*inverses)[lane];
@@ -63,8 +63,8 @@ struct VectorizedInverse
   }
 
   void
-  apply_inverse_impl(const ArrayView<VectorizedArray<scalar_value_type>> &       dst_view,
-                     const ArrayView<const VectorizedArray<scalar_value_type>> & src_view) const
+  vmult_impl(const ArrayView<VectorizedArray<scalar_value_type>> &       dst_view,
+             const ArrayView<const VectorizedArray<scalar_value_type>> & src_view) const
   {
     Vector<scalar_value_type> dst_lane(dst_view.size()), src_lane(src_view.size());
     for(auto lane = 0U; lane < macro_size; ++lane)
@@ -75,7 +75,7 @@ struct VectorizedInverse
                      [lane](const auto & value) { return value[lane]; });
       const auto src_view_lane = make_array_view(src_lane);
       const auto dst_view_lane = make_array_view(dst_lane);
-      apply_inverse_impl(dst_view_lane, src_view_lane);
+      vmult_impl(dst_view_lane, src_view_lane);
       for(auto i = 0U; i < dst_lane.size(); ++i)
         dst_view[i][lane] = dst_lane[i];
     }
@@ -271,7 +271,7 @@ private:
     AssertDimension(dst_view.size(), m());
     AssertDimension(src_view.size(), n());
     std::lock_guard<std::mutex> lock(this->mutex);
-    basic_inverse.apply_inverse(dst_view, src_view);
+    basic_inverse.vmult(dst_view, src_view);
   }
 
   template<bool add>
