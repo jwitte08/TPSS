@@ -129,23 +129,106 @@ protected:
                             std::numeric_limits<Number>::epsilon() *
                               std::min(100., ref_matrix.frobenius_norm()))
           << oss.str();
+        // std::cout << oss.str();
+
+        const bool is_2x2_block_matrix =
+          test.block_matrix.n_block_rows() == 2 && test.block_matrix.n_block_cols() == 2;
+        if(is_2x2_block_matrix)
+        {
+          /// compare Schur complement
+          Tensors::SchurComplement S(test.block_matrix.get_block(0, 0),
+                                     test.block_matrix.get_block(0, 1),
+                                     test.block_matrix.get_block(1, 0),
+                                     test.block_matrix.get_block(1, 1));
+          const auto               S_full = table_to_fullmatrix(S.as_table(), lane);
+          oss << "Schur complement:\n";
+          S_full.print_formatted(oss);
+
+          const auto Ainv =
+            table_to_fullmatrix(test.block_matrix.get_block(0, 0).as_inverse_table(), lane);
+          const auto B = table_to_fullmatrix(test.block_matrix.get_block(0, 1).as_table(), lane);
+          const auto C = table_to_fullmatrix(test.block_matrix.get_block(1, 0).as_table(), lane);
+          const auto D = table_to_fullmatrix(test.block_matrix.get_block(1, 1).as_table(), lane);
+          FullMatrix<Number> AinvB(Ainv.m(), B.n()), Sref(C.m(), Ainv.n());
+          Ainv.mmult(AinvB, B);
+          C.mmult(Sref, AinvB);
+          Sref *= -1.;
+          Sref.add(1., D);
+          oss << "Reference Schur complement:\n";
+          Sref.print_formatted(oss);
+
+          /// compare the inverse of the Schur complement
+          const auto Sinv_full = table_to_fullmatrix(S.as_inverse_table(), lane);
+          oss << "Inverse of Schur complement:\n";
+          Sinv_full.print_formatted(oss);
+          Sref.invert(Sref);
+          oss << "Inverse of reference Schur complement:\n";
+          Sref.print_formatted(oss);
+
+          /// compare the inverse of the block matrix
+          const auto block_inverse =
+            table_to_fullmatrix(test.block_matrix.as_inverse_table(), lane);
+          oss << "Inverse of block matrix @ lane " << lane << ":\n";
+          block_inverse.print_formatted(oss);
+
+          FullMatrix<Number> id(block_inverse.m(), block_inverse.n());
+          block_inverse.mmult(id, full_matrix);
+          oss << "A^{-1} A:\n";
+          id.print_formatted(oss);
+
+          const unsigned n_entries = id.m() * id.n();
+          for(auto i = 0U; i < id.m(); ++i)
+          {
+            EXPECT_NEAR(id(i, i), 1., std::numeric_limits<Number>::epsilon() * 10. * n_entries);
+            for(auto j = 0U; j < id.m(); ++j)
+              if(i != j)
+                EXPECT_NEAR(id(i, j), 0., std::numeric_limits<Number>::epsilon() * 10. * n_entries);
+          }
+          // std::cout << oss.str();
+        }
       }
     };
 
     /// identity
     {
       const unsigned int                m0 = 2, n0 = 2;
-      Table<2, VectorizedArray<Number>> id(m0, n0);
-      id.fill(static_cast<VectorizedArray<Number>>(0.));
-      for(unsigned int i = 0; i < m0; ++i)
+      Table<2, VectorizedArray<Number>> zero(m0, n0), id(m0, n0);
+      zero.fill(static_cast<VectorizedArray<Number>>(0.));
+      id = zero;
+      for(unsigned int i = 0; i < std::min(m0, n0); ++i)
         id(i, i) = 1.;
-      std::vector<Table<2, VectorizedArray<Number>>> left  = {id};
-      std::vector<Table<2, VectorizedArray<Number>>> right = {id};
-      compare_per_lane(left, right, left, right, left, right, left, right);
+      std::vector<Table<2, VectorizedArray<Number>>> id_   = {id};
+      std::vector<Table<2, VectorizedArray<Number>>> zero_ = {zero};
+      compare_per_lane(id_, id_, zero_, zero_, zero_, zero_, id_, id_);
     }
+    // /// identity x identity (not invertible)
+    // {
+    //   const unsigned int                m0 = 2, n0 = 2;
+    //   Table<2, VectorizedArray<Number>> id(m0, n0);
+    //   id.fill(static_cast<VectorizedArray<Number>>(0.));
+    //   for(unsigned int i = 0; i < std::min(m0, n0); ++i)
+    //     id(i, i) = 1.;
+    //   std::vector<Table<2, VectorizedArray<Number>>> left  = {id};
+    //   std::vector<Table<2, VectorizedArray<Number>>> right = {id};
+    //   compare_per_lane(left, right, left, right, left, right, left, right);
+    // }
+    // /// identity x power-2 diagonal (not invertible)
+    // {
+    //   const unsigned int                m0 = 2, n0 = 2;
+    //   Table<2, VectorizedArray<Number>> id(m0, n0), pow2(m0, n0);
+    //   id.fill(static_cast<VectorizedArray<Number>>(0.));
+    //   for(unsigned int i = 0; i < std::min(m0, n0); ++i)
+    //     id(i, i) = 1.;
+    //   pow2.fill(static_cast<VectorizedArray<Number>>(0.));
+    //   for(unsigned int i = 0; i < std::min(m0, n0); ++i)
+    //     pow2(i, i) = static_cast<VectorizedArray<Number>>(1 << i);
+    //   std::vector<Table<2, VectorizedArray<Number>>> left  = {id};
+    //   std::vector<Table<2, VectorizedArray<Number>>> right = {pow2};
+    //   compare_per_lane(left, right, left, left, left, left, left, right);
+    // }
     /// random
     {
-      // TODO non-quadratic matrices
+      // TODO non-square matrices
       const unsigned int m0 = 2;
       const unsigned int m1 = 2;
       const unsigned int n0 = 2;
