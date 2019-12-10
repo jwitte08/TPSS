@@ -12,6 +12,9 @@
 #include <deal.II/integrators/grad_div.h>
 #include <deal.II/integrators/l2.h>
 #include <deal.II/integrators/laplace.h>
+
+#include "solvers_and_preconditioners/TPSS/block_matrix.h"
+
 #include "equation_data.h"
 #include "laplace_integrator.h"
 
@@ -120,7 +123,10 @@ class MatrixIntegrator
 public:
   using value_type    = Number;
   using transfer_type = typename TPSS::PatchTransferBlock<dim, fe_degree, fe_degree + 1, Number>;
-  using EvaluatorType = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
+  static constexpr int n_patch_dofs_1d = -1;
+  using BlockMatrixDiagonal =
+    typename Tensors::BlockMatrixDiagonal<dim, VectorizedArray<Number>, n_patch_dofs_1d>;
+  using EvaluatorType        = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
   using VectorizedMatrixType = Table<2, VectorizedArray<Number>>;
 
 private:
@@ -132,10 +138,10 @@ private:
 public:
   using LaplaceIntegrator = typename Laplace::FD::MatrixIntegrator<dim, fe_degree, Number>;
   using CellMass          = typename LaplaceIntegrator::template CellMass<EvaluatorType>;
+  using FaceLaplace       = typename LaplaceIntegrator::template FaceLaplace<EvaluatorType>;
 
 private:
   EquationData equation_data;
-  bool         is_valid = false;
 
 public:
   MatrixIntegrator() = default;
@@ -149,7 +155,6 @@ public:
   initialize(const EquationData & equation_data_in)
   {
     equation_data = equation_data_in;
-    is_valid      = true;
   }
 
   const EquationData &
@@ -270,18 +275,6 @@ public:
                Table<2, VectorizedArray<Number>> & cell_matrix10,
                const int                           direction) const;
 
-    VectorizedArray<Number>
-    compute_penalty(const Evaluator &             fd_eval,
-                    const int                     direction,
-                    const int                     cell_no,
-                    const int                     cell_no_neighbor,
-                    const std::bitset<macro_size> at_boundary_mask) const
-    {
-      using FaceLaplace = typename LaplaceIntegrator::template FaceLaplace<Evaluator>;
-      return FaceLaplace::compute_penalty(
-        fd_eval, direction, cell_no, cell_no_neighbor, at_boundary_mask);
-    }
-
     const double mu;
     const int    component;
   };
@@ -316,18 +309,6 @@ public:
       AssertThrow(false, ExcNotImplemented());
     }
 
-    VectorizedArray<Number>
-    compute_penalty(const Evaluator &             fd_eval,
-                    const int                     direction,
-                    const int                     cell_no,
-                    const int                     cell_no_neighbor,
-                    const std::bitset<macro_size> at_boundary_mask) const
-    {
-      using FaceLaplace = typename LaplaceIntegrator::template FaceLaplace<Evaluator>;
-      return FaceLaplace::compute_penalty(
-        fd_eval, direction, cell_no, cell_no_neighbor, at_boundary_mask);
-    }
-
     const int    component_u;
     const int    component_v;
     const double mu;
@@ -357,18 +338,6 @@ public:
                Table<2, VectorizedArray<Number>> & cell_matrix01,
                Table<2, VectorizedArray<Number>> & cell_matrix10,
                const int                           direction) const;
-
-    VectorizedArray<Number>
-    compute_penalty(const Evaluator &             fd_eval,
-                    const int                     direction,
-                    const int                     cell_no,
-                    const int                     cell_no_neighbor,
-                    const std::bitset<macro_size> at_boundary_mask) const
-    {
-      using FaceLaplace = typename LaplaceIntegrator::template FaceLaplace<Evaluator>;
-      return FaceLaplace::compute_penalty(
-        fd_eval, direction, cell_no, cell_no_neighbor, at_boundary_mask);
-    }
 
     const double lambda;
     const int    component;
@@ -402,18 +371,6 @@ public:
                const int                           direction) const
     {
       AssertThrow(false, ExcNotImplemented());
-    }
-
-    VectorizedArray<Number>
-    compute_penalty(const Evaluator &             fd_eval,
-                    const int                     direction,
-                    const int                     cell_no,
-                    const int                     cell_no_neighbor,
-                    const std::bitset<macro_size> at_boundary_mask) const
-    {
-      using FaceLaplace = typename LaplaceIntegrator::template FaceLaplace<Evaluator>;
-      return FaceLaplace::compute_penalty(
-        fd_eval, direction, cell_no, cell_no_neighbor, at_boundary_mask);
     }
 
     const double lambda;
@@ -522,8 +479,8 @@ public:
     return block;
   }
 
-  // static TensorProductMatrix<VectorizedArray<Number>>
-  static std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>>
+  // static std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>>
+  static std::vector<std::array<VectorizedMatrixType, dim>>
   assemble_mixed_block(std::vector<std::shared_ptr<EvaluatorType>> & fd_evals,
                        const EquationData &                          equation_data,
                        const int                                     component_v,
@@ -531,10 +488,11 @@ public:
                        const unsigned int                            patch_id)
   {
     AssertThrow(dim == 2, ExcNotImplemented()); // TODO
+    AssertIndexRange(component_v, dim);
+    AssertIndexRange(component_u, dim);
 
-    const CellVoid<EvaluatorType>                                                   void_op;
-    std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>> left_and_right;
-    auto & [left, right] = left_and_right;
+    const CellVoid<EvaluatorType>                      void_op;
+    std::vector<std::array<VectorizedMatrixType, dim>> elementary_tensors;
 
     {
       const int partial_derivative_index_u = component_v; // i
@@ -559,12 +517,13 @@ public:
 
       /// (mu *  G(1)^T + N(1)) x G(0)
       const auto & mu_derivativeT = Tensors::scale(equation_data.mu, tensor_derivative[1]);
-      left.emplace_back(Tensors::sum(mu_derivativeT, tensor_nitsche[1]));
-      right.emplace_back(tensor_derivative[0]);
+      elementary_tensors.emplace_back(
+        std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
+                                              Tensors::sum(mu_derivativeT, tensor_nitsche[1])});
 
       /// G(1)^T x N(0)
-      left.emplace_back(tensor_derivative[1]);
-      right.emplace_back(tensor_nitsche[0]);
+      elementary_tensors.emplace_back(
+        std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
     }
 
     {
@@ -589,18 +548,17 @@ public:
       const auto & tensor_nitsche    = eval_v.patch_action(eval_u, void_op, nitsche_op, nitsche_op);
 
       /// (lambda * G(1) + N(1)) x G(0)^T
-      const auto & _derivativediv =
-        Tensors::kronecker_product(tensor_derivative[1], tensor_derivative[0]);
       const auto & lambda_derivative = Tensors::scale(equation_data.lambda, tensor_derivative[1]);
-      left.emplace_back(Tensors::sum(lambda_derivative, tensor_nitsche[1]));
-      right.emplace_back(tensor_derivative[0]);
+      elementary_tensors.emplace_back(
+        std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
+                                              Tensors::sum(lambda_derivative, tensor_nitsche[1])});
 
       /// G(1) x N(0)
-      left.emplace_back(tensor_derivative[1]);
-      right.emplace_back(tensor_nitsche[0]);
+      elementary_tensors.emplace_back(
+        std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
     }
 
-    return left_and_right;
+    return elementary_tensors;
   }
 
   static VectorizedMatrixType
@@ -689,14 +647,13 @@ public:
     }
   }
 
-  template<typename TPBlockMatrix, typename OperatorType>
+  template<typename OperatorType>
   void
   assemble_subspace_inverses(const SubdomainHandler<dim, Number> & data,
-                             std::vector<TPBlockMatrix> &          inverses,
+                             std::vector<BlockMatrixDiagonal> &    inverses,
                              const OperatorType &,
                              const std::pair<unsigned int, unsigned int> subdomain_range) const
   {
-    AssertThrow(is_valid, ExcNotInitialized());
     std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
     for(unsigned int comp = 0; comp < dim; ++comp)
       fd_evals.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
@@ -708,14 +665,6 @@ public:
       VectorizedMatrixType cell_mass_unit(fe_order, fe_order);
       fd_eval.compute_unit_mass(make_array_view(cell_mass_unit));
       cell_mass_operations.emplace_back(cell_mass_unit);
-      // // DEBUG
-      // for (unsigned int lane = 0; lane < macro_size; ++lane)
-      //   {
-      //     const auto& mass_lane = table_to_fullmatrix (cell_mass_unit,
-      // lane);
-      //     std::cout << "unit mass sizes: " << mass_lane.m() << ", " << mass_lane.n() <<
-      //     std::endl; mass_lane.print_formatted (std::cout);
-      //   }
     }
 
     std::vector<CellStrain<EvaluatorType>> cell_strain_operations;
@@ -903,7 +852,7 @@ operator()(const Evaluator & /*fd_eval_ansatz*/,
   AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
 
   const auto normal{make_vectorized_array<Number>(face_no == 0 ? -1. : 1.)};
-  const auto penalty{compute_penalty(fd_eval, direction, cell_no, cell_no, bdry_mask)};
+  const auto penalty{FaceLaplace::compute_penalty(fd_eval, direction, cell_no, cell_no, bdry_mask)};
 
   /*** factor varies on interior and boundary cells ***/
   auto factor{make_vectorized_array<Number>(0.)};
@@ -950,7 +899,7 @@ operator()(const Evaluator & /*fd_eval_ansatz*/,
   /*** the outward normal on face 0 seen from cell 1 ***/
   const auto normal1{make_vectorized_array<Number>(-1.)};
   /*** boundary mask is obiviously 0(=all interior), cell_no = 0 and cell_no_neighbor = 1 ***/
-  const auto penalty{compute_penalty(fd_eval, direction, 0, 1, 0)};
+  const auto penalty{FaceLaplace::compute_penalty(fd_eval, direction, 0, 1, 0)};
   /*** diagonal term of grad(u)^T : v ^ n ***/
   const auto factor = make_vectorized_array<Number>((component == direction) ? 1. : 0.5);
 
@@ -1048,7 +997,7 @@ operator()(const Evaluator & /*fd_eval_ansatz*/,
   AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
 
   const auto normal{make_vectorized_array<Number>(face_no == 0 ? -1. : 1.)};
-  const auto penalty{compute_penalty(fd_eval, direction, cell_no, cell_no, bdry_mask)};
+  const auto penalty{FaceLaplace::compute_penalty(fd_eval, direction, cell_no, cell_no, bdry_mask)};
 
   /*** factor varies on interior and boundary cells ***/
   auto factor{make_vectorized_array<Number>(0.)};
@@ -1098,7 +1047,7 @@ operator()(const Evaluator & /*fd_eval_ansatz*/,
   /*** the outward normal on face 0 seen from cell 1 ***/
   const auto normal1{make_vectorized_array<Number>(-1.)};
   /*** boundary mask is obiviously 0(=all interior), cell_no = 0 and cell_no_neighbor = 1 ***/
-  const auto penalty{compute_penalty(fd_eval, direction, 0, 1, 0)};
+  const auto penalty{FaceLaplace::compute_penalty(fd_eval, direction, 0, 1, 0)};
 
   /*** non-zero normal if component coincides with direction ***/
   if(component == direction)
@@ -1159,7 +1108,8 @@ operator()(const Evaluator &                   eval_ansatz,
   const auto normal_symmetry =
     sign_of_normal * make_vectorized_array<Number>(is_normal_nonzero_symmetry ? 1. : 0.);
 
-  const auto penalty{compute_penalty(eval_test, direction, cell_no, cell_no, bdry_mask)};
+  const auto penalty{
+    FaceLaplace::compute_penalty(eval_test, direction, cell_no, cell_no, bdry_mask)};
   /*** factor varies on interior and boundary cells ***/
   auto chi_bdry{make_vectorized_array<Number>(0.)};
   for(unsigned int vv = 0; vv < macro_size; ++vv)

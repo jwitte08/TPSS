@@ -444,38 +444,37 @@ protected:
       return elasticity_matrices;
     }
 
-    std::vector<std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>>>
+    // std::vector<std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>>>
+    std::vector<std::vector<std::array<VectorizedMatrixType, dim>>>
     assemble_block10() const
     {
       /// LAMBDA assembles the univariate matrices of the (1,0)-block for each subdomain
       const auto & assembler_block10 =
-        [&](const SubdomainHandler<dim, double> &                       data,
-            std::vector<std::pair<std::vector<VectorizedMatrixType>,
-                                  std::vector<VectorizedMatrixType>>> & left_and_rights,
-            const EquationData &                                        equation_data,
-            const std::pair<unsigned int, unsigned int> &               subdomain_range) {
+        [&](const SubdomainHandler<dim, double> &                             data,
+            std::vector<std::vector<std::array<VectorizedMatrixType, dim>>> & tensors,
+            const EquationData &                                              equation_data,
+            const std::pair<unsigned int, unsigned int> &                     subdomain_range) {
           std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
           for(unsigned int comp = 0; comp < dim; ++comp)
             fd_evals.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
 
           for(unsigned int id = subdomain_range.first; id < subdomain_range.second; ++id)
           {
-            left_and_rights[id] = FDMatrixIntegrator::assemble_mixed_block(
+            tensors[id] = FDMatrixIntegrator::assemble_mixed_block(
               fd_evals, equation_data, /*component_v*/ 1U, /*component_u*/ 0U, id);
           }
         };
 
       const auto & partition_data = patch_storage->get_partition_data();
-      std::vector<std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>>>
-        blocks;
+      std::vector<std::vector<std::array<VectorizedMatrixType, dim>>> blocks;
       blocks.resize(partition_data.n_subdomains());
       const auto & equation_data = combi_operator->get_equation_data();
       for(unsigned int color = 0; color < partition_data.n_colors(); ++color)
       {
-        patch_storage->template loop<EquationData,
-                                     std::vector<std::pair<std::vector<VectorizedMatrixType>,
-                                                           std::vector<VectorizedMatrixType>>>>(
-          assembler_block10, blocks, equation_data, color);
+        patch_storage
+          ->template loop<EquationData,
+                          std::vector<std::vector<std::array<VectorizedMatrixType, dim>>>>(
+            assembler_block10, blocks, equation_data, color);
       }
 
       return blocks;
@@ -548,7 +547,7 @@ protected:
   }
 
   void
-  compare_matrix(const FullMatrix<double> & other)
+  compare_matrix(const FullMatrix<double> & other) const
   {
     std::ostringstream oss;
     const auto         patch_matrix_full = table_to_fullmatrix(patch_matrix.as_table());
@@ -569,6 +568,35 @@ protected:
   }
 
   void
+  compare_inverse_matrix(const FullMatrix<double> & other) const
+  {
+    std::ostringstream oss;
+    const auto         inverse_patch_matrix = table_to_fullmatrix(patch_matrix.as_inverse_table());
+    oss << "Inverse of the patch matrix:\n";
+    inverse_patch_matrix.print_formatted(oss);
+    auto other_inverse(other);
+    other_inverse.invert(other);
+    oss << "Inverse of the extracted block of the level matrix:\n";
+    other_inverse.print_formatted(oss);
+
+    FullMatrix<double> id(inverse_patch_matrix.m(), inverse_patch_matrix.n());
+    const auto         patch_matrix_full = table_to_fullmatrix(patch_matrix.as_table());
+    inverse_patch_matrix.mmult(id, patch_matrix_full);
+    const unsigned n_entries = id.m() * id.n();
+    for(auto i = 0U; i < id.m(); ++i)
+    {
+      EXPECT_NEAR(id(i, i), 1., std::numeric_limits<double>::epsilon() * 10. * n_entries);
+      for(auto j = 0U; j < id.m(); ++j)
+        if(i != j)
+          EXPECT_NEAR(id(i, j), 0., std::numeric_limits<double>::epsilon() * 10. * n_entries);
+    }
+    oss << "A^{-1} A = \n";
+    id.print_formatted(oss);
+
+    *pcout_owned << oss.str();
+  }
+
+  void
   test()
   {
     using State = typename Tensors::TensorProductMatrix<dim, double>::State;
@@ -578,30 +606,22 @@ protected:
       ass.assemble_mass_matrices();
     const std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> elasticity_matrices =
       ass.assemble_elasticity_matrices();
-    const std::vector<
-      std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>>>
-      left_and_rights10 = ass.assemble_block10();
+    const std::vector<std::vector<std::array<VectorizedMatrixType, dim>>> elementary_tensors10 =
+      ass.assemble_block10();
 
     const auto level_matrix        = ass.assemble_level_matrix();
     const auto cell_to_patch_index = ex.map_cell_to_patch_index();
     const auto cell_to_dofs        = ex.map_cell_to_dof_indices();
     for(auto cell = 0U; cell < cell_to_patch_index.size(); ++cell)
     {
+      patch_matrix.resize(dim, dim);
       auto [patch, lane] = cell_to_patch_index[cell];
+
       /// block diagonal
       for(auto comp = 0U; comp < dim; ++comp)
       {
-        // std::vector<Table<2, double>> mass_comp, elas_comp;
         const auto & mass_tensor_comp = mass_matrices[patch][comp];
         const auto & elas_tensor_comp = elasticity_matrices[patch][comp];
-        // std::transform(mass_tensor_comp.cbegin(),
-        //                mass_tensor_comp.cend(),
-        //                std::back_inserter(mass_comp),
-        //                [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
-        // std::transform(elas_tensor_comp.cbegin(),
-        //                elas_tensor_comp.cend(),
-        //                std::back_inserter(elas_comp),
-        //                [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
         std::vector<std::array<Table<2, double>, dim>> tensors_comp;
         std::array<Table<2, double>, dim>              masses;
         std::transform(mass_tensor_comp.cbegin(),
@@ -620,30 +640,23 @@ protected:
 
       /// block off-diagonals
       {
-        const auto & [macro_left, macro_right] = left_and_rights10[patch];
+        const auto & macro_tensors10 = elementary_tensors10[patch];
         std::vector<std::array<Table<2, double>, dim>> tensors10;
-        std::transform(macro_left.cbegin(),
-                       macro_left.cend(),
-                       macro_right.cbegin(),
+        std::transform(macro_tensors10.cbegin(),
+                       macro_tensors10.cend(),
                        std::back_inserter(tensors10),
-                       [lane](const auto & l, const auto & r) {
-                         std::array<Table<2, double>, dim> tensor = {table_to_fullmatrix(l, lane),
-                                                                     table_to_fullmatrix(r, lane)};
-                         return tensor;
+                       [lane](const auto & t) -> std::array<Table<2, double>, dim> {
+                         return {table_to_fullmatrix(t[0], lane), table_to_fullmatrix(t[1], lane)};
                        });
         patch_matrix.get_block(1U, 0U).reinit(tensors10);
 
         std::vector<std::array<Table<2, double>, dim>> tensors01;
-        std::transform(macro_left.cbegin(),
-                       macro_left.cend(),
-                       macro_right.cbegin(),
+        std::transform(macro_tensors10.cbegin(),
+                       macro_tensors10.cend(),
                        std::back_inserter(tensors01),
-                       [lane](const auto & l, const auto & r) {
-                         const auto &                      lT     = Tensors::transpose(l);
-                         const auto &                      rT     = Tensors::transpose(r);
-                         std::array<Table<2, double>, dim> tensor = {table_to_fullmatrix(lT, lane),
-                                                                     table_to_fullmatrix(rT, lane)};
-                         return tensor;
+                       [lane](const auto & t) -> std::array<Table<2, double>, dim> {
+                         return {table_to_fullmatrix(Tensors::transpose(t[0]), lane),
+                                 table_to_fullmatrix(Tensors::transpose(t[1]), lane)};
                        });
         patch_matrix.get_block(0U, 1U).reinit(tensors01);
       }
@@ -655,25 +668,9 @@ protected:
       extracted_matrix.extract_submatrix_from(*level_matrix, level_dof_indices, level_dof_indices);
 
       compare_matrix(extracted_matrix);
+      compare_inverse_matrix(extracted_matrix);
     }
   }
-
-  // void
-  // test_block_vector()
-  // {
-  // initialize();
-  // auto blockvec = linelasticity_problem->system_u;
-  // for (auto b = 0; b < blockvec.n_blocks(); ++b)
-  //   {
-  // 	auto view = make_array_view(blockvec.block(b).begin(), blockvec.block(b).end());
-  // 	fill_with_random_values(view);
-  //   }
-  // for (auto i = 0; i < blockvec.size(); ++i)
-  //   *pcout_owned << blockvec[i] << std::endl;
-  // for (auto b = 0; b < blockvec.n_blocks(); ++b)
-  //   for (auto i = 0; i < blockvec.block(b).size(); ++i)
-  // 	*pcout_owned << blockvec.block(b)[i] << std::endl;
-  // }
 
   std::ofstream                       ofs;
   std::shared_ptr<ConditionalOStream> pcout_owned;
@@ -695,16 +692,16 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, VaryDegreeCellPatch)
   using Fixture = TestLinElasticityIntegratorFD<TypeParam>;
 
   Fixture::params.n_refinements        = 0U;
-  Fixture::params.equation_data.lambda = 1.; // 1.234;
-  Fixture::params.equation_data.mu     = 1.; // 9.876;
+  Fixture::params.equation_data.lambda = 1.;
+  Fixture::params.equation_data.mu     = 1.;
   Fixture::test();
 
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2U;
-  Fixture::params.n_refinements                = 1U;
-  Fixture::params.equation_data.lambda         = 1.234;
-  Fixture::params.equation_data.mu             = 9.876;
-  Fixture::test();
+  // Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  // Fixture::rt_parameters.mesh.n_repetitions    = 2U;
+  // Fixture::params.n_refinements                = 1U;
+  // Fixture::params.equation_data.lambda         = 1.234;
+  // Fixture::params.equation_data.mu             = 9.876;
+  // Fixture::test();
 }
 
 REGISTER_TYPED_TEST_SUITE_P(TestLinElasticityIntegratorFD, VaryDegreeCellPatch);
