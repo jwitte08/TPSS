@@ -221,12 +221,23 @@ public:
   using value_type  = typename matrix_type::value_type;
 
   /**
+   * Deletes current block structure.
+   */
+  void
+  clear()
+  {
+    std::fill(n_.begin(), n_.end(), 0U);
+    blocks.clear();
+    inverse_2x2.reset();
+  }
+
+  /**
    * Deletes old and resizes to square block structure.
    */
   void
   resize(const std::size_t n_rows)
   {
-    blocks.clear();
+    clear();
     blocks.resize(n_rows * n_rows);
     n_[0] = n_[1] = n_rows;
   }
@@ -237,7 +248,7 @@ public:
   void
   resize(const std::size_t n_rows, const std::size_t n_cols)
   {
-    blocks.clear();
+    clear();
     blocks.resize(n_rows * n_cols);
     n_[0] = n_rows;
     n_[1] = n_cols;
@@ -320,11 +331,12 @@ public:
   {
     const bool is_2x2_block_matrix = n_block_rows() == 2 && n_block_cols() == 2;
     AssertThrow(is_2x2_block_matrix, ExcMessage("TODO"));
-    BlockGaussianInverse inverse(get_block(0, 0),
-                                 get_block(0, 1),
-                                 get_block(1, 0),
-                                 get_block(1, 1));
-    inverse.vmult(dst, src);
+    if(!inverse_2x2)
+      inverse_2x2 = std::make_shared<BlockGaussianInverse<matrix_type>>(get_block(0, 0),
+                                                                        get_block(0, 1),
+                                                                        get_block(1, 0),
+                                                                        get_block(1, 1));
+    inverse_2x2->vmult(dst, src);
   }
 
   std::array<std::size_t, 2>
@@ -428,6 +440,11 @@ private:
    * The vector containing the matrix blocks.
    */
   AlignedVector<matrix_type> blocks;
+
+  /**
+   * The inverse of a 2 x 2 block matrix based on block Gaussian elimination.
+   */
+  mutable std::shared_ptr<const BlockGaussianInverse<matrix_type>> inverse_2x2;
 };
 
 
