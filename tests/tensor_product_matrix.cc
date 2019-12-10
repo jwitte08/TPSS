@@ -161,7 +161,7 @@ protected:
                      right.cbegin(),
                      std::back_inserter(test.elementary_tensors),
                      [](const auto & l, const auto & r) {
-                       std::array<Table<2, Number>, dim> tensor = {l, r};
+                       std::array<Table<2, Number>, dim> tensor = {r, l};
                        return tensor;
                      });
 
@@ -209,7 +209,7 @@ protected:
                        right.cbegin(),
                        std::back_inserter(test.elementary_tensors),
                        [](const auto & l, const auto & r) {
-                         std::array<Table<2, VectorizedArray<Number>>, dim> tensor = {l, r};
+                         std::array<Table<2, VectorizedArray<Number>>, dim> tensor = {r, l};
                          return tensor;
                        });
         std::vector<FullMatrix<Number>> left_full;

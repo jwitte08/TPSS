@@ -54,7 +54,7 @@ struct TestBlockMatrix
                    right.cbegin(),
                    std::back_inserter(tensors),
                    [](const auto & l, const auto & r) {
-                     std::array<Table<2, Number>, dim> tensor = {l, r};
+                     std::array<Table<2, Number>, dim> tensor = {r, l};
                      return tensor;
                    });
     block_matrix.get_block(row, col).reinit(tensors, State::basic);
@@ -95,16 +95,12 @@ protected:
         test.fill_block(1U, 1U, left11, right11);
 
         /// initialize reference matrix
-        const auto m00 = test.block_matrix.get_block(0, 0).m();
-        // const auto m01 = test.block_matrix.get_block(0,1).m();
-        const auto m10 = test.block_matrix.get_block(1, 0).m();
-        // const auto m11 = test.block_matrix.get_block(1,1).m();
-        const auto n00 = test.block_matrix.get_block(0, 0).n();
-        const auto n01 = test.block_matrix.get_block(0, 1).n();
-        // const auto n10 = test.block_matrix.get_block(1,0).n();
-        // const auto n11 = test.block_matrix.get_block(1,1).n();
-        const auto         m = m00 + m10;
-        const auto         n = n00 + n01;
+        const auto         m00 = test.block_matrix.get_block(0, 0).m();
+        const auto         m10 = test.block_matrix.get_block(1, 0).m();
+        const auto         n00 = test.block_matrix.get_block(0, 0).n();
+        const auto         n01 = test.block_matrix.get_block(0, 1).n();
+        const auto         m   = m00 + m10;
+        const auto         n   = n00 + n01;
         FullMatrix<Number> ref_matrix(m, n);
         const auto fm00 = table_to_fullmatrix(test.block_matrix.get_block(0, 0).as_table(), lane);
         const auto fm01 = table_to_fullmatrix(test.block_matrix.get_block(0, 1).as_table(), lane);

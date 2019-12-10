@@ -127,11 +127,11 @@ public:
       std::transform(elementary_tensors.cbegin(),
                      elementary_tensors.cend(),
                      left_owned.begin(),
-                     [](const auto & tensor) { return tensor[0]; });
+                     [](const auto & tensor) { return tensor[1]; });
       std::transform(elementary_tensors.cbegin(),
                      elementary_tensors.cend(),
                      right_owned.begin(),
-                     [](const auto & tensor) { return tensor[1]; });
+                     [](const auto & tensor) { return tensor[0]; });
       left_or_mass        = make_array_view(left_owned);
       right_or_derivative = make_array_view(right_owned);
       basic_inverse.reinit(as_table());
