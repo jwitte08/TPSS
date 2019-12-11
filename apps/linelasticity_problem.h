@@ -50,7 +50,10 @@ using namespace dealii;
 
 namespace LinElasticity
 {
-template<int dim, int fe_degree, typename Number = double, int n_patch_dofs = -1>
+template<int dim,
+         int fe_degree,
+         typename Number     = double,
+         typename MatrixType = Tensors::BlockMatrixDiagonal<dim, VectorizedArray<Number>>>
 struct ModelProblem : public Subscriptor
 {
   static constexpr unsigned int n_components = dim;
@@ -60,10 +63,10 @@ struct ModelProblem : public Subscriptor
   using VECTOR        = typename LinearAlgebra::distributed::BlockVector<Number>;
   using SYSTEM_MATRIX = LinElasticity::MF::Operator<dim, fe_degree, Number>;
 
-  using value_type_mg = Number;
-  using LEVEL_MATRIX  = LinElasticity::CombinedOperator<dim, fe_degree, value_type_mg>;
-  using MG_TRANSFER   = MGTransferMatrixFree<dim, value_type_mg>;
-  using PATCH_MATRIX  = Tensors::BlockMatrixDiagonal<dim, VectorizedArray<Number>, n_patch_dofs>;
+  using value_type_mg          = Number;
+  using LEVEL_MATRIX           = LinElasticity::CombinedOperator<dim, fe_degree, value_type_mg>;
+  using MG_TRANSFER            = MGTransferMatrixFree<dim, value_type_mg>;
+  using PATCH_MATRIX           = MatrixType;
   using SCHWARZ_PRECONDITIONER = SchwarzPreconditioner<dim, LEVEL_MATRIX, VECTOR, PATCH_MATRIX>;
   using SCHWARZ_SMOOTHER       = SchwarzSmoother<dim, LEVEL_MATRIX, SCHWARZ_PRECONDITIONER, VECTOR>;
   using MG_SMOOTHER_SCHWARZ    = MGSmootherSchwarz<dim, LEVEL_MATRIX, PATCH_MATRIX, VECTOR>;
@@ -800,7 +803,7 @@ struct ModelProblem : public Subscriptor
           {
             print_informations();
             TimerOutput::Scope time_section(time, "Solve linear system");
-            solve(preconditioner_id);
+            solve(preconditioner_id, print_details);
           }
           break;
         }
@@ -813,7 +816,7 @@ struct ModelProblem : public Subscriptor
           {
             print_informations();
             TimerOutput::Scope time_section(time, "Solve");
-            solve(*preconditioner_mg);
+            solve(*preconditioner_mg, print_details);
           }
           break;
         }
