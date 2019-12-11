@@ -105,6 +105,22 @@ struct TestTensorProductMatrix
       << oss.str();
   }
 
+  void
+  compare_copy()
+  {
+    TPM tp_matrix;
+    tp_matrix.reinit(elementary_tensors, state);
+    TPM tp_matrix_copy;
+    tp_matrix_copy        = tp_matrix;
+    const auto table      = tp_matrix.as_table();
+    const auto table_copy = tp_matrix_copy.as_table();
+    for(auto i = 0U; i < table.n_rows(); ++i)
+      for(auto j = 0U; j < table.n_cols(); ++j)
+        EXPECT_NEAR(table(i, j),
+                    table_copy(i, j),
+                    std::numeric_limits<scalar_value_type>::epsilon());
+  }
+
   template<typename MatrixType>
   static void
   reinit_matrix_with_random_values(MatrixType &       matrix,
@@ -122,9 +138,16 @@ struct TestTensorProductMatrix
 };
 
 template<typename T>
-class FixTensorProductMatrixVmult : public testing::Test
+class FixTensorProductMatrix : public testing::Test
 {
 protected:
+  enum class TestVariant
+  {
+    vmult,
+    apply_inverse,
+    copy
+  };
+
   static constexpr int dim                 = T::template type<0>::template value<0>();
   using Number                             = typename T::template type<1>;
   using Tester                             = TestTensorProductMatrix<dim, Number>;
@@ -149,12 +172,12 @@ protected:
   }
 
   void
-  do_test()
+  test_vmult_or_apply_inverse(const TestVariant test_variant = TestVariant::vmult)
   {
     using State          = typename Tester::TPM::State;
     const unsigned int m = 3;
 
-    const auto & test_impl = [this](const auto & left, const auto & right) {
+    const auto & test_impl = [test_variant, this](const auto & left, const auto & right) {
       Tester test;
       std::transform(left.cbegin(),
                      left.cend(),
@@ -167,9 +190,15 @@ protected:
 
       auto sum_of_products = assemble_reference(left, right);
       test.state           = State::basic;
-      test.compare_vmult(sum_of_products);
-      test.compare_matrix(sum_of_products);
-      test.compare_inverse_matrix(sum_of_products);
+      if(test_variant == TestVariant::vmult)
+      {
+        test.compare_vmult(sum_of_products);
+        test.compare_matrix(sum_of_products);
+      }
+      else if(test_variant == TestVariant::apply_inverse)
+        test.compare_inverse_matrix(sum_of_products);
+      else if(test_variant == TestVariant::copy)
+        test.compare_copy();
     };
 
     /// identity
@@ -195,12 +224,12 @@ protected:
   }
 
   void
-  do_vectorized_test()
+  test_vmult_or_apply_inverseV(const TestVariant test_variant = TestVariant::vmult)
   {
     using State          = typename TesterV::TPM::State;
     const unsigned int m = 3;
 
-    const auto & compare_per_lane = [this](const auto & left, const auto & right) {
+    const auto & compare_per_lane = [test_variant, this](const auto & left, const auto & right) {
       for(unsigned lane = 0; lane < macro_size; ++lane)
       {
         TesterV test;
@@ -224,9 +253,13 @@ protected:
                        [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
         const auto sum_of_products = assemble_reference(left_full, right_full);
         test.state                 = State::basic;
-        test.compare_vmult(sum_of_products, lane);
-        test.compare_matrix(sum_of_products, lane);
-        test.compare_inverse_matrix(sum_of_products, lane);
+        if(test_variant == TestVariant::vmult)
+        {
+          test.compare_vmult(sum_of_products, lane);
+          test.compare_matrix(sum_of_products, lane);
+        }
+        else if(test_variant == TestVariant::apply_inverse)
+          test.compare_inverse_matrix(sum_of_products, lane);
       }
     };
 
@@ -257,17 +290,32 @@ protected:
   }
 };
 
-TYPED_TEST_SUITE_P(FixTensorProductMatrixVmult);
-TYPED_TEST_P(FixTensorProductMatrixVmult, CompareVmultAndMatrix)
+TYPED_TEST_SUITE_P(FixTensorProductMatrix);
+TYPED_TEST_P(FixTensorProductMatrix, VmultAndMatrix)
 {
-  using Fixture = FixTensorProductMatrixVmult<TypeParam>;
-  Fixture::do_test();
-  Fixture::do_vectorized_test();
+  using Fixture = FixTensorProductMatrix<TypeParam>;
+  Fixture::test_vmult_or_apply_inverse();
+  Fixture::test_vmult_or_apply_inverseV();
 }
 
-REGISTER_TYPED_TEST_SUITE_P(FixTensorProductMatrixVmult, CompareVmultAndMatrix);
+TYPED_TEST_P(FixTensorProductMatrix, ApplyInverse)
+{
+  using Fixture     = FixTensorProductMatrix<TypeParam>;
+  using TestVariant = typename Fixture::TestVariant;
+  Fixture::test_vmult_or_apply_inverse(TestVariant::apply_inverse);
+  Fixture::test_vmult_or_apply_inverseV(TestVariant::apply_inverse);
+}
+
+TYPED_TEST_P(FixTensorProductMatrix, Copy)
+{
+  using Fixture     = FixTensorProductMatrix<TypeParam>;
+  using TestVariant = typename Fixture::TestVariant;
+  Fixture::test_vmult_or_apply_inverse(TestVariant::copy);
+}
+
+REGISTER_TYPED_TEST_SUITE_P(FixTensorProductMatrix, VmultAndMatrix, ApplyInverse, Copy);
 
 using ParamsTwoDimensionsDouble = testing::Types<Util::TypeList<Util::NonTypeParams<2>, double>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(TwoDimensionsDouble,
-                               FixTensorProductMatrixVmult,
+                               FixTensorProductMatrix,
                                ParamsTwoDimensionsDouble);

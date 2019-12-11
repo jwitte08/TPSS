@@ -95,57 +95,56 @@ public:
     skd
   };
 
-  using SKDMatrix = TensorProductMatrixSymmetricSum<order, Number, n_rows_1d>;
-  using SKDMatrix::value_type;
+  using SKDMatrix  = TensorProductMatrixSymmetricSum<order, Number, n_rows_1d>;
+  using value_type = Number;
 
   TensorProductMatrix() = default;
 
   TensorProductMatrix(const std::vector<std::array<Table<2, Number>, order>> & elementary_tensors,
                       const State state_in = State::basic)
   {
-    static_assert(order == 2, "TODO");
     reinit(elementary_tensors, state_in);
   }
 
+  TensorProductMatrix &
+  operator=(const TensorProductMatrix & other)
+  {
+    reinit(other.elementary_tensors, other.state);
+    return *this;
+  }
+
   void
-  reinit(const std::vector<std::array<Table<2, Number>, order>> & elementary_tensors,
+  reinit(const std::vector<std::array<Table<2, Number>, order>> & elementary_tensors_in,
          const State                                              state_in = State::basic)
   {
-    Assert(check_static_n_rows_1d(elementary_tensors),
+    Assert(check_static_n_rows_1d(elementary_tensors_in),
            ExcMessage("Not all univariate matrices are of size (n_rows_1d x n_rows_1d)."));
-    if(elementary_tensors.empty())
+    if(elementary_tensors_in.empty())
       return;
 
     state = state_in;
+
     if(state == State::basic)
     {
       for(unsigned i = 0; i < order; ++i)
-        Assert(check_size_1d(elementary_tensors, i),
+        Assert(check_size_1d(elementary_tensors_in, i),
                ExcMessage("Mismatching sizes of univariate matrices."));
-      left_owned.resize(elementary_tensors.size());
-      right_owned.resize(elementary_tensors.size());
-      std::transform(elementary_tensors.cbegin(),
-                     elementary_tensors.cend(),
-                     left_owned.begin(),
-                     [](const auto & tensor) { return tensor[1]; });
-      std::transform(elementary_tensors.cbegin(),
-                     elementary_tensors.cend(),
-                     right_owned.begin(),
-                     [](const auto & tensor) { return tensor[0]; });
-      left_or_mass        = make_array_view(left_owned);
-      right_or_derivative = make_array_view(right_owned);
+      elementary_tensors.clear();
+      std::copy(elementary_tensors_in.cbegin(),
+                elementary_tensors_in.cend(),
+                std::back_inserter(elementary_tensors));
       basic_inverse.reinit(as_table());
     }
 
     else if(state == State::skd)
     {
-      AssertThrow(elementary_tensors.size() == order,
-                  ExcMessage("The number of mass/derivative matrices and orderension differ."));
-      SKDMatrix::reinit(elementary_tensors[0], elementary_tensors[1]);
-      left_or_mass = make_array_view(SKDMatrix::mass_matrix.begin(), SKDMatrix::mass_matrix.end());
-      right_or_derivative =
-        make_array_view(SKDMatrix::derivative_matrix.begin(), SKDMatrix::derivative_matrix.end());
+      AssertThrow(
+        elementary_tensors_in.size() == 2,
+        ExcMessage(
+          "Two tensors are required, namely a tensor of mass matrices and a tensor of derivative matrices."));
+      SKDMatrix::reinit(elementary_tensors_in[0], elementary_tensors_in[1]);
     }
+
     else
       AssertThrow(false, ExcMessage("Invalid state at initialization."));
   }
@@ -155,7 +154,7 @@ public:
   {
     if(state == State::skd)
       return SKDMatrix::m();
-    Assert(left_or_mass.size() > 0, ExcMessage("Not initialized."));
+    Assert(elementary_tensors.size() > 0, ExcMessage("Not initialized."));
     const unsigned int m_left  = left(0).size(0);
     const unsigned int m_right = right(0).size(0);
     return m_left * m_right;
@@ -166,7 +165,7 @@ public:
   {
     if(state == State::skd)
       return SKDMatrix::n();
-    Assert(left_or_mass.size() > 0, ExcMessage("Not initialized."));
+    Assert(elementary_tensors.size() > 0, ExcMessage("Not initialized."));
     const unsigned int n_left  = left(0).size(1);
     const unsigned int n_right = right(0).size(1);
     return n_left * n_right;
@@ -206,40 +205,29 @@ protected:
   const Table<2, Number> &
   left(unsigned int r) const
   {
-    AssertIndexRange(r, left_or_mass.size());
-    return left_or_mass[r];
+    static_assert(order == 2, "TODO");
+    AssertIndexRange(r, elementary_tensors.size());
+    return elementary_tensors[r][1];
   }
 
   const Table<2, Number> &
   right(unsigned int r) const
   {
-    AssertIndexRange(r, right_or_derivative.size());
-    return right_or_derivative[r];
+    static_assert(order == 2, "TODO");
+    AssertIndexRange(r, elementary_tensors.size());
+    return elementary_tensors[r][0];
   }
 
   /**
-   * An array view pointing to the left or mass matrices, respectively,
-   * depending on the active state.
+   * Vector containing all elementary tensors, where each tensor consists of @p
+   * order-1 Kronecker products. If linear independent the vector size
+   * determines the tensor rank (or Kronecker rank).
+   *
+   * NOTE Elementary tensors are only stored in this field for the basic
+   * state. For the skd state the underlying TensorProductMatrixSymmetricSum
+   * stores the tensors.
    */
-  ArrayView<Table<2, Number>> left_or_mass;
-
-  /**
-   * A vector containing left matrices, that is left factors of the sum over
-   * Kronecker products.
-   */
-  std::vector<Table<2, Number>> left_owned;
-
-  /**
-   * An array view pointing to the right or derivative matrices, respectively,
-   * depending on the active state.
-   */
-  ArrayView<Table<2, Number>> right_or_derivative;
-
-  /**
-   * A vector containing right matrices, that is right factors of the sum over
-   * Kronecker products.
-   */
-  std::vector<Table<2, Number>> right_owned;
+  std::vector<std::array<Table<2, Number>, order>> elementary_tensors;
 
   /**
    * The state switches which functionalities are faciliated:
@@ -308,6 +296,7 @@ private:
   vmult_impl_basic_static(const ArrayView<Number> &       dst_view,
                           const ArrayView<const Number> & src_view) const
   {
+    static_assert(order == 2, "TODO");
     AssertDimension(dst_view.size(), m());
     AssertDimension(src_view.size(), n());
     std::lock_guard<std::mutex> lock(this->mutex);
@@ -333,7 +322,7 @@ private:
                                                                                       src,
                                                                                       tmp);
     eval.template apply<1, false, add>(left_0, tmp, dst);
-    for(std::size_t r = 1; r < left_or_mass.size(); ++r)
+    for(std::size_t r = 1; r < elementary_tensors.size(); ++r)
     {
       const Number * left_r  = &(left(r)(0, 0));
       const Number * right_r = &(right(r)(0, 0));
