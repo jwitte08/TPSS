@@ -67,8 +67,11 @@ struct BasicSetup
 
 
 
-template<int dim, int fe_degree, typename value_type = double>
-struct LinElasticityDiagOnly : public BasicSetup<dim, fe_degree, value_type>
+template<int dim,
+         int fe_degree,
+         typename Number     = double,
+         typename MatrixType = Tensors::BlockMatrixDiagonal<dim, VectorizedArray<Number>>>
+struct TestLinElasticity : public BasicSetup<dim, fe_degree, Number>
 {
   struct Params
   {
@@ -80,35 +83,35 @@ struct LinElasticityDiagOnly : public BasicSetup<dim, fe_degree, value_type>
     EquationData            equation_data;
   };
 
-  using Base = BasicSetup<dim, fe_degree, value_type>;
+  using Base = BasicSetup<dim, fe_degree, Number>;
   using Base::rt_parameters;
 
   void
   initialize() override
   {
-    Base::params  = {params.patch_variant, params.smoother_variant};
-    equation_data = params.equation_data;
+    Base::params = {params.patch_variant, params.smoother_variant};
     Base::initialize();
     rt_parameters.multigrid.pre_smoother.n_smoothing_steps  = params.n_smoothing_steps;
     rt_parameters.multigrid.post_smoother.n_smoothing_steps = params.n_smoothing_steps;
     rt_parameters.mesh.n_refinements                        = 1;
     rt_parameters.dof_limits = {params.dof_limit_min, params.dof_limit_max};
     rt_parameters.n_cycles   = 10;
+    if(params.smoother_variant == TPSS::SmootherVariant::multiplicative)
+      rt_parameters.solver.variant = "gmres";
+    // params.equation_data.lambda = 20.; fails!!!
   }
 
   void
   run()
   {
-    using LinElasticityOperator = typename LinElasticity::
-      ModelProblem<dim, fe_degree, value_type, /*n_patch_dofs_per_direction*/ -1>;
+    using LinElasticityOperator =
+      typename LinElasticity::ModelProblem<dim, fe_degree, Number, MatrixType>;
 
-    std::ofstream ofs("apps_poisson.log");
+    std::ofstream ofs("apps_linelasticity.log", std::ios_base::app);
     const bool    is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
     const auto    pcout         = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
 
-    initialize();
-
-    LinElasticityOperator linelasticity_problem(*pcout, rt_parameters, equation_data);
+    LinElasticityOperator linelasticity_problem(*pcout, rt_parameters, params.equation_data);
     linelasticity_problem.run(true);
 
     pp_data = linelasticity_problem.pp_data;
@@ -116,7 +119,6 @@ struct LinElasticityDiagOnly : public BasicSetup<dim, fe_degree, value_type>
   }
 
   Params          params;
-  EquationData    equation_data;
   PostProcessData pp_data;
 };
 
