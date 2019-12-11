@@ -154,7 +154,6 @@ public:
     AssertDimension(B.n(), D.n());
     const unsigned int m0 = A.m();
     const unsigned int m1 = D.m();
-    const unsigned int m  = m0 + m1;
     AssertDimension(src_view.size(), m);
     AssertDimension(dst_view.size(), m);
 
