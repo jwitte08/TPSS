@@ -126,6 +126,7 @@ public:
   static constexpr int n_patch_dofs_1d = -1;
   using BlockMatrixDiagonal =
     typename Tensors::BlockMatrixDiagonal<dim, VectorizedArray<Number>, n_patch_dofs_1d>;
+  using BlockMatrix = typename Tensors::BlockMatrix<dim, VectorizedArray<Number>, n_patch_dofs_1d>;
   using EvaluatorType        = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
   using VectorizedMatrixType = Table<2, VectorizedArray<Number>>;
 
@@ -167,20 +168,11 @@ public:
   struct CellVoid
   {
     void
-    operator()(const Evaluator &                   fd_eval,
-               Table<2, VectorizedArray<Number>> & cell_matrix,
-               const int                           direction,
-               const int                           cell_no) const
-    {
-      // *** does nothing
-    }
-
-    void
-    operator()(const Evaluator &                   eval_ansatz,
-               const Evaluator &                   eval_test,
-               Table<2, VectorizedArray<Number>> & cell_matrix,
-               const int                           direction,
-               const int                           cell_no) const
+    operator()(const Evaluator &,
+               const Evaluator &,
+               Table<2, VectorizedArray<Number>> &,
+               const int,
+               const int) const
     {
       // *** does nothing
     }
@@ -300,11 +292,11 @@ public:
                const std::bitset<macro_size>       bdry_mask) const;
 
     void
-    operator()(const Evaluator &                   eval_ansatz,
-               const Evaluator &                   eval_test,
-               Table<2, VectorizedArray<Number>> & cell_matrix01,
-               Table<2, VectorizedArray<Number>> & cell_matrix10,
-               const int                           direction) const
+    operator()(const Evaluator &,
+               const Evaluator &,
+               Table<2, VectorizedArray<Number>> &,
+               Table<2, VectorizedArray<Number>> &,
+               const int) const
     {
       AssertThrow(false, ExcNotImplemented());
     }
@@ -364,11 +356,11 @@ public:
                const std::bitset<macro_size>       bdry_mask) const;
 
     void
-    operator()(const Evaluator &                   eval_ansatz,
-               const Evaluator &                   eval_test,
-               Table<2, VectorizedArray<Number>> & cell_matrix01,
-               Table<2, VectorizedArray<Number>> & cell_matrix10,
-               const int                           direction) const
+    operator()(const Evaluator &,
+               const Evaluator &,
+               Table<2, VectorizedArray<Number>> &,
+               Table<2, VectorizedArray<Number>> &,
+               const int) const
     {
       AssertThrow(false, ExcNotImplemented());
     }
@@ -423,61 +415,61 @@ public:
     return tensors;
   }
 
-  static std::array<VectorizedMatrixType, dim>
-  assemble_gradmixed_tensor(EvaluatorType &                       eval_ansatz,
-                            EvaluatorType &                       eval_test,
-                            const CellDerivative<EvaluatorType> & cell_gradmixed_operation,
-                            const unsigned int                    patch_id)
-  {
-    std::array<VectorizedMatrixType, dim> tensor;
+  // static std::array<VectorizedMatrixType, dim>
+  // assemble_gradmixed_tensor(EvaluatorType &                       eval_ansatz,
+  //                           EvaluatorType &                       eval_test,
+  //                           const CellDerivative<EvaluatorType> & cell_gradmixed_operation,
+  //                           const unsigned int                    patch_id)
+  // {
+  //   std::array<VectorizedMatrixType, dim> tensor;
 
-    eval_ansatz.reinit(patch_id);
-    eval_ansatz.evaluate(true);
-    eval_test.reinit(patch_id);
-    eval_test.evaluate(true);
-    tensor = eval_test.patch_action(eval_ansatz, cell_gradmixed_operation);
+  //   eval_ansatz.reinit(patch_id);
+  //   eval_ansatz.evaluate(true);
+  //   eval_test.reinit(patch_id);
+  //   eval_test.evaluate(true);
+  //   tensor = eval_test.patch_action(eval_ansatz, cell_gradmixed_operation);
 
-    return tensor;
-  }
+  //   return tensor;
+  // }
 
-  static VectorizedMatrixType
-  assemble_strain_mixed(std::vector<std::shared_ptr<EvaluatorType>> & fd_evals,
-                        const EquationData &                          equation_data,
-                        const int                                     component_u,
-                        const int                                     component_v,
-                        const unsigned int                            patch_id)
-  {
-    AssertThrow(dim == 2, ExcNotImplemented());                                       // TODO
-    const int                               partial_derivative_index_u = component_v; // i
-    const int                               partial_derivative_index_v = component_u; // j
-    const CellDerivative<EvaluatorType>     grad{partial_derivative_index_u,
-                                             partial_derivative_index_v};
-    const CellVoid<EvaluatorType>           void_op;
-    const NitscheStrainMixed<EvaluatorType> nitsche{equation_data, component_u, component_v};
+  // static VectorizedMatrixType
+  // assemble_strain_mixed(std::vector<std::shared_ptr<EvaluatorType>> & fd_evals,
+  //                       const EquationData &                          equation_data,
+  //                       const int                                     component_u,
+  //                       const int                                     component_v,
+  //                       const unsigned int                            patch_id)
+  // {
+  //   AssertThrow(dim == 2, ExcNotImplemented());                                       // TODO
+  //   const int                               partial_derivative_index_u = component_v; // i
+  //   const int                               partial_derivative_index_v = component_u; // j
+  //   const CellDerivative<EvaluatorType>     grad{partial_derivative_index_u,
+  //                                            partial_derivative_index_v};
+  //   const CellVoid<EvaluatorType>           void_op;
+  //   const NitscheStrainMixed<EvaluatorType> nitsche{equation_data, component_u, component_v};
 
-    auto & eval_v = *(fd_evals[component_v]);
-    auto & eval_u = *(fd_evals[component_u]);
-    eval_u.reinit(patch_id);
-    eval_u.evaluate(true);
-    eval_v.reinit(patch_id);
-    eval_v.evaluate(true);
+  //   auto & eval_v = *(fd_evals[component_v]);
+  //   auto & eval_u = *(fd_evals[component_u]);
+  //   eval_u.reinit(patch_id);
+  //   eval_u.evaluate(true);
+  //   eval_v.reinit(patch_id);
+  //   eval_v.evaluate(true);
 
-    /*** compute the 1D integrals over    (d/dx_j v_i) * (d/dx_i u_j) ***/
-    const auto & tensor_grad = eval_v.patch_action(eval_u, grad);
-    /*** compute the nitsche matrices (point evaluations) given component_u/v ***/
-    const auto & tensor_nitsche = eval_v.patch_action(eval_u, void_op, nitsche, nitsche);
+  //   /*** compute the 1D integrals over    (d/dx_j v_i) * (d/dx_i u_j) ***/
+  //   const auto & tensor_grad = eval_v.patch_action(eval_u, grad);
+  //   /*** compute the nitsche matrices (point evaluations) given component_u/v ***/
+  //   const auto & tensor_nitsche = eval_v.patch_action(eval_u, void_op, nitsche, nitsche);
 
-    /*** assemble cell integrals (strain) ***/
-    const auto & cell_strain = Tensors::kronecker_product(tensor_grad[1], tensor_grad[0]);
-    auto         block       = Tensors::scale(equation_data.mu, cell_strain);
-    /*** assemble nitsche integrals (strain) ***/
-    const auto & tmp1         = Tensors::kronecker_product(tensor_nitsche[1], tensor_grad[0]);
-    const auto & tmp2         = Tensors::kronecker_product(tensor_grad[1], tensor_nitsche[0]);
-    const auto & face_nitsche = Tensors::sum(tmp1, tmp2);
-    block                     = Tensors::sum(block, face_nitsche);
+  //   /*** assemble cell integrals (strain) ***/
+  //   const auto & cell_strain = Tensors::kronecker_product(tensor_grad[1], tensor_grad[0]);
+  //   auto         block       = Tensors::scale(equation_data.mu, cell_strain);
+  //   /*** assemble nitsche integrals (strain) ***/
+  //   const auto & tmp1         = Tensors::kronecker_product(tensor_nitsche[1], tensor_grad[0]);
+  //   const auto & tmp2         = Tensors::kronecker_product(tensor_grad[1], tensor_nitsche[0]);
+  //   const auto & face_nitsche = Tensors::sum(tmp1, tmp2);
+  //   block                     = Tensors::sum(block, face_nitsche);
 
-    return block;
-  }
+  //   return block;
+  // }
 
   // static std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>>
   static std::vector<std::array<VectorizedMatrixType, dim>>
@@ -561,59 +553,59 @@ public:
     return elementary_tensors;
   }
 
-  static VectorizedMatrixType
-  assemble_graddiv_mixed(std::vector<std::shared_ptr<EvaluatorType>> & fd_evals,
-                         const EquationData &                          equation_data,
-                         const unsigned int                            component_u,
-                         const unsigned int                            component_v,
-                         const unsigned int                            patch_id)
-  {
-    AssertThrow(dim == 2, ExcNotImplemented());                                        // TODO
-    const int                                partial_derivative_index_v = component_v; // i
-    const int                                partial_derivative_index_u = component_u; // j
-    const CellDerivative<EvaluatorType>      grad{partial_derivative_index_u,
-                                             partial_derivative_index_v};
-    const CellVoid<EvaluatorType>            void_op;
-    const NitscheGradDivMixed<EvaluatorType> nitsche{equation_data, component_u, component_v};
+  // static VectorizedMatrixType
+  // assemble_graddiv_mixed(std::vector<std::shared_ptr<EvaluatorType>> & fd_evals,
+  //                        const EquationData &                          equation_data,
+  //                        const unsigned int                            component_u,
+  //                        const unsigned int                            component_v,
+  //                        const unsigned int                            patch_id)
+  // {
+  //   AssertThrow(dim == 2, ExcNotImplemented());                                        // TODO
+  //   const int                                partial_derivative_index_v = component_v; // i
+  //   const int                                partial_derivative_index_u = component_u; // j
+  //   const CellDerivative<EvaluatorType>      grad{partial_derivative_index_u,
+  //                                            partial_derivative_index_v};
+  //   const CellVoid<EvaluatorType>            void_op;
+  //   const NitscheGradDivMixed<EvaluatorType> nitsche{equation_data, component_u, component_v};
 
-    auto & eval_v = *(fd_evals[component_v]);
-    auto & eval_u = *(fd_evals[component_u]);
-    eval_u.reinit(patch_id);
-    eval_u.evaluate(true);
-    eval_v.reinit(patch_id);
-    eval_v.evaluate(true);
+  //   auto & eval_v = *(fd_evals[component_v]);
+  //   auto & eval_u = *(fd_evals[component_u]);
+  //   eval_u.reinit(patch_id);
+  //   eval_u.evaluate(true);
+  //   eval_v.reinit(patch_id);
+  //   eval_v.evaluate(true);
 
-    /*** compute the 1D integrals over    (d/dx_i v_i) * (d/dx_j u_j) ***/
-    const auto & tensor_grad = eval_v.patch_action(eval_u, grad);
-    /*** compute the  nitsche matrices (point evaluations) given component_u/v ***/
-    const auto & tensor_nitsche = eval_v.patch_action(eval_u, void_op, nitsche, nitsche);
+  //   /*** compute the 1D integrals over    (d/dx_i v_i) * (d/dx_j u_j) ***/
+  //   const auto & tensor_grad = eval_v.patch_action(eval_u, grad);
+  //   /*** compute the  nitsche matrices (point evaluations) given component_u/v ***/
+  //   const auto & tensor_nitsche = eval_v.patch_action(eval_u, void_op, nitsche, nitsche);
 
-    /*** assemble cell integrals (graddiv) ***/
-    const auto & cell_graddiv = Tensors::kronecker_product(tensor_grad[1], tensor_grad[0]);
-    auto         block        = Tensors::scale(equation_data.lambda, cell_graddiv);
-    /*** assemble nitsche integrals (graddiv) ***/
-    const auto & tmp1         = Tensors::kronecker_product(tensor_nitsche[1], tensor_grad[0]);
-    const auto & tmp2         = Tensors::kronecker_product(tensor_grad[1], tensor_nitsche[0]);
-    const auto & face_nitsche = Tensors::sum(tmp1, tmp2);
-    block                     = Tensors::sum(block, face_nitsche);
+  //   /*** assemble cell integrals (graddiv) ***/
+  //   const auto & cell_graddiv = Tensors::kronecker_product(tensor_grad[1], tensor_grad[0]);
+  //   auto         block        = Tensors::scale(equation_data.lambda, cell_graddiv);
+  //   /*** assemble nitsche integrals (graddiv) ***/
+  //   const auto & tmp1         = Tensors::kronecker_product(tensor_nitsche[1], tensor_grad[0]);
+  //   const auto & tmp2         = Tensors::kronecker_product(tensor_grad[1], tensor_nitsche[0]);
+  //   const auto & face_nitsche = Tensors::sum(tmp1, tmp2);
+  //   block                     = Tensors::sum(block, face_nitsche);
 
-    return block;
-    // AssertThrow(dim == 2, ExcNotImplemented());                    // TODO
-    // const int                          partial_derivative_index_v = component_v; // i
-    // const int                          partial_derivative_index_u = component_u; // j
-    // const CellDerivative<EvaluatorType> gradmixed{partial_derivative_index_u,
-    // partial_derivative_index_v}; auto &                             eval_v =
-    // *(fd_evals[component_v]); auto &                             eval_u =
-    // *(fd_evals[component_u]);
+  //   return block;
+  //   // AssertThrow(dim == 2, ExcNotImplemented());                    // TODO
+  //   // const int                          partial_derivative_index_v = component_v; // i
+  //   // const int                          partial_derivative_index_u = component_u; // j
+  //   // const CellDerivative<EvaluatorType> gradmixed{partial_derivative_index_u,
+  //   // partial_derivative_index_v}; auto &                             eval_v =
+  //   // *(fd_evals[component_v]); auto &                             eval_u =
+  //   // *(fd_evals[component_u]);
 
-    // /*** compute the 1D integrals over    (d/dx_i v_i) * (d/dx_j u_j) ***/
-    // auto tensor = assemble_gradmixed_tensor(/*u*/ eval_u, /*v*/ eval_v, gradmixed, patch_id);
-    // const auto & kronecker_product = Tensors::kronecker_product(tensor[1], tensor[0]);
-    // /*** scale the kronecker product ***/
-    // const auto & block = Tensors::scale(equation_data.lambda, kronecker_product);
+  //   // /*** compute the 1D integrals over    (d/dx_i v_i) * (d/dx_j u_j) ***/
+  //   // auto tensor = assemble_gradmixed_tensor(/*u*/ eval_u, /*v*/ eval_v, gradmixed, patch_id);
+  //   // const auto & kronecker_product = Tensors::kronecker_product(tensor[1], tensor[0]);
+  //   // /*** scale the kronecker product ***/
+  //   // const auto & block = Tensors::scale(equation_data.lambda, kronecker_product);
 
-    // return block;
-  }
+  //   // return block;
+  // }
 
   static void
   assemble_graddiv_tensors(
@@ -695,34 +687,87 @@ public:
       {
         auto & blockmatrix = inverse.get_block(comp);
         blockmatrix.reinit(mass_matrices[comp], elasticity_matrices[comp]);
+      }
+    }
+  }
 
-        //     // // DEBUG
-        //     // if (id == subdomain_range.first)
-        //     //   {
-        //     //     std::cout << "comp: " << comp << dim << std::endl;
-        //     //     for (const auto& mass : mass_matrices)
-        //     // 	for (unsigned int lane = 0; lane < macro_size; ++lane)
-        //     // 	  {
-        //     // 	    const auto& mass_lane = table_to_fullmatrix (mass,
-        //     lane);
-        //     // 	    std::cout << lane << "mass sizes: " << mass_lane.m() << ", " <<
-        //     mass_lane.n()
-        //     <<
-        //     // std::endl; 	    mass_lane.print_formatted (std::cout);
-        //     // 	  }
-        //     //     const auto mat = Tensors::assemble_separableKD (mass_matrices,
-        //     laplace_matrices);
-        //     //     for (unsigned int lane = 0; lane < macro_size; ++lane)
-        //     //     	{
-        //     //     	  const auto& mat_lane = table_to_fullmatrix (mat,
-        //     lane);
-        //     // 	  std::cout << lane << "kdmatrix sizes: " << mat_lane.m() << ", " <<
-        //     mat_lane.n()
-        //     <<
-        //     // std::endl;
-        //     //     	  mat_lane.print_formatted (std::cout);
-        //     //     	}
-        //     //   }
+  template<typename OperatorType>
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & data,
+                             std::vector<BlockMatrix> &            inverses,
+                             const OperatorType &,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    using TensorProductState = typename BlockMatrix::matrix_type::State;
+    AssertThrow(dim == 2, ExcMessage("TODO"));
+
+    std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
+    for(unsigned int comp = 0; comp < dim; ++comp)
+      fd_evals.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
+
+    std::vector<CellMass> cell_mass_op;
+    for(unsigned int comp = 0; comp < dim; ++comp)
+    {
+      auto &               fd_eval = *(fd_evals[comp]);
+      VectorizedMatrixType cell_mass_unit(fe_order, fe_order);
+      fd_eval.compute_unit_mass(make_array_view(cell_mass_unit));
+      cell_mass_op.emplace_back(cell_mass_unit);
+    }
+
+    std::vector<CellStrain<EvaluatorType>> cell_strain_op;
+    for(unsigned int comp = 0; comp < dim; ++comp)
+      cell_strain_op.emplace_back(equation_data, comp);
+    std::vector<NitscheStrain<EvaluatorType>> nitsche_strain_op;
+    for(unsigned int comp = 0; comp < dim; ++comp)
+      nitsche_strain_op.emplace_back(equation_data, comp);
+
+    std::vector<CellGradDiv<EvaluatorType>> cell_graddiv_op;
+    for(unsigned int comp = 0; comp < dim; ++comp)
+      cell_graddiv_op.emplace_back(equation_data, comp);
+    std::vector<NitscheGradDiv<EvaluatorType>> nitsche_graddiv_op;
+    for(unsigned int comp = 0; comp < dim; ++comp)
+      nitsche_graddiv_op.emplace_back(equation_data, comp);
+
+    for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
+    {
+      auto & block_matrix = inverses[patch];
+      block_matrix.resize(dim);
+      auto mass_matrices = assemble_mass_tensors(fd_evals, cell_mass_op, patch);
+      auto elasticity_matrices =
+        assemble_strain_tensors(fd_evals, cell_strain_op, nitsche_strain_op, patch);
+      assemble_graddiv_tensors(
+        elasticity_matrices, fd_evals, cell_graddiv_op, nitsche_graddiv_op, patch);
+
+      /// block diagonal
+      for(unsigned int comp = 0; comp < dim; ++comp)
+      {
+        std::vector<std::array<VectorizedMatrixType, dim>> elementary_tensors;
+        elementary_tensors.emplace_back(mass_matrices[comp]);
+        elementary_tensors.emplace_back(elasticity_matrices[comp]);
+        block_matrix.get_block(comp, comp).reinit(elementary_tensors, TensorProductState::skd);
+      }
+
+      /// block off-diagonals
+      {
+        auto mixed_tensors = assemble_mixed_block(
+          fd_evals, equation_data, /*component_v*/ 1U, /*component_u*/ 0U, patch);
+        block_matrix.get_block(1U, 0U).reinit(mixed_tensors);
+
+        std::vector<std::array<VectorizedMatrixType, dim>> mixed_tensorsT;
+        std::transform(mixed_tensors.cbegin(),
+                       mixed_tensors.cend(),
+                       std::back_inserter(mixed_tensorsT),
+                       [](const auto & tensor) {
+                         std::array<VectorizedMatrixType, dim> tensorT;
+                         std::transform(tensor.cbegin(),
+                                        tensor.cend(),
+                                        tensorT.begin(),
+                                        [](const auto & matrix) {
+                                          return Tensors::transpose(matrix);
+                                        });
+                         return tensorT;
+                       });
+        block_matrix.get_block(0U, 1U).reinit(mixed_tensorsT);
       }
     }
   }
