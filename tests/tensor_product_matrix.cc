@@ -63,22 +63,8 @@ struct TestTensorProductMatrix
   {
     TPM tp_matrix;
     tp_matrix.reinit(elementary_tensors, state);
-    auto full_matrix = table_to_fullmatrix(tp_matrix.as_table(), lane);
-    auto diff(full_matrix);
-    diff.add(-1., other);
-
-    std::ostringstream oss;
-    oss << "TP matrix:\n";
-    full_matrix.print_formatted(oss);
-    oss << "Reference matrix:\n";
-    other.print_formatted(oss);
-    const double n_entries = other.m() * other.n();
-    EXPECT_PRED_FORMAT2(testing::FloatLE,
-                        diff.frobenius_norm() / n_entries,
-                        std::numeric_limits<scalar_value_type>::epsilon() *
-                          std::max(10., other.frobenius_norm() / n_entries))
-      << oss.str();
-    pcout << "compare matrix @ lane" << lane << ":\n" << oss.str();
+    auto tp_matrix_full = table_to_fullmatrix(tp_matrix.as_table(), lane);
+    Util::compare_matrix(tp_matrix_full, other, pcout);
   }
 
   void
@@ -87,37 +73,7 @@ struct TestTensorProductMatrix
     TPM tp_matrix;
     tp_matrix.reinit(elementary_tensors, state);
     const auto inverse_matrix = table_to_fullmatrix(tp_matrix.as_inverse_table(), lane);
-    LAPACKFullMatrix<scalar_value_type> lapack_other;
-    lapack_other.reinit(other.m());
-    lapack_other = other;
-    lapack_other.compute_inverse_svd();
-    const auto & lapack_other_as_table = Tensors::lapack_matrix_to_table(lapack_other);
-    const auto   inverse_other         = table_to_fullmatrix(lapack_other_as_table);
-
-    std::ostringstream oss;
-    oss << "Inverse tensor product matrix:\n";
-    inverse_matrix.print_formatted(oss);
-    oss << "Reference inverse matrix:\n";
-    inverse_other.print_formatted(oss);
-
-    FullMatrix<scalar_value_type> id(inverse_matrix.m(), inverse_matrix.n());
-    inverse_matrix.mmult(id, other);
-    oss << "A^{-1} A:\n";
-    id.print_formatted(oss);
-    const double n_entries = id.m() * id.n();
-    for(auto i = 0U; i < id.m(); ++i)
-    {
-      EXPECT_NEAR(id(i, i),
-                  1.,
-                  std::numeric_limits<scalar_value_type>::epsilon() * 10. * n_entries);
-      for(auto j = 0U; j < id.m(); ++j)
-        if(i != j)
-          EXPECT_NEAR(id(i, j),
-                      0.,
-                      std::numeric_limits<scalar_value_type>::epsilon() * 10. * n_entries);
-    }
-
-    pcout << "compare inverse @ lane" << lane << ":\n" << oss.str();
+    Util::compare_inverse_matrix(inverse_matrix, other, pcout);
   }
 
   void
@@ -209,13 +165,20 @@ protected:
       test.state           = State::basic;
       if(test_variant == TestVariant::vmult)
       {
+        *pcout_owned << "compare tensor product matrix:\n";
         test.compare_vmult(sum_of_products);
         test.compare_matrix(sum_of_products);
       }
       else if(test_variant == TestVariant::apply_inverse)
+      {
+        *pcout_owned << "compare inverse tensor product matrix:\n";
         test.compare_inverse_matrix(sum_of_products);
+      }
       else if(test_variant == TestVariant::copy)
+      {
+        *pcout_owned << "test copy-assign:\n";
         test.compare_copy();
+      }
     };
 
     /// identity x identity
@@ -270,17 +233,19 @@ protected:
         test.state                 = State::basic;
         if(test_variant == TestVariant::vmult)
         {
+          *pcout_owned << "compare tensor product matrix @ lane" << lane << ":\n";
           test.compare_vmult(sum_of_products, lane);
           test.compare_matrix(sum_of_products, lane);
         }
         else if(test_variant == TestVariant::apply_inverse)
         {
+          *pcout_owned << "compare inverse tensor product matrix @ lane" << lane << ":\n";
           test.compare_inverse_matrix(sum_of_products, lane);
         }
       }
     };
 
-    /// (1,2,3,4) - identity
+    /// random-scaled identity
     {
       std::vector<Table<2, VectorizedArray<Number>>> left(1);
       std::vector<Table<2, VectorizedArray<Number>>> right(1);
