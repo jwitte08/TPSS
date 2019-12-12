@@ -19,6 +19,7 @@ namespace Tensors
 template<typename Number>
 struct VectorizedInverse
 {
+  using value_type                         = Number;
   using scalar_value_type                  = typename ExtractScalarType<Number>::type;
   static constexpr unsigned int macro_size = get_macro_size<Number>();
 
@@ -33,16 +34,33 @@ struct VectorizedInverse
   reinit(const Table<2, Number> & matrix_in)
   {
     Assert(matrix_in.size(0) == matrix_in.size(1), ExcMessage("Matrix is not square."));
-    const unsigned int n_rows = matrix_in.size(0);
+    clear();
+
     auto inverses = std::make_shared<std::array<LAPACKFullMatrix<scalar_value_type>, macro_size>>();
+    const unsigned int n_rows = matrix_in.size(0);
     for(auto lane = 0U; lane < macro_size; ++lane)
     {
       auto & inverse = (*inverses)[lane];
       inverse.reinit(n_rows);
       inverse = table_to_fullmatrix(matrix_in, lane);
-      inverse.compute_inverse_svd();
+      inverse.invert();
     }
+    /// ALTERNATIVE: FullMatrix
+    // auto inverses = std::make_shared<std::array<FullMatrix<scalar_value_type>, macro_size>>();
+    // const unsigned int n_rows = matrix_in.size(0);
+    // for(auto lane = 0U; lane < macro_size; ++lane)
+    // {
+    //   auto & inverse = (*inverses)[lane];
+    //   inverse.reinit(n_rows, n_rows);
+    //   inverse.invert(table_to_fullmatrix(matrix_in, lane));
+    // }
     this->inverses = inverses;
+  }
+
+  void
+  clear()
+  {
+    inverses.reset();
   }
 
   void
@@ -75,13 +93,15 @@ struct VectorizedInverse
                      [lane](const auto & value) { return value[lane]; });
       const auto src_view_lane = make_array_view(src_lane);
       const auto dst_view_lane = make_array_view(dst_lane);
-      vmult_impl(dst_view_lane, src_view_lane);
+      vmult_impl(dst_view_lane, src_view_lane, lane);
       for(auto i = 0U; i < dst_lane.size(); ++i)
         dst_view[i][lane] = dst_lane[i];
     }
   }
 
   std::shared_ptr<const std::array<LAPACKFullMatrix<scalar_value_type>, macro_size>> inverses;
+  /// ALTERNATIVE: FullMatrix
+  // std::shared_ptr<const std::array<FullMatrix<scalar_value_type>, macro_size>> inverses;
 };
 
 template<int order, typename Number, int n_rows_1d = -1>
@@ -95,8 +115,9 @@ public:
     skd
   };
 
-  using SKDMatrix  = TensorProductMatrixSymmetricSum<order, Number, n_rows_1d>;
-  using value_type = Number;
+  using SKDMatrix         = TensorProductMatrixSymmetricSum<order, Number, n_rows_1d>;
+  using value_type        = Number;
+  using scalar_value_type = ExtractScalarType<Number>;
 
   TensorProductMatrix() = default;
 
@@ -119,9 +140,13 @@ public:
   {
     Assert(check_static_n_rows_1d(elementary_tensors_in),
            ExcMessage("Not all univariate matrices are of size (n_rows_1d x n_rows_1d)."));
+
+    /// clear old data
+    clear();
     if(elementary_tensors_in.empty())
       return;
 
+    /// initialize new data
     state = state_in;
 
     if(state == State::basic)
@@ -129,11 +154,9 @@ public:
       for(unsigned i = 0; i < order; ++i)
         Assert(check_size_1d(elementary_tensors_in, i),
                ExcMessage("Mismatching sizes of univariate matrices."));
-      elementary_tensors.clear();
       std::copy(elementary_tensors_in.cbegin(),
                 elementary_tensors_in.cend(),
                 std::back_inserter(elementary_tensors));
-      basic_inverse.reinit(as_table());
     }
 
     else if(state == State::skd)
@@ -147,6 +170,16 @@ public:
 
     else
       AssertThrow(false, ExcMessage("Invalid state at initialization."));
+  }
+
+  void
+  clear()
+  {
+    tmp_array.clear();
+    basic_inverse.reset();
+    state = State::invalid;
+    elementary_tensors.clear();
+    /// TODO clear underlying TensorProductMatrixSymmetricSum
   }
 
   unsigned int
@@ -201,6 +234,17 @@ public:
     return Tensors::inverse_matrix_to_table(*this);
   }
 
+  // void
+  // copy_from (TensorProductMatrix<order, VectorizedArray<scalar_value_type>, n_rows_1d> & other,
+  // const unsigned int lane = 0)
+  // {
+  //   static_assert(std::is_same<Number, scalar_value_type>::value, "Copy is only valid if the
+  //   underlying class is of scalar value type"); AssertIndexRange(lane,
+  //   VectorizedArray<scalar_value_type>::n_array_elements); std::vector<std::array<Table<2,
+  //   scalar_value_type>, order>> tensors_lane; const auto & other_tensors =
+  //   other.elementary_tensors;
+  // }
+
 protected:
   const Table<2, Number> &
   left(unsigned int r) const
@@ -245,9 +289,7 @@ private:
     if(state == State::basic)
       apply_inverse_impl_basic_static(dst_view, src_view);
     else if(state == State::skd)
-    {
       SKDMatrix::apply_inverse(dst_view, src_view);
-    }
     else
       AssertThrow(false, ExcMessage("Not implemented."));
   }
@@ -258,8 +300,9 @@ private:
   {
     AssertDimension(dst_view.size(), m());
     AssertDimension(src_view.size(), n());
-    std::lock_guard<std::mutex> lock(this->mutex);
-    basic_inverse.vmult(dst_view, src_view);
+    if(!basic_inverse)
+      basic_inverse = std::make_shared<const VectorizedInverse<Number>>(as_table());
+    basic_inverse->vmult(dst_view, src_view);
   }
 
   template<bool add>
@@ -302,6 +345,7 @@ private:
     std::lock_guard<std::mutex> lock(this->mutex);
     const unsigned int          mm =
       n_rows_1d > 0 ? Utilities::fixed_power<order>(n_rows_1d) : right(0).size(0) * left(0).size(1);
+    tmp_array.clear();
     tmp_array.resize_fast(mm);
     constexpr int kernel_size = n_rows_1d > 0 ? n_rows_1d : 0;
     internal::
@@ -374,7 +418,7 @@ private:
   /**
    * The naive inverse of the underlying matrix for the basic state.
    */
-  VectorizedInverse<Number> basic_inverse;
+  mutable std::shared_ptr<const VectorizedInverse<Number>> basic_inverse;
 
   /**
    * A mutex that guards access to the array @p tmp_array.
