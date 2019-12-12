@@ -206,15 +206,16 @@ protected:
     ModelProblem<dim, fe_degree, double, Tensors::BlockMatrix<dim, VectorizedArray<double>>>;
   using BlockVector                        = LinearAlgebra::distributed::BlockVector<double>;
   using LevelMatrix                        = typename LinElasticityProblem::LEVEL_MATRIX;
+  using PatchTransfer                      = typename LevelMatrix::transfer_type;
   using VectorizedMatrixType               = Table<2, VectorizedArray<double>>;
   static constexpr unsigned int fe_order   = fe_degree + 1;
   static constexpr unsigned int macro_size = VectorizedArray<double>::n_array_elements;
 
   struct Params
   {
-    unsigned int n_refinements = 0;
-    EquationData equation_data;
-    bool         print_details = true;
+    unsigned int       n_refinements = 0;
+    EquationData       equation_data;
+    TPSS::PatchVariant patch_variant = TPSS::PatchVariant::cell;
   };
 
   struct Extractor
@@ -243,6 +244,25 @@ protected:
           u->set_dof_values(dst.block(comp));
         }
       }
+    }
+
+    std::vector<unsigned int>
+    extract_dof_indices_per_patch(const unsigned patch, const unsigned lane = 0)
+    {
+      Assert(patch_transfer, ExcMessage("Patch transfer not initialized."));
+      patch_transfer->reinit(patch);
+
+      BlockVector global_indices;
+      combi_operator->initialize_dof_vector(global_indices);
+      for(auto i = 0U; i < global_indices.size(); ++i)
+        global_indices(i) = static_cast<double>(i) + 0.1;
+
+      const auto                indices      = patch_transfer->gather(global_indices);
+      const auto                indices_view = make_array_view(indices.begin(), indices.end());
+      const auto                indices_lane = array_view_to_vector(indices_view, lane);
+      std::vector<unsigned int> indices_per_patch;
+      std::copy(indices_lane.begin(), indices_lane.end(), std::back_inserter(indices_per_patch));
+      return indices_per_patch;
     }
 
     std::vector<unsigned int>
@@ -301,6 +321,7 @@ protected:
     const LevelMatrix *                                  combi_operator;
     std::shared_ptr<const MatrixFree<dim, double>>       data;
     std::shared_ptr<const SubdomainHandler<dim, double>> patch_storage;
+    std::shared_ptr<PatchTransfer>                       patch_transfer;
   };
 
   struct Assembler
@@ -498,13 +519,14 @@ protected:
   SetUp() override
   {
     ofs.open("apps_linelasticity_integrator.log", std::ios_base::app);
-    pcout_owned = std::make_shared<ConditionalOStream>(ofs, params.print_details);
+    const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
+    pcout_owned              = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
 
     rt_parameters.mesh.n_subdivisions.resize(dim, 1);
     rt_parameters.mesh.n_subdivisions.at(0) = 2;
     rt_parameters.mesh.geometry_variant     = MeshParameter::GeometryVariant::CuboidSubdivided;
 
-    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = TPSS::PatchVariant::cell;
+    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = params.patch_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
     rt_parameters.multigrid.post_smoother.schwarz = rt_parameters.multigrid.pre_smoother.schwarz;
   }
@@ -534,6 +556,7 @@ protected:
     ex.combi_operator = &(linelasticity_problem->mg_matrices[level]);
     ex.data           = ex.combi_operator->get_matrix_free();
     ex.patch_storage  = linelasticity_problem->get_subdomain_handler(level);
+    ex.patch_transfer = std::make_shared<PatchTransfer>(*(ex.patch_storage));
 
     ass.combi_operator = ex.combi_operator;
     ass.data           = ex.data;
@@ -700,6 +723,41 @@ protected:
     }
   }
 
+  void
+  tpss_assembly_vp(const TestVariant test_variant = TestVariant::matrix)
+  {
+    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant  = TPSS::PatchVariant::vertex;
+    rt_parameters.multigrid.post_smoother.schwarz.patch_variant = TPSS::PatchVariant::vertex;
+    initialize();
+
+    const auto level_matrix = ass.assemble_level_matrix();
+    const auto schwarz_preconditioner =
+      linelasticity_problem->mg_schwarz_smoother_pre->get_preconditioner();
+    const auto & patch_matrices = *(schwarz_preconditioner->get_local_solvers());
+    const auto   subdomain_handler =
+      linelasticity_problem->mg_schwarz_smoother_pre->get_subdomain_handler();
+    const auto &                   patch_info = subdomain_handler->get_patch_info();
+    TPSS::PatchWorker<dim, double> worker(patch_info);
+    const auto &                   partition_data = subdomain_handler->get_partition_data();
+
+    for(auto patch = 0U; patch < partition_data.n_subdomains(); ++patch)
+    {
+      for(auto lane = 0U; lane < worker.n_lanes_filled(patch); ++lane)
+      {
+        const auto dof_indices = ex.extract_dof_indices_per_patch(patch, lane);
+        // std::cout << vector_to_string(dof_indices) << std::endl;
+        FullMatrix<double> patch_matrix_reference(dof_indices.size());
+        patch_matrix_reference.extract_submatrix_from(*level_matrix, dof_indices, dof_indices);
+        // patch_matrix_reference.print_formatted(std::cout);
+        auto       patch_matrix_vectorized = patch_matrices[patch];
+        const auto patch_matrix_full =
+          table_to_fullmatrix(patch_matrix_vectorized.as_table(), lane);
+        *pcout_owned << "Compare patch matrix " << patch << "@ lane " << lane << ":\n";
+        compare_matrix(patch_matrix_full, patch_matrix_reference);
+      }
+    }
+  }
+
   std::ofstream                       ofs;
   std::shared_ptr<ConditionalOStream> pcout_owned;
 
@@ -786,11 +844,34 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSInvertCellPatch)
   Fixture::tpss_assembly(Fixture::TestVariant::inverse);
 }
 
+TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSAssemblyVertexPatch)
+{
+  using Fixture = TestLinElasticityIntegratorFD<TypeParam>;
+
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 3U;
+  Fixture::params.n_refinements                = 0U;
+  // Fixture::rt_parameters.mesh.n_subdivisions.resize(Fixture::dim, 2);
+  // Fixture::rt_parameters.mesh.n_subdivisions.at(0) = 3;
+  // Fixture::params.n_refinements        = 2U;
+  Fixture::params.equation_data.lambda = 1.;
+  Fixture::params.equation_data.mu     = 1.;
+  // Fixture::tpss_assembly_vp();
+
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2U;
+  Fixture::params.n_refinements                = 0U;
+  Fixture::params.equation_data.lambda         = 1.; // 1.234;
+  Fixture::params.equation_data.mu             = 1.; // 9.876;
+  Fixture::tpss_assembly_vp();
+}
+
 REGISTER_TYPED_TEST_SUITE_P(TestLinElasticityIntegratorFD,
                             ManualAssemblyCellPatch,
                             ManualInvertCellPatch,
                             TPSSAssemblyCellPatch,
-                            TPSSInvertCellPatch);
+                            TPSSInvertCellPatch,
+                            TPSSAssemblyVertexPatch);
 
 using TestParamsLinear = testing::Types<Util::NonTypeParams<2, 1>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestLinElasticityIntegratorFD, TestParamsLinear);

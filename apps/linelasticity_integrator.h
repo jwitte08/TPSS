@@ -298,7 +298,8 @@ public:
                Table<2, VectorizedArray<Number>> &,
                const int) const
     {
-      AssertThrow(false, ExcNotImplemented());
+      // AssertThrow(false, ExcNotImplemented());
+      bool todo;
     }
 
     const int    component_u;
@@ -362,7 +363,8 @@ public:
                Table<2, VectorizedArray<Number>> &,
                const int) const
     {
-      AssertThrow(false, ExcNotImplemented());
+      bool todo;
+      // AssertThrow(false, ExcNotImplemented());
     }
 
     const double lambda;
@@ -1200,7 +1202,8 @@ template<int dim, int fe_degree, typename Number>
 class Operator : public LinearOperatorBase
 {
 public:
-  using value_type = Number;
+  using value_type  = Number;
+  using vector_type = LinearAlgebra::distributed::BlockVector<Number>;
   using gradient_type =
     typename FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number>::gradient_type;
   static constexpr unsigned int n_components = dim;
@@ -1768,6 +1771,7 @@ struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
   using value_type = Number;
   using FDOperator::get_equation_data;
   using FDOperator::transfer_type;
+  using MFOperator::vector_type;
 
   CombinedOperator() = default;
 
