@@ -48,7 +48,8 @@ TYPED_TEST_P(TestLinElasticityDiagOnly, VaryDimAndDegree)
   using Fixture = TestLinElasticityDiagOnly<TypeParam>;
 
   { // ACP
-    const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 4), 25.0},
+    const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 1), 28.0},
+                                                          {std::make_pair(2, 3), 25.0},
                                                           {std::make_pair(2, 7), 32.0}};
     const auto               bound_of_n_iter           = bounds.at({Fixture::dim, Fixture::degree});
     typename Fixture::Params params                    = {TPSS::PatchVariant::cell,
@@ -58,7 +59,8 @@ TYPED_TEST_P(TestLinElasticityDiagOnly, VaryDimAndDegree)
   }
 
   { // MCP
-    const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 4), 20.0},
+    const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 1), 20.0},
+                                                          {std::make_pair(2, 3), 19.0},
                                                           {std::make_pair(2, 7), 25.0}};
     const auto               bound_of_n_iter           = bounds.at({Fixture::dim, Fixture::degree});
     typename Fixture::Params params                    = {TPSS::PatchVariant::cell,
@@ -68,7 +70,8 @@ TYPED_TEST_P(TestLinElasticityDiagOnly, VaryDimAndDegree)
   }
 
   { // AVP
-    const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 4), 29.0},
+    const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 1), 36.0},
+                                                          {std::make_pair(2, 3), 29.0},
                                                           {std::make_pair(2, 7), 32.0}};
     const auto               bound_of_n_iter           = bounds.at({Fixture::dim, Fixture::degree});
     typename Fixture::Params params                    = {TPSS::PatchVariant::vertex,
@@ -78,7 +81,8 @@ TYPED_TEST_P(TestLinElasticityDiagOnly, VaryDimAndDegree)
   }
 
   { // MVP
-    const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 4), 7.0},
+    const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 1), 9.0},
+                                                          {std::make_pair(2, 3), 7.0},
                                                           {std::make_pair(2, 7), 7.0}};
     const auto               bound_of_n_iter           = bounds.at({Fixture::dim, Fixture::degree});
     typename Fixture::Params params                    = {TPSS::PatchVariant::vertex,
@@ -90,8 +94,10 @@ TYPED_TEST_P(TestLinElasticityDiagOnly, VaryDimAndDegree)
 
 REGISTER_TYPED_TEST_SUITE_P(TestLinElasticityDiagOnly, VaryDimAndDegree);
 
-using TestParamsDiagOnly = testing::Types<Util::NonTypeParams<2, 4>, Util::NonTypeParams<2, 7>>;
-INSTANTIATE_TYPED_TEST_SUITE_P(TwoDimensions, TestLinElasticityDiagOnly, TestParamsDiagOnly);
+using TestParamsLinear      = testing::Types<Util::NonTypeParams<2, 1>>;
+using TestParamsHigherOrder = testing::Types<Util::NonTypeParams<2, 3>, Util::NonTypeParams<2, 7>>;
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestLinElasticityDiagOnly, TestParamsLinear);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestLinElasticityDiagOnly, TestParamsHigherOrder);
 
 
 
@@ -133,8 +139,9 @@ TYPED_TEST_P(TestLinElasticityExact, VaryDimAndDegree)
   using Fixture = TestLinElasticityExact<TypeParam>;
 
   { // ACP
-    const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 4), 24.0},
-                                                          {std::make_pair(2, 7), 32.0}};
+    const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 1), 27.0},
+                                                          {std::make_pair(2, 3), 25.0},
+                                                          {std::make_pair(2, 7), 30.0}};
     const auto               bound_of_n_iter           = bounds.at({Fixture::dim, Fixture::degree});
     typename Fixture::Params params;
     params.patch_variant    = TPSS::PatchVariant::cell;
@@ -143,23 +150,22 @@ TYPED_TEST_P(TestLinElasticityExact, VaryDimAndDegree)
     Fixture::check(params);
   }
 
-  /// NOTE mcp requires more iterations than acp ??
-  // { // MCP
-  //   const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 4), 20.0},
-  //                                                         {std::make_pair(2, 7), 25.0}};
-  //   const auto               bound_of_n_iter           = bounds.at({Fixture::dim,
-  //   Fixture::degree}); typename Fixture::Params params                    =
-  //   {TPSS::PatchVariant::cell,
-  //                                      TPSS::SmootherVariant::multiplicative,
-  //                                      bound_of_n_iter};
-  //   Fixture::check(params);
-  // }
+  { // MCP
+    const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 1), 15.0},
+                                                          {std::make_pair(2, 3), 18.0},
+                                                          {std::make_pair(2, 7), 23.0}};
+    const auto               bound_of_n_iter           = bounds.at({Fixture::dim, Fixture::degree});
+    typename Fixture::Params params                    = {TPSS::PatchVariant::cell,
+                                       TPSS::SmootherVariant::multiplicative,
+                                       bound_of_n_iter};
+    Fixture::check(params);
+  }
 }
 
 REGISTER_TYPED_TEST_SUITE_P(TestLinElasticityExact, VaryDimAndDegree);
 
-using TestParamsExact = testing::Types<Util::NonTypeParams<2, 4> /*, Util::NonTypeParams<2, 7>*/>;
-INSTANTIATE_TYPED_TEST_SUITE_P(TwoDimensions, TestLinElasticityExact, TestParamsExact);
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestLinElasticityExact, TestParamsLinear);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestLinElasticityExact, TestParamsHigherOrder);
 
 
 

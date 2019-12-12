@@ -97,6 +97,10 @@ struct TestLinElasticity : public BasicSetup<dim, fe_degree, Number>
   initialize() override
   {
     base_initialize();
+
+    // params.equation_data.lambda = 25.; // fails!!!
+    // params.n_smoothing_steps = 3;
+
     rt_parameters.multigrid.pre_smoother.n_smoothing_steps  = params.n_smoothing_steps;
     rt_parameters.multigrid.post_smoother.n_smoothing_steps = params.n_smoothing_steps;
     rt_parameters.mesh.n_refinements                        = 1;
@@ -104,7 +108,6 @@ struct TestLinElasticity : public BasicSetup<dim, fe_degree, Number>
     rt_parameters.n_cycles   = 10;
     // if(params.smoother_variant == TPSS::SmootherVariant::multiplicative)
     //   rt_parameters.solver.variant = "gmres";
-    // params.equation_data.lambda = 20.; fails!!!
   }
 
   void
