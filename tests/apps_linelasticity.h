@@ -87,17 +87,23 @@ struct TestLinElasticity : public BasicSetup<dim, fe_degree, Number>
   using Base::rt_parameters;
 
   void
-  initialize() override
+  base_initialize()
   {
     Base::params = {params.patch_variant, params.smoother_variant};
     Base::initialize();
+  }
+
+  void
+  initialize() override
+  {
+    base_initialize();
     rt_parameters.multigrid.pre_smoother.n_smoothing_steps  = params.n_smoothing_steps;
     rt_parameters.multigrid.post_smoother.n_smoothing_steps = params.n_smoothing_steps;
     rt_parameters.mesh.n_refinements                        = 1;
     rt_parameters.dof_limits = {params.dof_limit_min, params.dof_limit_max};
     rt_parameters.n_cycles   = 10;
-    if(params.smoother_variant == TPSS::SmootherVariant::multiplicative)
-      rt_parameters.solver.variant = "gmres";
+    // if(params.smoother_variant == TPSS::SmootherVariant::multiplicative)
+    //   rt_parameters.solver.variant = "gmres";
     // params.equation_data.lambda = 20.; fails!!!
   }
 
