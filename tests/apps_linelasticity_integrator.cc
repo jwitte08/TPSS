@@ -862,7 +862,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSAssemblyVertexPatch)
   Fixture::rt_parameters.mesh.n_repetitions    = 2U;
   Fixture::params.n_refinements                = 0U;
   Fixture::params.equation_data.lambda         = 1.; // 1.234;
-  Fixture::params.equation_data.mu             = 1.; // 9.876;
+  Fixture::params.equation_data.mu             = 9.876;
   Fixture::tpss_assembly_vp();
 }
 
