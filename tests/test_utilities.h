@@ -27,13 +27,14 @@ namespace Util
 {
 struct PrintFormat
 {
-  static constexpr unsigned int precision   = 3;
-  static constexpr bool         scientific  = true;
-  static constexpr unsigned int width       = 0;
-  static constexpr char *       zero_string = " ";
+  static constexpr unsigned int precision  = 3;
+  static constexpr bool         scientific = true;
+  static constexpr unsigned int width      = 0;
+  static const std::string      zero_string;
   static constexpr double       denominator = 1.;
   static constexpr double       threshold   = std::numeric_limits<double>::epsilon() * 100.;
 };
+const std::string PrintFormat::zero_string = " ";
 
 /// Compare pair of matrices of FullMatrix type
 template<typename Number>
