@@ -25,6 +25,16 @@
 
 namespace Util
 {
+struct PrintFormat
+{
+  static constexpr unsigned int precision   = 3;
+  static constexpr bool         scientific  = true;
+  static constexpr unsigned int width       = 0;
+  static constexpr char *       zero_string = " ";
+  static constexpr double       denominator = 1.;
+  static constexpr double       threshold   = std::numeric_limits<double>::epsilon() * 100.;
+};
+
 /// Compare pair of matrices of FullMatrix type
 template<typename Number>
 void
@@ -34,9 +44,21 @@ compare_matrix(const FullMatrix<Number> & matrix,
 {
   std::ostringstream oss;
   oss << "Matrix:\n";
-  matrix.print_formatted(oss);
+  matrix.print_formatted(oss,
+                         PrintFormat::precision,
+                         PrintFormat::scientific,
+                         PrintFormat::width,
+                         PrintFormat::zero_string,
+                         PrintFormat::denominator,
+                         PrintFormat::threshold);
   oss << "Reference matrix:\n";
-  other.print_formatted(oss);
+  other.print_formatted(oss,
+                        PrintFormat::precision,
+                        PrintFormat::scientific,
+                        PrintFormat::width,
+                        PrintFormat::zero_string,
+                        PrintFormat::denominator,
+                        PrintFormat::threshold);
   auto diff(matrix);
   diff.add(-1., other);
   const double n_entries = other.m() * other.n();
@@ -65,14 +87,32 @@ compare_inverse_matrix(const FullMatrix<Number> & inverse_matrix,
 
   std::ostringstream oss;
   oss << "Inverse matrix:\n";
-  inverse_matrix.print_formatted(oss);
+  inverse_matrix.print_formatted(oss,
+                                 PrintFormat::precision,
+                                 PrintFormat::scientific,
+                                 PrintFormat::width,
+                                 PrintFormat::zero_string,
+                                 PrintFormat::denominator,
+                                 PrintFormat::threshold);
   oss << "Reference inverse matrix (LAPACK):\n";
-  inverse_other.print_formatted(oss);
+  inverse_other.print_formatted(oss,
+                                PrintFormat::precision,
+                                PrintFormat::scientific,
+                                PrintFormat::width,
+                                PrintFormat::zero_string,
+                                PrintFormat::denominator,
+                                PrintFormat::threshold);
 
   FullMatrix<Number> id(inverse_matrix.m(), inverse_matrix.n());
   inverse_matrix.mmult(id, other);
   oss << "A^{-1} A:\n";
-  id.print_formatted(oss);
+  id.print_formatted(oss,
+                     PrintFormat::precision,
+                     PrintFormat::scientific,
+                     PrintFormat::width,
+                     PrintFormat::zero_string,
+                     PrintFormat::denominator,
+                     PrintFormat::threshold);
   const double n_entries = id.m() * id.n();
   for(auto i = 0U; i < id.m(); ++i)
   {
