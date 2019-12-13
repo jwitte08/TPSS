@@ -691,45 +691,6 @@ protected:
   {
     initialize();
 
-    const auto schwarz_preconditioner =
-      linelasticity_problem->mg_schwarz_smoother_pre->get_preconditioner();
-    const auto & patch_matrices      = *(schwarz_preconditioner->get_local_solvers());
-    const auto   level_matrix        = ass.assemble_level_matrix();
-    const auto   cell_to_patch_index = ex.map_cell_to_patch_index();
-    const auto   cell_to_dofs        = ex.map_cell_to_dof_indices();
-    for(auto cell = 0U; cell < cell_to_patch_index.size(); ++cell)
-    {
-      /// pick and transform a vectorized patch matrix into a scalar one of the
-      /// given lane
-      auto [patch, lane]                 = cell_to_patch_index[cell];
-      auto       patch_matrix_vectorized = patch_matrices[patch];
-      const auto patch_matrix_full = table_to_fullmatrix(patch_matrix_vectorized.as_table(), lane);
-      const auto patch_matrix_inverse =
-        table_to_fullmatrix(patch_matrix_vectorized.as_inverse_table(), lane);
-
-      /// extract reference matrix from global matrix
-      const auto & level_dof_indices = cell_to_dofs[cell];
-      AssertDimension(level_dof_indices.size(), patch_matrix_vectorized.m());
-      AssertDimension(level_dof_indices.size(), patch_matrix_vectorized.n());
-      FullMatrix<double> patch_matrix_reference(patch_matrix_vectorized.m(),
-                                                patch_matrix_vectorized.n());
-      patch_matrix_reference.extract_submatrix_from(*level_matrix,
-                                                    level_dof_indices,
-                                                    level_dof_indices);
-      if(test_variant == TestVariant::matrix)
-        compare_matrix(patch_matrix_full, patch_matrix_reference);
-      else if(test_variant == TestVariant::inverse)
-        compare_inverse_matrix(patch_matrix_inverse, patch_matrix_reference);
-    }
-  }
-
-  void
-  tpss_assembly_vp(const TestVariant test_variant = TestVariant::matrix)
-  {
-    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant  = TPSS::PatchVariant::vertex;
-    rt_parameters.multigrid.post_smoother.schwarz.patch_variant = TPSS::PatchVariant::vertex;
-    initialize();
-
     const auto level_matrix = ass.assemble_level_matrix();
     const auto schwarz_preconditioner =
       linelasticity_problem->mg_schwarz_smoother_pre->get_preconditioner();
@@ -744,16 +705,29 @@ protected:
     {
       for(auto lane = 0U; lane < worker.n_lanes_filled(patch); ++lane)
       {
-        const auto dof_indices = ex.extract_dof_indices_per_patch(patch, lane);
-        // std::cout << vector_to_string(dof_indices) << std::endl;
+        /// extract reference matrix from level matrix
+        const auto         dof_indices = ex.extract_dof_indices_per_patch(patch, lane);
         FullMatrix<double> patch_matrix_reference(dof_indices.size());
         patch_matrix_reference.extract_submatrix_from(*level_matrix, dof_indices, dof_indices);
-        // patch_matrix_reference.print_formatted(std::cout);
-        auto       patch_matrix_vectorized = patch_matrices[patch];
-        const auto patch_matrix_full =
-          table_to_fullmatrix(patch_matrix_vectorized.as_table(), lane);
-        *pcout_owned << "Compare patch matrix " << patch << "@ lane " << lane << ":\n";
-        compare_matrix(patch_matrix_full, patch_matrix_reference);
+
+        /// compare patch matrix
+        auto patch_matrix_vectorized = patch_matrices[patch];
+        if(test_variant == TestVariant::matrix)
+        {
+          const auto patch_matrix_full =
+            table_to_fullmatrix(patch_matrix_vectorized.as_table(), lane);
+          *pcout_owned << "Compare patch matrix " << patch << "@ lane " << lane << ":\n";
+          compare_matrix(patch_matrix_full, patch_matrix_reference);
+        }
+
+        /// compare inverse patch matrix
+        if(test_variant == TestVariant::inverse)
+        {
+          const auto patch_matrix_inverse =
+            table_to_fullmatrix(patch_matrix_vectorized.as_inverse_table(), lane);
+          *pcout_owned << "Compare inverse patch matrix " << patch << "@ lane " << lane << ":\n";
+          compare_inverse_matrix(patch_matrix_inverse, patch_matrix_reference);
+        }
       }
     }
   }
@@ -848,22 +822,48 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSAssemblyVertexPatch)
 {
   using Fixture = TestLinElasticityIntegratorFD<TypeParam>;
 
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 3U;
-  Fixture::params.n_refinements                = 0U;
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant  = TPSS::PatchVariant::vertex;
+  Fixture::rt_parameters.multigrid.post_smoother.schwarz.patch_variant = TPSS::PatchVariant::vertex;
+
+  // TODO vertex patches are not build for subdivided mesh ?!
   // Fixture::rt_parameters.mesh.n_subdivisions.resize(Fixture::dim, 2);
   // Fixture::rt_parameters.mesh.n_subdivisions.at(0) = 3;
   // Fixture::params.n_refinements        = 2U;
-  Fixture::params.equation_data.lambda = 1.;
-  Fixture::params.equation_data.mu     = 1.;
-  // Fixture::tpss_assembly_vp();
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2U;
+  Fixture::params.n_refinements                = 0U;
+  Fixture::params.equation_data.lambda         = 1.;
+  Fixture::params.equation_data.mu             = 1.;
+  Fixture::tpss_assembly();
+
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 3U;
+  Fixture::params.n_refinements                = 1U;
+  Fixture::params.equation_data.lambda         = 1.234;
+  Fixture::params.equation_data.mu             = 9.876;
+  Fixture::tpss_assembly();
+}
+
+TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSInvertVertexPatch)
+{
+  using Fixture = TestLinElasticityIntegratorFD<TypeParam>;
+
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant  = TPSS::PatchVariant::vertex;
+  Fixture::rt_parameters.multigrid.post_smoother.schwarz.patch_variant = TPSS::PatchVariant::vertex;
 
   Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::rt_parameters.mesh.n_repetitions    = 2U;
+  Fixture::params.n_refinements                = 0U;
+  Fixture::params.equation_data.lambda         = 1.;
+  Fixture::params.equation_data.mu             = 1.;
+  Fixture::tpss_assembly(Fixture::TestVariant::inverse);
+
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 3U;
   Fixture::params.n_refinements                = 1U;
   Fixture::params.equation_data.lambda         = 1.234;
-  Fixture::params.equation_data.mu             = 1.; // 9.876;
-  Fixture::tpss_assembly_vp();
+  Fixture::params.equation_data.mu             = 9.876;
+  Fixture::tpss_assembly(Fixture::TestVariant::inverse);
 }
 
 REGISTER_TYPED_TEST_SUITE_P(TestLinElasticityIntegratorFD,
@@ -871,7 +871,8 @@ REGISTER_TYPED_TEST_SUITE_P(TestLinElasticityIntegratorFD,
                             ManualInvertCellPatch,
                             TPSSAssemblyCellPatch,
                             TPSSInvertCellPatch,
-                            TPSSAssemblyVertexPatch);
+                            TPSSAssemblyVertexPatch,
+                            TPSSInvertVertexPatch);
 
 using TestParamsLinear = testing::Types<Util::NonTypeParams<2, 1>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestLinElasticityIntegratorFD, TestParamsLinear);
