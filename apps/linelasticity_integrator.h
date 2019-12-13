@@ -239,12 +239,12 @@ public:
                const int                           direction,
                const int                           cell_no) const;
 
-    void
-    operator()(const Evaluator &                   eval_ansatz,
-               const Evaluator &                   eval_test,
-               Table<2, VectorizedArray<Number>> & cell_matrix01,
-               Table<2, VectorizedArray<Number>> & cell_matrix10,
-               const int                           direction) const;
+    // void
+    // operator()(const Evaluator &                   eval_ansatz,
+    //            const Evaluator &                   eval_test,
+    //            Table<2, VectorizedArray<Number>> & cell_matrix01,
+    //            Table<2, VectorizedArray<Number>> & cell_matrix10,
+    //            const int                           direction) const;
 
     const int partial_derivative_index_u;
     const int partial_derivative_index_v;
@@ -385,11 +385,7 @@ public:
                const Evaluator &,
                Table<2, VectorizedArray<Number>> &,
                Table<2, VectorizedArray<Number>> &,
-               const int) const
-    {
-      bool todo;
-      // AssertThrow(false, ExcNotImplemented());
-    }
+               const int) const;
 
     const double lambda;
     const int    component_u;
@@ -423,6 +419,9 @@ public:
     const std::vector<NitscheStrain<EvaluatorType>> & nitsche_strain_operations,
     const unsigned int                                patch_id)
   {
+    bool                             todo;
+    std::vector<Void<EvaluatorType>> void_op;
+
     AssertDimension(fd_evals.size(), dim);
     AssertDimension(cell_strain_operations.size(), dim);
     AssertDimension(nitsche_strain_operations.size(), dim);
@@ -434,9 +433,10 @@ public:
       fd_eval.reinit(patch_id);
       fd_eval.evaluate(true);
 
-      matrices = fd_eval.patch_action(cell_strain_operations[comp],
-                                      nitsche_strain_operations[comp],
-                                      nitsche_strain_operations[comp]);
+      // matrices = fd_eval.patch_action(cell_strain_operations[comp],
+      //                                 nitsche_strain_operations[comp],
+      //                                 nitsche_strain_operations[comp]);
+      matrices = fd_eval.patch_action(void_op[comp], void_op[comp], void_op[comp]);
     }
     return tensors;
   }
@@ -497,7 +497,6 @@ public:
   //   return block;
   // }
 
-  // static std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>>
   static std::vector<std::array<VectorizedMatrixType, dim>>
   assemble_mixed_block(std::vector<std::shared_ptr<EvaluatorType>> & fd_evals,
                        const EquationData &                          equation_data,
@@ -505,24 +504,58 @@ public:
                        const int                                     component_u,
                        const unsigned int                            patch_id)
   {
-    AssertThrow(dim == 2, ExcNotImplemented()); // TODO
+    AssertThrow(dim == 2, ExcMessage("TODO"));
     AssertIndexRange(component_v, dim);
     AssertIndexRange(component_u, dim);
 
     const Void<EvaluatorType>                          void_op;
     std::vector<std::array<VectorizedMatrixType, dim>> elementary_tensors;
 
-    /// 1.) cell + face contribution of LINEAR STRAIN
+    bool todo;
+    // {
+    //   const int partial_derivative_index_u = component_v; // i
+    //   const int partial_derivative_index_v = component_u; // j
+    //   /// compute the univariate matrices subject to the mixed gradients
+    //   /// (d/dx_j v_i) * (d/dx_i u_j)
+    //   const CellDerivative<EvaluatorType> derivative_op{partial_derivative_index_u,
+    //                                                     partial_derivative_index_v};
+    //   /// compute the complementing matrices subject to the nitsche-strain
+    //   /// contributions (point evaluations)
+    //   const NitscheStrainMixed<EvaluatorType> nitsche_op{equation_data, component_u,
+    //   component_v};
+
+    //   auto & eval_v = *(fd_evals[component_v]);
+    //   auto & eval_u = *(fd_evals[component_u]);
+    //   eval_u.reinit(patch_id);
+    //   eval_u.evaluate(true);
+    //   eval_v.reinit(patch_id);
+    //   eval_v.evaluate(true);
+
+    //   const auto & tensor_derivative = eval_v.patch_action(eval_u, derivative_op);
+    //   const auto & tensor_nitsche    = eval_v.patch_action(eval_u, void_op, nitsche_op,
+    //   nitsche_op);
+
+    //   /// (mu *  G(1)^T + N(1)) x G(0)
+    //   const auto & mu_derivativeT = Tensors::scale(equation_data.mu, tensor_derivative[1]);
+    //   elementary_tensors.emplace_back(
+    //     std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
+    //                                           Tensors::sum(mu_derivativeT, tensor_nitsche[1])});
+
+    //   /// G(1)^T x N(0)
+    //   elementary_tensors.emplace_back(
+    //     std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
+    // }
+
     {
-      const int partial_derivative_index_u = component_v; // i
-      const int partial_derivative_index_v = component_u; // j
-      /// compute the univariate matrices subject to the mixed gradients
-      /// (d/dx_j v_i) * (d/dx_i u_j)
+      const int partial_derivative_index_v = component_v; // i
+      const int partial_derivative_index_u = component_u; // j
+      /// computes the univariate matrices subject to the mixed divergence
+      /// (d/dx_i v_i) * (d/dx_j u_j) ***/
       const CellDerivative<EvaluatorType> derivative_op{partial_derivative_index_u,
                                                         partial_derivative_index_v};
-      /// compute the complementing matrices subject to the nitsche-strain
+      /// computes the complementing matrices of the nitsche - grad-div
       /// contributions (point evaluations)
-      const NitscheStrainMixed<EvaluatorType> nitsche_op{equation_data, component_u, component_v};
+      const NitscheGradDivMixed<EvaluatorType> nitsche_op{equation_data, component_u, component_v};
 
       auto & eval_v = *(fd_evals[component_v]);
       auto & eval_u = *(fd_evals[component_u]);
@@ -534,52 +567,16 @@ public:
       const auto & tensor_derivative = eval_v.patch_action(eval_u, derivative_op);
       const auto & tensor_nitsche    = eval_v.patch_action(eval_u, void_op, nitsche_op, nitsche_op);
 
-      /// (mu *  G(1)^T + N(1)) x G(0)
-      const auto & mu_derivativeT = Tensors::scale(equation_data.mu, tensor_derivative[1]);
+      /// (lambda * G(1) + N(1)) x G(0)^T
+      const auto & lambda_derivative = Tensors::scale(equation_data.lambda, tensor_derivative[1]);
       elementary_tensors.emplace_back(
         std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
-                                              Tensors::sum(mu_derivativeT, tensor_nitsche[1])});
+                                              Tensors::sum(lambda_derivative, tensor_nitsche[1])});
 
-      /// G(1)^T x N(0)
+      /// G(1) x N(0)
       elementary_tensors.emplace_back(
         std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
     }
-
-    bool todo;
-    /// 2.) cell + face contribution of GRAD-DIV
-    // {
-    //   const int partial_derivative_index_v = component_v; // i
-    //   const int partial_derivative_index_u = component_u; // j
-    //   /// computes the univariate matrices subject to the mixed divergence
-    //   /// (d/dx_i v_i) * (d/dx_j u_j) ***/
-    //   const CellDerivative<EvaluatorType> derivative_op{partial_derivative_index_u,
-    //                                                     partial_derivative_index_v};
-    //   /// computes the complementing matrices of the nitsche - grad-div
-    //   /// contributions (point evaluations)
-    //   const NitscheGradDivMixed<EvaluatorType> nitsche_op{equation_data, component_u,
-    //   component_v};
-
-    //   auto & eval_v = *(fd_evals[component_v]);
-    //   auto & eval_u = *(fd_evals[component_u]);
-    //   eval_u.reinit(patch_id);
-    //   eval_u.evaluate(true);
-    //   eval_v.reinit(patch_id);
-    //   eval_v.evaluate(true);
-
-    //   const auto & tensor_derivative = eval_v.patch_action(eval_u, derivative_op);
-    //   const auto & tensor_nitsche    = eval_v.patch_action(eval_u, void_op, nitsche_op, void_op);
-
-    //   /// (lambda * G(1) + N(1)) x G(0)^T
-    //   const auto & lambda_derivative = Tensors::scale(equation_data.lambda,
-    //   tensor_derivative[1]); elementary_tensors.emplace_back(
-    //     std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
-    //                                           Tensors::sum(lambda_derivative,
-    //                                           tensor_nitsche[1])});
-
-    //   /// G(1) x N(0)
-    //   elementary_tensors.emplace_back(
-    //     std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
-    // }
 
     /// 2.) interface contributions
     // const auto & subdomain_handler = fd_evals[0]->get_subdomain_handler();
@@ -799,11 +796,11 @@ public:
       auto & block_matrix = inverses[patch];
       block_matrix.resize(dim);
       auto mass_matrices = assemble_mass_tensors(fd_evals, cell_mass_op, patch);
+
       auto elasticity_matrices =
         assemble_strain_tensors(fd_evals, cell_strain_op, nitsche_strain_op, patch);
-      bool todo;
-      // assemble_graddiv_tensors(
-      //   elasticity_matrices, fd_evals, cell_graddiv_op, nitsche_graddiv_op, patch);
+      assemble_graddiv_tensors(
+        elasticity_matrices, fd_evals, cell_graddiv_op, nitsche_graddiv_op, patch);
 
       /// block diagonal
       for(unsigned int comp = 0; comp < dim; ++comp)
@@ -909,48 +906,48 @@ operator()(const Evaluator &                   fd_eval_u,
     }
 }
 
-template<int dim, int fe_degree, typename Number>
-template<typename Evaluator>
-inline void
-MatrixIntegrator<dim, fe_degree, Number>::CellDerivative<Evaluator>::
-operator()(const Evaluator &                   eval_u,
-           const Evaluator &                   eval_v,
-           Table<2, VectorizedArray<Number>> & cell_matrix01,
-           Table<2, VectorizedArray<Number>> & cell_matrix10,
-           const int                           direction) const
-{
-  auto       integral01{make_vectorized_array<Number>(0.)};
-  auto       integral10{make_vectorized_array<Number>(0.)};
-  const bool flag_derive_u = (direction == partial_derivative_index_u);
-  const bool flag_derive_v = (direction == partial_derivative_index_v);
-  for(int dof_u = 0; dof_u < fe_order; ++dof_u) // u is ansatz function & v is test function
-    for(int dof_v = 0; dof_v < fe_order; ++dof_v)
-    {
-      integral01 = integral10 = 0.;
-      for(unsigned int q = 0; q < Evaluator::n_q_points; ++q)
-      {
-        const auto & value_or_grad_u0 = flag_derive_u ?
-                                          eval_u.shape_gradient(dof_u, q, direction, 0) :
-                                          eval_u.shape_value(dof_u, q, direction, 0);
-        const auto & value_or_grad_u1 = flag_derive_u ?
-                                          eval_u.shape_gradient(dof_u, q, direction, 1) :
-                                          eval_u.shape_value(dof_u, q, direction, 1);
-        const auto & value_or_grad_v0 = flag_derive_v ?
-                                          eval_v.shape_gradient(dof_v, q, direction, 0) :
-                                          eval_v.shape_value(dof_v, q, direction, 0);
-        const auto & value_or_grad_v1 = flag_derive_v ?
-                                          eval_v.shape_gradient(dof_v, q, direction, 1) :
-                                          eval_v.shape_value(dof_v, q, direction, 1);
-        const auto & dx0 = eval_v.get_JxW(q, direction, 0);
-        const auto & dx1 = eval_v.get_JxW(q, direction, 1);
+// template<int dim, int fe_degree, typename Number>
+// template<typename Evaluator>
+// inline void
+// MatrixIntegrator<dim, fe_degree, Number>::CellDerivative<Evaluator>::
+// operator()(const Evaluator &                   eval_u,
+//            const Evaluator &                   eval_v,
+//            Table<2, VectorizedArray<Number>> & cell_matrix01,
+//            Table<2, VectorizedArray<Number>> & cell_matrix10,
+//            const int                           direction) const
+// {
+//   auto       integral01{make_vectorized_array<Number>(0.)};
+//   auto       integral10{make_vectorized_array<Number>(0.)};
+//   const bool flag_derive_u = (direction == partial_derivative_index_u);
+//   const bool flag_derive_v = (direction == partial_derivative_index_v);
+//   for(int dof_u = 0; dof_u < fe_order; ++dof_u) // u is ansatz function & v is test function
+//     for(int dof_v = 0; dof_v < fe_order; ++dof_v)
+//     {
+//       integral01 = integral10 = 0.;
+//       for(unsigned int q = 0; q < Evaluator::n_q_points; ++q)
+//       {
+//         const auto & value_or_grad_u0 = flag_derive_u ?
+//                                           eval_u.shape_gradient(dof_u, q, direction, 0) :
+//                                           eval_u.shape_value(dof_u, q, direction, 0);
+//         const auto & value_or_grad_u1 = flag_derive_u ?
+//                                           eval_u.shape_gradient(dof_u, q, direction, 1) :
+//                                           eval_u.shape_value(dof_u, q, direction, 1);
+//         const auto & value_or_grad_v0 = flag_derive_v ?
+//                                           eval_v.shape_gradient(dof_v, q, direction, 0) :
+//                                           eval_v.shape_value(dof_v, q, direction, 0);
+//         const auto & value_or_grad_v1 = flag_derive_v ?
+//                                           eval_v.shape_gradient(dof_v, q, direction, 1) :
+//                                           eval_v.shape_value(dof_v, q, direction, 1);
+//         const auto & dx0 = eval_v.get_JxW(q, direction, 0);
+//         const auto & dx1 = eval_v.get_JxW(q, direction, 1);
 
-        integral01 += value_or_grad_u1 * value_or_grad_v0 * dx0;
-        integral10 += value_or_grad_u0 * value_or_grad_v1 * dx1;
-      }
-      cell_matrix01(dof_v, dof_u) += integral01;
-      cell_matrix10(dof_v, dof_u) += integral10;
-    }
-}
+//         integral01 += value_or_grad_u1 * value_or_grad_v0 * dx0;
+//         integral10 += value_or_grad_u0 * value_or_grad_v1 * dx1;
+//       }
+//       cell_matrix01(dof_v, dof_u) += integral01;
+//       cell_matrix10(dof_v, dof_u) += integral10;
+//     }
+// }
 
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
@@ -1169,7 +1166,8 @@ operator()(const Evaluator &                   eval_ansatz,
   //   chi_bdry[vv] = bdry_mask[vv] ? 1. : 0.5;
 
   /// TODO check sign of factor
-  const auto & factor{mu * make_vectorized_array<Number>(0.5)};
+  const Number chi_e = 0.5;
+  const auto & factor{mu * chi_e};
   // const auto & factor{-1. * mu * make_vectorized_array<Number>(0.5)};
 
   auto value_on_interface01{make_vectorized_array<Number>(0.)};
@@ -1320,8 +1318,6 @@ operator()(const Evaluator &                   eval_ansatz,
   const auto normal_symmetry =
     sign_of_normal * make_vectorized_array<Number>(is_normal_nonzero_symmetry ? 1. : 0.);
 
-  const auto penalty{
-    FaceLaplace::compute_penalty(eval_test, direction, cell_no, cell_no, bdry_mask)};
   /*** factor varies on interior and boundary cells ***/
   auto chi_bdry{make_vectorized_array<Number>(0.)};
   for(unsigned int vv = 0; vv < macro_size; ++vv)
@@ -1339,6 +1335,61 @@ operator()(const Evaluator &                   eval_ansatz,
       value_on_face =
         (v * normal_consistency) * u + v * (u * normal_symmetry); // consistency + symmetry
       cell_matrix(dof_v, dof_u) += factor * value_on_face;
+    }
+  }
+}
+
+template<int dim, int fe_degree, typename Number>
+template<typename Evaluator>
+inline void
+MatrixIntegrator<dim, fe_degree, Number>::NitscheGradDivMixed<Evaluator>::
+operator()(const Evaluator &                   eval_ansatz,
+           const Evaluator &                   eval_test,
+           Table<2, VectorizedArray<Number>> & cell_matrix01,
+           Table<2, VectorizedArray<Number>> & cell_matrix10,
+           const int                           direction) const
+{
+  AssertIndexRange(direction, dim);
+  AssertDimension(cell_matrix01.n_rows(), cell_matrix01.n_cols());
+  AssertDimension(static_cast<int>(cell_matrix01.n_rows()), fe_order);
+  AssertDimension(cell_matrix01.n_rows(), cell_matrix10.n_rows());
+  AssertDimension(cell_matrix01.n_cols(), cell_matrix10.n_cols());
+
+  const bool is_normal_nonzero_consistency = (component_v == direction);
+  const bool is_normal_nonzero_symmetry    = (component_u == direction);
+  /*** the outward normal on face 1 seen from cell 0 ***/
+  const Number sign_of_normal0 = 1.;
+  /*** the outward normal on face 0 seen from cell 1 ***/
+  const Number sign_of_normal1 = -1.;
+
+  const auto normal0_symmetry =
+    sign_of_normal0 * make_vectorized_array<Number>(is_normal_nonzero_symmetry ? 1. : 0.);
+  const auto normal0_consistency =
+    sign_of_normal0 * make_vectorized_array<Number>(is_normal_nonzero_consistency ? 1. : 0.);
+  const auto normal1_symmetry =
+    sign_of_normal1 * make_vectorized_array<Number>(is_normal_nonzero_symmetry ? 1. : 0.);
+  const auto normal1_consistency =
+    sign_of_normal1 * make_vectorized_array<Number>(is_normal_nonzero_consistency ? 1. : 0.);
+
+  const double chi_e = 0.5; // interior edge
+  /// TODO checked signs! why in hell negative sign?
+  const auto factor = -1. * lambda * chi_e;
+
+  auto value_on_interface01{make_vectorized_array<Number>(0.)};
+  auto value_on_interface10{make_vectorized_array<Number>(0.)};
+  for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz function & v is test function
+  {
+    const auto & v0 = eval_test.shape_value_face(dof_v, /*face_no*/ 1, direction, /*cell_no*/ 0);
+    const auto & v1 = eval_test.shape_value_face(dof_v, /*face_no*/ 0, direction, /*cell_no*/ 1);
+    for(int dof_u = 0; dof_u < fe_order; ++dof_u)
+    {
+      const auto & u0 = eval_ansatz.shape_value_face(dof_u, 1, direction, 0);
+      const auto & u1 = eval_ansatz.shape_value_face(dof_u, 0, direction, 1);
+
+      value_on_interface01 = (v0 * normal0_consistency) * u1 + v0 * (u1 * normal1_symmetry);
+      value_on_interface10 = (v1 * normal1_consistency) * u0 + v1 * (u0 * normal0_symmetry);
+      cell_matrix01(dof_v, dof_u) += factor * value_on_interface01;
+      cell_matrix10(dof_v, dof_u) += factor * value_on_interface10;
     }
   }
 }
@@ -1674,22 +1725,22 @@ Operator<dim, fe_degree, Number>::apply_cell(
                        [n_qpoints](const auto & phi) { return phi->n_q_points == n_qpoints; }),
            ExcMessage("Quadrature is not isotropic."));
 
-    // *** linear strain: e(u) : e(v)
-    for(unsigned int q = 0; q < n_qpoints; ++q)
-    {
-      submit_symmetric_gradient(v, 2. * mu * get_symmetric_gradient(u, q), q);
-    }
-    for(unsigned comp = 0; comp < dim; ++comp)
-      v[comp]->integrate_scatter(false, true, dst.block(comp));
-
     bool todo;
-    // // *** grad div: div(u) * div(v)
+    // // *** linear strain: e(u) : e(v)
     // for(unsigned int q = 0; q < n_qpoints; ++q)
     // {
-    //   submit_divergence(v, lambda * get_divergence(u, q), q);
+    //   submit_symmetric_gradient(v, 2. * mu * get_symmetric_gradient(u, q), q);
     // }
     // for(unsigned comp = 0; comp < dim; ++comp)
     //   v[comp]->integrate_scatter(false, true, dst.block(comp));
+
+    // *** grad div: div(u) * div(v)
+    for(unsigned int q = 0; q < n_qpoints; ++q)
+    {
+      submit_divergence(v, lambda * get_divergence(u, q), q);
+    }
+    for(unsigned comp = 0; comp < dim; ++comp)
+      v[comp]->integrate_scatter(false, true, dst.block(comp));
   }
 }
 
@@ -1799,64 +1850,64 @@ Operator<dim, fe_degree, Number>::apply_face(
         return -0.5 * lambda * value_u * normal_u;
       };
 
-    // *** integrate against test functions v (LINEAR STRAIN)
-    for(unsigned int q = 0; q < n_qpoints; ++q)
-    {
-      const auto & normal_inner = u_inner[0]->get_normal_vector(q);
-      const auto & normal_outer = -normal_inner;
-
-      submit_value(v_inner,
-                   test_by_value_strain(u_inner, /*u*/ normal_inner, /*v*/ normal_inner, q) +
-                     test_by_value_strain(u_outer, /*u*/ normal_outer, /*v*/ normal_inner, q),
-                   q);
-      submit_symmetric_gradient(v_inner,
-                                test_by_symmetric_gradient(u_inner, /*u*/ normal_inner, q) +
-                                  test_by_symmetric_gradient(u_outer, /*u*/ normal_outer, q),
-                                q);
-      submit_value(v_outer,
-                   test_by_value_strain(u_outer, /*u*/ normal_outer, /*v*/ normal_outer, q) +
-                     test_by_value_strain(u_inner, /*u*/ normal_inner, /*v*/ normal_outer, q),
-                   q);
-      submit_symmetric_gradient(v_outer,
-                                test_by_symmetric_gradient(u_outer, normal_outer, q) +
-                                  test_by_symmetric_gradient(u_inner, normal_inner, q),
-                                q);
-    }
-    for(unsigned comp = 0; comp < dim; ++comp)
-    {
-      v_inner[comp]->integrate_scatter(true, true, dst.block(comp));
-      v_outer[comp]->integrate_scatter(true, true, dst.block(comp));
-    }
-
     bool todo;
-    // // *** integrate against test functions v (GRAD DIV)
+    // // *** integrate against test functions v (LINEAR STRAIN)
     // for(unsigned int q = 0; q < n_qpoints; ++q)
     // {
     //   const auto & normal_inner = u_inner[0]->get_normal_vector(q);
     //   const auto & normal_outer = -normal_inner;
 
     //   submit_value(v_inner,
-    //                test_by_value_graddiv(u_inner, normal_inner, normal_inner, q) +
-    //                  test_by_value_graddiv(u_outer, normal_outer, normal_inner, q),
+    //                test_by_value_strain(u_inner, /*u*/ normal_inner, /*v*/ normal_inner, q) +
+    //                  test_by_value_strain(u_outer, /*u*/ normal_outer, /*v*/ normal_inner, q),
     //                q);
-    //   submit_divergence(v_inner,
-    //                     test_by_divergence(u_inner, /*u*/ normal_inner, q) +
-    //                       test_by_divergence(u_outer, /*u*/ normal_outer, q),
-    //                     q);
+    //   submit_symmetric_gradient(v_inner,
+    //                             test_by_symmetric_gradient(u_inner, /*u*/ normal_inner, q) +
+    //                               test_by_symmetric_gradient(u_outer, /*u*/ normal_outer, q),
+    //                             q);
     //   submit_value(v_outer,
-    //                test_by_value_graddiv(u_outer, normal_outer, normal_outer, q) +
-    //                  test_by_value_graddiv(u_inner, normal_inner, normal_outer, q),
+    //                test_by_value_strain(u_outer, /*u*/ normal_outer, /*v*/ normal_outer, q) +
+    //                  test_by_value_strain(u_inner, /*u*/ normal_inner, /*v*/ normal_outer, q),
     //                q);
-    //   submit_divergence(v_outer,
-    //                     test_by_divergence(u_outer, normal_outer, q) +
-    //                       test_by_divergence(u_inner, normal_inner, q),
-    //                     q);
+    //   submit_symmetric_gradient(v_outer,
+    //                             test_by_symmetric_gradient(u_outer, normal_outer, q) +
+    //                               test_by_symmetric_gradient(u_inner, normal_inner, q),
+    //                             q);
     // }
     // for(unsigned comp = 0; comp < dim; ++comp)
     // {
     //   v_inner[comp]->integrate_scatter(true, true, dst.block(comp));
     //   v_outer[comp]->integrate_scatter(true, true, dst.block(comp));
     // }
+
+    // *** integrate against test functions v (GRAD DIV)
+    for(unsigned int q = 0; q < n_qpoints; ++q)
+    {
+      const auto & normal_inner = u_inner[0]->get_normal_vector(q);
+      const auto & normal_outer = -normal_inner;
+
+      submit_value(v_inner,
+                   test_by_value_graddiv(u_inner, normal_inner, normal_inner, q) +
+                     test_by_value_graddiv(u_outer, normal_outer, normal_inner, q),
+                   q);
+      submit_divergence(v_inner,
+                        test_by_divergence(u_inner, /*u*/ normal_inner, q) +
+                          test_by_divergence(u_outer, /*u*/ normal_outer, q),
+                        q);
+      submit_value(v_outer,
+                   test_by_value_graddiv(u_outer, normal_outer, normal_outer, q) +
+                     test_by_value_graddiv(u_inner, normal_inner, normal_outer, q),
+                   q);
+      submit_divergence(v_outer,
+                        test_by_divergence(u_outer, normal_outer, q) +
+                          test_by_divergence(u_inner, normal_inner, q),
+                        q);
+    }
+    for(unsigned comp = 0; comp < dim; ++comp)
+    {
+      v_inner[comp]->integrate_scatter(true, true, dst.block(comp));
+      v_outer[comp]->integrate_scatter(true, true, dst.block(comp));
+    }
   }
 }
 
@@ -1900,31 +1951,31 @@ Operator<dim, fe_degree, Number>::apply_boundary(
                        [n_qpoints](const auto & phi) { return phi->n_q_points == n_qpoints; }),
            ExcMessage("Quadrature is not isotropic."));
 
-    // *** integrate against test functions and derivates v (LINEAR STRAIN)
-    for(unsigned int q = 0; q < n_qpoints; ++q)
-    {
-      const auto e_u     = get_symmetric_gradient(u, q);
-      const auto normal  = u[0]->get_normal_vector(q);
-      const auto value_u = get_value(u, q);
-
-      submit_value(v, 2. * mu * (sigma * value_u - contract<0, 0>(normal, e_u)), q);
-      submit_symmetric_gradient(v, -2. * mu * outer_product(value_u, normal), q);
-    }
-    for(unsigned comp = 0; comp < dim; ++comp)
-      v[comp]->integrate_scatter(true, true, dst.block(comp));
-
     bool todo;
-    // // *** integrate against test functions and derivates v (GRAD DIV)
+    // // *** integrate against test functions and derivates v (LINEAR STRAIN)
     // for(unsigned int q = 0; q < n_qpoints; ++q)
     // {
+    //   const auto e_u     = get_symmetric_gradient(u, q);
     //   const auto normal  = u[0]->get_normal_vector(q);
     //   const auto value_u = get_value(u, q);
 
-    //   submit_value(v, lambda * (sigma * value_u * normal - get_divergence(u, q)) * normal, q);
-    //   submit_divergence(v, -1. * lambda * value_u * normal, q);
+    //   submit_value(v, 2. * mu * (sigma * value_u - contract<0, 0>(normal, e_u)), q);
+    //   submit_symmetric_gradient(v, -2. * mu * outer_product(value_u, normal), q);
     // }
     // for(unsigned comp = 0; comp < dim; ++comp)
     //   v[comp]->integrate_scatter(true, true, dst.block(comp));
+
+    // *** integrate against test functions and derivates v (GRAD DIV)
+    for(unsigned int q = 0; q < n_qpoints; ++q)
+    {
+      const auto normal  = u[0]->get_normal_vector(q);
+      const auto value_u = get_value(u, q);
+
+      submit_value(v, lambda * (sigma * value_u * normal - get_divergence(u, q)) * normal, q);
+      submit_divergence(v, -1. * lambda * value_u * normal, q);
+    }
+    for(unsigned comp = 0; comp < dim; ++comp)
+      v[comp]->integrate_scatter(true, true, dst.block(comp));
   }
 }
 
