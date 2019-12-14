@@ -13,21 +13,6 @@
 
 using namespace dealii;
 
-void
-printTable(Table<2, double> tab)
-{
-  std::size_t m = tab.size()[0];
-  std::size_t n = tab.size()[1];
-  std::cout << "-----------------\n";
-  for(std::size_t i = 0; i < m; i++)
-  {
-    for(std::size_t j = 0; j < n; j++)
-      std::cout << ((int)(tab(i, j) * 100 + 0.5)) / 100.0 << "\t";
-    std::cout << "\n";
-  }
-  std::cout << "-----------------\n";
-}
-
 // calculate the new index (the index in the reshuffled matrix) of the i-th diagonal entry, having a
 // diagonal matrix only makes sense if kronecker factors are square
 std::array<std::size_t, 2>
@@ -199,6 +184,7 @@ rankk_vector_multiplication(const std::vector<AlignedVector<Number>> & in,
     ret = vector_addition(ret, rank1_vector_multiplication(in[i], inT[i], vec));
   return ret;
 }
+//calculates matrix-vector product of a reshuffled diagonal matrix with a vector, big_m and small_m of the wanted kronecker structure are passed to have correct reshuffling
 template<typename Number>
 AlignedVector<Number>
 reshuffled_diag_vector_multiplication(const AlignedVector<Number> & diagonal,
@@ -215,6 +201,7 @@ reshuffled_diag_vector_multiplication(const AlignedVector<Number> & diagonal,
   }
   return ret;
 }
+//calculates matrix-vector product of a transposed reshuffled diagonal matrix with a vector, big_m and small_m of the wanted kronecker structure are passed to have correct reshuffling
 
 template<typename Number>
 AlignedVector<Number>
@@ -459,6 +446,14 @@ compute_ksvd(const std::vector<std::array<Table<2, Number>, dim>> &    in,
     }
   }
 }
+
+/*
+  Compute the low Kronecker rank approximation, i.e. the ksvd, of a diagonal matrix.
+ We compute the first few singular
+  values/vectors by using the Lanczos algorithm. The matricization of these
+  singular vectors then is the low Kronecker rank approximation. The matrix M is
+  passed in "in", and the low rank approximation is passed in "out"
+*/
 
 template<int dim, typename Number, int out_rank>
 void
