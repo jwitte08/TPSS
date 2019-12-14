@@ -403,4 +403,12 @@ compute_ksvd(const std::vector<std::array<Table<2, Number>, dim>> &    in,
   }
 }
 
+template<int dim, typename Number, int out_rank>
+void
+compute_ksvd(Table<2, Number> &    in,
+             std::array<std::array<Table<2, Number>, dim>, out_rank> & out,
+             const std::size_t lanczos_iterations = out_rank * out_rank + 10)
+{
+	
+}
 #endif
