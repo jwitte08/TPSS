@@ -58,6 +58,12 @@ public:
     return std::bitset<macro_size>{0};
   }
 
+  const SubdomainHandler<dim, Number> &
+  get_subdomain_handler() const
+  {
+    return sd_handler;
+  }
+
   const VectorizedArray<Number> &
   shape_value(const int dof, const int qpoint_no, const int direction, const int cell_no) const;
 
@@ -257,26 +263,32 @@ public:
   void
   compute_unit_mass(const ArrayView<VectorizedArray<Number>> & matrix) const;
 
-  template<typename CellOperation>
-  std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action(CellOperation && cell_operation) const
-  {
-    const auto patch_variant = Base::patch_variant;
-    if(patch_variant == TPSS::PatchVariant::cell)
-    {
-      constexpr unsigned int n_cells_per_direction =
-        TPSS::UniversalInfo<dim>::n_cells_per_direction(TPSS::PatchVariant::cell);
-      return patch_action_impl<n_cells_per_direction>(std::forward<CellOperation>(cell_operation));
-    }
-    else if(patch_variant == TPSS::PatchVariant::vertex)
-    {
-      constexpr auto n_cells_per_direction =
-        TPSS::UniversalInfo<dim>::n_cells_per_direction(TPSS::PatchVariant::vertex);
-      return patch_action_impl<n_cells_per_direction>(std::forward<CellOperation>(cell_operation));
-    }
-    else
-      AssertThrow(false, ExcNotImplemented());
-  }
+  // template<typename CellOperation>
+  // std::array<Table<2, VectorizedArray<Number>>, dim>
+  // patch_action_interface(const FDEvaluation & eval_ansatz, CellOperation && cell_operation) const
+  // {
+  //   using MatrixType                            = Table<2, VectorizedArray<Number>>;
+  //   constexpr unsigned int n_dofs_per_direction = fe_order * /*n_cells_per_direction*/ 2U;
+  //   AssertThrow(Base::patch_variant == TPSS::PatchVariant::vertex,
+  //               ExcMessage("Implemented for vertex patches."));
+
+  //   std::array<MatrixType, dim> matrices;
+  //   for(int direction = 0; direction < dim; ++direction)
+  //   {
+  //     MatrixType & matrix = matrices[direction];
+  //     matrix.reinit(n_dofs_per_direction, n_dofs_per_direction);
+
+  //     MatrixType cell_matrix01{fe_order, fe_order}, cell_matrix10{fe_order, fe_order};
+  //     std::forward<decltype(cell_operation)>(
+  //       cell_operation)(eval_ansatz, *this, cell_matrix01, cell_matrix10, direction);
+  //     Base::submit_cell_matrix(matrix, cell_matrix01, 0, 1);
+  //     Base::submit_cell_matrix(matrix, cell_matrix10, 1, 0);
+  //   }
+
+  //   AssertDimension(n_dofs_per_direction, matrices.front().n_rows());
+  //   AssertDimension(n_dofs_per_direction, matrices.back().n_cols());
+  //   return matrices;
+  // }
 
   template<typename CellOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
@@ -301,23 +313,28 @@ public:
       AssertThrow(false, ExcNotImplemented());
   }
 
-  template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
+  template<typename CellOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action(const CellOperation &      cell_operation,
-               const FaceOperation &      face_operation,
-               const InterfaceOperation & interface_operation) const
+  patch_action(CellOperation && cell_operation) const
   {
-    const auto patch_variant = Base::patch_variant;
-    if(patch_variant == TPSS::PatchVariant::cell)
-    {
-      return patch_action_dgcp_impl(cell_operation, face_operation);
-    }
-    else if(patch_variant == TPSS::PatchVariant::vertex)
-    {
-      return patch_action_dgvp_impl(cell_operation, face_operation, interface_operation);
-    }
-    else
-      AssertThrow(false, ExcNotImplemented());
+    return patch_action(*this, std::forward<CellOperation>(cell_operation));
+    // const auto patch_variant = Base::patch_variant;
+    // if(patch_variant == TPSS::PatchVariant::cell)
+    // {
+    //   constexpr unsigned int n_cells_per_direction =
+    //     TPSS::UniversalInfo<dim>::n_cells_per_direction(TPSS::PatchVariant::cell);
+    //   return
+    //   patch_action_impl<n_cells_per_direction>(std::forward<CellOperation>(cell_operation));
+    // }
+    // else if(patch_variant == TPSS::PatchVariant::vertex)
+    // {
+    //   constexpr auto n_cells_per_direction =
+    //     TPSS::UniversalInfo<dim>::n_cells_per_direction(TPSS::PatchVariant::vertex);
+    //   return
+    //   patch_action_impl<n_cells_per_direction>(std::forward<CellOperation>(cell_operation));
+    // }
+    // else
+    //   AssertThrow(false, ExcNotImplemented());
   }
 
   template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
@@ -341,6 +358,26 @@ public:
     }
     else
       AssertThrow(false, ExcNotImplemented());
+  }
+
+  template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
+  std::array<Table<2, VectorizedArray<Number>>, dim>
+  patch_action(const CellOperation &      cell_operation,
+               const FaceOperation &      face_operation,
+               const InterfaceOperation & interface_operation) const
+  {
+    return patch_action(*this, cell_operation, face_operation, interface_operation);
+    // const auto patch_variant = Base::patch_variant;
+    // if(patch_variant == TPSS::PatchVariant::cell)
+    // {
+    //   return patch_action_dgcp_impl(cell_operation, face_operation);
+    // }
+    // else if(patch_variant == TPSS::PatchVariant::vertex)
+    // {
+    //   return patch_action_dgvp_impl(cell_operation, face_operation, interface_operation);
+    // }
+    // else
+    //   AssertThrow(false, ExcNotImplemented());
   }
 
 private:
@@ -410,20 +447,20 @@ private:
     return matrices;
   }
 
-  template<int n_cells_per_direction, typename CellOperation>
-  std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action_impl(CellOperation && cell_operation) const
-  {
-    return patch_action_impl<n_cells_per_direction>(*this, cell_operation);
-  }
+  // template<int n_cells_per_direction, typename CellOperation>
+  // std::array<Table<2, VectorizedArray<Number>>, dim>
+  // patch_action_impl(CellOperation && cell_operation) const
+  // {
+  //   return patch_action_impl<n_cells_per_direction>(*this, cell_operation);
+  // }
 
-  template<typename CellOperation, typename FaceOperation>
-  std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action_dgcp_impl(const CellOperation & cell_operation,
-                         const FaceOperation & face_operation) const
-  {
-    return patch_action_dgcp_impl(*this, cell_operation, face_operation);
-  }
+  // template<typename CellOperation, typename FaceOperation>
+  // std::array<Table<2, VectorizedArray<Number>>, dim>
+  // patch_action_dgcp_impl(const CellOperation & cell_operation,
+  //                        const FaceOperation & face_operation) const
+  // {
+  //   return patch_action_dgcp_impl(*this, cell_operation, face_operation);
+  // }
 
   template<typename CellOperation, typename FaceOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
@@ -441,8 +478,7 @@ private:
       matrix.reinit(n_dofs_per_direction, n_dofs_per_direction);
       MatrixType cell_matrix{fe_order, fe_order};
 
-      std::forward<decltype(cell_operation)>(
-        cell_operation)(eval_ansatz, *this, cell_matrix, direction, 0 /*cell_no*/);
+      cell_operation(eval_ansatz, *this, cell_matrix, direction, 0 /*cell_no*/);
 
       for(const int face_no : {0, 1})
       {
@@ -458,14 +494,14 @@ private:
     return matrices;
   }
 
-  template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
-  std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action_dgvp_impl(const CellOperation &      cell_operation,
-                         const FaceOperation &      face_operation,
-                         const InterfaceOperation & interface_operation) const
-  {
-    return patch_action_dgvp_impl(*this, cell_operation, face_operation, interface_operation);
-  }
+  // template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
+  // std::array<Table<2, VectorizedArray<Number>>, dim>
+  // patch_action_dgvp_impl(const CellOperation &      cell_operation,
+  //                        const FaceOperation &      face_operation,
+  //                        const InterfaceOperation & interface_operation) const
+  // {
+  //   return patch_action_dgvp_impl(*this, cell_operation, face_operation, interface_operation);
+  // }
 
   template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
@@ -485,10 +521,8 @@ private:
       MatrixType cell_matrix0{fe_order, fe_order}, cell_matrix1{fe_order, fe_order};
 
       // *** CELL integral on cell 0 & 1
-      std::forward<decltype(cell_operation)>(
-        cell_operation)(eval_ansatz, *this, cell_matrix0, direction, 0);
-      std::forward<decltype(cell_operation)>(
-        cell_operation)(eval_ansatz, *this, cell_matrix1, direction, 1);
+      cell_operation(eval_ansatz, *this, cell_matrix0, direction, 0);
+      cell_operation(eval_ansatz, *this, cell_matrix1, direction, 1);
 
       // *** FACE integrals at patch boundary, i.e. face 0 on cell 0 & face 1 on cell 1
       const std::bitset<macro_size> & mask0 =

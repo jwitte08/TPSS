@@ -59,12 +59,14 @@ public:
     AssertDimension(C.m(), dst_view.size());
 
     std::lock_guard<std::mutex> lock(this->mutex);
+    tmp_array.clear();
     tmp_array.resize(B.m()); // TODO resize to max
     const auto dst_view_of_B = ArrayView(tmp_array.begin(), B.m());
     B.vmult(dst_view_of_B, src_view);
     Assert(A.m() <= dst_view.size(), ExcMessage("TODO dst_view not usable as temporary array."));
     const auto dst_view_of_Ainv = ArrayView(dst_view.begin(), A.m());
     A.apply_inverse(dst_view_of_Ainv, dst_view_of_B);
+    tmp_array.clear();
     tmp_array.resize(C.n()); // TODO
     const auto dst_view_of_C = ArrayView(tmp_array.begin(), C.m());
     C.vmult(dst_view_of_C, dst_view_of_Ainv);
@@ -154,9 +156,8 @@ public:
     AssertDimension(B.n(), D.n());
     const unsigned int m0 = A.m();
     const unsigned int m1 = D.m();
-    const unsigned int m  = m0 + m1;
-    AssertDimension(src_view.size(), m);
-    AssertDimension(dst_view.size(), m);
+    AssertDimension(src_view.size(), m0 + m1);
+    AssertDimension(dst_view.size(), m0 + m1);
 
     /// MEMORY INEFFICENT CODE
 
@@ -220,15 +221,34 @@ public:
   using matrix_type = TensorProductMatrix<dim, Number, n_rows_1d>;
   using value_type  = typename matrix_type::value_type;
 
+  BlockMatrix() = default;
+
+  BlockMatrix &
+  operator=(const BlockMatrix & other)
+  {
+    resize(other.n_block_rows, other.n_block_cols);
+    blocks = other.blocks;
+    return *this;
+  }
+
+  /**
+   * Deletes current block structure.
+   */
+  void
+  clear()
+  {
+    std::fill(n_.begin(), n_.end(), 0U);
+    blocks.clear();
+    inverse_2x2.reset();
+  }
+
   /**
    * Deletes old and resizes to square block structure.
    */
   void
   resize(const std::size_t n_rows)
   {
-    blocks.clear();
-    blocks.resize(n_rows * n_rows);
-    n_[0] = n_[1] = n_rows;
+    resize(n_rows, n_rows);
   }
 
   /**
@@ -237,7 +257,7 @@ public:
   void
   resize(const std::size_t n_rows, const std::size_t n_cols)
   {
-    blocks.clear();
+    clear();
     blocks.resize(n_rows * n_cols);
     n_[0] = n_rows;
     n_[1] = n_cols;
@@ -248,6 +268,8 @@ public:
   {
     AssertIndexRange(row_index, n_block_rows());
     AssertIndexRange(col_index, n_block_cols());
+    /// possible change of block requires recomputation of inverse
+    inverse_2x2.reset();
     return blocks[block_index(row_index, col_index)];
   }
 
@@ -320,11 +342,15 @@ public:
   {
     const bool is_2x2_block_matrix = n_block_rows() == 2 && n_block_cols() == 2;
     AssertThrow(is_2x2_block_matrix, ExcMessage("TODO"));
-    BlockGaussianInverse inverse(get_block(0, 0),
-                                 get_block(0, 1),
-                                 get_block(1, 0),
-                                 get_block(1, 1));
-    inverse.vmult(dst, src);
+    if(!inverse_2x2)
+      inverse_2x2 = std::make_shared<BlockGaussianInverse<matrix_type>>(get_block(0, 0),
+                                                                        get_block(0, 1),
+                                                                        get_block(1, 0),
+                                                                        get_block(1, 1));
+    inverse_2x2->vmult(dst, src);
+    /// ALTERNATIVE: standard inverse based on LAPACK
+    // basic_inverse = std::make_shared<const VectorizedInverse<Number>>(as_table());
+    // basic_inverse->vmult(dst, src);
   }
 
   std::array<std::size_t, 2>
@@ -428,6 +454,13 @@ private:
    * The vector containing the matrix blocks.
    */
   AlignedVector<matrix_type> blocks;
+
+  /**
+   * The inverse of a 2 x 2 block matrix based on block Gaussian elimination.
+   */
+  mutable std::shared_ptr<const BlockGaussianInverse<matrix_type>> inverse_2x2;
+  /// ALTERNATIVE: standard inverse based on LAPACK
+  // mutable std::shared_ptr<const VectorizedInverse<Number>>         basic_inverse;
 };
 
 

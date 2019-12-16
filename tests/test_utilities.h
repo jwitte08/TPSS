@@ -10,6 +10,12 @@
 #ifndef TEST_UTILITIES_H_
 #define TEST_UTILITIES_H_
 
+#include <deal.II/base/utilities.h>
+#include <deal.II/lac/full_matrix.h>
+#include <deal.II/lac/lapack_full_matrix.h>
+
+#include <gtest/gtest.h>
+
 #include <array>
 #include <functional>
 #include <iostream>
@@ -19,6 +25,108 @@
 
 namespace Util
 {
+struct PrintFormat
+{
+  static constexpr unsigned int precision  = 3;
+  static constexpr bool         scientific = true;
+  static constexpr unsigned int width      = 0;
+  static const std::string      zero_string;
+  static constexpr double       denominator = 1.;
+  static constexpr double       threshold   = std::numeric_limits<double>::epsilon() * 100.;
+};
+const std::string PrintFormat::zero_string = " ";
+
+/// Compare pair of matrices of FullMatrix type
+template<typename Number>
+void
+compare_matrix(const FullMatrix<Number> & matrix,
+               const FullMatrix<Number> & other,
+               const ConditionalOStream & pcout = ConditionalOStream(std::cout, true))
+{
+  std::ostringstream oss;
+  oss << "Matrix:\n";
+  matrix.print_formatted(oss,
+                         PrintFormat::precision,
+                         PrintFormat::scientific,
+                         PrintFormat::width,
+                         PrintFormat::zero_string,
+                         PrintFormat::denominator,
+                         PrintFormat::threshold);
+  oss << "Reference matrix:\n";
+  other.print_formatted(oss,
+                        PrintFormat::precision,
+                        PrintFormat::scientific,
+                        PrintFormat::width,
+                        PrintFormat::zero_string,
+                        PrintFormat::denominator,
+                        PrintFormat::threshold);
+  auto diff(matrix);
+  diff.add(-1., other);
+  const double n_entries = other.m() * other.n();
+  EXPECT_PRED_FORMAT2(testing::FloatLE,
+                      diff.frobenius_norm(),
+                      std::numeric_limits<Number>::epsilon() *
+                        std::max(100. * n_entries, other.frobenius_norm()))
+    << oss.str();
+  pcout << oss.str();
+}
+
+/// Compare inverse matrix by multiplying with reference matrix, both of
+/// FullMatrix type
+template<typename Number>
+void
+compare_inverse_matrix(const FullMatrix<Number> & inverse_matrix,
+                       const FullMatrix<Number> & other,
+                       const ConditionalOStream & pcout = ConditionalOStream(std::cout, true))
+{
+  LAPACKFullMatrix<Number> lapack_other;
+  lapack_other.reinit(other.m());
+  lapack_other = other;
+  lapack_other.compute_inverse_svd();
+  const auto & lapack_other_as_table = Tensors::lapack_matrix_to_table(lapack_other);
+  const auto   inverse_other         = table_to_fullmatrix(lapack_other_as_table);
+
+  std::ostringstream oss;
+  oss << "Inverse matrix:\n";
+  inverse_matrix.print_formatted(oss,
+                                 PrintFormat::precision,
+                                 PrintFormat::scientific,
+                                 PrintFormat::width,
+                                 PrintFormat::zero_string,
+                                 PrintFormat::denominator,
+                                 PrintFormat::threshold);
+  oss << "Reference inverse matrix (LAPACK):\n";
+  inverse_other.print_formatted(oss,
+                                PrintFormat::precision,
+                                PrintFormat::scientific,
+                                PrintFormat::width,
+                                PrintFormat::zero_string,
+                                PrintFormat::denominator,
+                                PrintFormat::threshold);
+
+  FullMatrix<Number> id(inverse_matrix.m(), inverse_matrix.n());
+  inverse_matrix.mmult(id, other);
+  oss << "A^{-1} A:\n";
+  id.print_formatted(oss,
+                     PrintFormat::precision,
+                     PrintFormat::scientific,
+                     PrintFormat::width,
+                     PrintFormat::zero_string,
+                     PrintFormat::denominator,
+                     PrintFormat::threshold);
+  const double n_entries = id.m() * id.n();
+  for(auto i = 0U; i < id.m(); ++i)
+  {
+    EXPECT_NEAR(id(i, i), 1., std::numeric_limits<Number>::epsilon() * 100. * n_entries);
+    for(auto j = 0U; j < id.m(); ++j)
+      if(i != j)
+        EXPECT_NEAR(id(i, j),
+                    std::numeric_limits<Number>::epsilon(),
+                    std::numeric_limits<Number>::epsilon() * 100. * n_entries);
+  }
+  pcout << oss.str();
+}
+
 /// Convert any array-type into a tuple
 template<typename Array, std::size_t... I>
 auto
@@ -60,7 +168,7 @@ constexpr auto
 make_array(Ts... args)
 {
   static_assert(std::conjunction_v<std::is_convertible<T, Ts>...>,
-                "One type in Ts is not convertible to T.");
+                "At least one type in Ts is not convertible to T.");
   std::array<T, sizeof...(Ts)> array = {args...};
   return array;
 }

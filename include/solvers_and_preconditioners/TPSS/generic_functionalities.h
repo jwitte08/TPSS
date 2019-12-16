@@ -46,18 +46,32 @@ operator/(const Utilities::MPI::MinMaxAvg & mma_in, const double t)
   return mma;
 }
 
-double
-random_value()
+
+template<typename Number = double>
+Number
+make_random_value()
 {
-  return static_cast<double>(rand()) / RAND_MAX;
+  return static_cast<Number>(rand()) / RAND_MAX;
 }
+
+
+template<>
+VectorizedArray<double>
+make_random_value()
+{
+  VectorizedArray<double> value;
+  for(auto lane = 0U; lane < VectorizedArray<double>::n_array_elements; ++lane)
+    value[lane] = make_random_value<double>();
+  return value;
+}
+
 
 template<typename VectorType>
 void
 fill_with_random_values(VectorType & vec)
 {
   for(auto it = vec.begin(); it != vec.end(); ++it)
-    *it = random_value();
+    *it = make_random_value();
 }
 
 
@@ -67,6 +81,26 @@ fill_with_random_values(ArrayView<ElementType> view)
 {
   for(auto it = view.begin(); it != view.end(); ++it)
     *it = (double)rand() / RAND_MAX;
+}
+
+
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+void
+fill_matrix_with_random_values(MatrixType & matrix)
+{
+  fill_matrix_with_random_values<MatrixType, Number>(matrix, matrix.m(), matrix.n());
+}
+
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+void
+fill_matrix_with_random_values(MatrixType &       matrix,
+                               const unsigned int n_rows,
+                               const unsigned int n_cols)
+{
+  matrix.reinit(n_rows, n_cols);
+  for(unsigned int i = 0; i < n_rows; ++i)
+    for(unsigned int j = 0; j < n_cols; ++j)
+      matrix(i, j) = make_random_value<Number>();
 }
 
 

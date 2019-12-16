@@ -34,8 +34,7 @@ template<int dim, int fe_degree, typename value_type = double>
 void
 test(const TestParameter & prms = TestParameter{})
 {
-  using LinElasticityOperator = typename LinElasticity::
-    ModelProblem<dim, fe_degree, value_type, /*n_patch_dofs_per_direction*/ -1>;
+  using LinElasticityOperator = typename LinElasticity::ModelProblem<dim, fe_degree, value_type>;
 
   RT::Parameter rt_parameters;
   //: discretization
