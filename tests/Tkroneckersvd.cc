@@ -4,8 +4,7 @@
 #include "solvers_and_preconditioners/TPSS/kroneckersvd.h"
 #include "solvers_and_preconditioners/TPSS/tensors.h"
 
-void
-printTable(Table<2, VectorizedArray<double>> tab)
+void printTable(Table<2, VectorizedArray<double>> tab)
 {
   constexpr std::size_t macro_size = VectorizedArray<double>::n_array_elements;
   std::size_t           m          = tab.size()[0];
@@ -27,8 +26,7 @@ printTable(Table<2, VectorizedArray<double>> tab)
 
 
 template<typename Number>
-bool
-operator==(Table<2, Number> tab1, Table<2, Number> tab2)
+bool operator==(Table<2, Number> tab1, Table<2, Number> tab2)
 {
   AssertDimension(tab1.size()[0], tab2.size()[0]);
   AssertDimension(tab1.size()[1], tab2.size()[1]);
