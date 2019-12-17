@@ -10,6 +10,7 @@
 
 #include <deal.II/base/table.h>
 #include <deal.II/lac/lapack_full_matrix.h>
+#include "alignedlinalg.h"
 
 using namespace dealii;
 
@@ -23,152 +24,6 @@ reshuffle_diag_index(std::size_t i, std::size_t big_m, std::size_t small_m)
 	std::size_t sub_i   = i % small_m;
 	return {block_i * (big_m + 1), sub_i * (small_m + 1)};
 }
-
-// Calculate inner product of two AlignedVectors
-template<typename Number>
-Number
-inner_product(const AlignedVector<Number> & in1, const AlignedVector<Number> & in2)
-{
-	AssertDimension(in1.size(), in2.size());
-	Number ret = Number(0);
-	for(std::size_t i = 0; i < in1.size(); i++)
-		ret += in1[i] * in2[i];
-	return ret;
-}
-
-
-// Add two Tables
-template<typename Number>
-Table<2,Number>
-matrix_addition(const Table<2,Number> & in1, const Table<2,Number> & in2)
-{
-	AssertDimension(in1.size()[0], in2.size()[0]);
-	AssertDimension(in1.size()[1], in2.size()[1]);
-	Table<2,Number> ret = Table<2,Number>(in1);
-	for(std::size_t i = 0; i < in1.size()[0]; i++)
-		for(std::size_t j = 0; j < in1.size()[1]; j++)
-			ret(i,j) = in1(i,j) + in2(i,j);
-	return ret;
-}
-// Add two AlignedVectors
-template<typename Number>
-AlignedVector<Number>
-vector_addition(const AlignedVector<Number> & in1, const AlignedVector<Number> & in2)
-{
-	AssertDimension(in1.size(), in2.size());
-	AlignedVector<Number> ret = AlignedVector<Number>(in1);
-	for(std::size_t i = 0; i < in1.size(); i++)
-		ret[i] = in1[i] + in2[i];
-	return ret;
-}
-
-
-// Multiply AlignedVector with scalar
-template<typename Number>
-AlignedVector<Number>
-vector_scaling(const AlignedVector<Number> & in, const Number & scalar)
-{
-	AlignedVector<Number> ret = AlignedVector<Number>(in);
-	for(std::size_t i = 0; i < in.size(); i++)
-		ret[i] = in[i] * scalar;
-	return ret;
-}
-
-
-/*
-  Divide AlignedVector by scalar, if vector is zero allow scalar to be zero.
-  Alowing this makes it possible to simultaneously execute a Lanczos algorithm
-  on matrices with different Kronecker rank. We check for zero, so for
-  vectorizedarrays we need to do it comonent wise
-*/
-template<typename Number>
-AlignedVector<VectorizedArray<Number>>
-vector_inverse_scaling(const AlignedVector<VectorizedArray<Number>> & in,
-                       const VectorizedArray<Number> &                scalar)
-{
-	AlignedVector<VectorizedArray<Number>> ret(in.size());
-
-	constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
-	for(std::size_t lane = 0; lane < macro_size; lane++)
-	{
-		for(std::size_t i = 0; i < in.size(); i++)
-		{
-			if(std::abs(scalar[lane]) >=
-			   std::numeric_limits<Number>::epsilon() * std::abs(scalar[lane] + in[i][lane]))
-				ret[i][lane] = in[i][lane] / scalar[lane];
-			else
-			{
-				ret[i][lane] = 0;
-			}
-		}
-	}
-	return ret;
-}
-
-
-// Divide AlignedVector by scalar, if vector is zero allow scalar to be zero
-template<typename Number>
-AlignedVector<Number>
-vector_inverse_scaling(const AlignedVector<Number> & in, const Number & scalar)
-{
-	AlignedVector<Number> ret(in.size());
-	for(std::size_t i = 0; i < in.size(); i++)
-	{
-		if(std::abs(scalar) >= std::numeric_limits<Number>::epsilon() * std::abs(scalar + in[i]))
-			ret[i] = in[i] / scalar;
-		else
-		{
-			ret[i] = 0;
-		}
-	}
-	return ret;
-}
-
-
-// Multiply Matrix by Matrix
-template<typename Number>
-Table<2, Number>
-matrix_multiplication(const Table<2, Number> & in1, const Table<2, Number> & in2)
-{
-	AssertDimension(in1.size()[1], in2.size()[0]);
-	Table<2, Number> ret(in1.size()[0], in2.size()[1]);
-	for(std::size_t i = 0; i < in1.size()[0]; i++)
-		for(std::size_t j = 0; j < in2.size()[1]; j++)
-			for(std::size_t k = 0; k < in2.size()[0]; k++)
-				ret(i, j) += in1(i, k) * in2(k, j);
-	return ret;
-}
-
-
-// Multiply transpose of Matrix by Matrix
-template<typename Number>
-Table<2, Number>
-matrix_transpose_multiplication(const Table<2, Number> & in1, const Table<2, Number> & in2)
-{
-	AssertDimension(in1.size()[0], in2.size()[0]);
-	Table<2, Number> ret(in1.size()[1], in2.size()[1]);
-	for(std::size_t i = 0; i < in1.size()[1]; i++)
-		for(std::size_t j = 0; j < in2.size()[1]; j++)
-			for(std::size_t k = 0; k < in2.size()[0]; k++)
-				ret(i, j) += in1(k, i) * in2(k, j);
-	return ret;
-}
-
-
-// Flatten Table to AlignedVector
-template<typename Number>
-AlignedVector<Number>
-vectorize_matrix(const Table<2, Number> & tab)
-{
-	std::size_t           m = tab.size()[0];
-	std::size_t           n = tab.size()[1];
-	AlignedVector<Number> ret(m * n);
-	for(std::size_t k = 0; k < m; k++)
-		for(std::size_t l = 0; l < n; l++)
-			ret[k * n + l] = tab(k, l);
-	return ret;
-}
-
 
 // Calculate the product of a Rank 1 matrix, given as dyadic product of two
 // vectors, with a vector: (in⊗inT)vec where ⊗ is the dyadic product
@@ -246,46 +101,6 @@ orthogonalize(std::vector<AlignedVector<Number>> & vectors)
 }
 
 
-// For vectorizedarray check if > holds for all elements
-template<typename Number>
-bool
-operator>(VectorizedArray<Number> a, VectorizedArray<Number> b)
-{
-	constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
-	for(std::size_t lane = 0; lane < macro_size; lane++)
-		if(a[lane] <= b[lane])
-			return false;
-	return true;
-}
-
-
-// For vectorizedarray check if > holds for all elements
-template<typename Number>
-bool
-operator>(VectorizedArray<Number> a, Number b)
-{
-	constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
-	for(std::size_t lane = 0; lane < macro_size; lane++)
-		if(a[lane] <= b)
-			return false;
-	return true;
-}
-
-
-namespace std
-{
-	template<typename Number>
-	class numeric_limits<VectorizedArray<Number>>
-	{
-	public:
-		static Number
-		epsilon()
-			{
-				return numeric_limits<Number>::epsilon();
-			};
-	};
-} // namespace std
-
 
 // compute svd of bidiagonal matrix
 template<typename Number>
@@ -303,109 +118,14 @@ bidiagonal_svd(const AlignedVector<Number> & diagonal,
 	AssertDimension(base_len, singular_values.size());
 	AssertDimension(base_len, VT.size()[0]);
 	AssertDimension(base_len, VT.size()[1]);
-	LAPACKFullMatrix<Number> bidiag_mat(base_len, base_len);
+	Table<2, Number> bidiag_mat(base_len, base_len);
 	for(std::size_t i = 0; i < base_len; i++)
 	{
 		bidiag_mat(i, i) = diagonal[i];
 		if(i < base_len - 1)
 			bidiag_mat(i, i + 1) = upper_diagonal[i];
 	}
-	bidiag_mat.compute_svd();
-	LAPACKFullMatrix<Number> U_  = bidiag_mat.get_svd_u();
-	LAPACKFullMatrix<Number> VT_ = bidiag_mat.get_svd_vt();
-	for(std::size_t i = 0; i < base_len; i++)
-		for(std::size_t j = 0; j < base_len; j++)
-		{
-			U(i, j)            = U_(i, j);
-			VT(i, j)           = VT_(i, j);
-			singular_values[i] = bidiag_mat.singular_value(i);
-		}
-}
-
-
-// compute lane-wise svd of bidiagonal matrix
-template<typename Number>
-void
-bidiagonal_svd(const AlignedVector<VectorizedArray<Number>> & diagonal,
-               const AlignedVector<VectorizedArray<Number>> & upper_diagonal,
-               Table<2, VectorizedArray<Number>> &            U,
-               AlignedVector<VectorizedArray<Number>> &       singular_values,
-               Table<2, VectorizedArray<Number>> &            VT)
-{
-	constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
-	std::size_t           base_len   = diagonal.size();
-	AlignedVector<Number> diag(base_len);
-	AlignedVector<Number> updiag(base_len - 1);
-	AlignedVector<Number> sing_values(base_len);
-	Table<2, Number>      U_(base_len, base_len);
-	Table<2, Number>      VT_(base_len, base_len);
-	for(std::size_t lane = 0; lane < macro_size; lane++)
-	{
-		for(std::size_t i = 0; i < base_len; i++)
-		{
-			diag[i] = diagonal[i][lane];
-			if(i < base_len - 1)
-				updiag[i] = upper_diagonal[i][lane];
-		}
-		bidiagonal_svd(diag, updiag, U_, sing_values, VT_);
-		for(std::size_t i = 0; i < base_len; i++)
-		{
-			for(std::size_t j = 0; j < base_len; j++)
-			{
-				U(i, j)[lane]  = U_(i, j);
-				VT(i, j)[lane] = VT_(i, j);
-			}
-			singular_values[i][lane] = sing_values[i];
-		}
-	}
-}
-
-template<typename Number>
-void
-printTable(Table<2, Number> tab)
-{
-	std::size_t           m          = tab.size()[0];
-	std::size_t           n          = tab.size()[1];
-	std::cout << "------------------------------------\n";
-	for(std::size_t i = 0; i < m; i++)
-	{
-		for(std::size_t j = 0; j < n; j++)
-			std::cout << ((int)(tab(i, j) * 100 + 0.5)) / 100.0 << "\t";
-		std::cout << "\n";
-	}
-	std::cout << "------------------------------------\n";
-}
-
-template<typename Number>
-void
-printTable(Table<2, VectorizedArray<Number>> tab)
-{
-	constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
-	std::size_t           m          = tab.size()[0];
-	std::size_t           n          = tab.size()[1];
-	std::cout << "------------------------------------\n";
-	for(std::size_t lane = 0; lane < macro_size; lane++)
-	{
-		std::cout << "-----------------\n";
-		for(std::size_t i = 0; i < m; i++)
-		{
-			for(std::size_t j = 0; j < n; j++)
-				std::cout << ((int)(tab(i, j)[lane] * 100 + 0.5)) / 100.0 << "\t";
-			std::cout << "\n";
-		}
-		std::cout << "-----------------\n";
-	}
-	std::cout << "------------------------------------\n";
-}
-template<typename Number>
-void
-printAlignedVector(AlignedVector<Number> vec)
-{
-	std::size_t           m          = vec.size();
-	std::cout << "------------------------------------\n";
-	for(std::size_t i = 0; i < m; i++)
-		std::cout << ((int)(vec[i] * 100 + 0.5)) / 100.0 << "\t";
-	std::cout << "------------------------------------\n";
+	svd(bidiag_mat,U,singular_values,VT);
 }
 
 template<typename Number>
