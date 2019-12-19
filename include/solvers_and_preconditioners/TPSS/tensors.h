@@ -322,6 +322,42 @@ product(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
   return prod_of_tensors;
 }
 
+template<typename Number>
+bool
+is_nearly_zero_value(const Number & value)
+{
+  using scalar_value_type = typename ExtractScalarType<Number>::type;
+  static constexpr scalar_value_type threshold =
+    std::numeric_limits<scalar_value_type>::epsilon() * 100.;
+
+  bool is_nearly_zero = true;
+  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+  {
+    const double scalar = scalar_value(value, lane);
+    is_nearly_zero &= std::abs(scalar) < threshold;
+  }
+  return is_nearly_zero;
+}
+
+template<typename Number>
+bool
+is_nearly_zero(const Table<2, Number> & matrix)
+{
+  const auto           m     = matrix.size(0);
+  const auto           n     = matrix.size(1);
+  const Number * const begin = &(matrix(0, 0));
+  const Number * const end   = std::next(&(matrix(m - 1, n - 1)));
+  return std::all_of(begin, end, is_nearly_zero_value<Number>);
+}
+
+template<int N, typename Number>
+bool
+is_nearly_zero(const std::array<Table<2, Number>, N> & array)
+{
+  return std::all_of(array.cbegin(), array.cend(), is_nearly_zero<Number>);
+}
+
+
 /**
  * Computes the sum of two equally sized matrices. Each input
  * MatrixType must contain at least the operator(n,m) to acces the
