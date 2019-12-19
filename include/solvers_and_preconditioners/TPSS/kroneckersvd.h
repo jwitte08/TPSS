@@ -8,6 +8,7 @@
 #ifndef KRONECKERSVD_H_
 #define KRONECKERSVD_H_
 
+#include <deal.II/base/array_view.h>
 #include <deal.II/base/table.h>
 #include <deal.II/lac/lapack_full_matrix.h>
 
@@ -184,7 +185,8 @@ rankk_vector_multiplication(const std::vector<AlignedVector<Number>> & in,
     ret = vector_addition(ret, rank1_vector_multiplication(in[i], inT[i], vec));
   return ret;
 }
-//calculates matrix-vector product of a reshuffled diagonal matrix with a vector, big_m and small_m of the wanted kronecker structure are passed to have correct reshuffling
+// calculates matrix-vector product of a reshuffled diagonal matrix with a vector, big_m and small_m
+// of the wanted kronecker structure are passed to have correct reshuffling
 template<typename Number>
 AlignedVector<Number>
 reshuffled_diag_vector_multiplication(const AlignedVector<Number> & diagonal,
@@ -201,7 +203,8 @@ reshuffled_diag_vector_multiplication(const AlignedVector<Number> & diagonal,
   }
   return ret;
 }
-//calculates matrix-vector product of a transposed reshuffled diagonal matrix with a vector, big_m and small_m of the wanted kronecker structure are passed to have correct reshuffling
+// calculates matrix-vector product of a transposed reshuffled diagonal matrix with a vector, big_m
+// and small_m of the wanted kronecker structure are passed to have correct reshuffling
 
 template<typename Number>
 AlignedVector<Number>
@@ -347,6 +350,21 @@ bidiagonal_svd(const AlignedVector<VectorizedArray<Number>> & diagonal,
   }
 }
 
+template<int dim, typename Number>
+void
+reverse_tensors(const ArrayView<std::array<Table<2, Number>, dim>> tensors)
+{
+  for(auto & tensor : tensors)
+    std::reverse(tensor.begin(), tensor.end());
+}
+
+template<int dim, typename Number, int rank>
+void reverse_tensors(std::array<std::array<Table<2, Number>, dim>, rank> & tensors)
+{
+  const auto view =
+    make_array_view<std::array<Table<2, Number>, dim>>(tensors.begin(), tensors.end());
+  reverse_tensors<dim, Number>(view);
+}
 
 /*
   Compute the low Kronecker rank approximation, i.e. the ksvd, of a matrix of
@@ -434,6 +452,7 @@ compute_ksvd(const std::vector<std::array<Table<2, Number>, dim>> &    in,
     Table<2, Number> left_singular_vectors  = matrix_transpose_multiplication(tildeU, U);
     Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
 
+    /// TODO mismatch between out_rank and base_len
     for(std::size_t i = 0; i < out_rank; i++)
     {
       for(std::size_t k = 0; k < big_m; k++)
@@ -520,6 +539,7 @@ compute_ksvd(AlignedVector<Number> &                                   in,
     Table<2, Number> left_singular_vectors  = matrix_transpose_multiplication(tildeU, U);
     Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
 
+    /// TODO mismatch between out_rank and base_len
     for(std::size_t i = 0; i < out_rank; i++)
     {
       for(std::size_t k = 0; k < big_m; k++)
@@ -532,4 +552,30 @@ compute_ksvd(AlignedVector<Number> &                                   in,
     }
   }
 }
+
+/// TODO
+template<int dim, typename Number, int out_rank>
+void
+compute_ksvd_reverse(AlignedVector<Number> &                                   in,
+                     std::array<std::array<Table<2, Number>, dim>, out_rank> & out, // A1 x A0
+                     const std::size_t lanczos_iterations = out_rank * out_rank + 10)
+{
+  reverse_tensors<dim, Number, out_rank>(out); // A0 x A1
+  compute_ksvd<dim, Number, out_rank>(in, out, lanczos_iterations);
+  reverse_tensors<dim, Number, out_rank>(out); // A1 x A0
+}
+
+/// TODO
+template<int dim, typename Number, int out_rank>
+void compute_ksvd_reverse(std::vector<std::array<Table<2, Number>, dim>> &          in,
+                          std::array<std::array<Table<2, Number>, dim>, out_rank> & out, // A1 x A0
+                          const std::size_t lanczos_iterations = out_rank * out_rank + 10)
+{
+  const auto in_view = make_array_view<std::array<Table<2, Number>, dim>>(in);
+  reverse_tensors<dim, Number>(in_view);       // A0 x A1
+  reverse_tensors<dim, Number, out_rank>(out); // A0 x A1
+  compute_ksvd<dim, Number, out_rank>(in, out, lanczos_iterations);
+  reverse_tensors<dim, Number, out_rank>(out); // A1 x A0
+}
+
 #endif
