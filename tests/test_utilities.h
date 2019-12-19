@@ -126,6 +126,33 @@ compare_inverse_matrix(const FullMatrix<Number> & inverse_matrix,
   pcout << oss.str();
 }
 
+/// Compare inverse matrix by multiplying with reference matrix, both of
+/// FullMatrix type
+template<typename Number>
+void
+compare_vector(const Vector<Number> &     vector,
+               const Vector<Number> &     other,
+               const ConditionalOStream & pcout = ConditionalOStream(std::cout, true))
+{
+  AssertDimension(vector.size(), other.size());
+  std::ostringstream oss;
+  oss << "Vector:\n";
+  vector.print(oss, PrintFormat::precision, PrintFormat::scientific);
+  oss << "Reference vector:\n";
+  other.print(oss, PrintFormat::precision, PrintFormat::scientific);
+  for(auto i = 0U; i < vector.size(); ++i)
+  {
+    const auto value       = vector[i];
+    const auto other_value = other[i];
+    const auto diff        = std::abs(value - other_value);
+    EXPECT_PRED_FORMAT2(testing::FloatLE,
+                        diff,
+                        std::numeric_limits<Number>::epsilon() * std::max(100., other_value))
+      << oss.str();
+  }
+  pcout << oss.str();
+}
+
 /// Convert any array-type into a tuple
 template<typename Array, std::size_t... I>
 auto
