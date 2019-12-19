@@ -147,7 +147,7 @@ compare_vector(const Vector<Number> &     vector,
     const auto diff        = std::abs(value - other_value);
     EXPECT_PRED_FORMAT2(testing::FloatLE,
                         diff,
-                        std::numeric_limits<Number>::epsilon() * std::max(100., other_value))
+                        std::numeric_limits<Number>::epsilon() * std::max(1000., other_value))
       << oss.str();
   }
   pcout << oss.str();
