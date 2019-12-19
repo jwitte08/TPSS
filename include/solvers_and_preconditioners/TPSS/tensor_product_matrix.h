@@ -135,6 +135,16 @@ public:
   }
 
   void
+  clear()
+  {
+    tmp_array.clear();
+    basic_inverse.reset();
+    state = State::invalid;
+    elementary_tensors.clear();
+    /// TODO clear underlying TensorProductMatrixSymmetricSum
+  }
+
+  void
   reinit(const std::vector<std::array<Table<2, Number>, order>> & elementary_tensors_in,
          const State                                              state_in = State::basic)
   {
@@ -165,6 +175,8 @@ public:
         elementary_tensors_in.size() == 2,
         ExcMessage(
           "Two tensors are required, namely a tensor of mass matrices and a tensor of derivative matrices."));
+      /// TODO avoid duplication
+      // elementary_tensor = elementary_tensor_in;
       SKDMatrix::reinit(elementary_tensors_in[0], elementary_tensors_in[1]);
     }
 
@@ -172,14 +184,59 @@ public:
       AssertThrow(false, ExcMessage("Invalid state at initialization."));
   }
 
-  void
-  clear()
+  AlignedVector<Number>
+  get_eigenvalues() const
   {
-    tmp_array.clear();
-    basic_inverse.reset();
-    state = State::invalid;
-    elementary_tensors.clear();
-    /// TODO clear underlying TensorProductMatrixSymmetricSum
+    AssertThrow(state == State::skd, ExcMessage("Not implemented."));
+    AlignedVector<Number>           eigenvalues(m());
+    const auto &                    evs_1d = SKDMatrix::eigenvalues;
+    std::array<unsigned int, order> sizes;
+    std::transform(evs_1d.cbegin(), evs_1d.cend(), sizes.begin(), [](const auto & evs) {
+      return evs.size();
+    });
+    for(unsigned int i = 0; i < eigenvalues.size(); ++i)
+    {
+      const auto & ii     = uni_to_multiindex<order>(i, sizes);
+      Number       lambda = evs_1d[0][ii[0]];
+      for(auto d = 1; d < order; ++d)
+        lambda += evs_1d[d][ii[d]];
+      eigenvalues[i] = lambda;
+    }
+
+    return eigenvalues;
+  }
+
+  const std::array<Table<2, Number>, order> &
+  get_eigenvectors() const
+  {
+    AssertThrow(state == State::skd, ExcMessage("Not implemented."));
+    return this->eigenvectors;
+  }
+
+  std::vector<std::array<Table<2, Number>, order>>
+  get_elementary_tensors() const
+  {
+    if(state == State::skd)
+    {
+      std::vector<std::array<Table<2, Number>, order>> tensors(order);
+      const auto &                                     mass       = this->mass_matrix;
+      const auto &                                     derivative = this->derivative_matrix;
+      for(auto i = 0U; i < order; ++i)
+      {
+        auto & tensor = tensors[i];
+        for(auto j = 0U; j < order; ++j)
+          tensor[j] = i == j ? derivative[j] : mass[j];
+      }
+      return tensors;
+    }
+    Assert(state != State::invalid, ExcMessage("Invalid State"));
+    return elementary_tensors;
+  }
+
+  State
+  get_state() const
+  {
+    return state;
   }
 
   unsigned int
@@ -202,6 +259,16 @@ public:
     const unsigned int n_left  = left(0).size(1);
     const unsigned int n_right = right(0).size(1);
     return n_left * n_right;
+  }
+
+  unsigned int
+  m(unsigned int dimension) const
+  {
+    AssertIndexRange(dimension, order);
+    if(state == State::skd)
+      return SKDMatrix::eigenvalues[dimension].size();
+    Assert(elementary_tensors.size() > 0, ExcMessage("Not initialized."));
+    return elementary_tensors.front()[dimension].n_rows();
   }
 
   void
