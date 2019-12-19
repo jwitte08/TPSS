@@ -47,6 +47,26 @@ operator/(const Utilities::MPI::MinMaxAvg & mma_in, const double t)
 }
 
 
+template<typename Number>
+Number
+scalar_value(const Number & value, const unsigned int /*dummy*/ = 0)
+{
+  using UnvectorizedNumber = typename ExtractScalarType<Number>::type;
+  static_assert(std::is_same<Number, UnvectorizedNumber>::value == true,
+                "Implemented for unvectorized number type.");
+  return value;
+}
+
+
+template<typename Number>
+Number
+scalar_value(const VectorizedArray<Number> & value, const unsigned int lane = 0)
+{
+  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
+  return value[lane];
+}
+
+
 template<typename Number = double>
 Number
 make_random_value()
