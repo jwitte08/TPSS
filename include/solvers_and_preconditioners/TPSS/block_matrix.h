@@ -70,44 +70,13 @@ public:
     const auto   minus_C_Ainv_B = Tensors::product<order, Number>(C_tensors, minus_Ainv);
     auto         schur_tensors  = D_in.get_elementary_tensors();
     std::copy(minus_C_Ainv_B.cbegin(), minus_C_Ainv_B.cend(), std::back_inserter(schur_tensors));
-
-    // /// compute the KSVD of the inverse eigenvalues
-    // auto                      eigenvalues = A_in.get_eigenvalues();
-    // AlignedVector<value_type> inverse_eigenvalues(eigenvalues.size());
-    // std::transform(eigenvalues.begin(),
-    //                eigenvalues.end(),
-    //                inverse_eigenvalues.begin(),
-    //                [](const auto & lambda) { return static_cast<Number>(1. / lambda); });
-    // std::array<std::array<Table<2, Number>, order>, rank> ksvd_eigenvalues_;
-    // for(auto & tensor : ksvd_eigenvalues_)
-    //   for(auto d = 0U; d < order; ++d)
-    //     tensor[d].reinit(A_in.m(d), A_in.m(d));
-    // compute_ksvd_reverse<order, Number, rank>(inverse_eigenvalues, ksvd_eigenvalues_);
-
-    // /// compute the Schur complement S defined by elementary tensors
-    // std::vector<std::array<Table<2, Number>, order>> eigenvectors(1), eigenvectorsT(1),
-    //   ksvd_eigenvalues;
-    // std::copy(ksvd_eigenvalues_.cbegin(),
-    //           ksvd_eigenvalues_.cend(),
-    //           std::back_inserter(ksvd_eigenvalues));
-    // eigenvectorsT.front() = A_in.get_eigenvectors();
-    // std::transform(eigenvectorsT.front().cbegin(),
-    //                eigenvectorsT.front().cend(),
-    //                eigenvectors.front().begin(),
-    //                [](const auto & tab) { return transpose(tab); });
-    // eigenvectors.front().front()        = scale(-1., eigenvectors.front().front());
-    // const auto B_tensors                = B_in.get_elementary_tensors();
-    // const auto C_tensors                = C_in.get_elementary_tensors();
-    // const auto QT_x_B                   = product<order, Number>(eigenvectorsT, B_tensors);
-    // const auto Lambda_x_QT_x_B          = product<order, Number>(ksvd_eigenvalues, QT_x_B);
-    // const auto minusQ_x_Lambda_x_QT_x_B = product<order, Number>(eigenvectors, Lambda_x_QT_x_B);
-    // const auto minusC_x_Q_x_Lambda_x_QT_x_B =
-    //   product<order, Number>(C_tensors, minusQ_x_Lambda_x_QT_x_B);
-    // auto schur_tensors = D_in.get_elementary_tensors();
-    // std::copy(minusC_x_Q_x_Lambda_x_QT_x_B.cbegin(),
-    //           minusC_x_Q_x_Lambda_x_QT_x_B.cend(),
-    //           std::back_inserter(schur_tensors));
-
+    // TODO without copy !?
+    std::vector<std::array<Table<2, Number>, order>> tmp;
+    std::remove_copy_if(schur_tensors.cbegin(),
+                        schur_tensors.cend(),
+                        std::back_inserter(tmp),
+                        Tensors::is_nearly_zero<order, Number>);
+    std::swap(schur_tensors, tmp);
     // /// DEBUG
     // std::cout << "right:" << std::endl;
     // for(const auto & tensor : schur_tensors)
@@ -124,13 +93,13 @@ public:
     compute_ksvd_reverse<2, Number, 2>(schur_tensors, ksvd_schur_);
 
     std::vector<std::array<Table<2, Number>, 2>> mass_and_derivative(2);
-    auto &                                       mass = mass_and_derivative[0];
-    mass[0]                                           = ksvd_schur_[0][0];
-    mass[1]                                           = ksvd_schur_[1][1];
-    auto & driv                                       = mass_and_derivative[1];
-    driv[0]                                           = ksvd_schur_[1][0];
-    driv[1]                                           = ksvd_schur_[0][1];
-
+    auto &                                       driv = mass_and_derivative[1];
+    driv[0]                                           = ksvd_schur_[0][0];
+    driv[1]                                           = ksvd_schur_[1][1];
+    auto & mass                                       = mass_and_derivative[0];
+    mass[0]                                           = ksvd_schur_[1][0];
+    mass[1]                                           = ksvd_schur_[0][1];
+    // /// DEBUG
     // const auto check_definiteness = [](auto & matrix) {
     //   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
     //   {
@@ -145,11 +114,12 @@ public:
     //     eigenvalues.print(std::cout);
     //   }
     // };
+    // std::cout << "eigenvalues of mass" << std::endl;
     // for(auto & matrix : mass)
     //   check_definiteness(matrix);
+    // std::cout << "eigenvalues of derivative" << std::endl;
     // for(auto & matrix : driv)
     //   check_definiteness(matrix);
-
     // /// DEBUG
     // std::cout << "mass" << std::endl;
     // for(const auto & tab : mass_and_derivative[0])
@@ -165,12 +135,6 @@ public:
     std::vector<std::array<Table<2, Number>, order>> ksvd_schur;
     std::copy(ksvd_schur_.cbegin(), ksvd_schur_.cend(), std::back_inserter(ksvd_schur));
     matrix_type::reinit(ksvd_schur);
-
-    // /// DEBUG
-    // std::cout << "schur" << std::endl;
-    // table_to_fullmatrix(this->as_table()).print_formatted(std::cout);
-    // std::cout << "inverse schur" << std::endl;
-    // table_to_fullmatrix(this->as_inverse_table()).print_formatted(std::cout);
   }
 };
 
@@ -291,7 +255,9 @@ private:
  *
  * where the inverse of S is the dominating complexity.
  */
-template<typename MatrixType, typename Number = typename MatrixType::value_type>
+template<typename MatrixType,
+         typename SchurType = SchurComplement<MatrixType>,
+         typename Number    = typename MatrixType::value_type>
 class BlockGaussianInverse
 {
 public:
@@ -304,6 +270,18 @@ public:
                        const matrix_type & D_in)
     : A(A_in), B(B_in), C(C_in), D(D_in), S(A_in, B_in, C_in, D_in)
   {
+  }
+
+  unsigned int
+  m() const
+  {
+    return A.n() + D.n();
+  }
+
+  unsigned int
+  n() const
+  {
+    return A.m() + D.m();
   }
 
   void
@@ -367,12 +345,18 @@ public:
     std::copy(src2_view_m1.cbegin(), src2_view_m1.cend(), dst_view.begin() + m0);
   }
 
+  Table<2, Number>
+  as_table() const
+  {
+    return Tensors::matrix_to_table(*this);
+  }
+
 private:
-  const matrix_type &         A;
-  const matrix_type &         B;
-  const matrix_type &         C;
-  const matrix_type &         D;
-  SchurComplement<MatrixType> S;
+  const matrix_type & A;
+  const matrix_type & B;
+  const matrix_type & C;
+  const matrix_type & D;
+  SchurType           S;
 };
 
 
