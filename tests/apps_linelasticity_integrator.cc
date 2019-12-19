@@ -3,6 +3,10 @@
  * Test linear elasticity integrators.
  *
  * 1) Comparison of MatrixFree and MeshWorker.
+ * 2) Comparison of MatrixFree and fast diagonal integrators
+ *    (a) block diagonal only
+ *    (b) exact inversion
+ *    (c) fast diagonalized inverse Schur complement WIP
  *
  *  Created on: Jun 27, 2019
  *      Author: witte
@@ -727,6 +731,26 @@ protected:
             table_to_fullmatrix(patch_matrix_vectorized.as_inverse_table(), lane);
           *pcout_owned << "Compare inverse patch matrix " << patch << "@ lane " << lane << ":\n";
           compare_inverse_matrix(patch_matrix_inverse, patch_matrix_reference);
+
+          using TensorProductMatrixType =
+            typename Tensors::TensorProductMatrix<dim, VectorizedArray<double>>;
+          using SchurType = typename Tensors::SchurComplementFast<dim, VectorizedArray<double>>;
+          Tensors::BlockGaussianInverse<TensorProductMatrixType, SchurType> Atilde_inv(
+            patch_matrix_vectorized.get_block(0, 0),
+            patch_matrix_vectorized.get_block(0, 1),
+            patch_matrix_vectorized.get_block(1, 0),
+            patch_matrix_vectorized.get_block(1, 1));
+          const auto Atilde_inv_full = table_to_fullmatrix(Atilde_inv.as_table(), lane);
+
+          FullMatrix<double> ID(IdentityMatrix(Atilde_inv.m())),
+            Diff(Atilde_inv.m(), Atilde_inv.n());
+          Atilde_inv_full.mmult(Diff, patch_matrix_reference);
+          Diff.add(-1., ID);
+          *pcout_owned << "||Atilde^{-1} A - ID||_frob / m*n : "
+                       << Diff.frobenius_norm() / (Diff.m() * Diff.n()) << std::endl;
+          *pcout_owned << "Compare inverse patch matrix (fast) " << patch << "@ lane " << lane
+                       << ":\n";
+          compare_matrix(Atilde_inv_full, patch_matrix_inverse);
         }
       }
     }
@@ -825,7 +849,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSAssemblyVertexPatch)
   Fixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant  = TPSS::PatchVariant::vertex;
   Fixture::rt_parameters.multigrid.post_smoother.schwarz.patch_variant = TPSS::PatchVariant::vertex;
 
-  // TODO vertex patches are not build for subdivided mesh ?!
+  /// TODO vertex patches are not build for subdivided mesh ?!
   // Fixture::rt_parameters.mesh.n_subdivisions.resize(Fixture::dim, 2);
   // Fixture::rt_parameters.mesh.n_subdivisions.at(0) = 3;
   // Fixture::params.n_refinements        = 2U;
