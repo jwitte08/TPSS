@@ -8,12 +8,173 @@
 #ifndef BLOCK_MATRIX_H_
 #define BLOCK_MATRIX_H_
 
+#include "kroneckersvd.h"
 #include "tensor_product_matrix.h"
 
 using namespace dealii;
 
 namespace Tensors
 {
+template<int order, typename Number, int rank = order, int n_rows_1d = -1>
+class SchurComplementFast : public TensorProductMatrix<order, Number, n_rows_1d>
+{
+public:
+  using matrix_type = TensorProductMatrix<order, Number, n_rows_1d>;
+  using value_type  = typename matrix_type::value_type;
+
+  SchurComplementFast(const matrix_type & A_in,
+                      const matrix_type & B_in,
+                      const matrix_type & C_in,
+                      const matrix_type & D_in)
+  {
+    static_assert(order == 2);
+    using State = typename matrix_type::State;
+    Assert(A_in.get_state() == State::skd, ExcMessage("Not a separable Kronecker decomposition."));
+
+    /// compute inverse eigenvalues
+    const auto            eigenvalues = A_in.get_eigenvalues();
+    AlignedVector<Number> inverse_eigenvalues(eigenvalues.size());
+    std::transform(eigenvalues.begin(),
+                   eigenvalues.end(),
+                   inverse_eigenvalues.begin(),
+                   [](const auto & lambda) { return static_cast<Number>(1. / lambda); });
+
+    /// compute KSVD of inverse eigenvalue matrix
+    std::vector<std::array<Table<2, Number>, order>>      ksvd_eigenvalues;
+    std::array<std::array<Table<2, Number>, order>, rank> ksvd_eigenvalues_;
+    for(auto & tensor : ksvd_eigenvalues_)
+      for(auto d = 0U; d < order; ++d)
+        tensor[d].reinit(A_in.m(d), A_in.m(d));
+    compute_ksvd_reverse<order, Number, rank>(inverse_eigenvalues, ksvd_eigenvalues_);
+    std::copy(ksvd_eigenvalues_.cbegin(),
+              ksvd_eigenvalues_.cend(),
+              std::back_inserter(ksvd_eigenvalues));
+
+    /// compute elementary tensors representing the approximation of -A^{-1}
+    std::vector<std::array<Table<2, Number>, order>> eigenvectors(1), eigenvectorsT(1);
+    eigenvectors.front() = A_in.get_eigenvectors();
+    std::transform(eigenvectors.front().cbegin(),
+                   eigenvectors.front().cend(),
+                   eigenvectorsT.front().begin(),
+                   [](const auto & tab) { return Tensors::transpose(tab); });
+    const auto Lambda_QT         = Tensors::product<order, Number>(ksvd_eigenvalues, eigenvectorsT);
+    eigenvectors.front().front() = Tensors::scale(-1., eigenvectors.front().front());
+    const auto   minus_Q_Lambda_QT = Tensors::product<order, Number>(eigenvectors, Lambda_QT);
+    const auto & minus_Ainv        = minus_Q_Lambda_QT;
+
+    /// compute elementary tensors representing the approximated Schur complement
+    ///    S = D - C * A^{-1} * B
+    const auto & B_tensors      = B_in.get_elementary_tensors();
+    const auto & C_tensors      = C_in.get_elementary_tensors();
+    const auto   minus_Ainv_B   = Tensors::product<order, Number>(minus_Ainv, B_tensors);
+    const auto   minus_C_Ainv_B = Tensors::product<order, Number>(C_tensors, minus_Ainv);
+    auto         schur_tensors  = D_in.get_elementary_tensors();
+    std::copy(minus_C_Ainv_B.cbegin(), minus_C_Ainv_B.cend(), std::back_inserter(schur_tensors));
+
+    // /// compute the KSVD of the inverse eigenvalues
+    // auto                      eigenvalues = A_in.get_eigenvalues();
+    // AlignedVector<value_type> inverse_eigenvalues(eigenvalues.size());
+    // std::transform(eigenvalues.begin(),
+    //                eigenvalues.end(),
+    //                inverse_eigenvalues.begin(),
+    //                [](const auto & lambda) { return static_cast<Number>(1. / lambda); });
+    // std::array<std::array<Table<2, Number>, order>, rank> ksvd_eigenvalues_;
+    // for(auto & tensor : ksvd_eigenvalues_)
+    //   for(auto d = 0U; d < order; ++d)
+    //     tensor[d].reinit(A_in.m(d), A_in.m(d));
+    // compute_ksvd_reverse<order, Number, rank>(inverse_eigenvalues, ksvd_eigenvalues_);
+
+    // /// compute the Schur complement S defined by elementary tensors
+    // std::vector<std::array<Table<2, Number>, order>> eigenvectors(1), eigenvectorsT(1),
+    //   ksvd_eigenvalues;
+    // std::copy(ksvd_eigenvalues_.cbegin(),
+    //           ksvd_eigenvalues_.cend(),
+    //           std::back_inserter(ksvd_eigenvalues));
+    // eigenvectorsT.front() = A_in.get_eigenvectors();
+    // std::transform(eigenvectorsT.front().cbegin(),
+    //                eigenvectorsT.front().cend(),
+    //                eigenvectors.front().begin(),
+    //                [](const auto & tab) { return transpose(tab); });
+    // eigenvectors.front().front()        = scale(-1., eigenvectors.front().front());
+    // const auto B_tensors                = B_in.get_elementary_tensors();
+    // const auto C_tensors                = C_in.get_elementary_tensors();
+    // const auto QT_x_B                   = product<order, Number>(eigenvectorsT, B_tensors);
+    // const auto Lambda_x_QT_x_B          = product<order, Number>(ksvd_eigenvalues, QT_x_B);
+    // const auto minusQ_x_Lambda_x_QT_x_B = product<order, Number>(eigenvectors, Lambda_x_QT_x_B);
+    // const auto minusC_x_Q_x_Lambda_x_QT_x_B =
+    //   product<order, Number>(C_tensors, minusQ_x_Lambda_x_QT_x_B);
+    // auto schur_tensors = D_in.get_elementary_tensors();
+    // std::copy(minusC_x_Q_x_Lambda_x_QT_x_B.cbegin(),
+    //           minusC_x_Q_x_Lambda_x_QT_x_B.cend(),
+    //           std::back_inserter(schur_tensors));
+
+    // /// DEBUG
+    // std::cout << "right:" << std::endl;
+    // for(const auto & tensor : schur_tensors)
+    //   table_to_fullmatrix(tensor[0], 0).print_formatted(std::cout);
+    // std::cout << "left:" << std::endl;
+    // for(const auto & tensor : schur_tensors)
+    //   table_to_fullmatrix(tensor[1], 0).print_formatted(std::cout);
+
+    /// compute the KSVD of the Schur matrix
+    std::array<std::array<Table<2, Number>, 2>, 2> ksvd_schur_;
+    for(auto & tensor : ksvd_schur_)
+      for(auto d = 0U; d < order; ++d)
+        tensor[d].reinit(A_in.m(d), A_in.m(d));
+    compute_ksvd_reverse<2, Number, 2>(schur_tensors, ksvd_schur_);
+
+    std::vector<std::array<Table<2, Number>, 2>> mass_and_derivative(2);
+    auto &                                       mass = mass_and_derivative[0];
+    mass[0]                                           = ksvd_schur_[0][0];
+    mass[1]                                           = ksvd_schur_[1][1];
+    auto & driv                                       = mass_and_derivative[1];
+    driv[0]                                           = ksvd_schur_[1][0];
+    driv[1]                                           = ksvd_schur_[0][1];
+
+    // const auto check_definiteness = [](auto & matrix) {
+    //   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+    //   {
+    //     using scalar_value_type                     = typename ExtractScalarType<Number>::type;
+    //     const auto                          fullmat = table_to_fullmatrix(matrix, lane);
+    //     LAPACKFullMatrix<scalar_value_type> mat(fullmat.m());
+    //     mat = fullmat;
+    //     Vector<std::complex<scalar_value_type>> eigenvalues(mat.m());
+    //     mat.compute_eigenvalues();
+    //     for(auto i = 0U; i < eigenvalues.size(); ++i)
+    //       eigenvalues[i] = mat.eigenvalue(i);
+    //     eigenvalues.print(std::cout);
+    //   }
+    // };
+    // for(auto & matrix : mass)
+    //   check_definiteness(matrix);
+    // for(auto & matrix : driv)
+    //   check_definiteness(matrix);
+
+    // /// DEBUG
+    // std::cout << "mass" << std::endl;
+    // for(const auto & tab : mass_and_derivative[0])
+    //   table_to_fullmatrix(tab, 0).print_formatted(std::cout);
+    // std::cout << "driv" << std::endl;
+    // for(const auto & tab : mass_and_derivative[1])
+    //   table_to_fullmatrix(tab, 0).print_formatted(std::cout);
+
+    /// initialize the separable Kronecker decomposition based on the
+    /// approximate Schur matrix @p ksvd_schur
+    // matrix_type::reinit(mass_and_derivative, State::skd);
+    /// ALTERNATIVE no fast diagonalization
+    std::vector<std::array<Table<2, Number>, order>> ksvd_schur;
+    std::copy(ksvd_schur_.cbegin(), ksvd_schur_.cend(), std::back_inserter(ksvd_schur));
+    matrix_type::reinit(ksvd_schur);
+
+    // /// DEBUG
+    // std::cout << "schur" << std::endl;
+    // table_to_fullmatrix(this->as_table()).print_formatted(std::cout);
+    // std::cout << "inverse schur" << std::endl;
+    // table_to_fullmatrix(this->as_inverse_table()).print_formatted(std::cout);
+  }
+};
+
+
 /**
  * Schur complement S = D - C * A^{-1} * B
  */
@@ -30,7 +191,6 @@ public:
                   const matrix_type & D_in)
     : A(A_in), B(B_in), C(C_in), D(D_in)
   {
-    Sinv.reinit(as_table());
   }
 
   unsigned int
@@ -82,7 +242,9 @@ public:
   void
   apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    Sinv.vmult(dst_view, src_view);
+    if(!Sinv)
+      Sinv = std::make_shared<VectorizedInverse<Number>>(as_table());
+    Sinv->vmult(dst_view, src_view);
   }
 
   Table<2, Number>
@@ -98,11 +260,11 @@ public:
   }
 
 private:
-  const matrix_type &       A;
-  const matrix_type &       B;
-  const matrix_type &       C;
-  const matrix_type &       D;
-  VectorizedInverse<Number> Sinv;
+  const matrix_type &                                      A;
+  const matrix_type &                                      B;
+  const matrix_type &                                      C;
+  const matrix_type &                                      D;
+  mutable std::shared_ptr<const VectorizedInverse<Number>> Sinv;
 
   /**
    * A mutex that guards access to the array @p tmp_array.
@@ -214,11 +376,11 @@ private:
 };
 
 
-template<int dim, typename Number, int n_rows_1d = -1>
+template<int order, typename Number, int n_rows_1d = -1>
 class BlockMatrix
 {
 public:
-  using matrix_type = TensorProductMatrix<dim, Number, n_rows_1d>;
+  using matrix_type = TensorProductMatrix<order, Number, n_rows_1d>;
   using value_type  = typename matrix_type::value_type;
 
   BlockMatrix() = default;
