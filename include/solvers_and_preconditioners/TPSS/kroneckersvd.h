@@ -190,6 +190,7 @@ unfold_rankk(std::vector<std::array<AlignedVector<Number>, 3>> polyadic_factors,
   values/vectors by using the Lanczos algorithm. The matricization of these
   singular vectors then is the low Kronecker rank approximation. The matrix M is
   passed in "in", and the low rank approximation is passed in "out"
+  to be consistent with dealII kroneckerproducts are passed as {B_i,A_i}
 */
 template<typename Number>
 void
@@ -204,16 +205,16 @@ compute_ksvd(const std::vector<std::array<Table<2, Number>, 2>> &    in,
 		lanczos_iterations = out_rank*out_rank+10;
 	}
 	
-	std::size_t                        big_m   = in[0][0].size()[0];
-	std::size_t                        big_n   = in[0][0].size()[1];
-	std::size_t                        small_m = in[0][1].size()[0];
-	std::size_t                        small_n = in[0][1].size()[1];
+	std::size_t                        big_m   = in[0][1].size()[0];
+	std::size_t                        big_n   = in[0][1].size()[1];
+	std::size_t                        small_m = in[0][0].size()[0];
+	std::size_t                        small_n = in[0][0].size()[1];
 	std::vector<AlignedVector<Number>> big_matrices_vectorized;
 	std::vector<AlignedVector<Number>> small_matrices_vectorized;
 	for(std::size_t i = 0; i < in_rank; i++)
 	{
-		small_matrices_vectorized.push_back(vectorize_matrix(in[i][1]));
-		big_matrices_vectorized.push_back(vectorize_matrix(in[i][0]));
+		small_matrices_vectorized.push_back(vectorize_matrix(in[i][0]));
+		big_matrices_vectorized.push_back(vectorize_matrix(in[i][1]));
 	}
 	AlignedVector<Number> beta;
 	beta.push_back(Number(1)); // we artificially introduce a first value for
@@ -277,10 +278,10 @@ compute_ksvd(const std::vector<std::array<Table<2, Number>, 2>> &    in,
 	{
 		for(std::size_t k = 0; k < big_m; k++)
 			for(std::size_t l = 0; l < big_n; l++)
-				out[i][0](k, l) = left_singular_vectors(i, k * big_n + l) * std::sqrt(singular_values[i]);
+				out[i][1](k, l) = left_singular_vectors(i, k * big_n + l) * std::sqrt(singular_values[i]);
 		for(std::size_t k = 0; k < small_m; k++)
 			for(std::size_t l = 0; l < small_n; l++)
-				out[i][1](k, l) =
+				out[i][0](k, l) =
 					right_singular_vectors(i, k * small_n + l) * std::sqrt(singular_values[i]);
 	}
 	
@@ -291,6 +292,7 @@ compute_ksvd(const std::vector<std::array<Table<2, Number>, 2>> &    in,
   values/vectors by using the Lanczos algorithm. The matricization of these
   singular vectors then is the low Kronecker rank approximation. The matrix M is
   passed in "in", and the low rank approximation is passed in "out"
+  to be consistent with dealII kroneckerproducts are passed as {B_i,A_i}
 */
 
 template<typename Number>
@@ -306,8 +308,8 @@ compute_ksvd(AlignedVector<Number> &                                   in,
 		lanczos_iterations = out_rank*out_rank+10;
 	}
 	
-	std::size_t           big_m   = out[0][0].size()[0];
-	std::size_t           small_m = out[0][1].size()[0];
+	std::size_t           big_m   = out[0][1].size()[0];
+	std::size_t           small_m = out[0][0].size()[0];
 	AlignedVector<Number> beta;
 	beta.push_back(Number(1)); // we artificially introduce a first value for
 	// beta to define beta.back()
@@ -367,10 +369,10 @@ compute_ksvd(AlignedVector<Number> &                                   in,
 	{
 		for(std::size_t k = 0; k < big_m; k++)
 			for(std::size_t l = 0; l < big_m; l++)
-				out[i][0](k, l) = left_singular_vectors(i, k * big_m + l) * std::sqrt(singular_values[i]);
+				out[i][1](k, l) = left_singular_vectors(i, k * big_m + l) * std::sqrt(singular_values[i]);
 		for(std::size_t k = 0; k < small_m; k++)
 			for(std::size_t l = 0; l < small_m; l++)
-				out[i][1](k, l) =
+				out[i][0](k, l) =
 					right_singular_vectors(i, k * small_m + l) * std::sqrt(singular_values[i]);
 	}
 }
