@@ -127,19 +127,7 @@ bidiagonal_svd(const AlignedVector<Number> & diagonal,
 	}
 	svd(bidiag_mat,U,singular_values,VT);
 }
-
-template<typename Number>
-Table<2, Number>
-khatri_rao(const Table<2, Number> & in1, const Table<2, Number> & in2)
-{
-	AssertDimension(in1.size()[1], in2.size()[1]);
-	Table<2, Number> ret(in1.size()[0]*in1.size()[0], in1.size()[1]);
-	for(std::size_t i = 0; i < in1.size()[0]; i++)
-		for(std::size_t j = 0; j < in2.size()[0]; j++)
-			for(std::size_t k = 0; k < in1.size()[1]; k++)
-				ret(i*in2.size()[0]+j,k) = in1(i,k)*in2(j,k);
-	return ret;
-}
+//Calculate the unfolding matrix in some direction of a third order tensor with polyadic rank one, that is a tensor given as the polyadic product of three vectors
 template<typename Number>
 Table<2, Number>
 unfold_rank1(std::array<AlignedVector<Number>, 3> polyadic_factors, std::size_t direction)
@@ -172,6 +160,7 @@ unfold_rank1(std::array<AlignedVector<Number>, 3> polyadic_factors, std::size_t 
 				ret(i,j*third.size()+k) = first[i]*second[j]*third[k];
 	return ret;
 }
+//Calculate the unfolding matrix in some direction of a third order tensor with higher polyadic rank, that is a tensor given as the sum of polyadic products of three vectors, here each polyadic product is given as one entry of the vector polyadic_factors
 template<typename Number>
 Table<2, Number>
 unfold_rankk(std::vector<std::array<AlignedVector<Number>, 3>> polyadic_factors, std::size_t direction)
@@ -378,16 +367,23 @@ compute_ksvd(AlignedVector<Number> &                                   in,
 }
 
 
+/*
+  Compute the low Kronecker rank approximation, we use the ALS decomposition to get a Candecomp/Parafac decomposition, of a matrix of
+  the form M = Σ A_i⊗B_i⊗C_i. We first reshuffle M and then compute the first few singular
+  values/vectors by using the Lanczos algorithm. The matricization of these
+  singular vectors then is the low Kronecker rank approximation. The matrix M is
+  passed in "in", and the low rank approximation is passed in "out"
+  to be consistent with dealII kroneckerproducts are passed as {C_i,B_i,A_i}
+*/
 template<typename Number>
 void
 compute_kcp(const std::vector<std::array<Table<2, Number>, 3>> &    in,
 	    std::vector<std::array<Table<2, Number>, 3>> & out,
 	    std::size_t als_iterations = -1)
 {
-	
 	std::size_t in_rank = in.size();
 
-	std::size_t out_rank = out.size();
+	const std::size_t out_rank = out.size();
 	if(als_iterations == (std::size_t)-1)
 	{
 		als_iterations = out_rank*out_rank+10;
@@ -395,13 +391,51 @@ compute_kcp(const std::vector<std::array<Table<2, Number>, 3>> &    in,
 	std::vector<std::array<AlignedVector<Number>, 3>> matrices_vectorized;
 	for(std::size_t i = 0; i < in_rank; i++)
 	{
-		std::array<AlignedVector<Number>, 3> matrix_vect = {vectorize_matrix(in[i][0]),vectorize_matrix(in[i][1]),vectorize_matrix(in[i][2])};
+		std::array<AlignedVector<Number>, 3> matrix_vect = {vectorize_matrix(in[i][2]),vectorize_matrix(in[i][1]),vectorize_matrix(in[i][0])};
 		matrices_vectorized.push_back(matrix_vect);
 	}
+	std::vector<Table<2,Number>> parafac_components;
+	Table<2,Number> A0(matrices_vectorized[0][0].size(),out_rank);
+	Table<2,Number> A1(matrices_vectorized[0][1].size(),out_rank);
+	Table<2,Number> A2(matrices_vectorized[0][2].size(),out_rank);
+	for (std::size_t i = 0; i < out_rank; i++)
+	{
+		for (std::size_t j = 0; j < matrices_vectorized[0][0].size(); j++)
+			A0(j,i) = matrices_vectorized[i][0][j];
+		for (std::size_t j = 0; j < matrices_vectorized[0][1].size(); j++)
+			A1(j,i) = matrices_vectorized[i][1][j];
+		for (std::size_t j = 0; j < matrices_vectorized[0][2].size(); j++)
+			A2(j,i) = matrices_vectorized[i][2][j];
+	}
+	Table <2,Number> V;
+	
 	for(std::size_t i = 0; i < als_iterations; i++)
 	{
-		//TODO
+		V = hadamard(matrix_transpose_multiplication(A1,A1),matrix_transpose_multiplication(A2,A2));
+		A0 = matrix_multiplication(unfold_rankk(matrices_vectorized,0), matrix_multiplication(khatri_rao(A2,A1),pseudo_inverse(V)));
+		V = hadamard(matrix_transpose_multiplication(A0,A0),matrix_transpose_multiplication(A2,A2));
+		A1 = matrix_multiplication(unfold_rankk(matrices_vectorized,1), matrix_multiplication(khatri_rao(A2,A0),pseudo_inverse(V)));
+		V = hadamard(matrix_transpose_multiplication(A0,A0),matrix_transpose_multiplication(A1,A1));
+		A2 = matrix_multiplication(unfold_rankk(matrices_vectorized,2), matrix_multiplication(khatri_rao(A1,A0),pseudo_inverse(V)));
+		      
 	}
+	
+	
+	for (std::size_t i = 0; i < out_rank; i++)
+	{
+		for (std::size_t j = 0; j < out[i][0].size()[0]; j++)
+			for (std::size_t k = 0; k < out[i][0].size()[1]; k++)
+				out[i][0](j,k) = A2(j*out[i][0].size()[1]+k,i);
+
+		for (std::size_t j = 0; j < out[i][1].size()[0]; j++)
+			for (std::size_t k = 0; k < out[i][1].size()[1]; k++)
+				out[i][1](j,k) = A1(j*out[i][1].size()[1]+k,i);
+
+		for (std::size_t j = 0; j < out[i][2].size()[0]; j++)
+			for (std::size_t k = 0; k < out[i][2].size()[1]; k++)
+				out[i][2](j,k) = A0(j*out[i][2].size()[1]+k,i);
+	}
+	
 	
 
 }

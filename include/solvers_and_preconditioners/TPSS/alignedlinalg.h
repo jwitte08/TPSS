@@ -44,6 +44,17 @@ vector_addition(const AlignedVector<Number> & in1, const AlignedVector<Number> &
 }
 
 
+// Multiply Table with scalar
+template<typename Number>
+Table<2, Number>
+matrix_scaling(const Table<2, Number> & in, const Number & scalar)
+{
+	Table<2, Number> ret = Table<2, Number>(in);
+	for(std::size_t i = 0; i < in.size()[0]; i++)
+		for(std::size_t j = 0; j < in.size()[1]; j++)
+			ret(i,j) = in(i,j) * scalar;
+	return ret;
+}
 // Multiply AlignedVector with scalar
 template<typename Number>
 AlignedVector<Number>
@@ -55,33 +66,27 @@ vector_scaling(const AlignedVector<Number> & in, const Number & scalar)
 	return ret;
 }
 
-
-/*
-  Divide AlignedVector by scalar, if vector is zero allow scalar to be zero.
-  Alowing this makes it possible to simultaneously execute a Lanczos algorithm
-  on matrices with different Kronecker rank. We check for zero, so for
-  vectorizedarrays we need to do it comonent wise
-*/
 template<typename Number>
-AlignedVector<VectorizedArray<Number>>
-vector_inverse_scaling(const AlignedVector<VectorizedArray<Number>> & in,
-                       const VectorizedArray<Number> &                scalar)
+Number invert_safe(const Number x)
 {
-	AlignedVector<VectorizedArray<Number>> ret(in.size());
+	if(std::abs(x)<=std::numeric_limits<Number>::epsilon())
+		return Number(0);
+	else
+		return Number(1)/x;
+}
 
+template<typename Number>
+VectorizedArray<Number> invert_safe(const VectorizedArray<Number> x)
+{
+	VectorizedArray<Number> ret; 
 	constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
 	for(std::size_t lane = 0; lane < macro_size; lane++)
 	{
-		for(std::size_t i = 0; i < in.size(); i++)
-		{
-			if(std::abs(scalar[lane]) >=
-			   std::numeric_limits<Number>::epsilon() * std::abs(scalar[lane] + in[i][lane]))
-				ret[i][lane] = in[i][lane] / scalar[lane];
-			else
-			{
-				ret[i][lane] = 0;
-			}
-		}
+		if(std::abs(x[lane])<=std::numeric_limits<Number>::epsilon())
+			ret[lane] =  Number(0);
+		else
+			ret[lane] =  Number(1)/x[lane];
+
 	}
 	return ret;
 }
@@ -94,14 +99,7 @@ vector_inverse_scaling(const AlignedVector<Number> & in, const Number & scalar)
 {
 	AlignedVector<Number> ret(in.size());
 	for(std::size_t i = 0; i < in.size(); i++)
-	{
-		if(std::abs(scalar) >= std::numeric_limits<Number>::epsilon() * std::abs(scalar + in[i]))
-			ret[i] = in[i] / scalar;
-		else
-		{
-			ret[i] = 0;
-		}
-	}
+		ret[i] = in[i]*invert_safe(scalar);
 	return ret;
 }
 
@@ -132,6 +130,34 @@ matrix_transpose_multiplication(const Table<2, Number> & in1, const Table<2, Num
 		for(std::size_t j = 0; j < in2.size()[1]; j++)
 			for(std::size_t k = 0; k < in2.size()[0]; k++)
 				ret(i, j) += in1(k, i) * in2(k, j);
+	return ret;
+}
+
+//compute the Khatri-Rao product of two matrices
+template<typename Number>
+Table<2, Number>
+khatri_rao(const Table<2, Number> & in1, const Table<2, Number> & in2)
+{
+	AssertDimension(in1.size()[1], in2.size()[1]);
+	Table<2, Number> ret(in1.size()[0]*in2.size()[0], in1.size()[1]);
+	for(std::size_t i = 0; i < in1.size()[0]; i++)
+		for(std::size_t j = 0; j < in2.size()[0]; j++)
+			for(std::size_t k = 0; k < in1.size()[1]; k++)
+				ret(i*in2.size()[0]+j,k) = in1(i,k)*in2(j,k);
+	return ret;
+}
+
+//compute the Hadamard product of two matrices
+template<typename Number>
+Table<2, Number>
+hadamard(const Table<2, Number> & in1, const Table<2, Number> & in2)
+{
+	AssertDimension(in1.size()[1], in2.size()[1]);
+	AssertDimension(in1.size()[0], in2.size()[0]);
+	Table<2, Number> ret(in1.size()[0], in1.size()[1]);
+	for(std::size_t i = 0; i < in1.size()[0]; i++)
+		for(std::size_t j = 0; j < in1.size()[1]; j++)
+			ret(i,j) = in1(i,j)*in2(i,j);
 	return ret;
 }
 
@@ -193,7 +219,7 @@ namespace std
 
 template<typename Number>
 void
-printTable(Table<2, Number> tab)
+printTable(Table<2, Number> tab, double digits=2)
 {
 	std::size_t           m          = tab.size()[0];
 	std::size_t           n          = tab.size()[1];
@@ -201,7 +227,7 @@ printTable(Table<2, Number> tab)
 	for(std::size_t i = 0; i < m; i++)
 	{
 		for(std::size_t j = 0; j < n; j++)
-			std::cout << ((int)(tab(i, j) * 100 + 0.5)) / 100.0 << "\t";
+			std::cout << ((int)(tab(i, j) * std::pow(10.0,digits) + 0.5)) / std::pow(10.0,digits) << "\t";
 		std::cout << "\n";
 	}
 	std::cout << "------------------------------------\n";
@@ -254,6 +280,7 @@ printAlignedVector(AlignedVector<VectorizedArray<Number>> vec)
 	}
 	std::cout << "\n######################################\n";
 }
+
 template<typename Number>
 void
 svd(const Number * matrix_begin,
@@ -325,6 +352,24 @@ svd(const Table<2, VectorizedArray<Number>> & matrix,
         
 }
 
+
+template<typename Number>
+Table<2,Number>
+pseudo_inverse(const Table<2, Number> matrix)
+{
+	AssertDimension(matrix.size()[0],matrix.size()[1]);
+	std::size_t n = matrix.size()[0];
+	Table<2,Number> ret(n,n);
+	Table<2,Number> U(n,n);
+	Table<2,Number> VT(n,n);
+	Table<2,Number> sing_inv_mat(n,n);
+	AlignedVector<Number> sing_vect(n);
+	svd(matrix, U,sing_vect,VT);
+	for(std::size_t i = 0; i < n; i++)
+		sing_inv_mat(i,i) = invert_safe(sing_vect[i]);
+	ret = matrix_multiplication(matrix_multiplication(U,sing_inv_mat), VT);
+	return ret;
+}
 
 
 
