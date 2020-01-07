@@ -208,6 +208,11 @@ protected:
   static constexpr int fe_degree = T::template value<1>();
   using LinElasticityProblem     = typename LinElasticity::
     ModelProblem<dim, fe_degree, double, Tensors::BlockMatrix<dim, VectorizedArray<double>>>;
+  using LinElasticityProblemFast = typename LinElasticity::ModelProblem<
+    dim,
+    fe_degree,
+    double,
+    Tensors::BlockMatrix<dim, VectorizedArray<double>, /*fast*/ true>>;
   using BlockVector                        = LinearAlgebra::distributed::BlockVector<double>;
   using LevelMatrix                        = typename LinElasticityProblem::LEVEL_MATRIX;
   using PatchTransfer                      = typename LevelMatrix::transfer_type;
@@ -548,12 +553,15 @@ protected:
 
     rt_parameters.mesh.n_refinements = params.n_refinements;
 
+    const auto initialize_problem = [](auto & new_problem) {
+      new_problem->create_triangulation();
+      new_problem->distribute_dofs();
+      new_problem->prepare_system(false, /*compute_rhs?*/ false);
+      new_problem->prepare_multigrid();
+    };
     const auto new_problem =
       std::make_shared<LinElasticityProblem>(*pcout_owned, rt_parameters, params.equation_data);
-    new_problem->create_triangulation();
-    new_problem->distribute_dofs();
-    new_problem->prepare_system(false, /*compute_rhs?*/ false);
-    new_problem->prepare_multigrid();
+    initialize_problem(new_problem);
     linelasticity_problem = new_problem;
 
     const auto level  = linelasticity_problem->mg_matrices.max_level();
@@ -731,27 +739,59 @@ protected:
             table_to_fullmatrix(patch_matrix_vectorized.as_inverse_table(), lane);
           *pcout_owned << "Compare inverse patch matrix " << patch << "@ lane " << lane << ":\n";
           compare_inverse_matrix(patch_matrix_inverse, patch_matrix_reference);
-
-          using TensorProductMatrixType =
-            typename Tensors::TensorProductMatrix<dim, VectorizedArray<double>>;
-          using SchurType = typename Tensors::SchurComplementFast<dim, VectorizedArray<double>>;
-          Tensors::BlockGaussianInverse<TensorProductMatrixType, SchurType> Atilde_inv(
-            patch_matrix_vectorized.get_block(0, 0),
-            patch_matrix_vectorized.get_block(0, 1),
-            patch_matrix_vectorized.get_block(1, 0),
-            patch_matrix_vectorized.get_block(1, 1));
-          const auto Atilde_inv_full = table_to_fullmatrix(Atilde_inv.as_table(), lane);
-
-          FullMatrix<double> ID(IdentityMatrix(Atilde_inv.m())),
-            Diff(Atilde_inv.m(), Atilde_inv.n());
-          Atilde_inv_full.mmult(Diff, patch_matrix_reference);
-          Diff.add(-1., ID);
-          *pcout_owned << "||Atilde^{-1} A - ID||_frob / m*n : "
-                       << Diff.frobenius_norm() / (Diff.m() * Diff.n()) << std::endl;
-          *pcout_owned << "Compare inverse patch matrix (fast) " << patch << "@ lane " << lane
-                       << ":\n";
-          compare_matrix(Atilde_inv_full, patch_matrix_inverse);
         }
+      }
+    }
+  }
+
+  void
+  tpss_assembly_fast()
+  {
+    initialize();
+
+    const auto level_matrix = ass.assemble_level_matrix();
+    const auto schwarz_preconditioner =
+      linelasticity_problem->mg_schwarz_smoother_pre->get_preconditioner();
+    const auto & patch_matrices = *(schwarz_preconditioner->get_local_solvers());
+    const auto   subdomain_handler =
+      linelasticity_problem->mg_schwarz_smoother_pre->get_subdomain_handler();
+    const auto &                   patch_info = subdomain_handler->get_patch_info();
+    TPSS::PatchWorker<dim, double> worker(patch_info);
+    const auto &                   partition_data = subdomain_handler->get_partition_data();
+
+    for(auto patch = 0U; patch < partition_data.n_subdomains(); ++patch)
+    {
+      for(auto lane = 0U; lane < worker.n_lanes_filled(patch); ++lane)
+      {
+        /// extract reference matrix from level matrix
+        const auto         dof_indices = ex.extract_dof_indices_per_patch(patch, lane);
+        FullMatrix<double> patch_matrix_reference(dof_indices.size());
+        patch_matrix_reference.extract_submatrix_from(*level_matrix, dof_indices, dof_indices);
+
+        using TensorProductMatrixType =
+          typename Tensors::TensorProductMatrix<dim, VectorizedArray<double>>;
+        using SchurType = typename Tensors::SchurComplementFast<dim, VectorizedArray<double>>;
+        auto patch_matrix_vectorized = patch_matrices[patch];
+        Tensors::BlockGaussianInverse<TensorProductMatrixType, SchurType> Atilde_inv(
+          patch_matrix_vectorized.get_block(0, 0),
+          patch_matrix_vectorized.get_block(0, 1),
+          patch_matrix_vectorized.get_block(1, 0),
+          patch_matrix_vectorized.get_block(1, 1));
+        const auto Atilde_inv_full = table_to_fullmatrix(Atilde_inv.as_table(), lane);
+
+        FullMatrix<double> ID(IdentityMatrix(Atilde_inv.m())), Diff(Atilde_inv.m(), Atilde_inv.n());
+        Atilde_inv_full.mmult(Diff, patch_matrix_reference);
+        Diff.add(-1., ID);
+        const auto deviation_frob = Diff.frobenius_norm() / (Diff.m() * Diff.n());
+        *pcout_owned << "||Atilde^{-1} A - ID||_frob / m*n : " << deviation_frob << std::endl;
+        EXPECT_PRED_FORMAT2(::testing::DoubleLE, deviation_frob, 1.e-2);
+
+        // /// DEBUG
+        // *pcout_owned << "Compare inverse patch matrix (fast) " << patch << "@ lane " << lane
+        //              << ":\n";
+        // const auto patch_matrix_inverse =
+        //   table_to_fullmatrix(patch_matrix_vectorized.as_inverse_table(), lane);
+        // compare_matrix(Atilde_inv_full, patch_matrix_inverse);
       }
     }
   }
@@ -890,13 +930,31 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSInvertVertexPatch)
   Fixture::tpss_assembly(Fixture::TestVariant::inverse);
 }
 
+TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSFastInvertCellPatch)
+{
+  using Fixture = TestLinElasticityIntegratorFD<TypeParam>;
+
+  Fixture::params.n_refinements        = 0U;
+  Fixture::params.equation_data.lambda = 1.;
+  Fixture::params.equation_data.mu     = 1.;
+  Fixture::tpss_assembly_fast();
+
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2U;
+  Fixture::params.n_refinements                = 2U;
+  Fixture::params.equation_data.lambda         = 1.234;
+  Fixture::params.equation_data.mu             = 9.876;
+  Fixture::tpss_assembly_fast();
+}
+
 REGISTER_TYPED_TEST_SUITE_P(TestLinElasticityIntegratorFD,
                             ManualAssemblyCellPatch,
                             ManualInvertCellPatch,
                             TPSSAssemblyCellPatch,
                             TPSSInvertCellPatch,
                             TPSSAssemblyVertexPatch,
-                            TPSSInvertVertexPatch);
+                            TPSSInvertVertexPatch,
+                            TPSSFastInvertCellPatch);
 
 using TestParamsLinear = testing::Types<Util::NonTypeParams<2, 1>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestLinElasticityIntegratorFD, TestParamsLinear);
