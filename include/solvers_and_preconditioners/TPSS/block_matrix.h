@@ -360,7 +360,7 @@ private:
 };
 
 
-template<int order, typename Number, int n_rows_1d = -1>
+template<int order, typename Number, bool fast = false, int n_rows_1d = -1>
 class BlockMatrix
 {
 public:
@@ -488,15 +488,28 @@ public:
   {
     const bool is_2x2_block_matrix = n_block_rows() == 2 && n_block_cols() == 2;
     AssertThrow(is_2x2_block_matrix, ExcMessage("TODO"));
-    if(!inverse_2x2)
-      inverse_2x2 = std::make_shared<BlockGaussianInverse<matrix_type>>(get_block(0, 0),
-                                                                        get_block(0, 1),
-                                                                        get_block(1, 0),
-                                                                        get_block(1, 1));
-    inverse_2x2->vmult(dst, src);
-    /// ALTERNATIVE: standard inverse based on LAPACK
-    // basic_inverse = std::make_shared<const VectorizedInverse<Number>>(as_table());
-    // basic_inverse->vmult(dst, src);
+
+    if(fast)
+    {
+      if(!fast_inverse_2x2)
+        fast_inverse_2x2 = std::make_shared<
+          BlockGaussianInverse<matrix_type, SchurComplementFast<order, Number, order, n_rows_1d>>>(
+          get_block(0, 0), get_block(0, 1), get_block(1, 0), get_block(1, 1));
+      fast_inverse_2x2->vmult(dst, src);
+    }
+
+    else
+    {
+      if(!inverse_2x2)
+        inverse_2x2 = std::make_shared<BlockGaussianInverse<matrix_type>>(get_block(0, 0),
+                                                                          get_block(0, 1),
+                                                                          get_block(1, 0),
+                                                                          get_block(1, 1));
+      inverse_2x2->vmult(dst, src);
+      /// ALTERNATIVE: standard inverse based on LAPACK
+      // basic_inverse = std::make_shared<const VectorizedInverse<Number>>(as_table());
+      // basic_inverse->vmult(dst, src);
+    }
   }
 
   std::array<std::size_t, 2>
@@ -607,6 +620,14 @@ private:
   mutable std::shared_ptr<const BlockGaussianInverse<matrix_type>> inverse_2x2;
   /// ALTERNATIVE: standard inverse based on LAPACK
   // mutable std::shared_ptr<const VectorizedInverse<Number>>         basic_inverse;
+
+  /**
+   * The inverse of a 2 x 2 block matrix based on approximate block Gaussian
+   * elimination.
+   */
+  mutable std::shared_ptr<
+    const BlockGaussianInverse<matrix_type, SchurComplementFast<order, Number, order, n_rows_1d>>>
+    fast_inverse_2x2;
 };
 
 
