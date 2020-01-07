@@ -73,11 +73,23 @@ struct Parameter
   };
 
   void
+  reset_damping_factor(int dimensions)
+  {
+    const auto reset = [&](auto & schwarz_data) {
+      schwarz_data.damping_factor = TPSS::lookup_damping_factor(schwarz_data.patch_variant,
+                                                                schwarz_data.smoother_variant,
+                                                                dimensions);
+    };
+    reset(multigrid.pre_smoother.schwarz);
+    reset(multigrid.post_smoother.schwarz);
+  }
+
+  void
   set_compressed(const bool flag = true);
 
   std::string
   to_string() const;
-};
+}; // namespace RT
 } // namespace RT
 
 // +++++++++++++++++++++++++++++++++++ DEFINITIONS +++++++++++++++++++++++++++++++++++

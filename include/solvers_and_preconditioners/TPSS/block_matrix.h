@@ -8,12 +8,137 @@
 #ifndef BLOCK_MATRIX_H_
 #define BLOCK_MATRIX_H_
 
+#include "kroneckersvd.h"
 #include "tensor_product_matrix.h"
 
 using namespace dealii;
 
 namespace Tensors
 {
+template<int order, typename Number, int rank = order, int n_rows_1d = -1>
+class SchurComplementFast : public TensorProductMatrix<order, Number, n_rows_1d>
+{
+public:
+  using matrix_type = TensorProductMatrix<order, Number, n_rows_1d>;
+  using value_type  = typename matrix_type::value_type;
+
+  SchurComplementFast(const matrix_type & A_in,
+                      const matrix_type & B_in,
+                      const matrix_type & C_in,
+                      const matrix_type & D_in)
+  {
+    static_assert(order == 2);
+    using State = typename matrix_type::State;
+    Assert(A_in.get_state() == State::skd, ExcMessage("Not a separable Kronecker decomposition."));
+
+    /// compute inverse eigenvalues
+    const auto            eigenvalues = A_in.get_eigenvalues();
+    AlignedVector<Number> inverse_eigenvalues(eigenvalues.size());
+    std::transform(eigenvalues.begin(),
+                   eigenvalues.end(),
+                   inverse_eigenvalues.begin(),
+                   [](const auto & lambda) { return static_cast<Number>(1. / lambda); });
+
+    /// compute KSVD of inverse eigenvalue matrix
+    std::vector<std::array<Table<2, Number>, order>>      ksvd_eigenvalues;
+    std::array<std::array<Table<2, Number>, order>, rank> ksvd_eigenvalues_;
+    for(auto & tensor : ksvd_eigenvalues_)
+      for(auto d = 0U; d < order; ++d)
+        tensor[d].reinit(A_in.m(d), A_in.m(d));
+    compute_ksvd_reverse<order, Number, rank>(inverse_eigenvalues, ksvd_eigenvalues_);
+    std::copy(ksvd_eigenvalues_.cbegin(),
+              ksvd_eigenvalues_.cend(),
+              std::back_inserter(ksvd_eigenvalues));
+
+    /// compute elementary tensors representing the approximation of -A^{-1}
+    std::vector<std::array<Table<2, Number>, order>> eigenvectors(1), eigenvectorsT(1);
+    eigenvectors.front() = A_in.get_eigenvectors();
+    std::transform(eigenvectors.front().cbegin(),
+                   eigenvectors.front().cend(),
+                   eigenvectorsT.front().begin(),
+                   [](const auto & tab) { return Tensors::transpose(tab); });
+    const auto Lambda_QT         = Tensors::product<order, Number>(ksvd_eigenvalues, eigenvectorsT);
+    eigenvectors.front().front() = Tensors::scale(-1., eigenvectors.front().front());
+    const auto   minus_Q_Lambda_QT = Tensors::product<order, Number>(eigenvectors, Lambda_QT);
+    const auto & minus_Ainv        = minus_Q_Lambda_QT;
+
+    /// compute elementary tensors representing the approximated Schur complement
+    ///    S = D - C * A^{-1} * B
+    const auto & B_tensors      = B_in.get_elementary_tensors();
+    const auto & C_tensors      = C_in.get_elementary_tensors();
+    const auto   minus_Ainv_B   = Tensors::product<order, Number>(minus_Ainv, B_tensors);
+    const auto   minus_C_Ainv_B = Tensors::product<order, Number>(C_tensors, minus_Ainv);
+    auto         schur_tensors  = D_in.get_elementary_tensors();
+    std::copy(minus_C_Ainv_B.cbegin(), minus_C_Ainv_B.cend(), std::back_inserter(schur_tensors));
+    // TODO without copy !?
+    std::vector<std::array<Table<2, Number>, order>> tmp;
+    std::remove_copy_if(schur_tensors.cbegin(),
+                        schur_tensors.cend(),
+                        std::back_inserter(tmp),
+                        Tensors::is_nearly_zero<order, Number>);
+    std::swap(schur_tensors, tmp);
+    // /// DEBUG
+    // std::cout << "right:" << std::endl;
+    // for(const auto & tensor : schur_tensors)
+    //   table_to_fullmatrix(tensor[0], 0).print_formatted(std::cout);
+    // std::cout << "left:" << std::endl;
+    // for(const auto & tensor : schur_tensors)
+    //   table_to_fullmatrix(tensor[1], 0).print_formatted(std::cout);
+
+    /// compute the KSVD of the Schur matrix
+    std::array<std::array<Table<2, Number>, 2>, 2> ksvd_schur_;
+    for(auto & tensor : ksvd_schur_)
+      for(auto d = 0U; d < order; ++d)
+        tensor[d].reinit(A_in.m(d), A_in.m(d));
+    compute_ksvd_reverse<2, Number, 2>(schur_tensors, ksvd_schur_);
+
+    std::vector<std::array<Table<2, Number>, 2>> mass_and_derivative(2);
+    auto &                                       driv = mass_and_derivative[1];
+    driv[0]                                           = ksvd_schur_[0][0];
+    driv[1]                                           = ksvd_schur_[1][1];
+    auto & mass                                       = mass_and_derivative[0];
+    mass[0]                                           = ksvd_schur_[1][0];
+    mass[1]                                           = ksvd_schur_[0][1];
+    // /// DEBUG
+    // const auto check_definiteness = [](auto & matrix) {
+    //   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+    //   {
+    //     using scalar_value_type                     = typename ExtractScalarType<Number>::type;
+    //     const auto                          fullmat = table_to_fullmatrix(matrix, lane);
+    //     LAPACKFullMatrix<scalar_value_type> mat(fullmat.m());
+    //     mat = fullmat;
+    //     Vector<std::complex<scalar_value_type>> eigenvalues(mat.m());
+    //     mat.compute_eigenvalues();
+    //     for(auto i = 0U; i < eigenvalues.size(); ++i)
+    //       eigenvalues[i] = mat.eigenvalue(i);
+    //     eigenvalues.print(std::cout);
+    //   }
+    // };
+    // std::cout << "eigenvalues of mass" << std::endl;
+    // for(auto & matrix : mass)
+    //   check_definiteness(matrix);
+    // std::cout << "eigenvalues of derivative" << std::endl;
+    // for(auto & matrix : driv)
+    //   check_definiteness(matrix);
+    // /// DEBUG
+    // std::cout << "mass" << std::endl;
+    // for(const auto & tab : mass_and_derivative[0])
+    //   table_to_fullmatrix(tab, 0).print_formatted(std::cout);
+    // std::cout << "driv" << std::endl;
+    // for(const auto & tab : mass_and_derivative[1])
+    //   table_to_fullmatrix(tab, 0).print_formatted(std::cout);
+
+    /// initialize the separable Kronecker decomposition based on the
+    /// approximate Schur matrix @p ksvd_schur
+    // matrix_type::reinit(mass_and_derivative, State::skd);
+    /// ALTERNATIVE no fast diagonalization
+    std::vector<std::array<Table<2, Number>, order>> ksvd_schur;
+    std::copy(ksvd_schur_.cbegin(), ksvd_schur_.cend(), std::back_inserter(ksvd_schur));
+    matrix_type::reinit(ksvd_schur);
+  }
+};
+
+
 /**
  * Schur complement S = D - C * A^{-1} * B
  */
@@ -30,7 +155,6 @@ public:
                   const matrix_type & D_in)
     : A(A_in), B(B_in), C(C_in), D(D_in)
   {
-    Sinv.reinit(as_table());
   }
 
   unsigned int
@@ -59,12 +183,14 @@ public:
     AssertDimension(C.m(), dst_view.size());
 
     std::lock_guard<std::mutex> lock(this->mutex);
+    tmp_array.clear();
     tmp_array.resize(B.m()); // TODO resize to max
     const auto dst_view_of_B = ArrayView(tmp_array.begin(), B.m());
     B.vmult(dst_view_of_B, src_view);
     Assert(A.m() <= dst_view.size(), ExcMessage("TODO dst_view not usable as temporary array."));
     const auto dst_view_of_Ainv = ArrayView(dst_view.begin(), A.m());
     A.apply_inverse(dst_view_of_Ainv, dst_view_of_B);
+    tmp_array.clear();
     tmp_array.resize(C.n()); // TODO
     const auto dst_view_of_C = ArrayView(tmp_array.begin(), C.m());
     C.vmult(dst_view_of_C, dst_view_of_Ainv);
@@ -80,7 +206,9 @@ public:
   void
   apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    Sinv.vmult(dst_view, src_view);
+    if(!Sinv)
+      Sinv = std::make_shared<VectorizedInverse<Number>>(as_table());
+    Sinv->vmult(dst_view, src_view);
   }
 
   Table<2, Number>
@@ -96,11 +224,11 @@ public:
   }
 
 private:
-  const matrix_type &       A;
-  const matrix_type &       B;
-  const matrix_type &       C;
-  const matrix_type &       D;
-  VectorizedInverse<Number> Sinv;
+  const matrix_type &                                      A;
+  const matrix_type &                                      B;
+  const matrix_type &                                      C;
+  const matrix_type &                                      D;
+  mutable std::shared_ptr<const VectorizedInverse<Number>> Sinv;
 
   /**
    * A mutex that guards access to the array @p tmp_array.
@@ -127,7 +255,9 @@ private:
  *
  * where the inverse of S is the dominating complexity.
  */
-template<typename MatrixType, typename Number = typename MatrixType::value_type>
+template<typename MatrixType,
+         typename SchurType = SchurComplement<MatrixType>,
+         typename Number    = typename MatrixType::value_type>
 class BlockGaussianInverse
 {
 public:
@@ -142,6 +272,18 @@ public:
   {
   }
 
+  unsigned int
+  m() const
+  {
+    return A.n() + D.n();
+  }
+
+  unsigned int
+  n() const
+  {
+    return A.m() + D.m();
+  }
+
   void
   vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
@@ -154,9 +296,8 @@ public:
     AssertDimension(B.n(), D.n());
     const unsigned int m0 = A.m();
     const unsigned int m1 = D.m();
-    const unsigned int m  = m0 + m1;
-    AssertDimension(src_view.size(), m);
-    AssertDimension(dst_view.size(), m);
+    AssertDimension(src_view.size(), m0 + m1);
+    AssertDimension(dst_view.size(), m0 + m1);
 
     /// MEMORY INEFFICENT CODE
 
@@ -204,21 +345,48 @@ public:
     std::copy(src2_view_m1.cbegin(), src2_view_m1.cend(), dst_view.begin() + m0);
   }
 
+  Table<2, Number>
+  as_table() const
+  {
+    return Tensors::matrix_to_table(*this);
+  }
+
 private:
-  const matrix_type &         A;
-  const matrix_type &         B;
-  const matrix_type &         C;
-  const matrix_type &         D;
-  SchurComplement<MatrixType> S;
+  const matrix_type & A;
+  const matrix_type & B;
+  const matrix_type & C;
+  const matrix_type & D;
+  SchurType           S;
 };
 
 
-template<int dim, typename Number, int n_rows_1d = -1>
+template<int order, typename Number, int n_rows_1d = -1>
 class BlockMatrix
 {
 public:
-  using matrix_type = TensorProductMatrix<dim, Number, n_rows_1d>;
+  using matrix_type = TensorProductMatrix<order, Number, n_rows_1d>;
   using value_type  = typename matrix_type::value_type;
+
+  BlockMatrix() = default;
+
+  BlockMatrix &
+  operator=(const BlockMatrix & other)
+  {
+    resize(other.n_block_rows, other.n_block_cols);
+    blocks = other.blocks;
+    return *this;
+  }
+
+  /**
+   * Deletes current block structure.
+   */
+  void
+  clear()
+  {
+    std::fill(n_.begin(), n_.end(), 0U);
+    blocks.clear();
+    inverse_2x2.reset();
+  }
 
   /**
    * Deletes old and resizes to square block structure.
@@ -226,9 +394,7 @@ public:
   void
   resize(const std::size_t n_rows)
   {
-    blocks.clear();
-    blocks.resize(n_rows * n_rows);
-    n_[0] = n_[1] = n_rows;
+    resize(n_rows, n_rows);
   }
 
   /**
@@ -237,7 +403,7 @@ public:
   void
   resize(const std::size_t n_rows, const std::size_t n_cols)
   {
-    blocks.clear();
+    clear();
     blocks.resize(n_rows * n_cols);
     n_[0] = n_rows;
     n_[1] = n_cols;
@@ -248,6 +414,8 @@ public:
   {
     AssertIndexRange(row_index, n_block_rows());
     AssertIndexRange(col_index, n_block_cols());
+    /// possible change of block requires recomputation of inverse
+    inverse_2x2.reset();
     return blocks[block_index(row_index, col_index)];
   }
 
@@ -320,11 +488,15 @@ public:
   {
     const bool is_2x2_block_matrix = n_block_rows() == 2 && n_block_cols() == 2;
     AssertThrow(is_2x2_block_matrix, ExcMessage("TODO"));
-    BlockGaussianInverse inverse(get_block(0, 0),
-                                 get_block(0, 1),
-                                 get_block(1, 0),
-                                 get_block(1, 1));
-    inverse.vmult(dst, src);
+    if(!inverse_2x2)
+      inverse_2x2 = std::make_shared<BlockGaussianInverse<matrix_type>>(get_block(0, 0),
+                                                                        get_block(0, 1),
+                                                                        get_block(1, 0),
+                                                                        get_block(1, 1));
+    inverse_2x2->vmult(dst, src);
+    /// ALTERNATIVE: standard inverse based on LAPACK
+    // basic_inverse = std::make_shared<const VectorizedInverse<Number>>(as_table());
+    // basic_inverse->vmult(dst, src);
   }
 
   std::array<std::size_t, 2>
@@ -428,6 +600,13 @@ private:
    * The vector containing the matrix blocks.
    */
   AlignedVector<matrix_type> blocks;
+
+  /**
+   * The inverse of a 2 x 2 block matrix based on block Gaussian elimination.
+   */
+  mutable std::shared_ptr<const BlockGaussianInverse<matrix_type>> inverse_2x2;
+  /// ALTERNATIVE: standard inverse based on LAPACK
+  // mutable std::shared_ptr<const VectorizedInverse<Number>>         basic_inverse;
 };
 
 

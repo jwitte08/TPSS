@@ -19,6 +19,21 @@
 
 using namespace dealii;
 
+// /// TEST: storage is row-major
+// class
+// MyTable : public TableBase<2, double>
+// {
+// public:
+//   using Base = TableBase<2, double>;
+//   using Base::reinit;
+
+//   unsigned int
+//   my_position(const TableIndices<2> & indices) const
+//   {
+//     return Base::position(indices);
+//   }
+// };
+
 namespace Tensors
 {
 template<int order, typename IntType = unsigned int>
@@ -283,6 +298,66 @@ kronecker_product(MatrixTypeIn1 && left_matrix, MatrixTypeIn2 && right_matrix)
   return matrix_out;
 }
 
+template<int order, typename Number>
+std::vector<std::array<Table<2, Number>, order>>
+product(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
+        const std::vector<std::array<Table<2, Number>, order>> & tensors2)
+{
+  std::vector<std::array<Table<2, Number>, order>> prod_of_tensors(tensors1.size() *
+                                                                   tensors2.size());
+  for(auto i2 = 0U; i2 < tensors2.size(); ++i2)
+    for(auto i1 = 0U; i1 < tensors1.size(); ++i1)
+      std::transform(tensors1[i1].cbegin(),
+                     tensors1[i1].cend(),
+                     tensors2[i2].cbegin(),
+                     prod_of_tensors[i1 + tensors1.size() * i2].begin(),
+                     [](const auto & A, const auto & B) {
+                       Assert(A.n_rows() > 0, ExcMessage("Empty."));
+                       Assert(B.n_cols() > 0, ExcMessage("Empty."));
+                       auto C = matrix_multiplication(A, B);
+                       AssertDimension(C.n_rows(), A.n_rows());
+                       AssertDimension(C.n_cols(), B.n_cols());
+                       return C;
+                     });
+  return prod_of_tensors;
+}
+
+template<typename Number>
+bool
+is_nearly_zero_value(const Number & value)
+{
+  using scalar_value_type = typename ExtractScalarType<Number>::type;
+  static constexpr scalar_value_type threshold =
+    std::numeric_limits<scalar_value_type>::epsilon() * 100.;
+
+  bool is_nearly_zero = true;
+  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+  {
+    const double scalar = scalar_value(value, lane);
+    is_nearly_zero &= std::abs(scalar) < threshold;
+  }
+  return is_nearly_zero;
+}
+
+template<typename Number>
+bool
+is_nearly_zero(const Table<2, Number> & matrix)
+{
+  const auto           m     = matrix.size(0);
+  const auto           n     = matrix.size(1);
+  const Number * const begin = &(matrix(0, 0));
+  const Number * const end   = std::next(&(matrix(m - 1, n - 1)));
+  return std::all_of(begin, end, is_nearly_zero_value<Number>);
+}
+
+template<int N, typename Number>
+bool
+is_nearly_zero(const std::array<Table<2, Number>, N> & array)
+{
+  return std::all_of(array.cbegin(), array.cend(), is_nearly_zero<Number>);
+}
+
+
 /**
  * Computes the sum of two equally sized matrices. Each input
  * MatrixType must contain at least the operator(n,m) to acces the
@@ -364,6 +439,14 @@ transpose(MatrixTypeIn1 && matrix_in)
 
   return matrix_out;
 }
+
+// template<int order, typename Number>
+// std::vector<std::array<Table<2, Number>, order>> elementary_tensors;
+// assemble_elementary_tensors(const Table<2, Number> * mass, const Table<2, Number> * driv)
+// {
+//   std::vector<std::array<Table<2, Number>, order>> elementary_tensors(order);
+
+// }
 
 /**
  * Assembles the separable Kronecker product form of a collection of

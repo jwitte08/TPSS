@@ -64,6 +64,12 @@ public:
   const AdditionalData &
   get_additional_data() const;
 
+  std::shared_ptr<const std::vector<MatrixType>>
+  get_local_solvers() const
+  {
+    return subdomain_to_inverse;
+  }
+
   std::vector<TimeInfo>
   get_time_data() const;
 

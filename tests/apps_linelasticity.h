@@ -18,15 +18,12 @@ using namespace LinElasticity;
 template<int dim, int fe_degree, typename value_type = double>
 struct BasicSetup
 {
-  struct Params
-  {
-    TPSS::PatchVariant    patch_variant    = TPSS::PatchVariant::cell;
-    TPSS::SmootherVariant smoother_variant = TPSS::SmootherVariant::additive;
-  };
-
   virtual void
   initialize()
   {
+    TPSS::PatchVariant    patch_variant    = TPSS::PatchVariant::cell;
+    TPSS::SmootherVariant smoother_variant = TPSS::SmootherVariant::additive;
+
     //: misc
     rt_parameters.compressed = false;
     rt_parameters.n_cycles   = 3;
@@ -37,16 +34,15 @@ struct BasicSetup
     rt_parameters.mesh.n_repetitions    = 2;
 
     //: multigrid
-    const double damping_factor =
-      TPSS::lookup_damping_factor(params.patch_variant, params.smoother_variant, dim);
+    const double damping_factor = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
     rt_parameters.multigrid.coarse_level = 0;
     rt_parameters.multigrid.coarse_grid.solver_variant =
       CoarseGridParameter::SolverVariant::IterativeAcc;
     rt_parameters.multigrid.coarse_grid.iterative_solver = "cg";
     rt_parameters.multigrid.coarse_grid.accuracy         = 1.e-12;
     rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
-    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = params.patch_variant;
-    rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = params.smoother_variant;
+    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = patch_variant;
+    rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = smoother_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
     rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
     rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = 1;
@@ -62,51 +58,40 @@ struct BasicSetup
   }
 
   RT::Parameter rt_parameters;
-  Params        params;
 };
 
 
 
-template<int dim, int fe_degree, typename value_type = double>
-struct LinElasticityDiagOnly : public BasicSetup<dim, fe_degree, value_type>
+template<int dim,
+         int fe_degree,
+         typename Number     = double,
+         typename MatrixType = Tensors::BlockMatrixDiagonal<dim, VectorizedArray<Number>>>
+struct TestLinElasticity : public BasicSetup<dim, fe_degree, Number>
 {
-  struct Params
-  {
-    TPSS::PatchVariant      patch_variant     = TPSS::PatchVariant::cell;
-    TPSS::SmootherVariant   smoother_variant  = TPSS::SmootherVariant::additive;
-    unsigned                n_smoothing_steps = 1;
-    types::global_dof_index dof_limit_min     = 1;
-    types::global_dof_index dof_limit_max     = 5e6;
-    EquationData            equation_data;
-  };
-
-  using Base = BasicSetup<dim, fe_degree, value_type>;
+  using Base = BasicSetup<dim, fe_degree, Number>;
   using Base::rt_parameters;
 
   void
   initialize() override
   {
-    Base::params  = {params.patch_variant, params.smoother_variant};
-    equation_data = params.equation_data;
     Base::initialize();
-    rt_parameters.multigrid.pre_smoother.n_smoothing_steps  = params.n_smoothing_steps;
-    rt_parameters.multigrid.post_smoother.n_smoothing_steps = params.n_smoothing_steps;
+
+    rt_parameters.multigrid.pre_smoother.n_smoothing_steps  = 1;
+    rt_parameters.multigrid.post_smoother.n_smoothing_steps = 1;
     rt_parameters.mesh.n_refinements                        = 1;
-    rt_parameters.dof_limits = {params.dof_limit_min, params.dof_limit_max};
-    rt_parameters.n_cycles   = 10;
+    rt_parameters.dof_limits                                = {1, 5e6};
+    rt_parameters.n_cycles                                  = 10;
   }
 
   void
   run()
   {
-    using LinElasticityOperator = typename LinElasticity::
-      ModelProblem<dim, fe_degree, value_type, /*n_patch_dofs_per_direction*/ -1>;
+    using LinElasticityOperator =
+      typename LinElasticity::ModelProblem<dim, fe_degree, Number, MatrixType>;
 
-    std::ofstream ofs("apps_poisson.log");
+    std::ofstream ofs("apps_linelasticity.log", std::ios_base::app);
     const bool    is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
     const auto    pcout         = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
-
-    initialize();
 
     LinElasticityOperator linelasticity_problem(*pcout, rt_parameters, equation_data);
     linelasticity_problem.run(true);
@@ -115,7 +100,6 @@ struct LinElasticityDiagOnly : public BasicSetup<dim, fe_degree, value_type>
     ofs.close();
   }
 
-  Params          params;
   EquationData    equation_data;
   PostProcessData pp_data;
 };

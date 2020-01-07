@@ -19,6 +19,7 @@ namespace Tensors
 template<typename Number>
 struct VectorizedInverse
 {
+  using value_type                         = Number;
   using scalar_value_type                  = typename ExtractScalarType<Number>::type;
   static constexpr unsigned int macro_size = get_macro_size<Number>();
 
@@ -33,16 +34,33 @@ struct VectorizedInverse
   reinit(const Table<2, Number> & matrix_in)
   {
     Assert(matrix_in.size(0) == matrix_in.size(1), ExcMessage("Matrix is not square."));
-    const unsigned int n_rows = matrix_in.size(0);
+    clear();
+
     auto inverses = std::make_shared<std::array<LAPACKFullMatrix<scalar_value_type>, macro_size>>();
+    const unsigned int n_rows = matrix_in.size(0);
     for(auto lane = 0U; lane < macro_size; ++lane)
     {
       auto & inverse = (*inverses)[lane];
       inverse.reinit(n_rows);
       inverse = table_to_fullmatrix(matrix_in, lane);
-      inverse.compute_inverse_svd();
+      inverse.invert();
     }
+    /// ALTERNATIVE: FullMatrix
+    // auto inverses = std::make_shared<std::array<FullMatrix<scalar_value_type>, macro_size>>();
+    // const unsigned int n_rows = matrix_in.size(0);
+    // for(auto lane = 0U; lane < macro_size; ++lane)
+    // {
+    //   auto & inverse = (*inverses)[lane];
+    //   inverse.reinit(n_rows, n_rows);
+    //   inverse.invert(table_to_fullmatrix(matrix_in, lane));
+    // }
     this->inverses = inverses;
+  }
+
+  void
+  clear()
+  {
+    inverses.reset();
   }
 
   void
@@ -75,13 +93,15 @@ struct VectorizedInverse
                      [lane](const auto & value) { return value[lane]; });
       const auto src_view_lane = make_array_view(src_lane);
       const auto dst_view_lane = make_array_view(dst_lane);
-      vmult_impl(dst_view_lane, src_view_lane);
+      vmult_impl(dst_view_lane, src_view_lane, lane);
       for(auto i = 0U; i < dst_lane.size(); ++i)
         dst_view[i][lane] = dst_lane[i];
     }
   }
 
   std::shared_ptr<const std::array<LAPACKFullMatrix<scalar_value_type>, macro_size>> inverses;
+  /// ALTERNATIVE: FullMatrix
+  // std::shared_ptr<const std::array<FullMatrix<scalar_value_type>, macro_size>> inverses;
 };
 
 template<int order, typename Number, int n_rows_1d = -1>
@@ -95,59 +115,128 @@ public:
     skd
   };
 
-  using SKDMatrix = TensorProductMatrixSymmetricSum<order, Number, n_rows_1d>;
-  using SKDMatrix::value_type;
+  using SKDMatrix         = TensorProductMatrixSymmetricSum<order, Number, n_rows_1d>;
+  using value_type        = Number;
+  using scalar_value_type = ExtractScalarType<Number>;
 
   TensorProductMatrix() = default;
 
   TensorProductMatrix(const std::vector<std::array<Table<2, Number>, order>> & elementary_tensors,
                       const State state_in = State::basic)
   {
-    static_assert(order == 2, "TODO");
     reinit(elementary_tensors, state_in);
   }
 
+  TensorProductMatrix &
+  operator=(const TensorProductMatrix & other)
+  {
+    reinit(other.elementary_tensors, other.state);
+    return *this;
+  }
+
   void
-  reinit(const std::vector<std::array<Table<2, Number>, order>> & elementary_tensors,
+  clear()
+  {
+    tmp_array.clear();
+    basic_inverse.reset();
+    state = State::invalid;
+    elementary_tensors.clear();
+    /// TODO clear underlying TensorProductMatrixSymmetricSum
+  }
+
+  void
+  reinit(const std::vector<std::array<Table<2, Number>, order>> & elementary_tensors_in,
          const State                                              state_in = State::basic)
   {
-    Assert(check_static_n_rows_1d(elementary_tensors),
+    Assert(check_static_n_rows_1d(elementary_tensors_in),
            ExcMessage("Not all univariate matrices are of size (n_rows_1d x n_rows_1d)."));
-    if(elementary_tensors.empty())
+
+    /// clear old data
+    clear();
+    if(elementary_tensors_in.empty())
       return;
 
+    /// initialize new data
     state = state_in;
+
     if(state == State::basic)
     {
       for(unsigned i = 0; i < order; ++i)
-        Assert(check_size_1d(elementary_tensors, i),
+        Assert(check_size_1d(elementary_tensors_in, i),
                ExcMessage("Mismatching sizes of univariate matrices."));
-      left_owned.resize(elementary_tensors.size());
-      right_owned.resize(elementary_tensors.size());
-      std::transform(elementary_tensors.cbegin(),
-                     elementary_tensors.cend(),
-                     left_owned.begin(),
-                     [](const auto & tensor) { return tensor[0]; });
-      std::transform(elementary_tensors.cbegin(),
-                     elementary_tensors.cend(),
-                     right_owned.begin(),
-                     [](const auto & tensor) { return tensor[1]; });
-      left_or_mass        = make_array_view(left_owned);
-      right_or_derivative = make_array_view(right_owned);
-      basic_inverse.reinit(as_table());
+      std::copy(elementary_tensors_in.cbegin(),
+                elementary_tensors_in.cend(),
+                std::back_inserter(elementary_tensors));
     }
 
     else if(state == State::skd)
     {
-      AssertThrow(elementary_tensors.size() == order,
-                  ExcMessage("The number of mass/derivative matrices and orderension differ."));
-      SKDMatrix::reinit(elementary_tensors[0], elementary_tensors[1]);
-      left_or_mass = make_array_view(SKDMatrix::mass_matrix.begin(), SKDMatrix::mass_matrix.end());
-      right_or_derivative =
-        make_array_view(SKDMatrix::derivative_matrix.begin(), SKDMatrix::derivative_matrix.end());
+      AssertThrow(
+        elementary_tensors_in.size() == 2,
+        ExcMessage(
+          "Two tensors are required, namely a tensor of mass matrices and a tensor of derivative matrices."));
+      /// TODO avoid duplication
+      // elementary_tensor = elementary_tensor_in;
+      SKDMatrix::reinit(elementary_tensors_in[0], elementary_tensors_in[1]);
     }
+
     else
       AssertThrow(false, ExcMessage("Invalid state at initialization."));
+  }
+
+  AlignedVector<Number>
+  get_eigenvalues() const
+  {
+    AssertThrow(state == State::skd, ExcMessage("Not implemented."));
+    AlignedVector<Number>           eigenvalues(m());
+    const auto &                    evs_1d = SKDMatrix::eigenvalues;
+    std::array<unsigned int, order> sizes;
+    std::transform(evs_1d.cbegin(), evs_1d.cend(), sizes.begin(), [](const auto & evs) {
+      return evs.size();
+    });
+    for(unsigned int i = 0; i < eigenvalues.size(); ++i)
+    {
+      const auto & ii     = uni_to_multiindex<order>(i, sizes);
+      Number       lambda = evs_1d[0][ii[0]];
+      for(auto d = 1; d < order; ++d)
+        lambda += evs_1d[d][ii[d]];
+      eigenvalues[i] = lambda;
+    }
+
+    return eigenvalues;
+  }
+
+  const std::array<Table<2, Number>, order> &
+  get_eigenvectors() const
+  {
+    AssertThrow(state == State::skd, ExcMessage("Not implemented."));
+    return this->eigenvectors;
+  }
+
+  std::vector<std::array<Table<2, Number>, order>>
+  get_elementary_tensors() const
+  {
+    if(state == State::skd)
+    {
+      std::vector<std::array<Table<2, Number>, order>> tensors(order);
+      const auto &                                     mass       = this->mass_matrix;
+      const auto &                                     derivative = this->derivative_matrix;
+      for(auto i = 0U; i < order; ++i)
+      {
+        auto & tensor = tensors[i];
+        for(auto j = 0U; j < order; ++j)
+          tensor[j] = i == j ? derivative[j] : mass[j];
+      }
+      return tensors;
+    }
+    Assert(state != State::invalid, ExcMessage("Invalid State"));
+    return elementary_tensors;
+  }
+
+  State
+  get_state() const
+  {
+    return state;
   }
 
   unsigned int
@@ -155,7 +244,7 @@ public:
   {
     if(state == State::skd)
       return SKDMatrix::m();
-    Assert(left_or_mass.size() > 0, ExcMessage("Not initialized."));
+    Assert(elementary_tensors.size() > 0, ExcMessage("Not initialized."));
     const unsigned int m_left  = left(0).size(0);
     const unsigned int m_right = right(0).size(0);
     return m_left * m_right;
@@ -166,10 +255,20 @@ public:
   {
     if(state == State::skd)
       return SKDMatrix::n();
-    Assert(left_or_mass.size() > 0, ExcMessage("Not initialized."));
+    Assert(elementary_tensors.size() > 0, ExcMessage("Not initialized."));
     const unsigned int n_left  = left(0).size(1);
     const unsigned int n_right = right(0).size(1);
     return n_left * n_right;
+  }
+
+  unsigned int
+  m(unsigned int dimension) const
+  {
+    AssertIndexRange(dimension, order);
+    if(state == State::skd)
+      return SKDMatrix::eigenvalues[dimension].size();
+    Assert(elementary_tensors.size() > 0, ExcMessage("Not initialized."));
+    return elementary_tensors.front()[dimension].n_rows();
   }
 
   void
@@ -202,44 +301,44 @@ public:
     return Tensors::inverse_matrix_to_table(*this);
   }
 
+  // void
+  // copy_from (TensorProductMatrix<order, VectorizedArray<scalar_value_type>, n_rows_1d> & other,
+  // const unsigned int lane = 0)
+  // {
+  //   static_assert(std::is_same<Number, scalar_value_type>::value, "Copy is only valid if the
+  //   underlying class is of scalar value type"); AssertIndexRange(lane,
+  //   VectorizedArray<scalar_value_type>::n_array_elements); std::vector<std::array<Table<2,
+  //   scalar_value_type>, order>> tensors_lane; const auto & other_tensors =
+  //   other.elementary_tensors;
+  // }
+
 protected:
   const Table<2, Number> &
   left(unsigned int r) const
   {
-    AssertIndexRange(r, left_or_mass.size());
-    return left_or_mass[r];
+    static_assert(order == 2, "TODO");
+    AssertIndexRange(r, elementary_tensors.size());
+    return elementary_tensors[r][1];
   }
 
   const Table<2, Number> &
   right(unsigned int r) const
   {
-    AssertIndexRange(r, right_or_derivative.size());
-    return right_or_derivative[r];
+    static_assert(order == 2, "TODO");
+    AssertIndexRange(r, elementary_tensors.size());
+    return elementary_tensors[r][0];
   }
 
   /**
-   * An array view pointing to the left or mass matrices, respectively,
-   * depending on the active state.
+   * Vector containing all elementary tensors, where each tensor consists of @p
+   * order-1 Kronecker products. If linear independent the vector size
+   * determines the tensor rank (or Kronecker rank).
+   *
+   * NOTE Elementary tensors are only stored in this field for the basic
+   * state. For the skd state the underlying TensorProductMatrixSymmetricSum
+   * stores the tensors.
    */
-  ArrayView<Table<2, Number>> left_or_mass;
-
-  /**
-   * A vector containing left matrices, that is left factors of the sum over
-   * Kronecker products.
-   */
-  std::vector<Table<2, Number>> left_owned;
-
-  /**
-   * An array view pointing to the right or derivative matrices, respectively,
-   * depending on the active state.
-   */
-  ArrayView<Table<2, Number>> right_or_derivative;
-
-  /**
-   * A vector containing right matrices, that is right factors of the sum over
-   * Kronecker products.
-   */
-  std::vector<Table<2, Number>> right_owned;
+  std::vector<std::array<Table<2, Number>, order>> elementary_tensors;
 
   /**
    * The state switches which functionalities are faciliated:
@@ -257,9 +356,7 @@ private:
     if(state == State::basic)
       apply_inverse_impl_basic_static(dst_view, src_view);
     else if(state == State::skd)
-    {
       SKDMatrix::apply_inverse(dst_view, src_view);
-    }
     else
       AssertThrow(false, ExcMessage("Not implemented."));
   }
@@ -270,8 +367,9 @@ private:
   {
     AssertDimension(dst_view.size(), m());
     AssertDimension(src_view.size(), n());
-    std::lock_guard<std::mutex> lock(this->mutex);
-    basic_inverse.vmult(dst_view, src_view);
+    if(!basic_inverse)
+      basic_inverse = std::make_shared<const VectorizedInverse<Number>>(as_table());
+    basic_inverse->vmult(dst_view, src_view);
   }
 
   template<bool add>
@@ -308,11 +406,13 @@ private:
   vmult_impl_basic_static(const ArrayView<Number> &       dst_view,
                           const ArrayView<const Number> & src_view) const
   {
+    static_assert(order == 2, "TODO");
     AssertDimension(dst_view.size(), m());
     AssertDimension(src_view.size(), n());
     std::lock_guard<std::mutex> lock(this->mutex);
     const unsigned int          mm =
       n_rows_1d > 0 ? Utilities::fixed_power<order>(n_rows_1d) : right(0).size(0) * left(0).size(1);
+    tmp_array.clear();
     tmp_array.resize_fast(mm);
     constexpr int kernel_size = n_rows_1d > 0 ? n_rows_1d : 0;
     internal::
@@ -333,7 +433,7 @@ private:
                                                                                       src,
                                                                                       tmp);
     eval.template apply<1, false, add>(left_0, tmp, dst);
-    for(std::size_t r = 1; r < left_or_mass.size(); ++r)
+    for(std::size_t r = 1; r < elementary_tensors.size(); ++r)
     {
       const Number * left_r  = &(left(r)(0, 0));
       const Number * right_r = &(right(r)(0, 0));
@@ -385,7 +485,7 @@ private:
   /**
    * The naive inverse of the underlying matrix for the basic state.
    */
-  VectorizedInverse<Number> basic_inverse;
+  mutable std::shared_ptr<const VectorizedInverse<Number>> basic_inverse;
 
   /**
    * A mutex that guards access to the array @p tmp_array.
