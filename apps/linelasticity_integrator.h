@@ -126,7 +126,10 @@ public:
   static constexpr int n_patch_dofs_1d = -1;
   using BlockMatrixDiagonal =
     typename Tensors::BlockMatrixDiagonal<dim, VectorizedArray<Number>, n_patch_dofs_1d>;
-  using BlockMatrix = typename Tensors::BlockMatrix<dim, VectorizedArray<Number>, n_patch_dofs_1d>;
+  using BlockMatrix =
+    typename Tensors::BlockMatrix<dim, VectorizedArray<Number>, false, n_patch_dofs_1d>;
+  using BlockMatrixFast =
+    typename Tensors::BlockMatrix<dim, VectorizedArray<Number>, true, n_patch_dofs_1d>;
   using EvaluatorType        = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
   using VectorizedMatrixType = Table<2, VectorizedArray<Number>>;
 
@@ -747,15 +750,15 @@ public:
     }
   }
 
-  template<typename OperatorType>
+  template<typename OperatorType, typename BlockMatrixType>
   void
-  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & data,
-                             std::vector<BlockMatrix> &            inverses,
-                             const OperatorType &,
-                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  assemble_subspace_inverses_impl(const SubdomainHandler<dim, Number> & data,
+                                  std::vector<BlockMatrixType> &        inverses,
+                                  const OperatorType &,
+                                  const std::pair<unsigned int, unsigned int> subdomain_range) const
   {
-    using TensorProductState = typename BlockMatrix::matrix_type::State;
-    AssertThrow(dim == 2, ExcMessage("TODO"));
+    using TensorProductState = typename BlockMatrixType::matrix_type::State;
+    static_assert(dim == 2, "TODO");
 
     std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
     for(unsigned int comp = 0; comp < dim; ++comp)
@@ -827,6 +830,29 @@ public:
         block_matrix.get_block(0U, 1U).reinit(mixed_tensorsT);
       }
     }
+  }
+
+  template<typename OperatorType>
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       data,
+                             std::vector<BlockMatrix> &                  inverses,
+                             const OperatorType &                        op,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    assemble_subspace_inverses_impl<OperatorType, BlockMatrix>(data, inverses, op, subdomain_range);
+  }
+
+  template<typename OperatorType>
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       data,
+                             std::vector<BlockMatrixFast> &              inverses,
+                             const OperatorType &                        op,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    assemble_subspace_inverses_impl<OperatorType, BlockMatrixFast>(data,
+                                                                   inverses,
+                                                                   op,
+                                                                   subdomain_range);
   }
 };
 
