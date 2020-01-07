@@ -444,17 +444,6 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastEigenvalueKSVD)
     // Tensors::TensorProductMatrix<2, value_type> AA_ksvd(ksvd_A);
     // Fixture::compare_matrix(table_to_fullmatrix(AA_ksvd.as_table(), lane),AA_invreference);
   }
-
-  // for (auto lane = 0U; lane < get_macro_size<value_type>(); ++lane)
-  //   {
-  //     const auto & Sinv_fd = table_to_fullmatrix(schur_fd.as_inverse_table(), lane);
-  //     const auto & S = table_to_fullmatrix(schur.as_table(), lane);
-  //     FullMatrix<Number> ID(IdentityMatrix(S.m())), Diff(S.m(), S.n());
-  //     Sinv_fd.mmult(Diff, S);
-  //     Diff.print_formatted(std::cout);
-  //     Diff.add(-1., ID);
-  //     std::cout << "Deviation: " << Diff.frobenius_norm()/(Diff.m()*Diff.n()) << std::endl;
-  //   }
 }
 
 TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastOffDiagonals)
