@@ -8,9 +8,9 @@
 #ifndef KRONECKERSVD_H_
 #define KRONECKERSVD_H_
 
-#include <deal.II/base/array_view.h>
 #include <deal.II/base/table.h>
 #include <deal.II/lac/lapack_full_matrix.h>
+#include "alignedlinalg.h"
 
 using namespace dealii;
 
@@ -24,139 +24,6 @@ reshuffle_diag_index(std::size_t i, std::size_t big_m, std::size_t small_m)
   std::size_t sub_i   = i % small_m;
   return {block_i * (big_m + 1), sub_i * (small_m + 1)};
 }
-
-// Calculate inner product of two AlignedVectors
-template<typename Number>
-Number
-inner_product(const AlignedVector<Number> & in1, const AlignedVector<Number> & in2)
-{
-  AssertDimension(in1.size(), in2.size());
-  Number ret = Number(0);
-  for(std::size_t i = 0; i < in1.size(); i++)
-    ret += in1[i] * in2[i];
-  return ret;
-}
-
-
-// Add two AlignedVectors
-template<typename Number>
-AlignedVector<Number>
-vector_addition(const AlignedVector<Number> & in1, const AlignedVector<Number> & in2)
-{
-  AssertDimension(in1.size(), in2.size());
-  AlignedVector<Number> ret = AlignedVector<Number>(in1);
-  for(std::size_t i = 0; i < in1.size(); i++)
-    ret[i] = in1[i] + in2[i];
-  return ret;
-}
-
-
-// Multiply AlignedVector with scalar
-template<typename Number>
-AlignedVector<Number>
-vector_scaling(const AlignedVector<Number> & in, const Number & scalar)
-{
-  AlignedVector<Number> ret = AlignedVector<Number>(in);
-  for(std::size_t i = 0; i < in.size(); i++)
-    ret[i] = in[i] * scalar;
-  return ret;
-}
-
-
-/*
-  Divide AlignedVector by scalar, if vector is zero allow scalar to be zero.
-  Alowing this makes it possible to simultaneously execute a Lanczos algorithm
-  on matrices with different Kronecker rank. We check for zero, so for
-  vectorizedarrays we need to do it comonent wise
-*/
-template<typename Number>
-AlignedVector<VectorizedArray<Number>>
-vector_inverse_scaling(const AlignedVector<VectorizedArray<Number>> & in,
-                       const VectorizedArray<Number> &                scalar)
-{
-  AlignedVector<VectorizedArray<Number>> ret(in.size());
-
-  constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
-  for(std::size_t lane = 0; lane < macro_size; lane++)
-  {
-    for(std::size_t i = 0; i < in.size(); i++)
-    {
-      if(std::abs(scalar[lane]) >=
-         std::numeric_limits<Number>::epsilon() * std::abs(scalar[lane] + in[i][lane]))
-        ret[i][lane] = in[i][lane] / scalar[lane];
-      else
-      {
-        ret[i][lane] = 0;
-      }
-    }
-  }
-  return ret;
-}
-
-
-// Divide AlignedVector by scalar, if vector is zero allow scalar to be zero
-template<typename Number>
-AlignedVector<Number>
-vector_inverse_scaling(const AlignedVector<Number> & in, const Number & scalar)
-{
-  AlignedVector<Number> ret(in.size());
-  for(std::size_t i = 0; i < in.size(); i++)
-  {
-    if(std::abs(scalar) >= std::numeric_limits<Number>::epsilon() * std::abs(scalar + in[i]))
-      ret[i] = in[i] / scalar;
-    else
-    {
-      ret[i] = 0;
-    }
-  }
-  return ret;
-}
-
-
-// Multiply Matrix by Matrix
-template<typename Number>
-Table<2, Number>
-matrix_multiplication(const Table<2, Number> & in1, const Table<2, Number> & in2)
-{
-  AssertDimension(in1.size()[1], in2.size()[0]);
-  Table<2, Number> ret(in1.size()[0], in2.size()[1]);
-  for(std::size_t i = 0; i < in1.size()[0]; i++)
-    for(std::size_t j = 0; j < in2.size()[1]; j++)
-      for(std::size_t k = 0; k < in2.size()[0]; k++)
-        ret(i, j) += in1(i, k) * in2(k, j);
-  return ret;
-}
-
-
-// Multiply transpose of Matrix by Matrix
-template<typename Number>
-Table<2, Number>
-matrix_transpose_multiplication(const Table<2, Number> & in1, const Table<2, Number> & in2)
-{
-  AssertDimension(in1.size()[0], in2.size()[0]);
-  Table<2, Number> ret(in1.size()[1], in2.size()[1]);
-  for(std::size_t i = 0; i < in1.size()[1]; i++)
-    for(std::size_t j = 0; j < in2.size()[1]; j++)
-      for(std::size_t k = 0; k < in2.size()[0]; k++)
-        ret(i, j) += in1(k, i) * in2(k, j);
-  return ret;
-}
-
-
-// Flatten Table to AlignedVector
-template<typename Number>
-AlignedVector<Number>
-vectorize_matrix(const Table<2, Number> & tab)
-{
-  std::size_t           m = tab.size()[0];
-  std::size_t           n = tab.size()[1];
-  AlignedVector<Number> ret(m * n);
-  for(std::size_t k = 0; k < m; k++)
-    for(std::size_t l = 0; l < n; l++)
-      ret[k * n + l] = tab(k, l);
-  return ret;
-}
-
 
 // Calculate the product of a Rank 1 matrix, given as dyadic product of two
 // vectors, with a vector: (in⊗inT)vec where ⊗ is the dyadic product
@@ -236,46 +103,6 @@ orthogonalize(std::vector<AlignedVector<Number>> & vectors)
 }
 
 
-// For vectorizedarray check if > holds for all elements
-template<typename Number>
-bool
-operator>(VectorizedArray<Number> a, VectorizedArray<Number> b)
-{
-  constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
-  for(std::size_t lane = 0; lane < macro_size; lane++)
-    if(a[lane] <= b[lane])
-      return false;
-  return true;
-}
-
-
-// For vectorizedarray check if > holds for all elements
-template<typename Number>
-bool
-operator>(VectorizedArray<Number> a, Number b)
-{
-  constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
-  for(std::size_t lane = 0; lane < macro_size; lane++)
-    if(a[lane] <= b)
-      return false;
-  return true;
-}
-
-
-namespace std
-{
-template<typename Number>
-class numeric_limits<VectorizedArray<Number>>
-{
-public:
-  static Number
-  epsilon()
-  {
-    return numeric_limits<Number>::epsilon();
-  };
-};
-} // namespace std
-
 
 // compute svd of bidiagonal matrix
 template<typename Number>
@@ -293,78 +120,63 @@ bidiagonal_svd(const AlignedVector<Number> & diagonal,
   AssertDimension(base_len, singular_values.size());
   AssertDimension(base_len, VT.size()[0]);
   AssertDimension(base_len, VT.size()[1]);
-  LAPACKFullMatrix<Number> bidiag_mat(base_len, base_len);
+  Table<2, Number> bidiag_mat(base_len, base_len);
   for(std::size_t i = 0; i < base_len; i++)
   {
     bidiag_mat(i, i) = diagonal[i];
     if(i < base_len - 1)
       bidiag_mat(i, i + 1) = upper_diagonal[i];
   }
-  bidiag_mat.compute_svd();
-  LAPACKFullMatrix<Number> U_  = bidiag_mat.get_svd_u();
-  LAPACKFullMatrix<Number> VT_ = bidiag_mat.get_svd_vt();
-  for(std::size_t i = 0; i < base_len; i++)
-    for(std::size_t j = 0; j < base_len; j++)
-    {
-      U(i, j)            = U_(i, j);
-      VT(i, j)           = VT_(i, j);
-      singular_values[i] = bidiag_mat.singular_value(i);
-    }
+  svd(bidiag_mat, U, singular_values, VT);
 }
-
-
-// compute lane-wise svd of bidiagonal matrix
+// Calculate the unfolding matrix in some direction of a third order tensor with polyadic rank one,
+// that is a tensor given as the polyadic product of three vectors
 template<typename Number>
-void
-bidiagonal_svd(const AlignedVector<VectorizedArray<Number>> & diagonal,
-               const AlignedVector<VectorizedArray<Number>> & upper_diagonal,
-               Table<2, VectorizedArray<Number>> &            U,
-               AlignedVector<VectorizedArray<Number>> &       singular_values,
-               Table<2, VectorizedArray<Number>> &            VT)
+Table<2, Number>
+unfold_rank1(std::array<AlignedVector<Number>, 3> polyadic_factors, std::size_t direction)
 {
-  constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
-  std::size_t           base_len   = diagonal.size();
-  AlignedVector<Number> diag(base_len);
-  AlignedVector<Number> updiag(base_len - 1);
-  AlignedVector<Number> sing_values(base_len);
-  Table<2, Number>      U_(base_len, base_len);
-  Table<2, Number>      VT_(base_len, base_len);
-  for(std::size_t lane = 0; lane < macro_size; lane++)
+  AlignedVector<Number> first;
+  AlignedVector<Number> second;
+  AlignedVector<Number> third;
+  if(direction == 0)
   {
-    for(std::size_t i = 0; i < base_len; i++)
-    {
-      diag[i] = diagonal[i][lane];
-      if(i < base_len - 1)
-        updiag[i] = upper_diagonal[i][lane];
-    }
-    bidiagonal_svd(diag, updiag, U_, sing_values, VT_);
-    for(std::size_t i = 0; i < base_len; i++)
-    {
-      for(std::size_t j = 0; j < base_len; j++)
-      {
-        U(i, j)[lane]  = U_(i, j);
-        VT(i, j)[lane] = VT_(i, j);
-      }
-      singular_values[i][lane] = sing_values[i];
-    }
+    first  = polyadic_factors[0];
+    second = polyadic_factors[2];
+    third  = polyadic_factors[1];
   }
+  if(direction == 1)
+  {
+    first  = polyadic_factors[1];
+    second = polyadic_factors[2];
+    third  = polyadic_factors[0];
+  }
+  if(direction == 2)
+  {
+    first  = polyadic_factors[2];
+    second = polyadic_factors[1];
+    third  = polyadic_factors[0];
+  }
+  Table<2, Number> ret(first.size(), second.size() * third.size());
+  for(std::size_t i = 0; i < first.size(); i++)
+    for(std::size_t j = 0; j < second.size(); j++)
+      for(std::size_t k = 0; k < third.size(); k++)
+        ret(i, j * third.size() + k) = first[i] * second[j] * third[k];
+  return ret;
+}
+// Calculate the unfolding matrix in some direction of a third order tensor with higher polyadic
+// rank, that is a tensor given as the sum of polyadic products of three vectors, here each polyadic
+// product is given as one entry of the vector polyadic_factors
+template<typename Number>
+Table<2, Number>
+unfold_rankk(std::vector<std::array<AlignedVector<Number>, 3>> polyadic_factors,
+             std::size_t                                       direction)
+{
+  Table<2, Number> ret = unfold_rank1(polyadic_factors[0], direction);
+  for(std::size_t i = 1; i < polyadic_factors.size(); i++)
+    ret = matrix_addition(ret, unfold_rank1(polyadic_factors[i], direction));
+  return ret;
 }
 
-template<int dim, typename Number>
-void
-reverse_tensors(const ArrayView<std::array<Table<2, Number>, dim>> tensors)
-{
-  for(auto & tensor : tensors)
-    std::reverse(tensor.begin(), tensor.end());
-}
-
-template<int dim, typename Number, int rank>
-void reverse_tensors(std::array<std::array<Table<2, Number>, dim>, rank> & tensors)
-{
-  const auto view =
-    make_array_view<std::array<Table<2, Number>, dim>>(tensors.begin(), tensors.end());
-  reverse_tensors<dim, Number>(view);
-}
 
 /*
   Compute the low Kronecker rank approximation, i.e. the ksvd, of a matrix of
@@ -373,209 +185,284 @@ void reverse_tensors(std::array<std::array<Table<2, Number>, dim>, rank> & tenso
   values/vectors by using the Lanczos algorithm. The matricization of these
   singular vectors then is the low Kronecker rank approximation. The matrix M is
   passed in "in", and the low rank approximation is passed in "out"
+  to be consistent with dealII kroneckerproducts are passed as {B_i,A_i}
 */
-template<int dim, typename Number, int out_rank>
+template<typename Number>
 void
-compute_ksvd(const std::vector<std::array<Table<2, Number>, dim>> &    in,
-             std::array<std::array<Table<2, Number>, dim>, out_rank> & out,
-             const std::size_t lanczos_iterations = out_rank * out_rank + 10)
+compute_ksvd(const std::vector<std::array<Table<2, Number>, 2>> & in,
+             std::vector<std::array<Table<2, Number>, 2>> &       out,
+             std::size_t                                          lanczos_iterations = -1)
 {
-  std::size_t in_rank = in.size();
-  if(dim == 2)
+  std::size_t in_rank  = in.size();
+  std::size_t out_rank = out.size();
+  if(lanczos_iterations == (std::size_t)-1)
   {
-    std::size_t                        big_m   = in[0][0].size()[0];
-    std::size_t                        big_n   = in[0][0].size()[1];
-    std::size_t                        small_m = in[0][1].size()[0];
-    std::size_t                        small_n = in[0][1].size()[1];
-    std::vector<AlignedVector<Number>> big_matrices_vectorized;
-    std::vector<AlignedVector<Number>> small_matrices_vectorized;
-    for(std::size_t i = 0; i < in_rank; i++)
-    {
-      small_matrices_vectorized.push_back(vectorize_matrix(in[i][1]));
-      big_matrices_vectorized.push_back(vectorize_matrix(in[i][0]));
-    }
-    AlignedVector<Number> beta;
-    beta.push_back(Number(1)); // we artificially introduce a first value for
-    // beta to define beta.back()
-    AlignedVector<Number>              alpha;
-    std::vector<AlignedVector<Number>> r;
-    std::vector<AlignedVector<Number>> p = {AlignedVector<Number>(small_m * small_n)};
-    p.back()[0]                          = Number(1);
-    std::vector<AlignedVector<Number>> u = {AlignedVector<Number>(big_m * big_n)};
-    std::vector<AlignedVector<Number>> v;
-    for(std::size_t i = 0;
-        i < lanczos_iterations && std::abs(beta.back()) > std::numeric_limits<Number>::epsilon();
-        i++)
-    {
-      beta.push_back(std::sqrt(inner_product(p.back(), p.back())));
-      v.push_back(vector_inverse_scaling(p.back(), beta.back()));
-      r.push_back(vector_scaling(u.back(), -beta.back()));
-      r.back() = vector_addition(r.back(),
-                                 rankk_vector_multiplication(big_matrices_vectorized,
-                                                             small_matrices_vectorized,
-                                                             v.back()));
-      orthogonalize(r);
-      alpha.push_back(std::sqrt(inner_product(r.back(), r.back())));
-      u.push_back(vector_inverse_scaling(r.back(), alpha.back()));
-      p.push_back(vector_scaling(v.back(), -alpha.back()));
-      p.back() = vector_addition(p.back(),
-                                 rankk_vector_multiplication(small_matrices_vectorized,
-                                                             big_matrices_vectorized,
-                                                             u.back()));
-      orthogonalize(p);
-    }
-    std::size_t           base_len = alpha.size() - 1;
-    Table<2, Number>      U(base_len, big_m * big_n); // discard first value of u since it is zero
-    Table<2, Number>      V(base_len,
-                       small_m * small_n); // discard last value of v since it is zero
-    AlignedVector<Number> real_beta(base_len -
-                                    1); // discard first two values of beta, first is artificially
-    // introduced, second only depends on inital guess
-    AlignedVector<Number> real_alpha(base_len); // discard last value of alpha since it is zero
-    for(std::size_t i = 0; i < base_len; i++)
-    {
-      real_alpha[i] = alpha[i];
-      if(i < base_len - 1)
-        real_beta[i] = beta[i + 2];
-      for(std::size_t j = 0; j < big_m * big_n; j++)
-        U(i, j) = u[i + 1][j];
-      for(std::size_t j = 0; j < small_m * small_n; j++)
-        V(i, j) = v[i][j];
-    }
+    lanczos_iterations = out_rank * out_rank + 10;
+  }
 
-    AlignedVector<Number> singular_values(base_len);
-    Table<2, Number>      tildeU(base_len, base_len);
-    Table<2, Number>      tildeVT(base_len, base_len);
+  std::size_t                        big_m   = in[0][1].size()[0];
+  std::size_t                        big_n   = in[0][1].size()[1];
+  std::size_t                        small_m = in[0][0].size()[0];
+  std::size_t                        small_n = in[0][0].size()[1];
+  std::vector<AlignedVector<Number>> big_matrices_vectorized;
+  std::vector<AlignedVector<Number>> small_matrices_vectorized;
+  for(std::size_t i = 0; i < in_rank; i++)
+  {
+    small_matrices_vectorized.push_back(vectorize_matrix(in[i][0]));
+    big_matrices_vectorized.push_back(vectorize_matrix(in[i][1]));
+  }
+  AlignedVector<Number> beta;
+  beta.push_back(Number(1)); // we artificially introduce a first value for
+  // beta to define beta.back()
+  AlignedVector<Number>              alpha;
+  std::vector<AlignedVector<Number>> r;
+  std::vector<AlignedVector<Number>> p = {AlignedVector<Number>(small_m * small_n)};
+  p.back()[0]                          = Number(1);
+  std::vector<AlignedVector<Number>> u = {AlignedVector<Number>(big_m * big_n)};
+  std::vector<AlignedVector<Number>> v;
+  for(std::size_t i = 0;
+      i < lanczos_iterations && std::abs(beta.back()) > std::numeric_limits<Number>::epsilon();
+      i++)
+  {
+    beta.push_back(std::sqrt(inner_product(p.back(), p.back())));
+    v.push_back(vector_inverse_scaling(p.back(), beta.back()));
+    r.push_back(vector_scaling(u.back(), -beta.back()));
+    r.back() = vector_addition(r.back(),
+                               rankk_vector_multiplication(big_matrices_vectorized,
+                                                           small_matrices_vectorized,
+                                                           v.back()));
+    orthogonalize(r);
+    alpha.push_back(std::sqrt(inner_product(r.back(), r.back())));
+    u.push_back(vector_inverse_scaling(r.back(), alpha.back()));
+    p.push_back(vector_scaling(v.back(), -alpha.back()));
+    p.back() = vector_addition(p.back(),
+                               rankk_vector_multiplication(small_matrices_vectorized,
+                                                           big_matrices_vectorized,
+                                                           u.back()));
+    orthogonalize(p);
+  }
+  std::size_t           base_len = alpha.size() - 1;
+  Table<2, Number>      U(base_len, big_m * big_n); // discard first value of u since it is zero
+  Table<2, Number>      V(base_len,
+                     small_m * small_n); // discard last value of v since it is zero
+  AlignedVector<Number> real_beta(base_len -
+                                  1); // discard first two values of beta, first is artificially
+  // introduced, second only depends on inital guess
+  AlignedVector<Number> real_alpha(base_len); // discard last value of alpha since it is zero
+  for(std::size_t i = 0; i < base_len; i++)
+  {
+    real_alpha[i] = alpha[i];
+    if(i < base_len - 1)
+      real_beta[i] = beta[i + 2];
+    for(std::size_t j = 0; j < big_m * big_n; j++)
+      U(i, j) = u[i + 1][j];
+    for(std::size_t j = 0; j < small_m * small_n; j++)
+      V(i, j) = v[i][j];
+  }
 
-    bidiagonal_svd(real_alpha, real_beta, tildeU, singular_values, tildeVT);
+  AlignedVector<Number> singular_values(base_len);
+  Table<2, Number>      tildeU(base_len, base_len);
+  Table<2, Number>      tildeVT(base_len, base_len);
 
-    Table<2, Number> left_singular_vectors  = matrix_transpose_multiplication(tildeU, U);
-    Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
+  bidiagonal_svd(real_alpha, real_beta, tildeU, singular_values, tildeVT);
+
+  Table<2, Number> left_singular_vectors  = matrix_transpose_multiplication(tildeU, U);
+  Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
 
     /// TODO mismatch between out_rank and base_len
-    for(std::size_t i = 0; i < out_rank; i++)
-    {
-      for(std::size_t k = 0; k < big_m; k++)
-        for(std::size_t l = 0; l < big_n; l++)
-          out[i][0](k, l) = left_singular_vectors(i, k * big_n + l) * std::sqrt(singular_values[i]);
-      for(std::size_t k = 0; k < small_m; k++)
-        for(std::size_t l = 0; l < small_n; l++)
-          out[i][1](k, l) =
-            right_singular_vectors(i, k * small_n + l) * std::sqrt(singular_values[i]);
-    }
+  for(std::size_t i = 0; i < out_rank; i++)
+  {
+    for(std::size_t k = 0; k < big_m; k++)
+      for(std::size_t l = 0; l < big_n; l++)
+        out[i][1](k, l) = left_singular_vectors(i, k * big_n + l) * std::sqrt(singular_values[i]);
+    for(std::size_t k = 0; k < small_m; k++)
+      for(std::size_t l = 0; l < small_n; l++)
+        out[i][0](k, l) =
+          right_singular_vectors(i, k * small_n + l) * std::sqrt(singular_values[i]);
   }
 }
-
 /*
   Compute the low Kronecker rank approximation, i.e. the ksvd, of a diagonal matrix.
- We compute the first few singular
+  We compute the first few singular
   values/vectors by using the Lanczos algorithm. The matricization of these
   singular vectors then is the low Kronecker rank approximation. The matrix M is
   passed in "in", and the low rank approximation is passed in "out"
+  to be consistent with dealII kroneckerproducts are passed as {B_i,A_i}
 */
 
-template<int dim, typename Number, int out_rank>
+template<typename Number>
 void
-compute_ksvd(AlignedVector<Number> &                                   in,
-             std::array<std::array<Table<2, Number>, dim>, out_rank> & out,
-             const std::size_t lanczos_iterations = out_rank * out_rank + 10)
+compute_ksvd(AlignedVector<Number> &                        in,
+             std::vector<std::array<Table<2, Number>, 2>> & out,
+             std::size_t                                    lanczos_iterations = -1)
 {
-  if(dim == 2)
+  std::size_t out_rank = out.size();
+  if(lanczos_iterations == (std::size_t)-1)
   {
-    std::size_t           big_m   = out[0][0].size()[0];
-    std::size_t           small_m = out[0][1].size()[0];
-    AlignedVector<Number> beta;
-    beta.push_back(Number(1)); // we artificially introduce a first value for
-    // beta to define beta.back()
-    AlignedVector<Number>              alpha;
-    std::vector<AlignedVector<Number>> r;
-    std::vector<AlignedVector<Number>> p = {AlignedVector<Number>(small_m * small_m)};
-    p.back()[0]                          = Number(1);
-    std::vector<AlignedVector<Number>> u = {AlignedVector<Number>(big_m * big_m)};
-    std::vector<AlignedVector<Number>> v;
-    for(std::size_t i = 0;
-        i < lanczos_iterations && std::abs(beta.back()) > std::numeric_limits<Number>::epsilon();
-        i++)
-    {
-      beta.push_back(std::sqrt(inner_product(p.back(), p.back())));
-      v.push_back(vector_inverse_scaling(p.back(), beta.back()));
-      r.push_back(vector_scaling(u.back(), -beta.back()));
-      r.back() =
-        vector_addition(r.back(),
-                        reshuffled_diag_vector_multiplication(in, v.back(), big_m, small_m));
-      orthogonalize(r);
-      alpha.push_back(std::sqrt(inner_product(r.back(), r.back())));
-      u.push_back(vector_inverse_scaling(r.back(), alpha.back()));
-      p.push_back(vector_scaling(v.back(), -alpha.back()));
-      p.back() = vector_addition(
-        p.back(), transpose_reshuffled_diag_vector_multiplication(in, u.back(), big_m, small_m));
-      orthogonalize(p);
-    }
-    std::size_t           base_len = alpha.size() - 1;
-    Table<2, Number>      U(base_len, big_m * big_m); // discard first value of u since it is zero
-    Table<2, Number>      V(base_len,
-                       small_m * small_m); // discard last value of v since it is zero
-    AlignedVector<Number> real_beta(base_len -
-                                    1); // discard first two values of beta, first is artificially
-    // introduced, second only depends on inital guess
-    AlignedVector<Number> real_alpha(base_len); // discard last value of alpha since it is zero
-    for(std::size_t i = 0; i < base_len; i++)
-    {
-      real_alpha[i] = alpha[i];
-      if(i < base_len - 1)
-        real_beta[i] = beta[i + 2];
-      for(std::size_t j = 0; j < big_m * big_m; j++)
-        U(i, j) = u[i + 1][j];
-      for(std::size_t j = 0; j < small_m * small_m; j++)
-        V(i, j) = v[i][j];
-    }
+    lanczos_iterations = out_rank * out_rank + 10;
+  }
 
-    AlignedVector<Number> singular_values(base_len);
-    Table<2, Number>      tildeU(base_len, base_len);
-    Table<2, Number>      tildeVT(base_len, base_len);
+  std::size_t           big_m   = out[0][1].size()[0];
+  std::size_t           small_m = out[0][0].size()[0];
+  AlignedVector<Number> beta;
+  beta.push_back(Number(1)); // we artificially introduce a first value for
+  // beta to define beta.back()
+  AlignedVector<Number>              alpha;
+  std::vector<AlignedVector<Number>> r;
+  std::vector<AlignedVector<Number>> p = {AlignedVector<Number>(small_m * small_m)};
+  p.back()[0]                          = Number(1);
+  std::vector<AlignedVector<Number>> u = {AlignedVector<Number>(big_m * big_m)};
+  std::vector<AlignedVector<Number>> v;
+  for(std::size_t i = 0;
+      i < lanczos_iterations && std::abs(beta.back()) > std::numeric_limits<Number>::epsilon();
+      i++)
+  {
+    beta.push_back(std::sqrt(inner_product(p.back(), p.back())));
+    v.push_back(vector_inverse_scaling(p.back(), beta.back()));
+    r.push_back(vector_scaling(u.back(), -beta.back()));
+    r.back() = vector_addition(r.back(),
+                               reshuffled_diag_vector_multiplication(in, v.back(), big_m, small_m));
+    orthogonalize(r);
+    alpha.push_back(std::sqrt(inner_product(r.back(), r.back())));
+    u.push_back(vector_inverse_scaling(r.back(), alpha.back()));
+    p.push_back(vector_scaling(v.back(), -alpha.back()));
+    p.back() = vector_addition(
+      p.back(), transpose_reshuffled_diag_vector_multiplication(in, u.back(), big_m, small_m));
+    orthogonalize(p);
+  }
+  std::size_t           base_len = alpha.size() - 1;
+  Table<2, Number>      U(base_len, big_m * big_m); // discard first value of u since it is zero
+  Table<2, Number>      V(base_len,
+                     small_m * small_m); // discard last value of v since it is zero
+  AlignedVector<Number> real_beta(base_len -
+                                  1); // discard first two values of beta, first is artificially
+  // introduced, second only depends on inital guess
+  AlignedVector<Number> real_alpha(base_len); // discard last value of alpha since it is zero
+  for(std::size_t i = 0; i < base_len; i++)
+  {
+    real_alpha[i] = alpha[i];
+    if(i < base_len - 1)
+      real_beta[i] = beta[i + 2];
+    for(std::size_t j = 0; j < big_m * big_m; j++)
+      U(i, j) = u[i + 1][j];
+    for(std::size_t j = 0; j < small_m * small_m; j++)
+      V(i, j) = v[i][j];
+  }
 
-    bidiagonal_svd(real_alpha, real_beta, tildeU, singular_values, tildeVT);
+  AlignedVector<Number> singular_values(base_len);
+  Table<2, Number>      tildeU(base_len, base_len);
+  Table<2, Number>      tildeVT(base_len, base_len);
 
-    Table<2, Number> left_singular_vectors  = matrix_transpose_multiplication(tildeU, U);
-    Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
+  bidiagonal_svd(real_alpha, real_beta, tildeU, singular_values, tildeVT);
 
-    /// TODO mismatch between out_rank and base_len
-    for(std::size_t i = 0; i < out_rank; i++)
-    {
-      for(std::size_t k = 0; k < big_m; k++)
-        for(std::size_t l = 0; l < big_m; l++)
-          out[i][0](k, l) = left_singular_vectors(i, k * big_m + l) * std::sqrt(singular_values[i]);
-      for(std::size_t k = 0; k < small_m; k++)
-        for(std::size_t l = 0; l < small_m; l++)
-          out[i][1](k, l) =
-            right_singular_vectors(i, k * small_m + l) * std::sqrt(singular_values[i]);
-    }
+  Table<2, Number> left_singular_vectors  = matrix_transpose_multiplication(tildeU, U);
+  Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
+
+  for(std::size_t i = 0; i < out_rank; i++)
+  {
+    for(std::size_t k = 0; k < big_m; k++)
+      for(std::size_t l = 0; l < big_m; l++)
+        out[i][1](k, l) = left_singular_vectors(i, k * big_m + l) * std::sqrt(singular_values[i]);
+    for(std::size_t k = 0; k < small_m; k++)
+      for(std::size_t l = 0; l < small_m; l++)
+        out[i][0](k, l) =
+          right_singular_vectors(i, k * small_m + l) * std::sqrt(singular_values[i]);
   }
 }
 
-/// TODO
-template<int dim, typename Number, int out_rank>
-void
-compute_ksvd_reverse(AlignedVector<Number> &                                   in,
-                     std::array<std::array<Table<2, Number>, dim>, out_rank> & out, // A1 x A0
-                     const std::size_t lanczos_iterations = out_rank * out_rank + 10)
-{
-  reverse_tensors<dim, Number, out_rank>(out); // A0 x A1
-  compute_ksvd<dim, Number, out_rank>(in, out, lanczos_iterations);
-  reverse_tensors<dim, Number, out_rank>(out); // A1 x A0
-}
 
-/// TODO
-template<int dim, typename Number, int out_rank>
-void compute_ksvd_reverse(std::vector<std::array<Table<2, Number>, dim>> &          in,
-                          std::array<std::array<Table<2, Number>, dim>, out_rank> & out, // A1 x A0
-                          const std::size_t lanczos_iterations = out_rank * out_rank + 10)
+/*
+  Compute the low Kronecker rank approximation, we use the ALS decomposition to get a
+  Candecomp/Parafac decomposition, of a matrix of the form M = Σ A_i⊗B_i⊗C_i. We first reshuffle M
+  and then compute the first few singular values/vectors by using the Lanczos algorithm. The
+  matricization of these singular vectors then is the low Kronecker rank approximation. The matrix M
+  is passed in "in", and the low rank approximation is passed in "out" to be consistent with dealII
+  kroneckerproducts are passed as {C_i,B_i,A_i}
+*/
+template<typename Number>
+void
+compute_kcp(const std::vector<std::array<Table<2, Number>, 3>> & in,
+            std::vector<std::array<Table<2, Number>, 3>> &       out,
+            std::size_t                                          als_iterations = -1)
 {
-  const auto in_view = make_array_view<std::array<Table<2, Number>, dim>>(in);
-  reverse_tensors<dim, Number>(in_view);       // A0 x A1
-  reverse_tensors<dim, Number, out_rank>(out); // A0 x A1
-  compute_ksvd<dim, Number, out_rank>(in, out, lanczos_iterations);
-  reverse_tensors<dim, Number, out_rank>(out); // A1 x A0
+  AssertDimension(in[0][0].size()[0], out[0][0].size()[0]);
+  AssertDimension(in[0][1].size()[0], out[0][1].size()[0]);
+  AssertDimension(in[0][2].size()[0], out[0][2].size()[0]);
+  AssertDimension(in[0][0].size()[1], out[0][0].size()[1]);
+  AssertDimension(in[0][1].size()[1], out[0][1].size()[1]);
+  AssertDimension(in[0][2].size()[1], out[0][2].size()[1]);
+  std::size_t in_rank = in.size();
+
+  const std::size_t out_rank = out.size();
+  if(als_iterations == (std::size_t)-1)
+  {
+    als_iterations = out_rank * out_rank + 10;
+  }
+  for(std::size_t i = 0; i < out_rank; i++)
+  {
+    AssertDimension(out[0][0].size()[0], out[i][0].size()[0]);
+    AssertDimension(out[0][1].size()[0], out[i][1].size()[0]);
+    AssertDimension(out[0][2].size()[0], out[i][2].size()[0]);
+    AssertDimension(out[0][0].size()[1], out[i][0].size()[1]);
+    AssertDimension(out[0][1].size()[1], out[i][1].size()[1]);
+    AssertDimension(out[0][2].size()[1], out[i][2].size()[1]);
+  }
+  std::vector<std::array<AlignedVector<Number>, 3>> matrices_vectorized;
+  for(std::size_t i = 0; i < in_rank; i++)
+  {
+    AssertDimension(in[0][0].size()[0], in[i][0].size()[0]);
+    AssertDimension(in[0][1].size()[0], in[i][1].size()[0]);
+    AssertDimension(in[0][2].size()[0], in[i][2].size()[0]);
+    AssertDimension(in[0][0].size()[1], in[i][0].size()[1]);
+    AssertDimension(in[0][1].size()[1], in[i][1].size()[1]);
+    AssertDimension(in[0][2].size()[1], in[i][2].size()[1]);
+    std::array<AlignedVector<Number>, 3> matrix_vect = {vectorize_matrix(in[i][2]),
+                                                        vectorize_matrix(in[i][1]),
+                                                        vectorize_matrix(in[i][0])};
+    matrices_vectorized.push_back(matrix_vect);
+  }
+  std::vector<Table<2, Number>> parafac_components;
+  Table<2, Number>              A0(matrices_vectorized[0][0].size(), out_rank);
+  Table<2, Number>              A1(matrices_vectorized[0][1].size(), out_rank);
+  Table<2, Number>              A2(matrices_vectorized[0][2].size(), out_rank);
+  for(std::size_t i = 0; i < out_rank; i++)
+  {
+    for(std::size_t j = 0; j < matrices_vectorized[0][0].size(); j++)
+      A0(j, i) = matrices_vectorized[i][0][j];
+    for(std::size_t j = 0; j < matrices_vectorized[0][1].size(); j++)
+      A1(j, i) = matrices_vectorized[i][1][j];
+    for(std::size_t j = 0; j < matrices_vectorized[0][2].size(); j++)
+      A2(j, i) = matrices_vectorized[i][2][j];
+  }
+  Table<2, Number> V;
+  for(std::size_t i = 0; i < als_iterations; i++)
+  {
+    V  = hadamard(matrix_transpose_multiplication(A1, A1), matrix_transpose_multiplication(A2, A2));
+    A0 = matrix_multiplication(unfold_rankk(matrices_vectorized, 0),
+                               matrix_multiplication(khatri_rao(A2, A1), pseudo_inverse(V)));
+    V  = hadamard(matrix_transpose_multiplication(A0, A0), matrix_transpose_multiplication(A2, A2));
+    A1 = matrix_multiplication(unfold_rankk(matrices_vectorized, 1),
+                               matrix_multiplication(khatri_rao(A2, A0), pseudo_inverse(V)));
+    V  = hadamard(matrix_transpose_multiplication(A0, A0), matrix_transpose_multiplication(A1, A1));
+    A2 = matrix_multiplication(unfold_rankk(matrices_vectorized, 2),
+                               matrix_multiplication(khatri_rao(A1, A0), pseudo_inverse(V)));
+  }
+
+
+  for(std::size_t i = 0; i < out_rank; i++)
+  {
+    for(std::size_t j = 0; j < out[i][0].size()[0]; j++)
+      for(std::size_t k = 0; k < out[i][0].size()[1]; k++)
+        out[i][0](j, k) = A2(j * out[i][0].size()[1] + k, i);
+
+    for(std::size_t j = 0; j < out[i][1].size()[0]; j++)
+      for(std::size_t k = 0; k < out[i][1].size()[1]; k++)
+        out[i][1](j, k) = A1(j * out[i][1].size()[1] + k, i);
+
+    for(std::size_t j = 0; j < out[i][2].size()[0]; j++)
+      for(std::size_t k = 0; k < out[i][2].size()[1]; k++)
+        out[i][2](j, k) = A0(j * out[i][2].size()[1] + k, i);
+  }
 }
 
 #endif
