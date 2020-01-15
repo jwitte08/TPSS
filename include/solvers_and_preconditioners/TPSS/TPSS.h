@@ -7,29 +7,8 @@
 
 #include <array>
 #include <memory>
-#include <type_traits>
 
-template<typename Number>
-struct ExtractScalarType
-{
-  using type = Number;
-};
-
-template<typename Number>
-struct ExtractScalarType<typename dealii::VectorizedArray<Number>>
-{
-  using type = Number;
-};
-
-template<typename Number>
-constexpr unsigned int
-get_macro_size()
-{
-  using UnvectorizedNumber = typename ExtractScalarType<Number>::type;
-  return (std::is_same<Number, UnvectorizedNumber>::value == true) ?
-           1U :
-           dealii::VectorizedArray<UnvectorizedNumber>::n_array_elements;
-}
+#include "generic_functionalities.h"
 
 namespace TPSS
 {
