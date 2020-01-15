@@ -24,10 +24,10 @@ using namespace dealii;
 
 
 
-template<int dim, typename Number, int n_rows_1d = -1>
+template<int dim, typename Number, bool fast = false, int n_rows_1d = -1>
 struct TestBlockMatrix
 {
-  using BlockMatrix       = typename Tensors::BlockMatrix<dim, Number, n_rows_1d>;
+  using BlockMatrix       = typename Tensors::BlockMatrix<dim, Number, fast, n_rows_1d>;
   using State             = typename BlockMatrix::matrix_type::State;
   using scalar_value_type = typename ExtractScalarType<Number>::type;
 
@@ -35,7 +35,8 @@ struct TestBlockMatrix
   fill_block(const std::size_t                     row,
              const std::size_t                     col,
              const std::vector<Table<2, Number>> & left,
-             const std::vector<Table<2, Number>> & right)
+             const std::vector<Table<2, Number>> & right,
+             const bool                            skd_if_possible = false)
   {
     AssertThrow(dim == 2, ExcMessage("Only two dimensions are valid."));
     std::vector<std::array<Table<2, Number>, dim>> tensors;
@@ -47,10 +48,11 @@ struct TestBlockMatrix
                      std::array<Table<2, Number>, dim> tensor = {r, l};
                      return tensor;
                    });
-    block_matrix.get_block(row, col).reinit(tensors, State::basic);
+    State state = skd_if_possible ? State::skd : State::basic;
+    block_matrix.get_block(row, col).reinit(tensors, state);
   }
 
-  Tensors::BlockMatrix<dim, Number, n_rows_1d> block_matrix;
+  BlockMatrix block_matrix;
 };
 
 template<typename T>
@@ -376,15 +378,11 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastEigenvalueKSVD)
                  inverse_eigenvalues.begin(),
                  [](const auto & lambda) { return static_cast<value_type>(1. / lambda); });
 
-  std::array<std::array<Table<2, value_type>, dim>, rank> ksvd_eigenvalues_;
-  for(auto & tensor : ksvd_eigenvalues_)
+  std::vector<std::array<Table<2, value_type>, dim>> ksvd_eigenvalues(rank);
+  for(auto & tensor : ksvd_eigenvalues)
     for(auto d = 0U; d < dim; ++d)
       tensor[d].reinit(AA.m(d), AA.m(d));
-  compute_ksvd_reverse<dim, value_type, rank>(inverse_eigenvalues, ksvd_eigenvalues_);
-  std::vector<std::array<Table<2, value_type>, dim>> ksvd_eigenvalues;
-  std::copy(ksvd_eigenvalues_.cbegin(),
-            ksvd_eigenvalues_.cend(),
-            std::back_inserter(ksvd_eigenvalues));
+  compute_ksvd<value_type>(inverse_eigenvalues, ksvd_eigenvalues);
   Tensors::TensorProductMatrix<dim, value_type> Lambda(ksvd_eigenvalues);
   for(auto lane = 0U; lane < get_macro_size<value_type>(); ++lane)
   {
@@ -433,14 +431,12 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastEigenvalueKSVD)
 
     // /// compare rank-2 KSVD of approximated inverse with original A (must be
     // /// exact for m = 2!)
-    // std::vector<std::array<Table<2, value_type>, 2>> ksvd_A;
-    // std::array<std::array<Table<2, value_type>, 2>, 2> ksvd_A_;
-    // for(auto & tensor : ksvd_A_)
+    // std::vector<std::array<Table<2, value_type>, 2>> ksvd_A(2);
+    // for(auto & tensor : ksvd_A)
     //   for(auto d = 0U; d < 2; ++d)
     // 	tensor[d].reinit(AA.m(d), AA.m(d));
     // auto Atilde_inv = AAtilde_inv.get_elementary_tensors();
-    // compute_ksvd_reverse<2, value_type, 2>(Atilde_inv, ksvd_A_);
-    // std::copy(ksvd_A_.cbegin(), ksvd_A_.cend(), std::back_inserter(ksvd_A));
+    // compute_ksvd<value_type>(Atilde_inv, ksvd_A);
     // Tensors::TensorProductMatrix<2, value_type> AA_ksvd(ksvd_A);
     // Fixture::compare_matrix(table_to_fullmatrix(AA_ksvd.as_table(), lane),AA_invreference);
   }

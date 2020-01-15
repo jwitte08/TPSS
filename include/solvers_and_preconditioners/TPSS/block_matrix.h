@@ -40,15 +40,11 @@ public:
                    [](const auto & lambda) { return static_cast<Number>(1. / lambda); });
 
     /// compute KSVD of inverse eigenvalue matrix
-    std::vector<std::array<Table<2, Number>, order>>      ksvd_eigenvalues;
-    std::array<std::array<Table<2, Number>, order>, rank> ksvd_eigenvalues_;
-    for(auto & tensor : ksvd_eigenvalues_)
+    std::vector<std::array<Table<2, Number>, order>> ksvd_eigenvalues(rank);
+    for(auto & tensor : ksvd_eigenvalues)
       for(auto d = 0U; d < order; ++d)
         tensor[d].reinit(A_in.m(d), A_in.m(d));
-    compute_ksvd_reverse<order, Number, rank>(inverse_eigenvalues, ksvd_eigenvalues_);
-    std::copy(ksvd_eigenvalues_.cbegin(),
-              ksvd_eigenvalues_.cend(),
-              std::back_inserter(ksvd_eigenvalues));
+    compute_ksvd<Number>(inverse_eigenvalues, ksvd_eigenvalues);
 
     /// compute elementary tensors representing the approximation of -A^{-1}
     std::vector<std::array<Table<2, Number>, order>> eigenvectors(1), eigenvectorsT(1);
@@ -86,19 +82,19 @@ public:
     //   table_to_fullmatrix(tensor[1], 0).print_formatted(std::cout);
 
     /// compute the KSVD of the Schur matrix
-    std::array<std::array<Table<2, Number>, 2>, 2> ksvd_schur_;
-    for(auto & tensor : ksvd_schur_)
+    std::vector<std::array<Table<2, Number>, order>> ksvd_schur(2);
+    for(auto & tensor : ksvd_schur)
       for(auto d = 0U; d < order; ++d)
         tensor[d].reinit(A_in.m(d), A_in.m(d));
-    compute_ksvd_reverse<2, Number, 2>(schur_tensors, ksvd_schur_);
+    compute_ksvd<Number>(schur_tensors, ksvd_schur);
 
     std::vector<std::array<Table<2, Number>, 2>> mass_and_derivative(2);
     auto &                                       driv = mass_and_derivative[1];
-    driv[0]                                           = ksvd_schur_[0][0];
-    driv[1]                                           = ksvd_schur_[1][1];
+    driv[0]                                           = ksvd_schur[0][0];
+    driv[1]                                           = ksvd_schur[1][1];
     auto & mass                                       = mass_and_derivative[0];
-    mass[0]                                           = ksvd_schur_[1][0];
-    mass[1]                                           = ksvd_schur_[0][1];
+    mass[0]                                           = ksvd_schur[1][0];
+    mass[1]                                           = ksvd_schur[0][1];
 
     // /// DEBUG
     // const auto check_definiteness = [](auto & matrix) {
@@ -116,12 +112,12 @@ public:
     //     eigenvalues.print(std::cout);
     //   }
     // };
-    // for (auto r = 0U; r < ksvd_schur_.size(); ++r)
+    // for (auto r = 0U; r < ksvd_schur.size(); ++r)
     //   {
     // 	std::cout << "eigenvalues of left (rank=" << r << ")" << std::endl;
-    // 	check_definiteness(ksvd_schur_[r][1]);
+    // 	check_definiteness(ksvd_schur[r][1]);
     // 	std::cout << "eigenvalues of right (rank=" << r << ")" << std::endl;
-    // 	check_definiteness(ksvd_schur_[r][0]);
+    // 	check_definiteness(ksvd_schur[r][0]);
     //   }
 
     // /// DEBUG
@@ -142,8 +138,6 @@ public:
     /// approximate Schur matrix @p ksvd_schur
     // matrix_type::reinit(mass_and_derivative, State::skd);
     /// ALTERNATIVE no fast diagonalization
-    std::vector<std::array<Table<2, Number>, order>> ksvd_schur;
-    std::copy(ksvd_schur_.cbegin(), ksvd_schur_.cend(), std::back_inserter(ksvd_schur));
     matrix_type::reinit(ksvd_schur);
   }
 };
