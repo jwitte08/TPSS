@@ -5,10 +5,10 @@ project(Apps
 
 message(STATUS "Configuring numerical applications within subdirectory 'apps'")
 
-# configure_file(
-#   ${CMAKE_SOURCE_DIR}/scripts/poisson_distorted.py.in
-#   ${CMAKE_BINARY_DIR}/scripts/poisson_distorted.py
-#   )
+configure_file(
+  ${CMAKE_SOURCE_DIR}/scripts/linelasticity_sipg.py.in
+  ${CMAKE_BINARY_DIR}/scripts/linelasticity_sipg.py
+  )
 
 set(sourcefiles
   # mlaplace.cc # TODO

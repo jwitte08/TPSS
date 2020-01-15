@@ -1,0 +1,78 @@
+import argparse
+from argparse import RawTextHelpFormatter
+import os
+import subprocess
+
+BUILD_DIR_ = os.path.abspath("@CMAKE_BINARY_DIR@")  # @...@ replaced by CMake
+EXEC_DIR_ = os.path.join(BUILD_DIR_, 'apps')
+
+
+def parse_args():
+    def cspair(string):
+        first, second = string.split(',')
+        return int(first), int(second)
+    parser = argparse.ArgumentParser(
+        description="""
+        Compare various tensor product Schwarz smoothers
+        """,
+        formatter_class=RawTextHelpFormatter
+    )
+    parser.add_argument('-smoo','--smoother',
+                        default='exct',
+                        choices=['exct','diag','fast'],
+                        help="smoothing variant"
+    )
+    parser.add_argument('-step', '--smoothing-steps',
+                        type=int,
+                        default=[1],
+                        nargs='+',
+                        metavar='int',
+                        help="smoothing steps"
+                        )
+    parser.add_argument('-mu', '--mu',
+                        type=float,
+                        default=[1.],
+                        nargs='+',
+                        metavar='float',
+                        help="Lame constant mu"
+                        )
+    parser.add_argument('-lamb', '--lambdaa',
+                        type=float,
+                        default=[1.],
+                        nargs='+',
+                        metavar='float',
+                        help="Lame constant lambda"
+                        )
+    parser.add_argument('-ip', '--ip-penalty',
+                        type=float,
+                        default=[1.],
+                        nargs='+',
+                        metavar='float',
+                        help="interior penalty pre-factor"
+                        )
+    args = parser.parse_args()
+    return args
+
+
+def main():
+    options = parse_args()
+    n_smoothing_steps = options.smoothing_steps
+    mus = options.mu
+    lambdas = options.lambdaa
+    penalties = options.ip_penalty
+    smoother_choices = {"diag":0, "exct":1, "fast":2}
+    id = smoother_choices[options.smoother]
+    
+    for n_steps in n_smoothing_steps:
+        for m in mus:
+            for l in lambdas:
+                for ip in penalties:
+                    exec = os.path.join(EXEC_DIR_, 'linelasticity_sipg')
+                    program = [exec, str(id), str(n_steps), str(m), str(l)]
+                    print("program: {}".format(program))
+                    subprocess.run(program)
+    return 0
+
+
+if __name__ == '__main__':
+    main()
