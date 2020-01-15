@@ -31,7 +31,9 @@ class MatrixIntegrator : public dealii::MeshWorker::LocalIntegrator<dim>
 {
 public:
   MatrixIntegrator(const EquationData & equation_data_in)
-    : mu(equation_data_in.mu), lambda(equation_data_in.lambda)
+    : mu(equation_data_in.mu),
+      lambda(equation_data_in.lambda),
+      ip_factor(equation_data_in.ip_factor)
   {
   }
 
@@ -48,8 +50,9 @@ public:
        typename dealii::MeshWorker::IntegrationInfo<dim> & info2) const;
 
 private:
-  double mu;     //= 1.;
-  double lambda; //= 1.;
+  double mu;
+  double lambda;
+  double ip_factor;
 };
 
 template<int dim>
@@ -74,12 +77,12 @@ MatrixIntegrator<dim>::boundary(dealii::MeshWorker::DoFInfo<dim> &              
   dealii::LocalIntegrators::Elasticity::nitsche_matrix(
     dinfo.matrix(0, false).matrix,
     info.fe_values(0),
-    dealii::LocalIntegrators::Laplace::compute_penalty(dinfo, dinfo, deg, deg),
+    ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo, dinfo, deg, deg),
     2. * mu);
   dealii::LocalIntegrators::GradDiv::nitsche_matrix(
     dinfo.matrix(0, false).matrix,
     info.fe_values(0),
-    dealii::LocalIntegrators::Laplace::compute_penalty(dinfo, dinfo, deg, deg),
+    ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo, dinfo, deg, deg),
     lambda);
 }
 
@@ -98,7 +101,7 @@ MatrixIntegrator<dim>::face(dealii::MeshWorker::DoFInfo<dim> &                  
     dinfo2.matrix(0, false).matrix,
     info1.fe_values(0),
     info2.fe_values(0),
-    dealii::LocalIntegrators::Laplace::compute_penalty(dinfo1, dinfo2, deg, deg),
+    ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo1, dinfo2, deg, deg),
     2. * mu);
   dealii::LocalIntegrators::GradDiv::ip_matrix(
     dinfo1.matrix(0, false).matrix,
@@ -107,7 +110,7 @@ MatrixIntegrator<dim>::face(dealii::MeshWorker::DoFInfo<dim> &                  
     dinfo2.matrix(0, false).matrix,
     info1.fe_values(0),
     info2.fe_values(0),
-    dealii::LocalIntegrators::Laplace::compute_penalty(dinfo1, dinfo2, deg, deg),
+    ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo1, dinfo2, deg, deg),
     lambda);
 }
 
@@ -277,7 +280,7 @@ public:
   struct NitscheStrain
   {
     NitscheStrain(const EquationData & equation_data_in, const int component_in)
-      : mu(equation_data_in.mu), component(component_in)
+      : mu(equation_data_in.mu), ip_factor(equation_data_in.ip_factor), component(component_in)
     {
       AssertIndexRange(component, dim);
     }
@@ -299,6 +302,7 @@ public:
                const int                           direction) const;
 
     const double mu;
+    const double ip_factor;
     const int    component;
   };
 
@@ -306,7 +310,10 @@ public:
   struct NitscheStrainMixed
   {
     NitscheStrainMixed(const EquationData & equation_data_in, const int comp_u, const int comp_v)
-      : component_u(comp_u), component_v(comp_v), mu(equation_data_in.mu)
+      : component_u(comp_u),
+        component_v(comp_v),
+        mu(equation_data_in.mu),
+        ip_factor(equation_data_in.ip_factor)
     {
       AssertIndexRange(component_u, dim);
       AssertIndexRange(component_v, dim);
@@ -332,13 +339,16 @@ public:
     const int    component_u;
     const int    component_v;
     const double mu;
+    const double ip_factor;
   };
 
   template<typename Evaluator>
   struct NitscheGradDiv
   {
     NitscheGradDiv(const EquationData & equation_data_in, const int component_in)
-      : lambda(equation_data_in.lambda), component(component_in)
+      : lambda(equation_data_in.lambda),
+        ip_factor(equation_data_in.ip_factor),
+        component(component_in)
     {
       AssertIndexRange(component, dim);
     }
@@ -360,6 +370,7 @@ public:
                const int                           direction) const;
 
     const double lambda;
+    const double ip_factor;
     const int    component;
   };
 
@@ -367,7 +378,10 @@ public:
   struct NitscheGradDivMixed
   {
     NitscheGradDivMixed(const EquationData & equation_data_in, const int comp_u, const int comp_v)
-      : lambda(equation_data_in.lambda), component_u(comp_u), component_v(comp_v)
+      : lambda(equation_data_in.lambda),
+        ip_factor(equation_data_in.ip_factor),
+        component_u(comp_u),
+        component_v(comp_v)
     {
       AssertIndexRange(component_u, dim);
       AssertIndexRange(component_v, dim);
@@ -391,6 +405,7 @@ public:
                const int) const;
 
     const double lambda;
+    const double ip_factor;
     const int    component_u;
     const int    component_v;
   };
@@ -1021,7 +1036,8 @@ operator()(const Evaluator & /*fd_eval_ansatz*/,
   AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
 
   const auto normal{make_vectorized_array<Number>(face_no == 0 ? -1. : 1.)};
-  const auto penalty{FaceLaplace::compute_penalty(fd_eval, direction, cell_no, cell_no, bdry_mask)};
+  const auto penalty{ip_factor *
+                     FaceLaplace::compute_penalty(fd_eval, direction, cell_no, cell_no, bdry_mask)};
 
   /*** factor varies on interior and boundary cells ***/
   auto factor{make_vectorized_array<Number>(0.)};
@@ -1068,7 +1084,7 @@ operator()(const Evaluator & /*fd_eval_ansatz*/,
   /*** the outward normal on face 0 seen from cell 1 ***/
   const auto normal1{make_vectorized_array<Number>(-1.)};
   /*** boundary mask is obiviously 0(=all interior), cell_no = 0 and cell_no_neighbor = 1 ***/
-  const auto penalty{FaceLaplace::compute_penalty(fd_eval, direction, 0, 1, 0)};
+  const auto penalty{ip_factor * FaceLaplace::compute_penalty(fd_eval, direction, 0, 1, 0)};
   /*** diagonal term of grad(u)^T : v ^ n ***/
   const auto factor = make_vectorized_array<Number>((component == direction) ? 1. : 0.5);
 
@@ -1226,7 +1242,8 @@ operator()(const Evaluator & /*fd_eval_ansatz*/,
   AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
 
   const auto normal{make_vectorized_array<Number>(face_no == 0 ? -1. : 1.)};
-  const auto penalty{FaceLaplace::compute_penalty(fd_eval, direction, cell_no, cell_no, bdry_mask)};
+  const auto penalty{ip_factor *
+                     FaceLaplace::compute_penalty(fd_eval, direction, cell_no, cell_no, bdry_mask)};
 
   /*** factor varies on interior and boundary cells ***/
   auto factor{make_vectorized_array<Number>(0.)};
@@ -1276,7 +1293,7 @@ operator()(const Evaluator & /*fd_eval_ansatz*/,
   /*** the outward normal on face 0 seen from cell 1 ***/
   const auto normal1{make_vectorized_array<Number>(-1.)};
   /*** boundary mask is obiviously 0(=all interior), cell_no = 0 and cell_no_neighbor = 1 ***/
-  const auto penalty{FaceLaplace::compute_penalty(fd_eval, direction, 0, 1, 0)};
+  const auto penalty{ip_factor * FaceLaplace::compute_penalty(fd_eval, direction, 0, 1, 0)};
 
   /*** non-zero normal if component coincides with direction ***/
   if(component == direction)
@@ -1445,8 +1462,9 @@ public:
 
 private:
   std::shared_ptr<const MatrixFree<dim, Number>> data;
-  VectorizedArray<Number>                        mu;     // = make_vectorized_array(1.);
-  VectorizedArray<Number>                        lambda; // = make_vectorized_array(1.);
+  VectorizedArray<Number>                        mu;
+  VectorizedArray<Number>                        lambda;
+  Number                                         ip_factor;
   mutable std::vector<TimeInfo>                  time_infos;
   bool                                           is_valid = false;
 
@@ -1491,7 +1509,7 @@ public:
   Number
   get_penalty_factor() const
   {
-    return 1.0 * IP::pre_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
+    return ip_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
   }
 
   // private:
@@ -1616,6 +1634,7 @@ Operator<dim, fe_degree, Number>::initialize(
   this->data = data_in;
   mu         = make_vectorized_array<Number>(equation_data_in.mu);
   lambda     = make_vectorized_array<Number>(equation_data_in.lambda);
+  ip_factor  = equation_data_in.ip_factor;
   time_infos = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
   is_valid   = static_cast<bool>(data);
 }
@@ -1805,6 +1824,7 @@ Operator<dim, fe_degree, Number>::apply_face(
     const VectorizedArray<Number> inverse_length_normal_to_face =
       std::abs((u_inner[0]->get_normal_vector(0) * u_inner[0]->inverse_jacobian(0))[dim - 1]);
     const VectorizedArray<Number> sigma = inverse_length_normal_to_face * get_penalty_factor();
+
     const unsigned int n_qpoints = u_inner[0]->n_q_points; // TODO assert isotropic quadrature
     Assert(std::all_of(u_inner.cbegin(),
                        u_inner.cend(),
@@ -1962,7 +1982,8 @@ Operator<dim, fe_degree, Number>::apply_boundary(
     const VectorizedArray<Number> inverse_length_normal_to_face =
       std::abs((u[0]->get_normal_vector(0) * u[0]->inverse_jacobian(0))[dim - 1]);
     const VectorizedArray<Number> sigma = 2. * inverse_length_normal_to_face * get_penalty_factor();
-    const unsigned int            n_qpoints = u[0]->n_q_points; // TODO assert isotropic quadrature
+
+    const unsigned int n_qpoints = u[0]->n_q_points; // TODO assert isotropic quadrature
     Assert(std::all_of(u.cbegin(),
                        u.cend(),
                        [n_qpoints](const auto & phi) { return phi->n_q_points == n_qpoints; }),

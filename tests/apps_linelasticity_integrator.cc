@@ -179,8 +179,9 @@ TYPED_TEST_P(TestLinElasticityIntegratorMF, VaryDimAndDegree)
 
   using Fixture = TestLinElasticityIntegratorMF<TypeParam>;
 
-  Fixture::params.equation_data.lambda = 1.234;
-  Fixture::params.equation_data.mu     = 9.876;
+  Fixture::params.equation_data.lambda    = 1.234;
+  Fixture::params.equation_data.mu        = 9.876;
+  Fixture::params.equation_data.ip_factor = 1.99;
   Fixture::test();
 }
 
@@ -824,6 +825,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, ManualAssemblyCellPatch)
   Fixture::params.n_refinements                = 1U;
   Fixture::params.equation_data.lambda         = 1.234;
   Fixture::params.equation_data.mu             = 9.876;
+  Fixture::params.equation_data.ip_factor      = 1.99;
   Fixture::manual_assembly();
 }
 
@@ -841,6 +843,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, ManualInvertCellPatch)
   Fixture::params.n_refinements                = 2U;
   Fixture::params.equation_data.lambda         = 1.234;
   Fixture::params.equation_data.mu             = 9.876;
+  Fixture::params.equation_data.ip_factor      = 2.99;
   Fixture::manual_assembly(Fixture::TestVariant::inverse);
 }
 
@@ -862,6 +865,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSAssemblyCellPatch)
   Fixture::params.n_refinements                = 1U;
   Fixture::params.equation_data.lambda         = 1.234;
   Fixture::params.equation_data.mu             = 9.876;
+  Fixture::params.equation_data.ip_factor      = 4.99;
   Fixture::tpss_assembly();
 }
 
@@ -879,6 +883,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSInvertCellPatch)
   Fixture::params.n_refinements                = 2U;
   Fixture::params.equation_data.lambda         = 1.234;
   Fixture::params.equation_data.mu             = 9.876;
+  Fixture::params.equation_data.ip_factor      = 5.99;
   Fixture::tpss_assembly(Fixture::TestVariant::inverse);
 }
 
@@ -905,6 +910,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSAssemblyVertexPatch)
   Fixture::params.n_refinements                = 1U;
   Fixture::params.equation_data.lambda         = 1.234;
   Fixture::params.equation_data.mu             = 9.876;
+  Fixture::params.equation_data.ip_factor      = 6.99;
   Fixture::tpss_assembly();
 }
 
@@ -927,6 +933,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSInvertVertexPatch)
   Fixture::params.n_refinements                = 1U;
   Fixture::params.equation_data.lambda         = 1.234;
   Fixture::params.equation_data.mu             = 9.876;
+  Fixture::params.equation_data.ip_factor      = 7.99;
   Fixture::tpss_assembly(Fixture::TestVariant::inverse);
 }
 
@@ -944,6 +951,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSFastInvertCellPatch)
   Fixture::params.n_refinements                = 2U;
   Fixture::params.equation_data.lambda         = 1.234;
   Fixture::params.equation_data.mu             = 9.876;
+  Fixture::params.equation_data.ip_factor      = 8.99;
   Fixture::tpss_assembly_fast();
 }
 
