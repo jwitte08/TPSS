@@ -222,8 +222,7 @@ public:
 
 // Two Matrices are considered equal if all of their components are equal up to machine epsilon
 template<typename Number>
-bool
-operator==(Table<2, Number> tab1, Table<2, Number> tab2)
+bool operator==(Table<2, Number> tab1, Table<2, Number> tab2)
 {
   AssertDimension(tab1.size()[0], tab2.size()[0]);
   AssertDimension(tab1.size()[1], tab2.size()[1]);
@@ -252,8 +251,7 @@ operator==(Table<2, Number> tab1, Table<2, Number> tab2)
 
 // print a table up to digits sginificant digits
 template<typename Number>
-void
-printTable(Table<2, Number> tab, double digits = 2)
+void printTable(Table<2, Number> tab, double digits = 2)
 {
   std::size_t m = tab.size()[0];
   std::size_t n = tab.size()[1];
@@ -269,8 +267,7 @@ printTable(Table<2, Number> tab, double digits = 2)
 }
 
 template<typename Number>
-void
-printTable(Table<2, VectorizedArray<Number>> tab)
+void printTable(Table<2, VectorizedArray<Number>> tab)
 {
   constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
   std::size_t           m          = tab.size()[0];
