@@ -14,6 +14,7 @@ set(sourcefiles
   # mlaplace.cc # TODO
   # linelasticity.cc # TODO
   linelasticity_diagonly.cc
+  linelasticity_sipg.cc
   poisson.cc
   poisson_distorted.cc
   poisson_mpiscaling.cc
