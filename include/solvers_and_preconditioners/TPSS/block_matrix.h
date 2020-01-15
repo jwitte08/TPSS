@@ -99,6 +99,7 @@ public:
     auto & mass                                       = mass_and_derivative[0];
     mass[0]                                           = ksvd_schur_[1][0];
     mass[1]                                           = ksvd_schur_[0][1];
+
     // /// DEBUG
     // const auto check_definiteness = [](auto & matrix) {
     //   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
@@ -111,16 +112,25 @@ public:
     //     mat.compute_eigenvalues();
     //     for(auto i = 0U; i < eigenvalues.size(); ++i)
     //       eigenvalues[i] = mat.eigenvalue(i);
+    // 	std::cout << "lane=" << lane << ": ";
     //     eigenvalues.print(std::cout);
     //   }
     // };
+    // for (auto r = 0U; r < ksvd_schur_.size(); ++r)
+    //   {
+    // 	std::cout << "eigenvalues of left (rank=" << r << ")" << std::endl;
+    // 	check_definiteness(ksvd_schur_[r][1]);
+    // 	std::cout << "eigenvalues of right (rank=" << r << ")" << std::endl;
+    // 	check_definiteness(ksvd_schur_[r][0]);
+    //   }
+
+    // /// DEBUG
     // std::cout << "eigenvalues of mass" << std::endl;
     // for(auto & matrix : mass)
     //   check_definiteness(matrix);
     // std::cout << "eigenvalues of derivative" << std::endl;
     // for(auto & matrix : driv)
     //   check_definiteness(matrix);
-    // /// DEBUG
     // std::cout << "mass" << std::endl;
     // for(const auto & tab : mass_and_derivative[0])
     //   table_to_fullmatrix(tab, 0).print_formatted(std::cout);
