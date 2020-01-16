@@ -30,5 +30,6 @@ foreach(src ${sourcefiles})
     ${CMAKE_SOURCE_DIR}/tests
     )
   target_link_libraries(${target} tpss)
+  target_compile_features(${target} PUBLIC cxx_std_17)
   DEAL_II_SETUP_TARGET(${target})
 endforeach(src)
