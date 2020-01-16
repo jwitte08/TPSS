@@ -17,8 +17,9 @@ def parse_args():
         """,
         formatter_class=RawTextHelpFormatter
     )
-    parser.add_argument('-smoo','--smoother',
-                        default='exct',
+    parser.add_argument('-smoo','--smoothers',
+                        default=['exct'],
+                        nargs='+',
                         choices=['exct','diag','fast'],
                         help="smoothing variant"
     )
@@ -61,16 +62,17 @@ def main():
     lambdas = options.lambdaa
     penalties = options.ip_penalty
     smoother_choices = {"diag":0, "exct":1, "fast":2}
-    id = smoother_choices[options.smoother]
+    smoother_ids = [smoother_choices[smo] for smo in options.smoothers]
     
     for n_steps in n_smoothing_steps:
         for m in mus:
             for l in lambdas:
                 for ip in penalties:
-                    exec = os.path.join(EXEC_DIR_, 'linelasticity_sipg')
-                    program = [exec, str(id), str(n_steps), str(m), str(l)]
-                    print("program: {}".format(program))
-                    subprocess.run(program)
+                    for id in smoother_ids:
+                        exec = os.path.join(EXEC_DIR_, 'linelasticity_sipg')
+                        program = [exec, str(id), str(n_steps), str(m), str(l)]
+                        print("program: {}".format(program))
+                        subprocess.run(program)
     return 0
 
 
