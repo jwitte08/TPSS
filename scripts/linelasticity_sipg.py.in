@@ -70,7 +70,7 @@ def main():
                 for ip in penalties:
                     for id in smoother_ids:
                         exec = os.path.join(EXEC_DIR_, 'linelasticity_sipg')
-                        program = [exec, str(id), str(n_steps), str(m), str(l)]
+                        program = [exec, str(id), str(n_steps), str(m), str(l), str(ip)]
                         print("program: {}".format(program))
                         subprocess.run(program)
     return 0

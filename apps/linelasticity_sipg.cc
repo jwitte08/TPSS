@@ -30,7 +30,7 @@ struct TestParameter
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::IterativeAcc;
   types::global_dof_index dof_limit_min = 1e4;
-  types::global_dof_index dof_limit_max = 5e7;
+  types::global_dof_index dof_limit_max = 5e7; // 1e6;
   EquationData            equation_data;
   double                  local_damping_factor = 1.;
   unsigned                n_smoothing_steps    = 2;
@@ -55,21 +55,22 @@ test_impl(const TestParameter & prms = TestParameter{})
   rt_parameters.solver.precondition_variant = SolverParameter::PreconditionVariant::GMG;
 
   //: multigrid
-  const double damping_factor =
-    TPSS::lookup_damping_factor(prms.patch_variant, prms.smoother_variant, dim);
+  // const double damping_factor =
+  //   TPSS::lookup_damping_factor(prms.patch_variant, prms.smoother_variant, dim);
   rt_parameters.multigrid.coarse_level                 = 0;
   rt_parameters.multigrid.coarse_grid.solver_variant   = prms.coarse_grid_variant;
   rt_parameters.multigrid.coarse_grid.iterative_solver = prms.solver_variant;
   rt_parameters.multigrid.coarse_grid.accuracy         = prms.coarse_grid_accuracy;
   rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
-  rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = prms.patch_variant;
-  rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = prms.smoother_variant;
-  rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
-  rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
-  rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = prms.n_smoothing_steps;
-  rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(6, fe_degree + 1);
-  rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
+  rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = prms.patch_variant;
+  rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = prms.smoother_variant;
+  rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring  = true;
+  // rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
+  rt_parameters.multigrid.pre_smoother.n_smoothing_steps = prms.n_smoothing_steps;
+  rt_parameters.multigrid.post_smoother                  = rt_parameters.multigrid.pre_smoother;
   rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
+  rt_parameters.reset_damping_factor(dim);
+  // rt_parameters.reset_solver_variant();
 
   //: misc
   rt_parameters.dof_limits = {prms.dof_limit_min, prms.dof_limit_max};
@@ -85,6 +86,8 @@ test_impl(const TestParameter & prms = TestParameter{})
   // oss << prms.local_damping_factor << "ldamp_";
   oss << prms.equation_data.mu << "mu_";
   oss << prms.equation_data.lambda << "lambda";
+  if(prms.equation_data.ip_factor > 1.)
+    oss << prms.equation_data.ip_factor << "ip";
   const std::string filename = oss.str();
 
   std::fstream fstream_log;
@@ -188,6 +191,8 @@ main(int argc, char * argv[])
     test_prms.equation_data.mu = std::atof(argv[3]);
   if(argc > 4)
     test_prms.equation_data.lambda = std::atof(argv[4]);
+  if(argc > 5)
+    test_prms.equation_data.ip_factor = std::atof(argv[5]);
 
   test<dim, fe_degree, value_type>(test_prms);
 
