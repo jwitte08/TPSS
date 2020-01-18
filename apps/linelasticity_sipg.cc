@@ -53,7 +53,7 @@ test_impl(const TestParameter & prms = TestParameter{})
   rt_parameters.solver.variant              = prms.solver_variant;
   rt_parameters.solver.rel_tolerance        = prms.cg_reduction;
   rt_parameters.solver.precondition_variant = SolverParameter::PreconditionVariant::GMG;
-  rt_parameters.solver.n_iterations_max = 200;
+  rt_parameters.solver.n_iterations_max     = 200;
 
   //: multigrid
   // const double damping_factor =
@@ -67,9 +67,9 @@ test_impl(const TestParameter & prms = TestParameter{})
   rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = prms.smoother_variant;
   rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring  = true;
   // AssertThrow(prms.local_damping_factor <= 1., ExcMessage("Invalid local damping."));
-  rt_parameters.multigrid.pre_smoother.schwarz.local_damping_factor   = prms.local_damping_factor;
-  rt_parameters.multigrid.pre_smoother.n_smoothing_steps = prms.n_smoothing_steps;
-  rt_parameters.multigrid.post_smoother                  = rt_parameters.multigrid.pre_smoother;
+  rt_parameters.multigrid.pre_smoother.schwarz.local_damping_factor = prms.local_damping_factor;
+  rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = prms.n_smoothing_steps;
+  rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
   rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
   rt_parameters.reset_damping_factor(dim);
   // rt_parameters.reset_solver_variant();
