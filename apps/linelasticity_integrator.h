@@ -1506,6 +1506,22 @@ public:
   Tvmult(LinearAlgebra::distributed::BlockVector<Number> &       dst,
          const LinearAlgebra::distributed::BlockVector<Number> & src) const;
 
+  void
+  vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const
+  {
+    AssertThrow(1 == Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD),
+                ExcMessage("Not implemented."));
+    LinearAlgebra::distributed::BlockVector<Number> src_vector;
+    initialize_dof_vector(src_vector);
+    AssertDimension(src_vector.size(), src.size());
+    std::copy(src.cbegin(), src.cend(), src_vector.begin());
+    LinearAlgebra::distributed::BlockVector<Number> dst_vector;
+    initialize_dof_vector(dst_vector);
+    AssertDimension(dst_vector.size(), dst.size());
+    vmult(dst_vector, src_vector);
+    std::copy(dst_vector.begin(), dst_vector.end(), dst.begin());
+  }
+
   Number
   get_penalty_factor() const
   {
