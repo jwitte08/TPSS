@@ -125,7 +125,7 @@ struct EquationData
 {
   double mu        = 1.;
   double lambda    = 1.;
-  double ip_factor = 1.;
+  double ip_factor = 10.; // required to stabilize discretization !!
 
   std::string
   to_string() const

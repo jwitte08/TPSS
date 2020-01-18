@@ -51,6 +51,13 @@ def parse_args():
                         metavar='float',
                         help="interior penalty pre-factor"
                         )
+    parser.add_argument('-damp', '--local-damping',
+                        type=float,
+                        default=[1.],
+                        nargs='+',
+                        metavar='float',
+                        help="Local damping factor"
+                        )
     args = parser.parse_args()
     return args
 
@@ -61,6 +68,7 @@ def main():
     mus = options.mu
     lambdas = options.lambdaa
     penalties = options.ip_penalty
+    local_dampings = options.local_damping
     smoother_choices = {"diag":0, "exct":1, "fast":2}
     smoother_ids = [smoother_choices[smo] for smo in options.smoothers]
     
@@ -68,11 +76,12 @@ def main():
         for m in mus:
             for l in lambdas:
                 for ip in penalties:
-                    for id in smoother_ids:
-                        exec = os.path.join(EXEC_DIR_, 'linelasticity_sipg')
-                        program = [exec, str(id), str(n_steps), str(m), str(l), str(ip)]
-                        print("program: {}".format(program))
-                        subprocess.run(program)
+                    for ld in local_dampings:
+                        for id in smoother_ids:
+                            exec = os.path.join(EXEC_DIR_, 'linelasticity_sipg')
+                            program = [exec, str(id), str(n_steps), str(m), str(l), str(ip), str(ld)]
+                            print("program: {}".format(program))
+                            subprocess.run(program)
     return 0
 
 

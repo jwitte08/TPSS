@@ -53,6 +53,7 @@ test_impl(const TestParameter & prms = TestParameter{})
   rt_parameters.solver.variant              = prms.solver_variant;
   rt_parameters.solver.rel_tolerance        = prms.cg_reduction;
   rt_parameters.solver.precondition_variant = SolverParameter::PreconditionVariant::GMG;
+  rt_parameters.solver.n_iterations_max = 200;
 
   //: multigrid
   // const double damping_factor =
@@ -65,7 +66,8 @@ test_impl(const TestParameter & prms = TestParameter{})
   rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = prms.patch_variant;
   rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = prms.smoother_variant;
   rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring  = true;
-  // rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
+  // AssertThrow(prms.local_damping_factor <= 1., ExcMessage("Invalid local damping."));
+  rt_parameters.multigrid.pre_smoother.schwarz.local_damping_factor   = prms.local_damping_factor;
   rt_parameters.multigrid.pre_smoother.n_smoothing_steps = prms.n_smoothing_steps;
   rt_parameters.multigrid.post_smoother                  = rt_parameters.multigrid.pre_smoother;
   rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
@@ -83,9 +85,10 @@ test_impl(const TestParameter & prms = TestParameter{})
   oss << prms.test_description << "_";
   oss << prms.n_smoothing_steps << "steps_";
   oss << std::scientific << std::setprecision(3);
-  // oss << prms.local_damping_factor << "ldamp_";
   oss << prms.equation_data.mu << "mu_";
   oss << prms.equation_data.lambda << "lambda";
+  if(prms.local_damping_factor < 1.)
+    oss << prms.local_damping_factor << "ldamp_";
   if(prms.equation_data.ip_factor > 1.)
     oss << prms.equation_data.ip_factor << "ip";
   const std::string filename = oss.str();
@@ -193,6 +196,8 @@ main(int argc, char * argv[])
     test_prms.equation_data.lambda = std::atof(argv[4]);
   if(argc > 5)
     test_prms.equation_data.ip_factor = std::atof(argv[5]);
+  if(argc > 6)
+    test_prms.local_damping_factor = std::atof(argv[6]);
 
   test<dim, fe_degree, value_type>(test_prms);
 
