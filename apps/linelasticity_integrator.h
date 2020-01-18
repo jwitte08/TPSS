@@ -1679,7 +1679,13 @@ Operator<dim, fe_degree, Number>::m() const
 {
   unsigned int n_dofs = 0;
   for(unsigned int comp = 0; comp < dim; ++comp)
-    n_dofs += data->get_dof_handler(comp).n_dofs(); // TODO: works only on active cells
+    {
+      const auto level = data->get_mg_level();
+      if ( level == numbers::invalid_dof_index)
+	n_dofs += data->get_dof_handler(comp).n_dofs();
+      else
+	n_dofs += data->get_dof_handler(comp).n_dofs(level);
+    }
   return n_dofs;
 }
 template<int dim, int fe_degree, typename Number>
