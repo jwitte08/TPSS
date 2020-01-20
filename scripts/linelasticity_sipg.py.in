@@ -46,7 +46,7 @@ def parse_args():
                         )
     parser.add_argument('-ip', '--ip-penalty',
                         type=float,
-                        default=[1.],
+                        default=[10.],
                         nargs='+',
                         metavar='float',
                         help="interior penalty pre-factor"
