@@ -269,7 +269,8 @@ compute_ksvd(const std::vector<std::array<Table<2, Number>, 2>> & in,
   Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
 
   /// TODO mismatch between out_rank and base_len
-  for(std::size_t i = 0; i < out_rank; i++)
+  for(std::size_t i = 0; i < out_rank && i < base_len; ++i)
+  // for(std::size_t i = 0; i < out_rank; i++)
   {
     for(std::size_t k = 0; k < big_m; k++)
       for(std::size_t l = 0; l < big_n; l++)
@@ -357,7 +358,8 @@ compute_ksvd(AlignedVector<Number> &                        in,
   Table<2, Number> left_singular_vectors  = matrix_transpose_multiplication(tildeU, U);
   Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
 
-  for(std::size_t i = 0; i < out_rank; i++)
+  for(std::size_t i = 0; i < out_rank && i < base_len; ++i)
+  // for(std::size_t i = 0; i < out_rank; i++)
   {
     for(std::size_t k = 0; k < big_m; k++)
       for(std::size_t l = 0; l < big_m; l++)
