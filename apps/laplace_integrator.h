@@ -481,6 +481,12 @@ public:
   Tvmult(LinearAlgebra::distributed::Vector<Number> &       dst,
          const LinearAlgebra::distributed::Vector<Number> & src) const;
 
+  void
+  vmult(const ArrayView<Number>, const ArrayView<const Number>) const
+  {
+    AssertThrow(false, ExcMessage("Dummy satisfying interface of MGCoarseSolver."));
+  }
+
   Number
   get_penalty_factor() const
   {
