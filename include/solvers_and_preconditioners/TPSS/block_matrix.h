@@ -50,7 +50,7 @@ public:
                    [](const auto & lambda) { return static_cast<Number>(1. / lambda); });
 
     /// compute KSVD of inverse eigenvalue matrix
-    std::vector<std::array<Table<2, Number>, order>> ksvd_eigenvalues(lambda_rank);
+    std::vector<std::array<Table<2, Number>, order>> ksvd_eigenvalues(A_in.m(0) /*lambda_rank*/);
     for(auto & tensor : ksvd_eigenvalues)
       for(auto d = 0U; d < order; ++d)
         tensor[d].reinit(A_in.m(d), A_in.m(d));
@@ -94,13 +94,17 @@ public:
     if(rank == -1)
     {
       matrix_type::reinit(schur_tensors);
-      std::cout << "Exact..." << std::endl;
+      // std::cout << "Exact..." << std::endl;
       return;
     }
-    std::cout << "Approximate..." << std::endl;
+    // std::cout << "Approximate..." << std::endl;
 
     /// compute the KSVD of the Schur matrix
-    std::vector<std::array<Table<2, Number>, order>> ksvd_schur(2);
+    const auto max_kronrank = D_in.get_elementary_tensors().size() +
+                              C_in.get_elementary_tensors().size() * ksvd_eigenvalues.size() *
+                                B_in.get_elementary_tensors().size();
+
+    std::vector<std::array<Table<2, Number>, order>> ksvd_schur(max_kronrank);
     for(auto & tensor : ksvd_schur)
       for(auto d = 0U; d < order; ++d)
         tensor[d].reinit(A_in.m(d), A_in.m(d));
@@ -539,8 +543,7 @@ public:
     if(fast)
     {
       if(!fast_inverse_2x2)
-        fast_inverse_2x2 = std::make_shared<
-          BlockGaussianInverse<matrix_type, SchurComplementFast<order, Number, n_rows_1d>>>(
+        fast_inverse_2x2 = std::make_shared<BlockGaussianInverse<matrix_type, FastDiagSchurType>>(
           get_block(0, 0), get_block(0, 1), get_block(1, 0), get_block(1, 1));
       fast_inverse_2x2->vmult(dst, src);
     }
@@ -580,6 +583,8 @@ public:
   }
 
 private:
+  using FastDiagSchurType = SchurComplementFast<order, Number, n_rows_1d>;
+
   std::size_t
   block_index(const std::size_t row_index, const std::size_t col_index) const
   {
@@ -674,8 +679,7 @@ private:
    * The inverse of a 2 x 2 block matrix based on approximate block Gaussian
    * elimination.
    */
-  mutable std::shared_ptr<
-    const BlockGaussianInverse<matrix_type, SchurComplementFast<order, Number, n_rows_1d>>>
+  mutable std::shared_ptr<const BlockGaussianInverse<matrix_type, FastDiagSchurType>>
     fast_inverse_2x2;
 };
 
