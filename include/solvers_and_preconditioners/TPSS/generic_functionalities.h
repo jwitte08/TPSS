@@ -22,6 +22,32 @@
 using namespace dealii;
 
 template<typename Number>
+std::vector<std::complex<Number>>
+compute_eigenvalues(LAPACKFullMatrix<Number> & matrix)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  matrix.compute_eigenvalues();
+  std::vector<std::complex<Number>> eigenvalues(matrix.m());
+  for(auto i = 0U; i < eigenvalues.size(); ++i)
+    eigenvalues[i] = matrix.eigenvalue(i);
+  std::sort(eigenvalues.begin(), eigenvalues.end(), [](const auto & a, const auto & b) {
+    return a.real() < b.real();
+  });
+  std::reverse(eigenvalues.begin(), eigenvalues.end());
+  return eigenvalues;
+}
+
+template<typename Number>
+std::vector<std::complex<Number>>
+compute_eigenvalues(const FullMatrix<Number> & matrix)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  LAPACKFullMatrix<Number> lapack_matrix(matrix.m());
+  lapack_matrix = matrix;
+  return compute_eigenvalues(lapack_matrix);
+}
+
+template<typename Number>
 struct ExtractScalarType
 {
   using type = Number;
