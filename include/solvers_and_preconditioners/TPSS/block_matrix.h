@@ -15,17 +15,27 @@ using namespace dealii;
 
 namespace Tensors
 {
-template<int order, typename Number, int rank = order, int n_rows_1d = -1>
+template<int order, typename Number, int n_rows_1d = -1, int rank = order>
 class SchurComplementFast : public TensorProductMatrix<order, Number, n_rows_1d>
 {
 public:
   using matrix_type = TensorProductMatrix<order, Number, n_rows_1d>;
   using value_type  = typename matrix_type::value_type;
 
-  SchurComplementFast(const matrix_type & A_in,
-                      const matrix_type & B_in,
-                      const matrix_type & C_in,
-                      const matrix_type & D_in)
+  // SchurComplementFast(const matrix_type & A_in,
+  //                     const matrix_type & B_in,
+  //                     const matrix_type & C_in,
+  //                     const matrix_type & D_in)
+  // {
+  //   reinit(A_in,B_in,C_in,D_in);
+  // }
+
+  void
+  reinit(const matrix_type & A_in,
+         const matrix_type & B_in,
+         const matrix_type & C_in,
+         const matrix_type & D_in,
+         const std::size_t   lambda_rank = order)
   {
     static_assert(order == 2);
     using State = typename matrix_type::State;
@@ -40,7 +50,7 @@ public:
                    [](const auto & lambda) { return static_cast<Number>(1. / lambda); });
 
     /// compute KSVD of inverse eigenvalue matrix
-    std::vector<std::array<Table<2, Number>, order>> ksvd_eigenvalues(rank);
+    std::vector<std::array<Table<2, Number>, order>> ksvd_eigenvalues(lambda_rank);
     for(auto & tensor : ksvd_eigenvalues)
       for(auto d = 0U; d < order; ++d)
         tensor[d].reinit(A_in.m(d), A_in.m(d));
@@ -63,7 +73,7 @@ public:
     const auto & B_tensors      = B_in.get_elementary_tensors();
     const auto & C_tensors      = C_in.get_elementary_tensors();
     const auto   minus_Ainv_B   = Tensors::product<order, Number>(minus_Ainv, B_tensors);
-    const auto   minus_C_Ainv_B = Tensors::product<order, Number>(C_tensors, minus_Ainv);
+    const auto   minus_C_Ainv_B = Tensors::product<order, Number>(C_tensors, minus_Ainv_B);
     auto         schur_tensors  = D_in.get_elementary_tensors();
     std::copy(minus_C_Ainv_B.cbegin(), minus_C_Ainv_B.cend(), std::back_inserter(schur_tensors));
     // TODO without copy !?
@@ -81,20 +91,20 @@ public:
     // for(const auto & tensor : schur_tensors)
     //   table_to_fullmatrix(tensor[1], 0).print_formatted(std::cout);
 
+    if(rank == -1)
+    {
+      matrix_type::reinit(schur_tensors);
+      std::cout << "Exact..." << std::endl;
+      return;
+    }
+    std::cout << "Approximate..." << std::endl;
+
     /// compute the KSVD of the Schur matrix
     std::vector<std::array<Table<2, Number>, order>> ksvd_schur(2);
     for(auto & tensor : ksvd_schur)
       for(auto d = 0U; d < order; ++d)
         tensor[d].reinit(A_in.m(d), A_in.m(d));
     compute_ksvd<Number>(schur_tensors, ksvd_schur);
-
-    std::vector<std::array<Table<2, Number>, 2>> mass_and_derivative(2);
-    auto &                                       driv = mass_and_derivative[1];
-    driv[0]                                           = ksvd_schur[0][0];
-    driv[1]                                           = ksvd_schur[1][1];
-    auto & mass                                       = mass_and_derivative[0];
-    mass[0]                                           = ksvd_schur[1][0];
-    mass[1]                                           = ksvd_schur[0][1];
 
     // /// DEBUG
     // const auto check_definiteness = [](auto & matrix) {
@@ -120,6 +130,16 @@ public:
     // 	check_definiteness(ksvd_schur[r][0]);
     //   }
 
+    /// TODO initialize the separable Kronecker decomposition based on the
+    /// approximate Schur matrix @p ksvd_schur
+    // std::vector<std::array<Table<2, Number>, 2>> mass_and_derivative(2);
+    // auto &                                       driv = mass_and_derivative[1];
+    // driv[0]                                           = ksvd_schur[0][0];
+    // driv[1]                                           = ksvd_schur[1][1];
+    // auto & mass                                       = mass_and_derivative[0];
+    // mass[0]                                           = ksvd_schur[1][0];
+    // mass[1]                                           = ksvd_schur[0][1];
+
     // /// DEBUG
     // std::cout << "eigenvalues of mass" << std::endl;
     // for(auto & matrix : mass)
@@ -134,9 +154,8 @@ public:
     // for(const auto & tab : mass_and_derivative[1])
     //   table_to_fullmatrix(tab, 0).print_formatted(std::cout);
 
-    /// initialize the separable Kronecker decomposition based on the
-    /// approximate Schur matrix @p ksvd_schur
     // matrix_type::reinit(mass_and_derivative, State::skd);
+
     /// ALTERNATIVE no fast diagonalization
     matrix_type::reinit(ksvd_schur);
   }
@@ -153,53 +172,73 @@ public:
   using matrix_type = MatrixType;
   using value_type  = typename matrix_type::value_type;
 
-  SchurComplement(const matrix_type & A_in,
-                  const matrix_type & B_in,
-                  const matrix_type & C_in,
-                  const matrix_type & D_in)
-    : A(A_in), B(B_in), C(C_in), D(D_in)
+  // SchurComplement(const matrix_type & A_in,
+  //                 const matrix_type & B_in,
+  //                 const matrix_type & C_in,
+  //                 const matrix_type & D_in)
+  // //   : A(A_in), B(B_in), C(C_in), D(D_in)
+  // // {
+  // // }
+  // {
+  //   reinit(A_in, B_in, C_in, D_in);
+  // }
+
+  void
+  reinit(const matrix_type & A_in,
+         const matrix_type & B_in,
+         const matrix_type & C_in,
+         const matrix_type & D_in,
+         const std::size_t   dummy = 0)
   {
+    (void)dummy;
+    A = &A_in;
+    B = &B_in;
+    C = &C_in;
+    D = &D_in;
   }
 
   unsigned int
   m() const
   {
-    AssertDimension(D.m(), C.m());
-    return D.m();
+    Assert(A && B && C && D, ExcMessage("Not initialized."));
+    AssertDimension(D->m(), C->m());
+    return D->m();
   }
 
   unsigned int
   n() const
   {
-    AssertDimension(D.n(), B.n());
-    return D.n();
+    Assert(A && B && C && D, ExcMessage("Not initialized."));
+    AssertDimension(D->n(), B->n());
+    return D->n();
   }
 
   void
   vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    AssertDimension(D.n(), src_view.size());
-    AssertDimension(D.m(), dst_view.size());
-    AssertDimension(B.n(), src_view.size());
-    AssertDimension(A.n(), A.m());
-    AssertDimension(A.m(), B.m());
-    AssertDimension(C.n(), A.m());
-    AssertDimension(C.m(), dst_view.size());
+    Assert(A && B && C && D, ExcMessage("Not initialized."));
+    AssertDimension(D->n(), src_view.size());
+    AssertDimension(D->m(), dst_view.size());
+    AssertDimension(B->n(), src_view.size());
+    AssertDimension(A->n(), A->m());
+    AssertDimension(A->m(), B->m());
+    AssertDimension(C->n(), A->m());
+    AssertDimension(C->m(), dst_view.size());
 
     std::lock_guard<std::mutex> lock(this->mutex);
     tmp_array.clear();
-    tmp_array.resize(B.m()); // TODO resize to max
-    const auto dst_view_of_B = ArrayView(tmp_array.begin(), B.m());
-    B.vmult(dst_view_of_B, src_view);
-    Assert(A.m() <= dst_view.size(), ExcMessage("TODO dst_view not usable as temporary array."));
-    const auto dst_view_of_Ainv = ArrayView(dst_view.begin(), A.m());
-    A.apply_inverse(dst_view_of_Ainv, dst_view_of_B);
+    tmp_array.resize(B->m()); // TODO resize to max
+    const auto dst_view_of_B = ArrayView(tmp_array.begin(), B->m());
+    B->vmult(dst_view_of_B, src_view);
+    Assert(A->m() <= dst_view.size(), ExcMessage("TODO dst_view not usable as temporary array."));
+    const auto dst_view_of_Ainv = ArrayView(dst_view.begin(), A->m());
+    A->apply_inverse(dst_view_of_Ainv, dst_view_of_B);
     tmp_array.clear();
-    tmp_array.resize(C.n()); // TODO
-    const auto dst_view_of_C = ArrayView(tmp_array.begin(), C.m());
-    C.vmult(dst_view_of_C, dst_view_of_Ainv);
+    tmp_array.resize(C->n()); // TODO
+    const auto dst_view_of_C = ArrayView(tmp_array.begin(), C->m());
+    C->vmult(dst_view_of_C, dst_view_of_Ainv);
 
-    D.vmult(dst_view, src_view);
+    D->vmult(dst_view, src_view);
     std::transform(dst_view.cbegin(),
                    dst_view.cend(),
                    dst_view_of_C.cbegin(),
@@ -210,6 +249,7 @@ public:
   void
   apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
+    Assert(A && B && C && D, ExcMessage("Not initialized."));
     if(!Sinv)
       Sinv = std::make_shared<VectorizedInverse<Number>>(as_table());
     Sinv->vmult(dst_view, src_view);
@@ -228,10 +268,10 @@ public:
   }
 
 private:
-  const matrix_type &                                      A;
-  const matrix_type &                                      B;
-  const matrix_type &                                      C;
-  const matrix_type &                                      D;
+  const matrix_type *                                      A = nullptr;
+  const matrix_type *                                      B = nullptr;
+  const matrix_type *                                      C = nullptr;
+  const matrix_type *                                      D = nullptr;
   mutable std::shared_ptr<const VectorizedInverse<Number>> Sinv;
 
   /**
@@ -272,8 +312,9 @@ public:
                        const matrix_type & B_in,
                        const matrix_type & C_in,
                        const matrix_type & D_in)
-    : A(A_in), B(B_in), C(C_in), D(D_in), S(A_in, B_in, C_in, D_in)
+    : A(A_in), B(B_in), C(C_in), D(D_in) //, S(A_in, B_in, C_in, D_in)
   {
+    S.reinit(A_in, B_in, C_in, D_in);
   }
 
   unsigned int
@@ -390,6 +431,8 @@ public:
     std::fill(n_.begin(), n_.end(), 0U);
     blocks.clear();
     inverse_2x2.reset();
+    fast_inverse_2x2.reset();
+    basic_inverse.reset();
   }
 
   /**
@@ -497,7 +540,7 @@ public:
     {
       if(!fast_inverse_2x2)
         fast_inverse_2x2 = std::make_shared<
-          BlockGaussianInverse<matrix_type, SchurComplementFast<order, Number, order, n_rows_1d>>>(
+          BlockGaussianInverse<matrix_type, SchurComplementFast<order, Number, n_rows_1d>>>(
           get_block(0, 0), get_block(0, 1), get_block(1, 0), get_block(1, 1));
       fast_inverse_2x2->vmult(dst, src);
     }
@@ -510,8 +553,10 @@ public:
                                                                           get_block(1, 0),
                                                                           get_block(1, 1));
       inverse_2x2->vmult(dst, src);
+
       /// ALTERNATIVE: standard inverse based on LAPACK
-      // basic_inverse = std::make_shared<const VectorizedInverse<Number>>(as_table());
+      // if(!basic_inverse)
+      // 	basic_inverse = std::make_shared<const VectorizedInverse<Number>>(as_table());
       // basic_inverse->vmult(dst, src);
     }
   }
@@ -623,14 +668,14 @@ private:
    */
   mutable std::shared_ptr<const BlockGaussianInverse<matrix_type>> inverse_2x2;
   /// ALTERNATIVE: standard inverse based on LAPACK
-  // mutable std::shared_ptr<const VectorizedInverse<Number>>         basic_inverse;
+  mutable std::shared_ptr<const VectorizedInverse<Number>> basic_inverse;
 
   /**
    * The inverse of a 2 x 2 block matrix based on approximate block Gaussian
    * elimination.
    */
   mutable std::shared_ptr<
-    const BlockGaussianInverse<matrix_type, SchurComplementFast<order, Number, order, n_rows_1d>>>
+    const BlockGaussianInverse<matrix_type, SchurComplementFast<order, Number, n_rows_1d>>>
     fast_inverse_2x2;
 };
 
