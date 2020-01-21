@@ -209,11 +209,8 @@ protected:
   static constexpr int fe_degree = T::template value<1>();
   using LinElasticityProblem     = typename LinElasticity::
     ModelProblem<dim, fe_degree, double, Tensors::BlockMatrix<dim, VectorizedArray<double>>>;
-  using LinElasticityProblemFast = typename LinElasticity::ModelProblem<
-    dim,
-    fe_degree,
-    double,
-    Tensors::BlockMatrix<dim, VectorizedArray<double>, /*fast*/ true>>;
+  using LinElasticityProblemFast = typename LinElasticity::
+    ModelProblem<dim, fe_degree, double, Tensors::BlockMatrix<dim, VectorizedArray<double>, 0>>;
   using BlockVector                        = LinearAlgebra::distributed::BlockVector<double>;
   using LevelMatrix                        = typename LinElasticityProblem::LEVEL_MATRIX;
   using PatchTransfer                      = typename LevelMatrix::transfer_type;

@@ -24,10 +24,10 @@ using namespace dealii;
 
 
 
-template<int dim, typename Number, bool fast = false, int n_rows_1d = -1>
+template<int dim, typename Number, int mode = -1, int n_rows_1d = -1>
 struct TestBlockMatrix
 {
-  using BlockMatrix       = typename Tensors::BlockMatrix<dim, Number, fast, n_rows_1d>;
+  using BlockMatrix       = typename Tensors::BlockMatrix<dim, Number, mode, n_rows_1d>;
   using State             = typename BlockMatrix::matrix_type::State;
   using scalar_value_type = typename ExtractScalarType<Number>::type;
 
@@ -512,8 +512,8 @@ TYPED_TEST_P(FixBlockMatrixVmult, SchurComplementFastReinit)
   Tensors::TensorProductMatrix<dim, value_type> DD(tensors_D, State::skd);
 
   /// compare the fast diagonalized Schur complement
-  Tensors::SchurComplementFast<dim, value_type, -1, -1> schur_fd;
-  schur_fd.reinit(AA, BB, CC, DD, m);
+  Tensors::SchurComplementFast<dim, value_type> schur_fd;
+  schur_fd.reinit(AA, BB, CC, DD, m, -1);
   Tensors::SchurComplement<Tensors::TensorProductMatrix<dim, value_type>> schur;
   schur.reinit(AA, BB, CC, DD);
   for(auto lane = 0U; lane < get_macro_size<value_type>(); ++lane)

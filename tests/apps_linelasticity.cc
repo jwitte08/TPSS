@@ -217,7 +217,7 @@ protected:
     TestLinElasticity<dim,
                       degree,
                       double,
-                      Tensors::BlockMatrix<dim, VectorizedArray<double>, /*fast*/ true>>;
+                      Tensors::BlockMatrix<dim, VectorizedArray<double>, /*fast*/ 0>>;
 
   void
   check(const Params & params)

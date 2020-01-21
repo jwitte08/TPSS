@@ -130,9 +130,9 @@ public:
   using BlockMatrixDiagonal =
     typename Tensors::BlockMatrixDiagonal<dim, VectorizedArray<Number>, n_patch_dofs_1d>;
   using BlockMatrix =
-    typename Tensors::BlockMatrix<dim, VectorizedArray<Number>, false, n_patch_dofs_1d>;
+    typename Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, n_patch_dofs_1d>;
   using BlockMatrixFast =
-    typename Tensors::BlockMatrix<dim, VectorizedArray<Number>, true, n_patch_dofs_1d>;
+    typename Tensors::BlockMatrix<dim, VectorizedArray<Number>, 0, n_patch_dofs_1d>;
   using EvaluatorType        = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
   using VectorizedMatrixType = Table<2, VectorizedArray<Number>>;
 
@@ -806,6 +806,8 @@ public:
     {
       auto & block_matrix = inverses[patch];
       block_matrix.resize(dim);
+      block_matrix.set_lambda_rank(equation_data.lambda_rank);
+      block_matrix.set_kronecker_rank(equation_data.kronecker_rank);
       auto mass_matrices = assemble_mass_tensors(fd_evals, cell_mass_op, patch);
 
       auto elasticity_matrices =

@@ -30,7 +30,7 @@ struct TestParameter
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::FullSVD;
   types::global_dof_index dof_limit_min = 1e4;
-  types::global_dof_index dof_limit_max = 5e7; // 1e6;
+  types::global_dof_index dof_limit_max = 1e6;
   EquationData            equation_data;
   double                  local_damping_factor = 1.;
   unsigned                n_smoothing_steps    = 2;
@@ -149,7 +149,7 @@ test(TestParameter prms = TestParameter{})
   using BlockMatrixExact   = Tensors::BlockMatrix<dim, VectorizedArray<value_type>>;
   using ElasticityExact =
     typename LinElasticity::ModelProblem<dim, fe_degree, value_type, BlockMatrixExact>;
-  using BlockMatrixFast = Tensors::BlockMatrix<dim, VectorizedArray<value_type>, /*fast*/ true>;
+  using BlockMatrixFast = Tensors::BlockMatrix<dim, VectorizedArray<value_type>, /*fast*/ 0>;
   using ElasticityFast =
     typename LinElasticity::ModelProblem<dim, fe_degree, value_type, BlockMatrixFast>;
 
@@ -198,6 +198,10 @@ main(int argc, char * argv[])
     test_prms.equation_data.ip_factor = std::atof(argv[5]);
   if(argc > 6)
     test_prms.local_damping_factor = std::atof(argv[6]);
+  if(argc > 7)
+    test_prms.equation_data.kronecker_rank = std::atoi(argv[7]);
+  if(argc > 8)
+    test_prms.equation_data.lambda_rank = std::atoi(argv[8]);
 
   test<dim, fe_degree, value_type>(test_prms);
 

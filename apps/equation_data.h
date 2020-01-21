@@ -123,9 +123,11 @@ namespace LinElasticity
 {
 struct EquationData
 {
-  double mu        = 1.;
-  double lambda    = 1.;
-  double ip_factor = 10.; // required to stabilize discretization !!
+  double mu             = 1.;
+  double lambda         = 1.;
+  double ip_factor      = 10.; // required to stabilize discretization !!
+  int    lambda_rank    = -1.;
+  int    kronecker_rank = 2.;
 
   std::string
   to_string() const
@@ -135,6 +137,8 @@ struct EquationData
     oss << Util::parameter_to_fstring("Lame coefficient (mu):", mu);
     oss << Util::parameter_to_fstring("Lame coefficient (lambda):", lambda);
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
+    oss << Util::parameter_to_fstring("Lambda Kronecker rank:", lambda_rank);
+    oss << Util::parameter_to_fstring("Schur Kronecker rank:", kronecker_rank);
     return oss.str();
   }
 };

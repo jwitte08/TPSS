@@ -58,6 +58,20 @@ def parse_args():
                         metavar='float',
                         help="Local damping factor"
                         )
+    parser.add_argument('-lrnk', '--lambda-rank',
+                        type=int,
+                        default=[-1],
+                        nargs='+',
+                        metavar='int',
+                        help="Kronecker rank of eigenvalue matrix Lambda"
+                        )
+    parser.add_argument('-krnk', '--kronecker-rank',
+                        type=int,
+                        default=[2],
+                        nargs='+',
+                        metavar='int',
+                        help="Kronecker rank of Schur complement"
+                        )
     args = parser.parse_args()
     return args
 
@@ -71,6 +85,8 @@ def main():
     local_dampings = options.local_damping
     smoother_choices = {"diag":0, "exct":1, "fast":2}
     smoother_ids = [smoother_choices[smo] for smo in options.smoothers]
+    kronecker_ranks = options.kronecker_rank
+    lambda_ranks = options.lambda_rank
     
     for n_steps in n_smoothing_steps:
         for m in mus:
@@ -78,10 +94,12 @@ def main():
                 for ip in penalties:
                     for ld in local_dampings:
                         for id in smoother_ids:
-                            exec = os.path.join(EXEC_DIR_, 'linelasticity_sipg')
-                            program = [exec, str(id), str(n_steps), str(m), str(l), str(ip), str(ld)]
-                            print("program: {}".format(program))
-                            subprocess.run(program)
+                            for krnk in kronecker_ranks:
+                                for lrnk in lambda_ranks:
+                                    exec = os.path.join(EXEC_DIR_, 'linelasticity_sipg')
+                                    program = [exec, str(id), str(n_steps), str(m), str(l), str(ip), str(ld), str(krnk), str(lrnk)]
+                                print("program: {}".format(program))
+                                subprocess.run(program)
     return 0
 
 

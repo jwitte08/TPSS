@@ -15,28 +15,23 @@ using namespace dealii;
 
 namespace Tensors
 {
-template<int order, typename Number, int n_rows_1d = -1, int rank = order>
+template<int order, typename Number, int n_rows_1d = -1>
 class SchurComplementFast : public TensorProductMatrix<order, Number, n_rows_1d>
 {
 public:
   using matrix_type = TensorProductMatrix<order, Number, n_rows_1d>;
   using value_type  = typename matrix_type::value_type;
 
-  // SchurComplementFast(const matrix_type & A_in,
-  //                     const matrix_type & B_in,
-  //                     const matrix_type & C_in,
-  //                     const matrix_type & D_in)
-  // {
-  //   reinit(A_in,B_in,C_in,D_in);
-  // }
-
   void
   reinit(const matrix_type & A_in,
          const matrix_type & B_in,
          const matrix_type & C_in,
          const matrix_type & D_in,
-         const std::size_t   lambda_rank = order)
+         const int           lambda_rank    = order,
+         const int           kronecker_rank = order)
   {
+    AssertThrow(lambda_rank == -1 || lambda_rank > 0, ExcMessage("Invalid lambda_rank."));
+    AssertThrow(kronecker_rank == -1 || kronecker_rank > 0, ExcMessage("Invalid kronecker_rank."));
     static_assert(order == 2);
     using State = typename matrix_type::State;
     Assert(A_in.get_state() == State::skd, ExcMessage("Not a separable Kronecker decomposition."));
@@ -50,7 +45,9 @@ public:
                    [](const auto & lambda) { return static_cast<Number>(1. / lambda); });
 
     /// compute KSVD of inverse eigenvalue matrix
-    std::vector<std::array<Table<2, Number>, order>> ksvd_eigenvalues(A_in.m(0) /*lambda_rank*/);
+    const int                                        lambda_rank_max = A_in.m(0);
+    std::vector<std::array<Table<2, Number>, order>> ksvd_eigenvalues(
+      lambda_rank == -1 ? lambda_rank_max : lambda_rank);
     for(auto & tensor : ksvd_eigenvalues)
       for(auto d = 0U; d < order; ++d)
         tensor[d].reinit(A_in.m(d), A_in.m(d));
@@ -70,19 +67,38 @@ public:
 
     /// compute elementary tensors representing the approximated Schur complement
     ///    S = D - C * A^{-1} * B
-    const auto & B_tensors      = B_in.get_elementary_tensors();
-    const auto & C_tensors      = C_in.get_elementary_tensors();
-    const auto   minus_Ainv_B   = Tensors::product<order, Number>(minus_Ainv, B_tensors);
-    const auto   minus_C_Ainv_B = Tensors::product<order, Number>(C_tensors, minus_Ainv_B);
-    auto         schur_tensors  = D_in.get_elementary_tensors();
-    std::copy(minus_C_Ainv_B.cbegin(), minus_C_Ainv_B.cend(), std::back_inserter(schur_tensors));
-    // TODO without copy !?
-    std::vector<std::array<Table<2, Number>, order>> tmp;
-    std::remove_copy_if(schur_tensors.cbegin(),
-                        schur_tensors.cend(),
-                        std::back_inserter(tmp),
-                        Tensors::is_nearly_zero<order, Number>);
-    std::swap(schur_tensors, tmp);
+    const auto & B_tensors = B_in.get_elementary_tensors(); // !!!
+    const auto & C_tensors = C_in.get_elementary_tensors(); // !!!
+
+    // std::vector<std::array<Table<2, Number>, order>>
+    // B_tensors(B_in.get_elementary_tensors().size()); for(auto & tensor : B_tensors)
+    //   for(auto d = 0U; d < order; ++d)
+    //     tensor[d].reinit(A_in.m(d), A_in.m(d));
+    // compute_ksvd<Number>(B_in.get_elementary_tensors(), B_tensors);
+    // // const auto & C_tensors      = C_in.get_elementary_tensors(); // !!!
+    // std::vector<std::array<Table<2, Number>, order>>
+    // C_tensors(B_in.get_elementary_tensors().size()); for(auto & tensor : C_tensors)
+    //   for(auto d = 0U; d < order; ++d)
+    //     tensor[d].reinit(A_in.m(d), A_in.m(d));
+    // compute_ksvd<Number>(C_in.get_elementary_tensors(), C_tensors);
+
+    const auto minus_Ainv_B   = Tensors::product<order, Number>(minus_Ainv, B_tensors);
+    const auto minus_C_Ainv_B = Tensors::product<order, Number>(C_tensors, minus_Ainv_B);
+
+    auto schur_tensors       = D_in.get_elementary_tensors();
+    auto schur_tensors_exact = D_in.get_elementary_tensors();
+    std::copy(minus_C_Ainv_B.cbegin(),
+              minus_C_Ainv_B.cend(),
+              std::back_inserter(schur_tensors_exact));                                   // !!!
+    std::copy(minus_Ainv.cbegin(), minus_Ainv.cend(), std::back_inserter(schur_tensors)); // !!!
+    // // TODO without copy !?
+    // std::vector<std::array<Table<2, Number>, order>> tmp;
+    // std::remove_copy_if(schur_tensors.cbegin(),
+    //                     schur_tensors.cend(),
+    //                     std::back_inserter(tmp),
+    //                     Tensors::is_nearly_zero<order, Number>);
+    // std::swap(schur_tensors, tmp);
+
     // /// DEBUG
     // std::cout << "right:" << std::endl;
     // for(const auto & tensor : schur_tensors)
@@ -91,24 +107,36 @@ public:
     // for(const auto & tensor : schur_tensors)
     //   table_to_fullmatrix(tensor[1], 0).print_formatted(std::cout);
 
-    if(rank == -1)
+    if(kronecker_rank == -1)
     {
-      matrix_type::reinit(schur_tensors);
-      // std::cout << "Exact..." << std::endl;
+      matrix_type::reinit(schur_tensors_exact);
       return;
     }
-    // std::cout << "Approximate..." << std::endl;
 
     /// compute the KSVD of the Schur matrix
-    const auto max_kronrank = D_in.get_elementary_tensors().size() +
-                              C_in.get_elementary_tensors().size() * ksvd_eigenvalues.size() *
-                                B_in.get_elementary_tensors().size();
+    const int kronecker_rank_max = D_in.get_elementary_tensors().size() +
+                                   C_in.get_elementary_tensors().size() * ksvd_eigenvalues.size() *
+                                     B_in.get_elementary_tensors().size();
 
-    std::vector<std::array<Table<2, Number>, order>> ksvd_schur(max_kronrank);
+    std::vector<std::array<Table<2, Number>, order>> ksvd_schur(
+      kronecker_rank == -1 ? kronecker_rank_max : kronecker_rank);
     for(auto & tensor : ksvd_schur)
       for(auto d = 0U; d < order; ++d)
         tensor[d].reinit(A_in.m(d), A_in.m(d));
     compute_ksvd<Number>(schur_tensors, ksvd_schur);
+    // /// DEBUG
+    // std::cout << "right:" << std::endl;
+    // for(const auto & tensor : ksvd_schur)
+    // {
+    //   table_to_fullmatrix(tensor[0], 0).print_formatted(std::cout);
+    //   std::cout << std::endl;
+    // }
+    // std::cout << "left:" << std::endl;
+    // for(const auto & tensor : ksvd_schur)
+    // {
+    //   table_to_fullmatrix(tensor[1], 0).print_formatted(std::cout);
+    //   std::cout << std::endl;
+    // }
 
     // /// DEBUG
     // const auto check_definiteness = [](auto & matrix) {
@@ -122,17 +150,17 @@ public:
     //     mat.compute_eigenvalues();
     //     for(auto i = 0U; i < eigenvalues.size(); ++i)
     //       eigenvalues[i] = mat.eigenvalue(i);
-    // 	std::cout << "lane=" << lane << ": ";
+    //     std::cout << "lane=" << lane << ": ";
     //     eigenvalues.print(std::cout);
     //   }
     // };
-    // for (auto r = 0U; r < ksvd_schur.size(); ++r)
-    //   {
-    // 	std::cout << "eigenvalues of left (rank=" << r << ")" << std::endl;
-    // 	check_definiteness(ksvd_schur[r][1]);
-    // 	std::cout << "eigenvalues of right (rank=" << r << ")" << std::endl;
-    // 	check_definiteness(ksvd_schur[r][0]);
-    //   }
+    // for(auto r = 0U; r < ksvd_schur.size(); ++r)
+    // {
+    //   std::cout << "eigenvalues of left (rank=" << r << ")" << std::endl;
+    //   check_definiteness(ksvd_schur[r][1]);
+    //   std::cout << "eigenvalues of right (rank=" << r << ")" << std::endl;
+    //   check_definiteness(ksvd_schur[r][0]);
+    // }
 
     /// TODO initialize the separable Kronecker decomposition based on the
     /// approximate Schur matrix @p ksvd_schur
@@ -162,6 +190,26 @@ public:
 
     /// ALTERNATIVE no fast diagonalization
     matrix_type::reinit(ksvd_schur);
+
+    {
+      TensorProductMatrix<order, Number, n_rows_1d> S;
+      S.reinit(schur_tensors_exact);
+      const auto & S_full = table_to_fullmatrix(S.as_table(), 0);
+      std::cout << "Schur exact:" << std::endl;
+      // S_full.print_formatted(std::cout);
+      TensorProductMatrix<order, Number, n_rows_1d> Stilde;
+      Stilde.reinit(ksvd_schur);
+      const auto & Stilde_full = table_to_fullmatrix(Stilde.as_table(), 0);
+      std::cout << "Schur approx:" << std::endl;
+      // Stilde_full.print_formatted(std::cout);
+
+      /// Check eigenvalues
+      const auto &       Stilde_inv = table_to_fullmatrix(Stilde.as_inverse_table(), 0);
+      FullMatrix<double> approx_Id(Stilde_inv.m(), S_full.n());
+      Stilde_inv.mmult(approx_Id, S_full);
+      const auto & eigenvalues = compute_eigenvalues(approx_Id);
+      std::cout << vector_to_string(eigenvalues) << std::endl;
+    }
   }
 };
 
@@ -176,25 +224,16 @@ public:
   using matrix_type = MatrixType;
   using value_type  = typename matrix_type::value_type;
 
-  // SchurComplement(const matrix_type & A_in,
-  //                 const matrix_type & B_in,
-  //                 const matrix_type & C_in,
-  //                 const matrix_type & D_in)
-  // //   : A(A_in), B(B_in), C(C_in), D(D_in)
-  // // {
-  // // }
-  // {
-  //   reinit(A_in, B_in, C_in, D_in);
-  // }
-
   void
   reinit(const matrix_type & A_in,
          const matrix_type & B_in,
          const matrix_type & C_in,
          const matrix_type & D_in,
-         const std::size_t   dummy = 0)
+         const int           dummy1 = 0,
+         const int           dummy2 = 0)
   {
-    (void)dummy;
+    (void)dummy1;
+    (void)dummy2;
     A = &A_in;
     B = &B_in;
     C = &C_in;
@@ -315,10 +354,19 @@ public:
   BlockGaussianInverse(const matrix_type & A_in,
                        const matrix_type & B_in,
                        const matrix_type & C_in,
-                       const matrix_type & D_in)
-    : A(A_in), B(B_in), C(C_in), D(D_in) //, S(A_in, B_in, C_in, D_in)
+                       const matrix_type & D_in,
+                       const int           lambda_rank    = 0,
+                       const int           kronecker_rank = 0)
+    : A(A_in), B(B_in), C(C_in), D(D_in)
   {
-    S.reinit(A_in, B_in, C_in, D_in);
+    // AssertThrow(!(kronecker_rank != 0 && lambda_rank == 0), ExcMessage("lambda_rank is
+    // invalid."));
+    if(kronecker_rank == 0 && lambda_rank == 0)
+      S.reinit(A_in, B_in, C_in, D_in);
+    else if(kronecker_rank == 0 && lambda_rank != 0)
+      S.reinit(A_in, B_in, C_in, D_in, lambda_rank);
+    else
+      S.reinit(A_in, B_in, C_in, D_in, lambda_rank, kronecker_rank);
   }
 
   unsigned int
@@ -409,7 +457,11 @@ private:
 };
 
 
-template<int order, typename Number, bool fast = false, int n_rows_1d = -1>
+/*
+ * mode = -1 : Compute exact Gaussian block elimination
+ * mode =  0 : Compute fast diagonalized Schur complement
+ */
+template<int order, typename Number, int mode = -1, int n_rows_1d = -1>
 class BlockMatrix
 {
 public:
@@ -540,15 +592,22 @@ public:
     const bool is_2x2_block_matrix = n_block_rows() == 2 && n_block_cols() == 2;
     AssertThrow(is_2x2_block_matrix, ExcMessage("TODO"));
 
-    if(fast)
+    if(mode == 0) // fast mode
     {
       if(!fast_inverse_2x2)
-        fast_inverse_2x2 = std::make_shared<BlockGaussianInverse<matrix_type, FastDiagSchurType>>(
-          get_block(0, 0), get_block(0, 1), get_block(1, 0), get_block(1, 1));
+      {
+        fast_inverse_2x2 =
+          std::make_shared<BlockGaussianInverse<matrix_type, FastDiagSchurType>>(get_block(0, 0),
+                                                                                 get_block(0, 1),
+                                                                                 get_block(1, 0),
+                                                                                 get_block(1, 1),
+                                                                                 lambda_rank,
+                                                                                 kronecker_rank);
+      }
       fast_inverse_2x2->vmult(dst, src);
     }
 
-    else
+    else if(mode == -1) // exact mode
     {
       if(!inverse_2x2)
         inverse_2x2 = std::make_shared<BlockGaussianInverse<matrix_type>>(get_block(0, 0),
@@ -580,6 +639,18 @@ public:
   n_block_cols() const
   {
     return n_[1];
+  }
+
+  void
+  set_lambda_rank(int rank)
+  {
+    lambda_rank = rank;
+  }
+
+  void
+  set_kronecker_rank(int rank)
+  {
+    kronecker_rank = rank;
   }
 
 private:
@@ -680,7 +751,9 @@ private:
    * elimination.
    */
   mutable std::shared_ptr<const BlockGaussianInverse<matrix_type, FastDiagSchurType>>
-    fast_inverse_2x2;
+      fast_inverse_2x2;
+  int lambda_rank    = order;
+  int kronecker_rank = order;
 };
 
 
