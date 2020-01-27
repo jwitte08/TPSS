@@ -303,10 +303,7 @@ public:
   struct NitscheStrainMixed
   {
     NitscheStrainMixed(const EquationData & equation_data_in, const int comp_u, const int comp_v)
-      : component_u(comp_u),
-        component_v(comp_v),
-        mu(equation_data_in.mu),
-        ip_factor(equation_data_in.ip_factor)
+      : component_u(comp_u), component_v(comp_v), mu(equation_data_in.mu)
     {
       AssertIndexRange(component_u, dim);
       AssertIndexRange(component_v, dim);
@@ -332,7 +329,6 @@ public:
     const int    component_u;
     const int    component_v;
     const double mu;
-    const double ip_factor;
   };
 
   template<typename Evaluator>
@@ -371,10 +367,7 @@ public:
   struct NitscheGradDivMixed
   {
     NitscheGradDivMixed(const EquationData & equation_data_in, const int comp_u, const int comp_v)
-      : lambda(equation_data_in.lambda),
-        ip_factor(equation_data_in.ip_factor),
-        component_u(comp_u),
-        component_v(comp_v)
+      : lambda(equation_data_in.lambda), component_u(comp_u), component_v(comp_v)
     {
       AssertIndexRange(component_u, dim);
       AssertIndexRange(component_v, dim);
@@ -398,7 +391,6 @@ public:
                const int) const;
 
     const double lambda;
-    const double ip_factor;
     const int    component_u;
     const int    component_v;
   };
@@ -444,6 +436,11 @@ public:
       matrices = eval.patch_action(cell_strain_operations[comp],
                                    nitsche_strain_operations[comp],
                                    nitsche_strain_operations[comp]);
+      // /// DEBUG
+      // const Void<EvaluatorType>                          void_op;
+      // matrices = eval.patch_action(cell_strain_operations[comp],
+      //                              void_op,
+      // 				   void_op);
     }
     return tensors;
   }
@@ -486,13 +483,21 @@ public:
       /// ??? terms might be neglected for preconditioning
       /// (mu *  G(1)^T + N(1)) x G(0)   NOTE: mu is included in Nitsche N(1)
       const auto & mu_derivativeT = Tensors::scale(equation_data.mu, tensor_derivative[1]);
+      // elementary_tensors.emplace_back(
+      //   std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
+      //                                         Tensors::sum(mu_derivativeT, tensor_nitsche[1])});
+
       elementary_tensors.emplace_back(
-        std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
-                                              Tensors::sum(mu_derivativeT, tensor_nitsche[1])});
+        std::array<VectorizedMatrixType, dim>{tensor_derivative[0], mu_derivativeT});
+      /// !!!
+      // elementary_tensors.emplace_back(
+      //   std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
+      // 	    tensor_nitsche[1]});
 
       /// G(1)^T x N(0)                  NOTE: mu is included in Nitsche N(0)
-      elementary_tensors.emplace_back(
-        std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
+      /// !!!
+      // elementary_tensors.emplace_back(
+      //   std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
     }
 
     {                                                     /// GRAD-DIV
@@ -518,19 +523,21 @@ public:
 
       /// (lambda * G(1) + N(1)) x G(0)^T    NOTE: lambda is included in Nitsche N(1)
       const auto & lambda_derivative = Tensors::scale(equation_data.lambda, tensor_derivative[1]);
-      // !!! same as the splitting below but more efficient
       // elementary_tensors.emplace_back(
       //   std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
       //                                         Tensors::sum(lambda_derivative,
       //                                         tensor_nitsche[1])});
+
       elementary_tensors.emplace_back(
         std::array<VectorizedMatrixType, dim>{tensor_derivative[0], lambda_derivative});
-      elementary_tensors.emplace_back(
-        std::array<VectorizedMatrixType, dim>{tensor_derivative[0], tensor_nitsche[1]});
+      // !!!
+      // elementary_tensors.emplace_back(
+      //   std::array<VectorizedMatrixType, dim>{tensor_derivative[0], tensor_nitsche[1]});
 
       /// G(1) x N(0)                        NOTE: lambda is included in Nitsche N(0)
-      elementary_tensors.emplace_back(
-        std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
+      // !!!
+      // elementary_tensors.emplace_back(
+      //   std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
     }
 
     return elementary_tensors;
@@ -561,6 +568,11 @@ public:
       const auto & matrices = eval.patch_action(cell_graddiv_operations[comp],
                                                 nitsche_graddiv_operations[comp],
                                                 nitsche_graddiv_operations[comp]);
+      // /// DEBUG
+      // const Void<EvaluatorType>                          void_op;
+      // const auto & matrices = eval.patch_action(cell_graddiv_operations[comp],
+      // 						void_op, void_op);
+
       sum_matrices(tensors[comp], matrices);
     }
   }
