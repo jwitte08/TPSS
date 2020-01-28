@@ -256,6 +256,65 @@ public:
     }
 
 
+    const auto print_eigenvalues_symm = [&](const Vector<double> & eigenvalues,
+                                            const std::string      name) {
+      std::vector<double> evs(eigenvalues.begin(), eigenvalues.end());
+      std::sort(evs.begin(), evs.end());
+      std::reverse(evs.begin(), evs.end());
+      std::cout << "Eigenvalues of " << name << " (symm)" << std::endl;
+      std::cout << vector_to_string(evs) << std::endl;
+    };
+
+    /// DEBUG
+    /// D = QLQ^T with QQ^T = I     D = QL^{1/2}L^{1/2}Q^T
+    /// S = QL^{1/2}(I - L^{-1/2}Q^TCA^{-1}BQL^{-1/2})L^{1/2}Q^T
+    {
+      TensorProductMatrix<order, Number, n_rows_1d> DD(D_in.get_elementary_tensors());
+      const auto &                                  D = table_to_fullmatrix(DD.as_table(), 0);
+      FullMatrix<double>                            Q;
+      const auto                                    eigenvalues = compute_eigenvalues_symm(D, Q);
+      {
+        print_eigenvalues_symm(eigenvalues, "D");
+        print_eigenvalues(D_in.get_elementary_tensors(), "D");
+      }
+      FullMatrix<double> LmbSqrtInv(eigenvalues.size(), eigenvalues.size());
+      for(auto i = 0U; i < eigenvalues.size(); ++i)
+        LmbSqrtInv(i, i) = 1. / std::sqrt(eigenvalues(i));
+      FullMatrix<double> LmbSqrtInvQT(LmbSqrtInv.m(), Q.m());
+      LmbSqrtInv.mTmult(LmbSqrtInvQT, Q);
+      {
+        FullMatrix<double> QLmbInvQT(D_in.m());
+        LmbSqrtInvQT.Tmmult(QLmbInvQT, LmbSqrtInvQT);
+        FullMatrix<double> dummy;
+        const auto         eigenvalues = compute_eigenvalues_symm(QLmbInvQT, dummy);
+        print_eigenvalues_symm(eigenvalues, "D");
+        print_inverse_eigenvalues(D_in.get_elementary_tensors(), "D");
+      }
+      TensorProductMatrix<order, Number, n_rows_1d> mmCAinvB(minus_C_Ainv_B);
+      const auto &       mCAinvB = table_to_fullmatrix(mmCAinvB.as_table(), 0);
+      FullMatrix<double> tmp(D_in.m());
+      LmbSqrtInvQT.mmult(tmp, mCAinvB);
+      FullMatrix<double> tmp2(D_in.m());
+      tmp.mTmult(tmp2, LmbSqrtInvQT);
+      for(auto i = 0U; i < tmp2.m(); ++i)
+        tmp2(i, i) += 1.;
+      FullMatrix<double> LmbSqrt(eigenvalues.size(), eigenvalues.size());
+      for(auto i = 0U; i < eigenvalues.size(); ++i)
+        LmbSqrt(i, i) = std::sqrt(eigenvalues(i));
+      FullMatrix<double> LmbSqrtQT(D_in.m());
+      LmbSqrt.mTmult(LmbSqrtQT, Q);
+      FullMatrix<double> tmp3(D_in.m());
+      LmbSqrtQT.Tmmult(tmp3, tmp2);
+      FullMatrix<double> S(D_in.m());
+      tmp3.mmult(S, LmbSqrtQT);
+      {
+        FullMatrix<double> dummy;
+        const auto         eigenvalues = compute_eigenvalues_symm(S, dummy);
+        print_eigenvalues_symm(eigenvalues, "S");
+        print_eigenvalues(schur_tensors_exact, "S");
+      }
+    }
+
 
     // matrix_type::reinit(long_schur_ksvd);
 
