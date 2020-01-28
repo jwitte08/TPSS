@@ -6,6 +6,69 @@
 
 
 void
+test_rank_two_kronecker_svd_full()
+{
+  /* Matrices:
+     t1:
+     |1    0    1  |
+     |1    1   0.1 |
+     |1   0.1   -7 |
+     |0    -1   0  |
+     t2:
+     |1    2|
+     |2    4|
+     t3:
+     |0.5  3    2  |
+     |3.4  1  -0.5 |
+     | 2 -0.4   0  |
+     | 0   0    0  |
+     t4:
+     |1    0|
+     |1    1|   */
+
+  Table<2, double> t1                 = Table<2, double>(4, 3);
+  Table<2, double> t2                 = Table<2, double>(2, 2);
+  t1(0, 0)                            = 1;
+  t1(1, 1)                            = 1;
+  t1(0, 1)                            = 0;
+  t1(1, 0)                            = 0;
+  t1(0, 2)                            = 1;
+  t1(1, 2)                            = 0.1;
+  t1(2, 0)                            = 1;
+  t1(2, 1)                            = 0.1;
+  t1(2, 2)                            = -7;
+  t1(3, 1)                            = -1;
+  t2(0, 0)                            = 1;
+  t2(1, 1)                            = 4;
+  t2(0, 1)                            = 2;
+  t2(1, 0)                            = 2;
+  Table<2, double> t3                 = Table<2, double>(4, 3);
+  Table<2, double> t4                 = Table<2, double>(2, 2);
+  t3(0, 0)                            = 0.5;
+  t3(1, 1)                            = 1;
+  t3(0, 1)                            = 3;
+  t3(1, 0)                            = 3.4;
+  t3(0, 2)                            = 2;
+  t3(1, 2)                            = -0.4;
+  t3(2, 0)                            = 2;
+  t3(2, 1)                            = -0.5;
+  t3(2, 2)                            = 0;
+  t4(0, 0)                            = 1;
+  t4(1, 1)                            = 0;
+  t4(0, 1)                            = 1;
+  t4(1, 0)                            = 1;
+  std::array<Table<2, double>, 2> kp1 = {t2, t1};
+  std::array<Table<2, double>, 2> kp2 = {t4, t3};
+  Table<2, double>                mat1 =
+    Tensors::sum(Tensors::kronecker_product(t1, t2), Tensors::kronecker_product(t3, t4));
+  std::vector<std::array<Table<2, double>, 2>> approx = {kp1, kp1};
+  compute_ksvd<double>(mat1, approx);
+  EXPECT_TRUE(Tensors::sum(Tensors::kronecker_product(approx[0][1], approx[0][0]),
+                           Tensors::kronecker_product(approx[1][1], approx[1][0])) == mat1)
+    << "The rank two Kronecker SVD of the matrix does not match the matrix";
+}
+
+void
 test_rank_two_kronecker_svd()
 {
   /* Matrices:
@@ -365,6 +428,10 @@ TEST(KroneckerSVD, RankOne)
 TEST(KroneckerSVD, RankTwo)
 {
   test_rank_two_kronecker_svd();
+}
+TEST(KroneckerSVD, RankTwoFull)
+{
+  test_rank_two_kronecker_svd_full();
 }
 TEST(KroneckerSVD, RankTwoVectorized)
 {
