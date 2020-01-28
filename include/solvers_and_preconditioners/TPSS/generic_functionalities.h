@@ -48,6 +48,30 @@ compute_eigenvalues(const FullMatrix<Number> & matrix)
 }
 
 template<typename Number>
+std::vector<Number>
+compute_singular_values(LAPACKFullMatrix<Number> & matrix)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  matrix.compute_svd();
+  std::vector<Number> singular_values(matrix.m());
+  for(auto i = 0U; i < singular_values.size(); ++i)
+    singular_values[i] = matrix.singular_value(i);
+  std::sort(singular_values.begin(), singular_values.end());
+  std::reverse(singular_values.begin(), singular_values.end());
+  return singular_values;
+}
+
+template<typename Number>
+std::vector<Number>
+compute_singular_values(const FullMatrix<Number> & matrix)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  LAPACKFullMatrix<Number> lapack_matrix(matrix.m());
+  lapack_matrix = matrix;
+  return compute_singular_values(lapack_matrix);
+}
+
+template<typename Number>
 struct ExtractScalarType
 {
   using type = Number;
@@ -255,6 +279,7 @@ vector_to_string(const std::vector<T> & vector)
     return "[]";
 
   std::ostringstream oss;
+  oss << std::scientific << std::setprecision(4);
   oss << "[";
   for(unsigned i = 0; i < vector.size(); ++i)
     oss << vector[i] << ((i + 1) < vector.size() ? ", " : "]");
