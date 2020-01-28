@@ -48,6 +48,27 @@ compute_eigenvalues(const FullMatrix<Number> & matrix)
 }
 
 template<typename Number>
+Vector<Number>
+compute_eigenvalues_symm(LAPACKFullMatrix<Number> & matrix, FullMatrix<Number> & Q)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  Vector<Number> eigenvalues;
+  matrix.compute_eigenvalues_symmetric(
+    std::numeric_limits<Number>::lowest(), std::numeric_limits<Number>::max(), 0., eigenvalues, Q);
+  return eigenvalues;
+}
+
+template<typename Number>
+Vector<Number>
+compute_eigenvalues_symm(const FullMatrix<Number> & matrix, FullMatrix<Number> & Q)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  LAPACKFullMatrix<Number> lapack_matrix(matrix.m());
+  lapack_matrix = matrix;
+  return compute_eigenvalues_symm(lapack_matrix, Q);
+}
+
+template<typename Number>
 std::vector<Number>
 compute_singular_values(LAPACKFullMatrix<Number> & matrix)
 {
