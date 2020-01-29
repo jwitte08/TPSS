@@ -19,8 +19,9 @@ template<int order, typename Number, int n_rows_1d = -1>
 class SchurComplementFast : public TensorProductMatrix<order, Number, n_rows_1d>
 {
 public:
-  using matrix_type = TensorProductMatrix<order, Number, n_rows_1d>;
-  using value_type  = typename matrix_type::value_type;
+  using matrix_type                        = TensorProductMatrix<order, Number, n_rows_1d>;
+  using value_type                         = typename matrix_type::value_type;
+  static constexpr unsigned int macro_size = get_macro_size<Number>();
 
   void
   reinit(const matrix_type & A_in,
@@ -87,6 +88,7 @@ public:
     /// exact mode
     if(kronecker_rank == -1)
     {
+      trimmed_mode = false;
       matrix_type::reinit(schur_tensors_exact);
       return;
     }
@@ -132,6 +134,8 @@ public:
       std::cout << vector_to_string(inverse_eigenvalues) << std::endl;
     };
 
+
+
     // print_eigenvalues(minus_Ainv, "-A^{-1}");
     // print_eigenvalues(D_in.get_elementary_tensors(), "D");
     // print_eigenvalues(B_in.get_elementary_tensors(), "B");
@@ -166,7 +170,9 @@ public:
     //   print_eigenvalues(schur_minus_rank1_tensor, "S - Stilde[0]");
     // }
 
-    /// DEBUG S = D(I-D^{-1}CA^{-1}B)
+
+
+    /// DEBUG S = D(I-D^{-1}CA^{-1}B)   INDEFINITE
 
     // std::vector<std::array<Table<2, Number>, order>> Dinv_ksvd;
     // { // KSVD of D^{-1}
@@ -255,6 +261,9 @@ public:
     //   std::cout << vector_to_string(eigenvalues) << std::endl;
     // }
 
+    // matrix_type::reinit(long_schur_ksvd);
+
+
 
     const auto print_eigenvalues_symm = [&](const Vector<double> & eigenvalues,
                                             const std::string      name) {
@@ -265,7 +274,7 @@ public:
       std::cout << vector_to_string(evs) << std::endl;
     };
 
-    // // /// DEBUG
+    // // /// DEBUG    NO KSVD POSSIBLE
     // /// D = QLQ^T with QQ^T = I     D = QL^{1/2}L^{1/2}Q^T
     // /// S = QL^{1/2}(I - L^{-1/2}Q^TCA^{-1}BQL^{-1/2})L^{1/2}Q^T
     // {
@@ -315,7 +324,13 @@ public:
     //   }
     // }
 
+
+
+    /// D = QLQ^T with QQ^T = I     D = QL^{1/2}L^{1/2}Q^T
+    /// S = QL^{1/2}(I - L^{-1/2}Q^TCA^{-1}BQL^{-1/2})L^{1/2}Q^T
+    /// trim Stilde with respect to lowest/negative eigenvalues
     {
+      /// compute Kronecker approximation of generalized Lambda(D)^{1/2}
       auto                  eigenvalues = D_in.get_eigenvalues();
       AlignedVector<Number> sqrt_eigenvalues(eigenvalues.size());
       std::transform(eigenvalues.begin(),
@@ -330,6 +345,7 @@ public:
       compute_ksvd<Number>(sqrt_eigenvalues, Lsqrt);
       // print_eigenvalues(Lsqrt, "sqrt of Lambda(D)");
 
+      /// compute Kronecker approximation of generalized Lambda(D)^{-1/2}
       AlignedVector<Number> inverse_sqrt_eigenvalues(eigenvalues.size());
       std::transform(eigenvalues.begin(),
                      eigenvalues.end(),
@@ -342,6 +358,7 @@ public:
           tensor[d].reinit(D_in.m(d), D_in.m(d));
       compute_ksvd<Number>(inverse_sqrt_eigenvalues, inverse_Lsqrt);
 
+      /// Kronecker decompositions of generalized eigenvectors(D), mass(D) and identity
       std::vector<std::array<Table<2, Number>, order>> eigenvectors(1), eigenvectorsT(1);
       eigenvectors.front() = D_in.get_eigenvectors();
       std::transform(eigenvectors.front().cbegin(),
@@ -350,6 +367,7 @@ public:
                      [](const auto & tab) { return Tensors::transpose(tab); });
       std::vector<std::array<Table<2, Number>, order>> mass;
       mass.emplace_back(D_in.get_mass());
+      // // DEBUG
       // {
       // 	const auto tmp1 = Tensors::product<order, Number>(mass, eigenvectors);
       // 	const auto Lambda = Tensors::product<order, Number>(Lsqrt, Lsqrt);
@@ -371,8 +389,11 @@ public:
           auto & matrix = tensor[d];
           matrix.reinit(D_in.m(d), D_in.m(d));
           for(auto i = 0U; i < D_in.m(d); ++i)
-            matrix(i, i) = 1.;
+            matrix(i, i) = 1.; // !!!
         }
+
+      /// Z = (I - L^{-1/2}Q^TCA^{-1}BQL^{-1/2})
+      /// compute KSVD of Z, namely Ztilde
       const auto tmp1 = Tensors::product<order, Number>(minus_C_Ainv_B, eigenvectors);
       const auto tmp2 = Tensors::product<order, Number>(tmp1, inverse_Lsqrt);
       const auto tmp3 = Tensors::product<order, Number>(eigenvectorsT, tmp2);
@@ -384,92 +405,128 @@ public:
         for(auto d = 0U; d < order; ++d)
           tensor[d].reinit(D_in.m(d), D_in.m(d));
       compute_ksvd<Number>(Z, Z_ksvd);
+      TensorProductMatrix<order, Number, n_rows_1d> ZZtilde(Z_ksvd);
+      const auto tmp4    = Tensors::product<order, Number>(mass, eigenvectors);
+      const auto MQLsqrt = Tensors::product<order, Number>(tmp4, Lsqrt);
+      TensorProductMatrix<order, Number, n_rows_1d> YY(MQLsqrt);
+      TensorProductMatrix<order, Number, n_rows_1d> SS(schur_tensors_exact);
+
+      const auto schur_inverse = std::make_shared<std::array<FullMatrix<double>, macro_size>>();
+      for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
       {
-        TensorProductMatrix<order, Number, n_rows_1d> ZZtilde(Z_ksvd);
-        const auto         Ztilde = table_to_fullmatrix(ZZtilde.as_table(), 0);
-        FullMatrix<double> Q(D_in.m());
-        auto               eigenvalues = compute_eigenvalues_symm(Ztilde, Q);
+        /// compute Stilde = YZtildeY^T with Y = MQL^{1/2}
+        std::cout << "Lane: " << lane << std::endl;
+        const auto Ztilde = table_to_fullmatrix(ZZtilde.as_table(), lane);
+        // FullMatrix<double> Q(D_in.m());
+        // auto               eigenvalues = compute_eigenvalues_symm(Ztilde, Q);
         // print_eigenvalues_symm(eigenvalues, "KSVD of Z");
         // print_eigenvalues(Z, "Z");
-        const auto tmp4    = Tensors::product<order, Number>(mass, eigenvectors);
-        const auto MQLsqrt = Tensors::product<order, Number>(tmp4, Lsqrt);
-        TensorProductMatrix<order, Number, n_rows_1d> YY(MQLsqrt);
-        const auto                                    Y = table_to_fullmatrix(YY.as_table(), 0);
-        FullMatrix<double>                            YZtilde(D_in.m());
+        const auto         Y = table_to_fullmatrix(YY.as_table(), lane);
+        FullMatrix<double> YZtilde(D_in.m());
         Y.mmult(YZtilde, Ztilde);
         FullMatrix<double> Stilde(D_in.m());
         YZtilde.mTmult(Stilde, Y);
-        eigenvalues = compute_eigenvalues_symm(Stilde, Q);
-        {
-          print_eigenvalues_symm(eigenvalues, "Stilde");
-          auto tmp_eigenvalues = compute_eigenvalues(Stilde);
-          std::sort(tmp_eigenvalues.begin(),
-                    tmp_eigenvalues.end(),
-                    [](const auto & a, const auto & b) { return a.real() < b.real(); });
-          std::reverse(tmp_eigenvalues.begin(), tmp_eigenvalues.end());
-          std::cout << vector_to_string(tmp_eigenvalues) << std::endl;
-          print_eigenvalues(schur_tensors_exact, "S");
-        }
+
+        /// compute (symmetric) eigenproblem of Stilde
+        FullMatrix<double> Q(D_in.m());
+        auto               eigenvalues = compute_eigenvalues_symm(Stilde, Q);
+        // {
+        //   print_eigenvalues_symm(eigenvalues, "Stilde");
+        //   // auto tmp_eigenvalues = compute_eigenvalues(Stilde);
+        //   // std::sort(tmp_eigenvalues.begin(),
+        //   //           tmp_eigenvalues.end(),
+        //   //           [](const auto & a, const auto & b) { return a.real() < b.real(); });
+        //   // std::reverse(tmp_eigenvalues.begin(), tmp_eigenvalues.end());
+        //   // std::cout << vector_to_string(tmp_eigenvalues) << std::endl;
+        //   print_eigenvalues(schur_tensors_exact, "S");
+        // }
+
+        /// compute trimmed Stilde^{-1}
         FullMatrix<double> inverse_Lmb_Stilde(D_in.m());
         for(auto i = 0U; i < eigenvalues.size(); ++i)
           inverse_Lmb_Stilde(i, i) = 1. / eigenvalues(i);
+        // {
+        //   FullMatrix<double> tmp1(D_in.m());
+        //   Q.mmult(tmp1, inverse_Lmb_Stilde);
+        //   FullMatrix<double> Stilde_inv(D_in.m());
+        //   tmp1.mTmult(Stilde_inv, Q);
+        //   const auto         S = table_to_fullmatrix(SS.as_table(), lane);
+        //   FullMatrix<double> Itilde(S.m());
+        //   Stilde_inv.mmult(Itilde, S);
+        //   auto eigenvalues = compute_eigenvalues(Itilde);
+        //   std::cout << "Eigenvalues of Stilde^{-1}S" << std::endl;
+        //   std::cout << vector_to_string(eigenvalues) << std::endl;
+        // }
+
+        // // DEBUG dismiss more than negative eigenvalues
+        // auto sorted_eigenvalues = eigenvalues;
+        // std::sort(sorted_eigenvalues.begin(), sorted_eigenvalues.end());
+        // const unsigned int n_dismiss = 1;
+        // const double       threshold = sorted_eigenvalues[n_dismiss - 1] + 0.001;
+        // std::cout << "number of dismissed eigenvalues: " << n_dismiss << std::endl;
+        // std::cout << "threshold: " << threshold << std::endl;
+        // std::vector<std::size_t> indices_dismiss;
+        // for(auto i = 0U; i < eigenvalues.size(); ++i)
+        // {
+        //   // std::cout << eigenvalues(i) << std::endl;
+        //   if(eigenvalues(i) < threshold)
+        //     indices_dismiss.push_back(i);
+        // }
+        // std::cout << vector_to_string(indices_dismiss) << std::endl;
+        // for(const auto j : indices_dismiss)
+        //   inverse_Lmb_Stilde(j, j) = 0.1;
         {
+          const auto last_negative_index = [&]() {
+            int last = -1;
+            for(auto j = 0; j < D_in.m(); ++j)
+              if(inverse_Lmb_Stilde(j, j) < 0.)
+                last = j;
+            return last;
+          };
+          // /// Dismiss only negative eigenvalues
+          // const auto n_dismissed = last_negative_index() + 1;
+          // const auto replacement = inverse_Lmb_Stilde(n_dismissed, n_dismissed);
+          // for(auto j = 0; j < n_dismissed; ++j)
+          // {
+          //   AssertThrow(inverse_Lmb_Stilde(j, j) < replacement, ExcMessage("Invalid
+          //   replacement.")); inverse_Lmb_Stilde(j, j) = 0.5 * replacement;
+          // }
+          // std::cout << "last index: " << n_dismissed << " replacement: " << replacement
+          //           << std::endl;
+          // /// ALTERNATIVE
+          // const auto n_dismissed = 2 * (last_negative_index() + 1);
+          // const auto replacement = inverse_Lmb_Stilde(n_dismissed, n_dismissed);
+          // for(auto j = 0; j < n_dismissed; ++j)
+          // {
+          //   // AssertThrow(inverse_Lmb_Stilde(j, j) < replacement, ExcMessage("Invalid
+          //   // replacement."));
+          //   inverse_Lmb_Stilde(j, j) = 0.1; // * replacement;
+          // }
+          // std::cout << "last index: " << n_dismissed << " replacement: " << replacement
+          //           << std::endl;
+          // /// ALTERNATIVE Dismiss n_dismiss lowest eigenvalues
+          // const unsigned n_dismiss = 10;
+          // for(auto j = 0; j < n_dismiss; ++j)
+          //   inverse_Lmb_Stilde(j, j) = 0.1;
+
           FullMatrix<double> tmp1(D_in.m());
           Q.mmult(tmp1, inverse_Lmb_Stilde);
-          FullMatrix<double> Stilde_inv(D_in.m());
+          auto & Stilde_inv = schur_inverse->at(lane);
+          Stilde_inv        = FullMatrix<double>(D_in.m());
           tmp1.mTmult(Stilde_inv, Q);
 
-          TensorProductMatrix<order, Number, n_rows_1d> SS(schur_tensors_exact);
-          const auto                                    S = table_to_fullmatrix(SS.as_table(), 0);
-          FullMatrix<double>                            Itilde(S.m());
+          const auto         S = table_to_fullmatrix(SS.as_table(), lane);
+          FullMatrix<double> Itilde(S.m());
           Stilde_inv.mmult(Itilde, S);
-          {
-            auto eigenvalues = compute_eigenvalues(Itilde);
-            std::cout << "Eigenvalues of Stilde^{-1}S" << std::endl;
-            std::cout << vector_to_string(eigenvalues) << std::endl;
-          }
-        }
-        auto sorted_eigenvalues = eigenvalues;
-        std::sort(sorted_eigenvalues.begin(), sorted_eigenvalues.end());
-        // std::reverse(sorted_eigenvalues.begin(), sorted_eigenvalues.end());
-        const unsigned int n_dismiss = 8;
-        const double       threshold = sorted_eigenvalues[n_dismiss - 1] + 0.001;
-        std::cout << "number of dismissed eigenvalues: " << n_dismiss << std::endl;
-        std::cout << "threshold: " << threshold << std::endl;
-        std::vector<std::size_t> indices_dismiss;
-        for(auto i = 0U; i < eigenvalues.size(); ++i)
-        {
-          // std::cout << eigenvalues(i) << std::endl;
-          if(eigenvalues(i) < threshold)
-            indices_dismiss.push_back(i);
-        }
-        std::cout << vector_to_string(indices_dismiss) << std::endl;
-        for(const auto j : indices_dismiss)
-        {
-          inverse_Lmb_Stilde(j, j) = 0.001;
-          // for (auto i = 0U; i < Q.n(); ++i)
-          //   Q(i,j) = 0.;
-        }
-        {
-          FullMatrix<double> tmp1(D_in.m());
-          Q.mmult(tmp1, inverse_Lmb_Stilde);
-          FullMatrix<double> Stilde_inv(D_in.m());
-          tmp1.mTmult(Stilde_inv, Q);
-
-          TensorProductMatrix<order, Number, n_rows_1d> SS(schur_tensors_exact);
-          const auto                                    S = table_to_fullmatrix(SS.as_table(), 0);
-          FullMatrix<double>                            Itilde(S.m());
-          Stilde_inv.mmult(Itilde, S);
-          {
-            auto eigenvalues = compute_eigenvalues(Itilde);
-            std::cout << "Eigenvalues of Stilde^{-1}S" << std::endl;
-            std::cout << vector_to_string(eigenvalues) << std::endl;
-          }
+          // {
+          //   auto eigenvalues = compute_eigenvalues(Itilde);
+          //   std::cout << "Eigenvalues of Stilde^{-1}S" << std::endl;
+          //   std::cout << vector_to_string(eigenvalues) << std::endl;
+          // }
         }
       }
+      this->inverse = schur_inverse;
     }
-
-    // matrix_type::reinit(long_schur_ksvd);
 
 
 
@@ -571,14 +628,41 @@ public:
   void
   vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    matrix_type::vmult(dst_view, src_view);
+    if(trimmed_mode)
+    {
+      AssertThrow(false, ExcNotImplemented());
+      (void)trimmed_mode;
+    }
+    else
+      matrix_type::vmult(dst_view, src_view);
   }
 
   void
   apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    matrix_type::apply_inverse(dst_view, src_view);
+    if(trimmed_mode)
+    {
+      AssertThrow(inverse, ExcMessage("Inverse not initialized."));
+      for(auto lane = 0U; lane < macro_size; ++lane)
+      {
+        Vector<double> src(src_view.size());
+        std::transform(src_view.begin(), src_view.end(), src.begin(), [lane](const auto & value) {
+          return scalar_value(value, lane);
+        });
+        Vector<double> dst(dst_view.size());
+        const auto &   schur_inverse = inverse->at(lane);
+        schur_inverse.vmult(dst, src);
+        for(auto i = 0U; i < dst_view.size(); ++i)
+          dst_view[i][lane] = dst(i);
+        // std::copy(dst.begin(), dst.end(), dst_view.begin());
+      }
+    }
+    else
+      matrix_type::apply_inverse(dst_view, src_view);
   }
+
+  bool                                                              trimmed_mode = true;
+  std::shared_ptr<const std::array<FullMatrix<double>, macro_size>> inverse;
 };
 
 
