@@ -480,24 +480,16 @@ public:
       const auto & tensor_derivative = eval_v.patch_action(eval_u, derivative_op);
       const auto & tensor_nitsche    = eval_v.patch_action(eval_u, void_op, nitsche_op, nitsche_op);
 
-      /// ??? terms might be neglected for preconditioning
       /// (mu *  G(1)^T + N(1)) x G(0)   NOTE: mu is included in Nitsche N(1)
       const auto & mu_derivativeT = Tensors::scale(equation_data.mu, tensor_derivative[1]);
-      // elementary_tensors.emplace_back(
-      //   std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
-      //                                         Tensors::sum(mu_derivativeT, tensor_nitsche[1])});
-
       elementary_tensors.emplace_back(
         std::array<VectorizedMatrixType, dim>{tensor_derivative[0], mu_derivativeT});
-      /// !!!
-      // elementary_tensors.emplace_back(
-      //   std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
-      // 	    tensor_nitsche[1]});
+      elementary_tensors.emplace_back(
+        std::array<VectorizedMatrixType, dim>{tensor_derivative[0], tensor_nitsche[1]});
 
       /// G(1)^T x N(0)                  NOTE: mu is included in Nitsche N(0)
-      /// !!!
-      // elementary_tensors.emplace_back(
-      //   std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
+      elementary_tensors.emplace_back(
+        std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
     }
 
     {                                                     /// GRAD-DIV
@@ -523,21 +515,14 @@ public:
 
       /// (lambda * G(1) + N(1)) x G(0)^T    NOTE: lambda is included in Nitsche N(1)
       const auto & lambda_derivative = Tensors::scale(equation_data.lambda, tensor_derivative[1]);
-      // elementary_tensors.emplace_back(
-      //   std::array<VectorizedMatrixType, dim>{tensor_derivative[0],
-      //                                         Tensors::sum(lambda_derivative,
-      //                                         tensor_nitsche[1])});
-
       elementary_tensors.emplace_back(
         std::array<VectorizedMatrixType, dim>{tensor_derivative[0], lambda_derivative});
-      // !!!
-      // elementary_tensors.emplace_back(
-      //   std::array<VectorizedMatrixType, dim>{tensor_derivative[0], tensor_nitsche[1]});
+      elementary_tensors.emplace_back(
+        std::array<VectorizedMatrixType, dim>{tensor_derivative[0], tensor_nitsche[1]});
 
       /// G(1) x N(0)                        NOTE: lambda is included in Nitsche N(0)
-      // !!!
-      // elementary_tensors.emplace_back(
-      //   std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
+      elementary_tensors.emplace_back(
+        std::array<VectorizedMatrixType, dim>{tensor_nitsche[0], tensor_derivative[1]});
     }
 
     return elementary_tensors;
