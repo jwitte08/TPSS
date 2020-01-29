@@ -207,6 +207,13 @@ public:
   }
 
   const std::array<Table<2, Number>, order> &
+  get_mass() const
+  {
+    AssertThrow(state == State::skd, ExcMessage("Not implemented."));
+    return this->mass_matrix;
+  }
+
+  const std::array<Table<2, Number>, order> &
   get_eigenvectors() const
   {
     AssertThrow(state == State::skd, ExcMessage("Not implemented."));
