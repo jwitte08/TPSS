@@ -207,6 +207,36 @@ matrix_to_table(const MatrixType & matrix)
  * typedef value_type
  * method vmult(ArrayView,ArrayView)
  */
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+Table<2, Number>
+transpose_matrix_to_table(const MatrixType & matrix)
+{
+  Table<2, Number>      table(matrix.m(), matrix.n());
+  AlignedVector<Number> e_j(matrix.n());
+  AlignedVector<Number> col_j(matrix.m());
+  for(unsigned int j = 0; j < matrix.n(); ++j)
+  {
+    e_j.fill(static_cast<Number>(0.));
+    col_j.fill(static_cast<Number>(0.));
+    e_j[j]                = static_cast<Number>(1.);
+    const auto e_j_view   = make_array_view<const Number>(e_j.begin(), e_j.end());
+    const auto col_j_view = make_array_view<Number>(col_j.begin(), col_j.end());
+    matrix.Tvmult(col_j_view, e_j_view);
+    for(unsigned int i = 0; i < matrix.m(); ++i)
+      table(i, j) = col_j[i];
+  }
+  return table;
+}
+
+/**
+ * Converts a matrix into a two dimensional table. MatrixType has to fulfill
+ * following interface:
+ *
+ * method m() returning number of rows
+ * method n() returning number of cols
+ * typedef value_type
+ * method vmult(ArrayView,ArrayView)
+ */
 template<typename Number = double>
 Table<2, Number>
 lapack_matrix_to_table(const LAPACKFullMatrix<Number> & matrix)
@@ -320,6 +350,70 @@ product(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
                        return C;
                      });
   return prod_of_tensors;
+}
+
+template<int order, typename Number>
+std::vector<std::array<Table<2, Number>, order>>
+Tproduct(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
+         const std::vector<std::array<Table<2, Number>, order>> & tensors2)
+{
+  std::vector<std::array<Table<2, Number>, order>> prod_of_tensors(tensors1.size() *
+                                                                   tensors2.size());
+  for(auto i2 = 0U; i2 < tensors2.size(); ++i2)
+    for(auto i1 = 0U; i1 < tensors1.size(); ++i1)
+      std::transform(tensors1[i1].cbegin(),
+                     tensors1[i1].cend(),
+                     tensors2[i2].cbegin(),
+                     prod_of_tensors[i1 + tensors1.size() * i2].begin(),
+                     [](const auto & A, const auto & B) {
+                       Assert(A.n_rows() > 0, ExcMessage("Empty."));
+                       Assert(B.n_cols() > 0, ExcMessage("Empty."));
+                       auto C = matrix_transpose_multiplication(A, B);
+                       AssertDimension(C.n_rows(), A.n_rows());
+                       AssertDimension(C.n_cols(), B.n_cols());
+                       return C;
+                     });
+  return prod_of_tensors;
+}
+
+template<int order, typename Number>
+std::vector<std::array<Table<2, Number>, order>>
+productT(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
+         const std::vector<std::array<Table<2, Number>, order>> & tensors2)
+{
+  std::vector<std::array<Table<2, Number>, order>> prod_of_tensors(tensors1.size() *
+                                                                   tensors2.size());
+  for(auto i2 = 0U; i2 < tensors2.size(); ++i2)
+    for(auto i1 = 0U; i1 < tensors1.size(); ++i1)
+      std::transform(tensors1[i1].cbegin(),
+                     tensors1[i1].cend(),
+                     tensors2[i2].cbegin(),
+                     prod_of_tensors[i1 + tensors1.size() * i2].begin(),
+                     [](const auto & A, const auto & B) {
+                       Assert(A.n_rows() > 0, ExcMessage("Empty."));
+                       Assert(B.n_cols() > 0, ExcMessage("Empty."));
+                       auto C = matrix_multiplication_transpose(A, B);
+                       AssertDimension(C.n_rows(), A.n_rows());
+                       AssertDimension(C.n_cols(), B.n_cols());
+                       return C;
+                     });
+  return prod_of_tensors;
+}
+
+template<int order, typename Number>
+std::vector<std::array<Table<2, Number>, order>>
+scale(const Number factor, const std::vector<std::array<Table<2, Number>, order>> & tensors)
+{
+  std::vector<std::array<Table<2, Number>, order>> scaled_tensors(tensors.size());
+  for(auto i = 0U; i < tensors.size(); ++i)
+  {
+    auto &       scaled_tensor = scaled_tensors[i];
+    const auto & tensor        = tensors[i];
+    scaled_tensor.front()      = matrix_scaling(tensor.front(), factor);
+    for(auto d = 1U; d < order; ++d)
+      scaled_tensor[d] = tensor[d];
+  }
+  return scaled_tensors;
 }
 
 template<typename Number>
