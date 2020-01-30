@@ -308,12 +308,42 @@ TYPED_TEST_P(FixTensorProductMatrix, ApplyInverseVectorized)
   Fixture::test_vmult_or_apply_inverseV(TestVariant::apply_inverse);
 }
 
+TYPED_TEST_P(FixTensorProductMatrix, TvmultVectorized)
+{
+  using Fixture      = FixTensorProductMatrix<TypeParam>;
+  constexpr auto dim = Fixture::dim;
+  using Number       = typename Fixture::Number;
+  using value_type   = VectorizedArray<typename Fixture::Number>;
+  std::ofstream ofs;
+  ofs.open("tensor_product_matrix.log", std::ios_base::app);
+  ConditionalOStream pcout(ofs, true);
+
+  const unsigned int m = 4;
+
+  /// random
+  std::vector<std::array<Table<2, value_type>, dim>> tensors(2);
+  for(auto & tensor : tensors)
+    for(auto & mat : tensor)
+      fill_matrix_with_random_values(mat, m, m);
+
+  for(unsigned lane = 0; lane < get_macro_size<value_type>(); ++lane)
+  {
+    Tensors::TensorProductMatrix<dim, value_type> tp_matrix(tensors);
+    const auto         reference = table_to_fullmatrix(tp_matrix.as_table(), lane);
+    FullMatrix<Number> reference_transposed(reference.m(), reference.n());
+    reference_transposed.copy_transposed(reference);
+    const auto matrix_transposed = table_to_fullmatrix(tp_matrix.as_transpose_table(), lane);
+    Util::compare_matrix(matrix_transposed, reference_transposed, pcout);
+  }
+}
+
 REGISTER_TYPED_TEST_SUITE_P(FixTensorProductMatrix,
                             Copy,
                             VmultAndMatrix,
                             VmultAndMatrixVectorized,
                             ApplyInverse,
-                            ApplyInverseVectorized);
+                            ApplyInverseVectorized,
+                            TvmultVectorized);
 
 using ParamsTwoDimensionsDouble = testing::Types<Util::TypeList<Util::NonTypeParams<2>, double>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(TwoDimensionsDouble,
