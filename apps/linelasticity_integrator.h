@@ -657,6 +657,7 @@ public:
       block_matrix.resize(dim);
       block_matrix.set_lambda_rank(equation_data.lambda_rank);
       block_matrix.set_kronecker_rank(equation_data.kronecker_rank);
+      block_matrix.set_schur_factor(equation_data.factor);
       auto mass_matrices = assemble_mass_tensors(evals, cell_mass_op, patch);
 
       std::array<std::array<VectorizedMatrixType, dim>, dim> elasticity_matrices;

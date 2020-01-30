@@ -128,6 +128,7 @@ struct EquationData
   double ip_factor      = 10.; // required to stabilize discretization !!
   int    lambda_rank    = -1.;
   int    kronecker_rank = 2.;
+  double factor         = 1.;
 
   std::string
   to_string() const
@@ -139,6 +140,7 @@ struct EquationData
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
     oss << Util::parameter_to_fstring("Lambda Kronecker rank:", lambda_rank);
     oss << Util::parameter_to_fstring("Schur Kronecker rank:", kronecker_rank);
+    oss << Util::parameter_to_fstring("Schur factor ...:", factor);
     return oss.str();
   }
 };

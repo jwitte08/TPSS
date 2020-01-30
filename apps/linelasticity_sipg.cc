@@ -99,6 +99,7 @@ debug_impl(const TestParameter & prms = TestParameter{})
 
   // std::fstream fstream_log;
   // fstream_log.open(filename + ".log", std::ios_base::app);
+  // ConditionalOStream pcout(fstream_log, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
   ConditionalOStream pcout(std::cout, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
   pcout << filename << std::endl;
   const EquationData & equation_data = prms.equation_data;
@@ -331,6 +332,8 @@ main(int argc, char * argv[])
     test_prms.equation_data.kronecker_rank = std::atoi(argv[7]);
   if(argc > 8)
     test_prms.equation_data.lambda_rank = std::atoi(argv[8]);
+  if(argc > 9)
+    test_prms.equation_data.factor = std::atof(argv[9]);
 
   test<dim, fe_degree, value_type>(test_prms);
 

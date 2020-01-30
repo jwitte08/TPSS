@@ -58,6 +58,13 @@ def parse_args():
                         metavar='float',
                         help="Local damping factor"
                         )
+    parser.add_argument('-fctr', '--factor',
+                        type=float,
+                        default=[1.],
+                        nargs='+',
+                        metavar='float',
+                        help="..."
+                        )
     parser.add_argument('-lrnk', '--lambda-rank',
                         type=int,
                         default=[-1],
@@ -83,6 +90,7 @@ def main():
     lambdas = options.lambdaa
     penalties = options.ip_penalty
     local_dampings = options.local_damping
+    factors = options.factor
     smoother_choices = {"diag":0, "exct":1, "fast":2}
     smoother_ids = [smoother_choices[smo] for smo in options.smoothers]
     kronecker_ranks = options.kronecker_rank
@@ -96,10 +104,11 @@ def main():
                         for id in smoother_ids:
                             for krnk in kronecker_ranks:
                                 for lrnk in lambda_ranks:
-                                    exec = os.path.join(EXEC_DIR_, 'linelasticity_sipg')
-                                    program = [exec, str(id), str(n_steps), str(m), str(l), str(ip), str(ld), str(krnk), str(lrnk)]
-                                print("program: {}".format(program))
-                                subprocess.run(program)
+                                    for f in factors:
+                                        exec = os.path.join(EXEC_DIR_, 'linelasticity_sipg')
+                                        program = [exec, str(id), str(n_steps), str(m), str(l), str(ip), str(ld), str(krnk), str(lrnk), str(f)]
+                                        print("program: {}".format(program))
+                                        subprocess.run(program)
     return 0
 
 
