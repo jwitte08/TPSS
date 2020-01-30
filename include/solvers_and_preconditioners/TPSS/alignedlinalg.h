@@ -105,7 +105,34 @@ vector_inverse_scaling(const AlignedVector<Number> & in, const Number & scalar)
   return ret;
 }
 
+// Multiply Matrix by vector
+template<typename Number>
+AlignedVector<Number>
 
+matrix_vector_multiplication(const Table<2, Number> & in_mat, const AlignedVector<Number> & in_vec)
+{
+  AssertDimension(in_mat.size()[1], in_vec.size());
+  AlignedVector<Number> ret(in_mat.size()[0]);
+  for(std::size_t i = 0; i < in_mat.size()[0]; i++)
+    for(std::size_t j = 0; j < in_vec.size(); j++)
+      ret[i] += in_mat(i, j) * in_vec[j];
+  return ret;
+}
+
+
+// Multiply transpose of Matrix by vector
+template<typename Number>
+AlignedVector<Number>
+matrix_transpose_vector_multiplication(const Table<2, Number> &      in_mat,
+                                       const AlignedVector<Number> & in_vec)
+{
+  AssertDimension(in_mat.size()[0], in_vec.size());
+  AlignedVector<Number> ret(in_mat.size()[1]);
+  for(std::size_t i = 0; i < in_mat.size()[1]; i++)
+    for(std::size_t j = 0; j < in_vec.size(); j++)
+      ret[i] += in_mat(j, i) * in_vec[j];
+  return ret;
+}
 // Multiply Matrix by Matrix
 template<typename Number>
 Table<2, Number>
@@ -222,7 +249,8 @@ public:
 
 // Two Matrices are considered equal if all of their components are equal up to machine epsilon
 template<typename Number>
-bool operator==(Table<2, Number> tab1, Table<2, Number> tab2)
+bool
+operator==(Table<2, Number> tab1, Table<2, Number> tab2)
 {
   AssertDimension(tab1.size()[0], tab2.size()[0]);
   AssertDimension(tab1.size()[1], tab2.size()[1]);
@@ -251,7 +279,8 @@ bool operator==(Table<2, Number> tab1, Table<2, Number> tab2)
 
 // print a table up to digits sginificant digits
 template<typename Number>
-void printTable(Table<2, Number> tab, double digits = 2)
+void
+printTable(Table<2, Number> tab, double digits = 2)
 {
   std::size_t m = tab.size()[0];
   std::size_t n = tab.size()[1];
@@ -267,7 +296,8 @@ void printTable(Table<2, Number> tab, double digits = 2)
 }
 
 template<typename Number>
-void printTable(Table<2, VectorizedArray<Number>> tab)
+void
+printTable(Table<2, VectorizedArray<Number>> tab)
 {
   constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
   std::size_t           m          = tab.size()[0];
@@ -309,7 +339,7 @@ printAlignedVector(AlignedVector<VectorizedArray<Number>> vec)
   {
     std::cout << "\n-----------------\n";
     for(std::size_t i = 0; i < m; i++)
-      std::cout << ((int)(vec[i] * 100 + 0.5)) / 100.0 << "\t";
+      std::cout << ((int)(vec[i][lane] * 100 + 0.5)) / 100.0 << "\t";
   }
   std::cout << "\n######################################\n";
 }
