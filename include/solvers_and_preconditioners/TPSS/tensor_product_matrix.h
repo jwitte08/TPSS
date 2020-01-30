@@ -291,6 +291,12 @@ public:
   }
 
   void
+  Tvmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    vmult_impl</*add*/ false, /*transpose*/ true>(dst_view, src_view);
+  }
+
+  void
   apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
     apply_inverse_impl(dst_view, src_view);
@@ -306,6 +312,12 @@ public:
   as_inverse_table() const
   {
     return Tensors::inverse_matrix_to_table(*this);
+  }
+
+  Table<2, Number>
+  as_transpose_table() const
+  {
+    return Tensors::transpose_matrix_to_table(*this);
   }
 
   // void
@@ -379,14 +391,15 @@ private:
     basic_inverse->vmult(dst_view, src_view);
   }
 
-  template<bool add>
+  template<bool add, bool transpose = false>
   void
   vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
     if(state == State::basic)
-      vmult_impl_basic_static<add>(dst_view, src_view);
+      vmult_impl_basic_static<add, transpose>(dst_view, src_view);
     else if(state == State::skd)
     {
+      AssertThrow(!transpose, ExcMessage("Not implemented."));
       AlignedVector<Number> initial_dst;
       if(add)
       {
@@ -408,7 +421,7 @@ private:
   }
 
 
-  template<bool add>
+  template<bool add, bool transpose = false>
   void
   vmult_impl_basic_static(const ArrayView<Number> &       dst_view,
                           const ArrayView<const Number> & src_view) const
@@ -417,8 +430,9 @@ private:
     AssertDimension(dst_view.size(), m());
     AssertDimension(src_view.size(), n());
     std::lock_guard<std::mutex> lock(this->mutex);
-    const unsigned int          mm =
-      n_rows_1d > 0 ? Utilities::fixed_power<order>(n_rows_1d) : right(0).size(0) * left(0).size(1);
+    const unsigned int          mm_dynamic =
+      transpose ? right(0).size(1) * left(0).size(0) : right(0).size(0) * left(0).size(1);
+    const unsigned int mm = n_rows_1d > 0 ? Utilities::fixed_power<order>(n_rows_1d) : mm_dynamic;
     tmp_array.clear();
     tmp_array.resize_fast(mm);
     constexpr int kernel_size = n_rows_1d > 0 ? n_rows_1d : 0;
@@ -436,16 +450,16 @@ private:
     Number *       dst     = dst_view.data();
     const Number * left_0  = &(left(0)(0, 0));
     const Number * right_0 = &(right(0)(0, 0));
-    eval.template apply</*direction*/ 0, /*contract_over_rows*/ false, /*add*/ false>(right_0,
-                                                                                      src,
-                                                                                      tmp);
-    eval.template apply<1, false, add>(left_0, tmp, dst);
+    eval.template apply</*direction*/ 0, /*contract_over_rows*/ transpose, /*add*/ false>(right_0,
+                                                                                          src,
+                                                                                          tmp);
+    eval.template apply<1, transpose, add>(left_0, tmp, dst);
     for(std::size_t r = 1; r < elementary_tensors.size(); ++r)
     {
       const Number * left_r  = &(left(r)(0, 0));
       const Number * right_r = &(right(r)(0, 0));
-      eval.template apply<0, false, false>(right_r, src, tmp);
-      eval.template apply<1, false, true>(left_r, tmp, dst);
+      eval.template apply<0, transpose, false>(right_r, src, tmp);
+      eval.template apply<1, transpose, true>(left_r, tmp, dst);
     }
   }
 
