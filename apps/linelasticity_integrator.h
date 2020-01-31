@@ -863,7 +863,7 @@ operator()(const Evaluator &                   eval_ansatz,
       const auto & grad_u = eval_ansatz.shape_gradient_face(dof_u, face_no, direction, cell_no);
 
       value_on_face = -1. * chi_e * symgrad_factor * (v * normal * grad_u + grad_v * u * normal);
-      value_on_face += penalty * v * u * normal * normal;
+      value_on_face += symgrad_factor * penalty * v * u * normal * normal; // !!!
       cell_matrix(dof_v, dof_u) += 2. * mu * value_on_face;
     }
   }
@@ -1247,6 +1247,7 @@ public:
   using gradient_type =
     typename FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number>::gradient_type;
   static constexpr unsigned int n_components = dim;
+  static constexpr unsigned int macro_size   = VectorizedArray<Number>::n_array_elements;
 
 private:
   std::shared_ptr<const MatrixFree<dim, Number>> data;
@@ -1664,9 +1665,9 @@ Operator<dim, fe_degree, Number>::apply_face(
      * where ^ is the outer/dyadic product
      */
     const auto test_by_symmetric_gradient =
-      [this, sigma](const auto &                                    u,
-                    const Tensor<1, dim, VectorizedArray<Number>> & normal_u,
-                    const unsigned                                  q) {
+      [this](const auto &                                    u,
+             const Tensor<1, dim, VectorizedArray<Number>> & normal_u,
+             const unsigned                                  q) {
         const auto & value_u = get_value(u, q);
         return -0.5 * 2. * mu * outer_product(value_u, normal_u);
       };
@@ -1690,13 +1691,12 @@ Operator<dim, fe_degree, Number>::apply_face(
      *    - lambda * u . normal_u * 0.5 *div(u)
      * where ^ is the outer/dyadic product
      */
-    const auto test_by_divergence =
-      [this, sigma](const auto &                                    u,
-                    const Tensor<1, dim, VectorizedArray<Number>> & normal_u,
-                    const unsigned                                  q) {
-        const auto & value_u = get_value(u, q);
-        return -0.5 * lambda * value_u * normal_u;
-      };
+    const auto test_by_divergence = [this](const auto &                                    u,
+                                           const Tensor<1, dim, VectorizedArray<Number>> & normal_u,
+                                           const unsigned                                  q) {
+      const auto & value_u = get_value(u, q);
+      return -0.5 * lambda * value_u * normal_u;
+    };
 
     // *** integrate against test functions v (LINEAR STRAIN)
     for(unsigned int q = 0; q < n_qpoints; ++q)
@@ -1805,8 +1805,25 @@ Operator<dim, fe_degree, Number>::apply_boundary(
       const auto e_u     = get_symmetric_gradient(u, q);
       const auto normal  = u[0]->get_normal_vector(q);
       const auto value_u = get_value(u, q);
+      // !!!
+      auto value_u_newpen = value_u;
+      for(unsigned comp = 0; comp < dim; ++comp)
+      {
+        Tensor<1, dim, Number> face_identifier;
+        face_identifier[comp]              = 1.;
+        const auto              normal     = u[0]->get_normal_vector(0);
+        const auto              inner_prod = abs(face_identifier * normal);
+        std::bitset<macro_size> flag;
+        for(auto lane = 0U; lane < macro_size; ++lane)
+          flag[lane] = inner_prod[lane] < 1.e-6;
+        for(auto lane = 0U; lane < macro_size; ++lane)
+          if(flag[lane])
+            value_u_newpen[comp][lane] = 0.5 * value_u[comp][lane];
 
-      submit_value(v, 2. * mu * (sigma * value_u - contract<0, 0>(normal, e_u)), q);
+        // std::cout << lane << "face " << face << " is not directed in " << comp << std::endl;
+      }
+
+      submit_value(v, 2. * mu * (sigma * value_u_newpen - contract<0, 0>(normal, e_u)), q);
       submit_symmetric_gradient(v, -2. * mu * outer_product(value_u, normal), q);
     }
     for(unsigned comp = 0; comp < dim; ++comp)

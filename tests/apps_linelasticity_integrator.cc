@@ -852,18 +852,22 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSAssemblyCellPatch)
 {
   using Fixture = TestLinElasticityIntegratorFD<TypeParam>;
 
+  // !!!
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 1U;
+  // !!!
   Fixture::params.n_refinements        = 0U;
   Fixture::params.equation_data.lambda = 1.;
   Fixture::params.equation_data.mu     = 1.;
   Fixture::tpss_assembly();
 
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2U;
-  Fixture::params.n_refinements                = 1U;
-  Fixture::params.equation_data.lambda         = 1.234;
-  Fixture::params.equation_data.mu             = 9.876;
-  Fixture::params.equation_data.ip_factor      = 4.99;
-  Fixture::tpss_assembly();
+  // Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  // Fixture::rt_parameters.mesh.n_repetitions    = 2U;
+  // Fixture::params.n_refinements                = 1U;
+  // Fixture::params.equation_data.lambda         = 1.234;
+  // Fixture::params.equation_data.mu             = 9.876;
+  // Fixture::params.equation_data.ip_factor      = 4.99;
+  // Fixture::tpss_assembly();
 }
 
 TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSInvertCellPatch)
