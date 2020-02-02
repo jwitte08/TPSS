@@ -917,8 +917,9 @@ operator()(const Evaluator &                   eval_ansatz,
         -1. * chi_e * symgrad_factor *
         (v1 * normal1 * grad_u0 + grad_v1 * u0 * normal0); // consistency + symmetry
 
-      value_on_interface01 += penalty * v0 * u1 * normal0 * normal1; // penalty
-      value_on_interface10 += penalty * v1 * u0 * normal1 * normal0; // penalty
+      // !!!
+      value_on_interface01 += symgrad_factor * penalty * v0 * u1 * normal0 * normal1; // penalty
+      value_on_interface10 += symgrad_factor * penalty * v1 * u0 * normal1 * normal0; // penalty
 
       cell_matrix01(dof_v, dof_u) += 2. * mu * value_on_interface01;
       cell_matrix10(dof_v, dof_u) += 2. * mu * value_on_interface10;
@@ -1654,8 +1655,24 @@ Operator<dim, fe_degree, Number>::apply_face(
                     const unsigned                                  q) {
         const auto & e_u     = get_symmetric_gradient(u, q);
         const auto & value_u = get_value(u, q);
+
+        // !!!
+        auto value_u_newpen = value_u;
+        for(unsigned comp = 0; comp < dim; ++comp)
+        {
+          Tensor<1, dim, Number> face_identifier;
+          face_identifier[comp]              = 1.;
+          const auto              inner_prod = abs(face_identifier * normal_u);
+          std::bitset<macro_size> flag;
+          for(auto lane = 0U; lane < macro_size; ++lane)
+            flag[lane] = inner_prod[lane] < 1.e-6;
+          for(auto lane = 0U; lane < macro_size; ++lane)
+            if(flag[lane])
+              value_u_newpen[comp][lane] = 0.5 * value_u[comp][lane];
+        }
+
         return 2. * mu *
-               (sigma * contract<1, 0>(outer_product(value_u, normal_u), normal_v) -
+               (sigma * contract<1, 0>(outer_product(value_u_newpen, normal_u), normal_v) -
                 contract<1, 0>(0.5 * e_u, normal_v));
       };
 
