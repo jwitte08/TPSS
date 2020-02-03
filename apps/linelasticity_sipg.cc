@@ -91,10 +91,12 @@ debug_impl(const TestParameter & prms = TestParameter{})
   oss << std::scientific << std::setprecision(3);
   oss << prms.equation_data.mu << "mu_";
   oss << prms.equation_data.lambda << "lambda";
+  if(prms.equation_data.factor != 1.)
+    oss << "_" << prms.equation_data.factor << "fctr";
   if(prms.local_damping_factor < 1.)
-    oss << prms.local_damping_factor << "ldamp_";
+    oss << "_" << prms.local_damping_factor << "ldamp";
   if(prms.equation_data.ip_factor > 1.)
-    oss << prms.equation_data.ip_factor << "ip";
+    oss << "_" << prms.equation_data.ip_factor << "ip";
   const std::string filename = oss.str();
 
   // std::fstream fstream_log;

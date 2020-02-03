@@ -32,6 +32,8 @@ public:
          const int           lambda_rank    = order,
          const int           kronecker_rank = order)
   {
+    ratio = factor;
+
     /// eigenvalues
     const auto print_eigenvalues = [](const auto & tensors, const std::string name) {
       TensorProductMatrix<order, Number, n_rows_1d> tpmat(tensors);
@@ -267,6 +269,7 @@ public:
       // {
       //   print_eigenvalues(Z_tensors, "Z - rank1_ksvd_of_Z");
       // }
+      // !!!
       Z_tensors.front().front() = Tensors::scale(factor, Z_tensors.front().front());
 
       /// compute rank1 KSVD of scaled remainder Z - Ztilde1
@@ -344,6 +347,23 @@ public:
                      tmp_view.begin(),
                      std::multiplies<Number>());
       Q->vmult(dst_view, tmp_view);
+      // /// DEBUG
+      // if(ratio < 1.)
+      // {
+      //   AssertThrow(ratio > 0., ExcMessage("Invalid ratio."));
+      //   const auto id_ratio = 1. - ratio;
+      //   std::transform(dst_view.begin(),
+      //                  dst_view.end(),
+      //                  tmp_view.begin(),
+      //                  [this](const auto & value) { return value * ratio; });
+      //   std::transform(tmp_view.begin(),
+      //                  tmp_view.end(),
+      //                  src_view.begin(),
+      //                  dst_view.begin(),
+      //                  [id_ratio](const auto & smooth_part, const auto & src) {
+      //                    return smooth_part + src * id_ratio;
+      //                  });
+      // }
     }
     else if(mode == Mode::ksvd_inv)
       matrix_type::vmult(dst_view, src_view);
@@ -357,7 +377,8 @@ public:
     ksvd,
     ksvd_inv
   };
-  Mode mode = Mode::exact;
+  Mode   mode  = Mode::exact;
+  double ratio = 1.;
   // std::shared_ptr<const TensorProductMatrix<order, Number, n_rows_1d>> MQLsqrt;
   std::shared_ptr<const TensorProductMatrix<order, Number, n_rows_1d>> M;
   std::shared_ptr<const TensorProductMatrix<order, Number, n_rows_1d>> Q;

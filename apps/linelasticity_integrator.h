@@ -874,7 +874,8 @@ operator()(const Evaluator &                   eval_ansatz,
       const auto & grad_u = eval_ansatz.shape_gradient_face(dof_u, face_no, direction, cell_no);
 
       value_on_face = -1. * chi_e * symgrad_factor * (v * normal * grad_u + grad_v * u * normal);
-      value_on_face += symgrad_factor * penalty * v * u * normal * normal; // !!!
+      // !!!
+      value_on_face += symgrad_factor * penalty * v * u * normal * normal;
       cell_matrix(dof_v, dof_u) += 2. * mu * value_on_face;
     }
   }
@@ -1055,9 +1056,9 @@ operator()(const Evaluator &                   eval_ansatz,
   AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
 
   const auto normal = make_vectorized_array<Number>(face_no == 0 ? -1. : 1.);
-  // !!!
-  const auto penalty = FaceLaplace::compute_penalty(eval, direction, cell_no, cell_no, bdry_mask);
-  auto       chi_e   = make_vectorized_array<Number>(0.);
+  const auto penalty =
+    ip_factor * FaceLaplace::compute_penalty(eval, direction, cell_no, cell_no, bdry_mask);
+  auto chi_e = make_vectorized_array<Number>(0.);
   for(unsigned int lane = 0; lane < macro_size; ++lane)
     chi_e[lane] = bdry_mask[lane] ? 1. : 0.5;
 
@@ -1103,8 +1104,7 @@ operator()(const Evaluator &                   eval_ansatz,
   /*** the outward normal on face 0 seen from cell 1 ***/
   const auto normal1 = make_vectorized_array<Number>(-1.);
   /*** boundary mask is obiviously 0(=all interior), cell_no = 0 and cell_no_neighbor = 1 ***/
-  // !!!
-  const auto   penalty = FaceLaplace::compute_penalty(eval, direction, 0, 1, 0);
+  const auto   penalty = ip_factor * FaceLaplace::compute_penalty(eval, direction, 0, 1, 0);
   const Number chi_e   = 0.5;
 
   /*** non-zero normal if component coincides with direction (Cartesian!)***/
@@ -1329,9 +1329,7 @@ public:
   Number
   get_penalty_factor() const
   {
-    // !!!
-    // return ip_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
-    return std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
+    return ip_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
   }
 
   // private:
@@ -1692,8 +1690,7 @@ Operator<dim, fe_degree, Number>::apply_face(
         //        (sigma * contract<1, 0>(outer_product(value_u_newpen, normal_u), normal_v) -
         //         contract<1, 0>(0.5 * e_u, normal_v));
         return 2. * mu *
-               (lambda * ip_factor * sigma *
-                  contract<1, 0>(outer_product(value_u_newpen, normal_u), normal_v) -
+               (lambda * sigma * contract<1, 0>(outer_product(value_u_newpen, normal_u), normal_v) -
                 contract<1, 0>(0.5 * e_u, normal_v));
       };
 
@@ -1863,10 +1860,7 @@ Operator<dim, fe_degree, Number>::apply_boundary(
 
       // !!!
       // submit_value(v, 2. * mu * (sigma * value_u_newpen - contract<0, 0>(normal, e_u)), q);
-      submit_value(v,
-                   2. * mu *
-                     (lambda * ip_factor * sigma * value_u_newpen - contract<0, 0>(normal, e_u)),
-                   q);
+      submit_value(v, 2. * mu * (lambda * sigma * value_u_newpen - contract<0, 0>(normal, e_u)), q);
       submit_symmetric_gradient(v, -2. * mu * outer_product(value_u, normal), q);
     }
     for(unsigned comp = 0; comp < dim; ++comp)
