@@ -41,31 +41,31 @@ public:
       std::cout << vector_to_string(eigenvalues) << std::endl;
       return eigenvalues;
     };
-    const auto print_inverse_eigenvalues = [](const auto & tensors, const std::string name) {
-      TensorProductMatrix<order, Number, n_rows_1d> tpmat(tensors);
-      const auto &                                  mat = table_to_fullmatrix(tpmat.as_table(), 0);
-      const auto &                                  eigenvalues = compute_eigenvalues(mat);
-      std::vector<std::complex<double>>             inverse_eigenvalues;
-      std::transform(eigenvalues.begin(),
-                     eigenvalues.end(),
-                     std::back_inserter(inverse_eigenvalues),
-                     [](const std::complex<double> & lambda) { return 1. / lambda; });
-      std::sort(inverse_eigenvalues.begin(),
-                inverse_eigenvalues.end(),
-                [](const auto & a, const auto & b) { return a.real() < b.real(); });
-      std::reverse(inverse_eigenvalues.begin(), inverse_eigenvalues.end());
-      std::cout << "Inverse eigenvalues of " << name << std::endl;
-      std::cout << vector_to_string(inverse_eigenvalues) << std::endl;
-      return inverse_eigenvalues;
-    };
-    const auto print_eigenvalues_symm = [&](const Vector<double> & eigenvalues,
-                                            const std::string      name) {
-      std::vector<double> evs(eigenvalues.begin(), eigenvalues.end());
-      std::sort(evs.begin(), evs.end());
-      std::reverse(evs.begin(), evs.end());
-      std::cout << "Eigenvalues of " << name << " (symm)" << std::endl;
-      std::cout << vector_to_string(evs) << std::endl;
-    };
+    // const auto print_inverse_eigenvalues = [](const auto & tensors, const std::string name) {
+    //   TensorProductMatrix<order, Number, n_rows_1d> tpmat(tensors);
+    //   const auto &                                  mat = table_to_fullmatrix(tpmat.as_table(),
+    //   0); const auto &                                  eigenvalues = compute_eigenvalues(mat);
+    //   std::vector<std::complex<double>>             inverse_eigenvalues;
+    //   std::transform(eigenvalues.begin(),
+    //                  eigenvalues.end(),
+    //                  std::back_inserter(inverse_eigenvalues),
+    //                  [](const std::complex<double> & lambda) { return 1. / lambda; });
+    //   std::sort(inverse_eigenvalues.begin(),
+    //             inverse_eigenvalues.end(),
+    //             [](const auto & a, const auto & b) { return a.real() < b.real(); });
+    //   std::reverse(inverse_eigenvalues.begin(), inverse_eigenvalues.end());
+    //   std::cout << "Inverse eigenvalues of " << name << std::endl;
+    //   std::cout << vector_to_string(inverse_eigenvalues) << std::endl;
+    //   return inverse_eigenvalues;
+    // };
+    // const auto print_eigenvalues_symm = [&](const Vector<double> & eigenvalues,
+    //                                         const std::string      name) {
+    //   std::vector<double> evs(eigenvalues.begin(), eigenvalues.end());
+    //   std::sort(evs.begin(), evs.end());
+    //   std::reverse(evs.begin(), evs.end());
+    //   std::cout << "Eigenvalues of " << name << " (symm)" << std::endl;
+    //   std::cout << vector_to_string(evs) << std::endl;
+    // };
     const auto remove_zeros = [](std::vector<std::array<Table<2, Number>, order>> & tensors) {
       std::vector<std::array<Table<2, Number>, order>> tmp;
       std::remove_copy_if(tensors.cbegin(),
@@ -774,9 +774,9 @@ public:
                                                                           get_block(1, 1));
       inverse_2x2->vmult(dst, src);
 
-      /// ALTERNATIVE: standard inverse based on LAPACK
+      // /// ALTERNATIVE: standard inverse based on LAPACK
       // if(!basic_inverse)
-      // 	basic_inverse = std::make_shared<const VectorizedInverse<Number>>(as_table());
+      //   basic_inverse = std::make_shared<const VectorizedInverse<Number>>(as_table());
       // basic_inverse->vmult(dst, src);
     }
   }

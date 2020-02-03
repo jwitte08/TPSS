@@ -30,7 +30,7 @@ struct TestParameter
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::FullSVD;
   types::global_dof_index dof_limit_min = 1e4;
-  types::global_dof_index dof_limit_max = 1e6;
+  types::global_dof_index dof_limit_max = 5e7;
   EquationData            equation_data;
   double                  local_damping_factor = 1.;
   unsigned                n_smoothing_steps    = 2;
@@ -241,36 +241,6 @@ test_impl(const TestParameter & prms = TestParameter{})
   }
 }
 
-// template<int dim, int fe_degree, typename value_type = double> !!!
-// void
-// test(TestParameter prms = TestParameter{})
-// {
-//   using ElasticityDiagOnly = typename LinElasticity::ModelProblem<dim, fe_degree, value_type>;
-//   using BlockMatrixExact   = Tensors::BlockMatrix<dim, VectorizedArray<value_type>>;
-//   using ElasticityExact =
-//     typename LinElasticity::ModelProblem<dim, fe_degree, value_type, BlockMatrixExact>;
-//   using BlockMatrixFast = Tensors::BlockMatrix<dim, VectorizedArray<value_type>, /*fast*/ 0>;
-//   using ElasticityFast =
-//     typename LinElasticity::ModelProblem<dim, fe_degree, value_type, BlockMatrixFast>;
-
-//   if(prms.test_variant == 0)
-//   {
-//     prms.test_description = "diag";
-//     test_impl<ElasticityDiagOnly, dim, fe_degree, value_type>(prms);
-//   }
-//   else if(prms.test_variant == 1)
-//   {
-//     prms.test_description = "exact";
-//     test_impl<ElasticityExact, dim, fe_degree, value_type>(prms);
-//   }
-//   else if(prms.test_variant == 2)
-//   {
-//     prms.test_description = "fast";
-//     test_impl<ElasticityFast, dim, fe_degree, value_type>(prms);
-//   }
-//   else
-//     AssertThrow(false, ExcMessage("Invalid test variant."));
-// }
 template<int dim, int fe_degree, typename value_type = double>
 void
 test(TestParameter prms = TestParameter{})
@@ -286,21 +256,51 @@ test(TestParameter prms = TestParameter{})
   if(prms.test_variant == 0)
   {
     prms.test_description = "diag";
-    debug_impl<ElasticityDiagOnly, dim, fe_degree, value_type>(prms);
+    test_impl<ElasticityDiagOnly, dim, fe_degree, value_type>(prms);
   }
   else if(prms.test_variant == 1)
   {
     prms.test_description = "exact";
-    debug_impl<ElasticityExact, dim, fe_degree, value_type>(prms);
+    test_impl<ElasticityExact, dim, fe_degree, value_type>(prms);
   }
   else if(prms.test_variant == 2)
   {
     prms.test_description = "fast";
-    debug_impl<ElasticityFast, dim, fe_degree, value_type>(prms);
+    test_impl<ElasticityFast, dim, fe_degree, value_type>(prms);
   }
   else
     AssertThrow(false, ExcMessage("Invalid test variant."));
 }
+// template<int dim, int fe_degree, typename value_type = double>
+// void
+// test(TestParameter prms = TestParameter{})
+// {
+//   using ElasticityDiagOnly = typename LinElasticity::ModelProblem<dim, fe_degree, value_type>;
+//   using BlockMatrixExact   = Tensors::BlockMatrix<dim, VectorizedArray<value_type>>;
+//   using ElasticityExact =
+//     typename LinElasticity::ModelProblem<dim, fe_degree, value_type, BlockMatrixExact>;
+//   using BlockMatrixFast = Tensors::BlockMatrix<dim, VectorizedArray<value_type>, /*fast*/ 0>;
+//   using ElasticityFast =
+//     typename LinElasticity::ModelProblem<dim, fe_degree, value_type, BlockMatrixFast>;
+
+//   if(prms.test_variant == 0)
+//   {
+//     prms.test_description = "diag";
+//     debug_impl<ElasticityDiagOnly, dim, fe_degree, value_type>(prms);
+//   }
+//   else if(prms.test_variant == 1)
+//   {
+//     prms.test_description = "exact";
+//     debug_impl<ElasticityExact, dim, fe_degree, value_type>(prms);
+//   }
+//   else if(prms.test_variant == 2)
+//   {
+//     prms.test_description = "fast";
+//     debug_impl<ElasticityFast, dim, fe_degree, value_type>(prms);
+//   }
+//   else
+//     AssertThrow(false, ExcMessage("Invalid test variant."));
+// }
 
 int
 main(int argc, char * argv[])

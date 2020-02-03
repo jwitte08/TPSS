@@ -273,7 +273,10 @@ public:
   struct NitscheStrain
   {
     NitscheStrain(const EquationData & equation_data_in, const int component_in)
-      : mu(equation_data_in.mu), ip_factor(equation_data_in.ip_factor), component(component_in)
+      : mu(equation_data_in.mu),
+        lambda(equation_data_in.lambda),
+        ip_factor(equation_data_in.ip_factor),
+        component(component_in)
     {
       AssertIndexRange(component, dim);
     }
@@ -295,6 +298,7 @@ public:
                const int                           direction) const;
 
     const double mu;
+    const double lambda;
     const double ip_factor;
     const int    component;
   };
@@ -303,7 +307,10 @@ public:
   struct NitscheStrainMixed
   {
     NitscheStrainMixed(const EquationData & equation_data_in, const int comp_u, const int comp_v)
-      : component_u(comp_u), component_v(comp_v), mu(equation_data_in.mu)
+      : component_u(comp_u),
+        component_v(comp_v),
+        mu(equation_data_in.mu),
+        lambda(equation_data_in.lambda)
     {
       AssertIndexRange(component_u, dim);
       AssertIndexRange(component_v, dim);
@@ -329,6 +336,7 @@ public:
     const int    component_u;
     const int    component_v;
     const double mu;
+    const double lambda;
   };
 
   template<typename Evaluator>
@@ -845,8 +853,12 @@ operator()(const Evaluator &                   eval_ansatz,
   AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
 
   const auto normal = make_vectorized_array<Number>(face_no == 0 ? -1. : 1.);
+  // !!!
   const auto penalty =
     ip_factor * FaceLaplace::compute_penalty(eval, direction, cell_no, cell_no, bdry_mask);
+  // const auto penalty =
+  //   lambda * ip_factor * FaceLaplace::compute_penalty(eval, direction, cell_no, cell_no,
+  //   bdry_mask);
   auto chi_e = make_vectorized_array<Number>(0.);
   for(unsigned int lane = 0; lane < macro_size; ++lane)
     chi_e[lane] = bdry_mask[lane] ? 1. : 0.5;
@@ -890,8 +902,11 @@ operator()(const Evaluator &                   eval_ansatz,
   /*** the outward normal on face 0 seen from cell 1 ***/
   const auto normal1 = make_vectorized_array<Number>(-1.);
   /*** boundary mask is obiviously 0(=all interior), cell_no = 0 and cell_no_neighbor = 1 ***/
-  const auto   penalty = ip_factor * FaceLaplace::compute_penalty(eval, direction, 0, 1, 0);
-  const Number chi_e   = 0.5;
+  // !!!
+  const auto penalty = ip_factor * FaceLaplace::compute_penalty(eval, direction, 0, 1, 0);
+  // const auto   penalty = lambda * ip_factor * FaceLaplace::compute_penalty(eval, direction, 0, 1,
+  // 0);
+  const Number chi_e = 0.5;
   /*** diagonal term of grad(u)^T : v ^ n ***/
   const Number symgrad_factor = (component == direction) ? 1. : 0.5;
 
@@ -1671,9 +1686,14 @@ Operator<dim, fe_degree, Number>::apply_face(
               value_u_newpen[comp][lane] = 0.5 * value_u[comp][lane];
         }
 
+        // !!!
         return 2. * mu *
                (sigma * contract<1, 0>(outer_product(value_u_newpen, normal_u), normal_v) -
                 contract<1, 0>(0.5 * e_u, normal_v));
+        // return 2. * mu *
+        //        (lambda * sigma * contract<1, 0>(outer_product(value_u_newpen, normal_u),
+        //        normal_v) -
+        //         contract<1, 0>(0.5 * e_u, normal_v));
       };
 
     /*
@@ -1840,7 +1860,10 @@ Operator<dim, fe_degree, Number>::apply_boundary(
         // std::cout << lane << "face " << face << " is not directed in " << comp << std::endl;
       }
 
+      // !!!
       submit_value(v, 2. * mu * (sigma * value_u_newpen - contract<0, 0>(normal, e_u)), q);
+      // submit_value(v, 2. * mu * (lambda * sigma * value_u_newpen - contract<0, 0>(normal, e_u)),
+      // q);
       submit_symmetric_gradient(v, -2. * mu * outer_product(value_u, normal), q);
     }
     for(unsigned comp = 0; comp < dim; ++comp)
