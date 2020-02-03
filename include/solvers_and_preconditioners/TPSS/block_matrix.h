@@ -150,14 +150,14 @@ public:
           tensor[d].reinit(D_in.m(d), D_in.m(d));
       compute_ksvd<Number>(inverse_exact, inverse_ksvd);
 
-      {
-        // const auto matrix      = table_to_fullmatrix(Tensors::matrix_to_table(*this), 0);
-        const auto matrix      = table_to_fullmatrix(inverse_exact, 0);
-        const auto eigenvalues = compute_eigenvalues(matrix);
-        std::cout << "Eigenvalues of S^{-1}" << std::endl;
-        std::cout << vector_to_string(eigenvalues) << std::endl;
-        print_eigenvalues(inverse_ksvd, "KSVD of S^{-1}");
-      }
+      // {
+      //   // const auto matrix      = table_to_fullmatrix(Tensors::matrix_to_table(*this), 0);
+      //   const auto matrix      = table_to_fullmatrix(inverse_exact, 0);
+      //   const auto eigenvalues = compute_eigenvalues(matrix);
+      //   std::cout << "Eigenvalues of S^{-1}" << std::endl;
+      //   std::cout << vector_to_string(eigenvalues) << std::endl;
+      //   print_eigenvalues(inverse_ksvd, "KSVD of S^{-1}");
+      // }
 
       matrix_type::reinit(inverse_ksvd);
       mode = Mode::ksvd_inv;
@@ -255,38 +255,38 @@ public:
           tensor[d].reinit(D_in.m(d), D_in.m(d));
       compute_ksvd<Number>(Z_tensors, rank1_ksvd);
       scaled_ksvd_of_Z.emplace_back(rank1_ksvd.front());
-      {
-        print_eigenvalues(Z_tensors, "Z");
-        print_eigenvalues(rank1_ksvd, "rank1 KSVD of Z");
-      }
+      // {
+      //   print_eigenvalues(Z_tensors, "Z");
+      //   print_eigenvalues(rank1_ksvd, "rank1 KSVD of Z");
+      // }
 
       /// compute remainder Z - Ztilde1 and scale its identity tensor
       auto tensor_ksvd1    = rank1_ksvd.front();
       tensor_ksvd1.front() = Tensors::scale(-1., tensor_ksvd1.front());
       Z_tensors.emplace_back(tensor_ksvd1);
-      {
-        print_eigenvalues(Z_tensors, "Z - rank1_ksvd_of_Z");
-      }
+      // {
+      //   print_eigenvalues(Z_tensors, "Z - rank1_ksvd_of_Z");
+      // }
       Z_tensors.front().front() = Tensors::scale(factor, Z_tensors.front().front());
 
       /// compute rank1 KSVD of scaled remainder Z - Ztilde1
       compute_ksvd<Number>(Z_tensors, rank1_ksvd);
-      {
-        print_eigenvalues(rank1_ksvd, "rank1 KSVD of (Z - rank1_ksvd_of_Z)");
-      }
+      // {
+      //   print_eigenvalues(rank1_ksvd, "rank1 KSVD of (Z - rank1_ksvd_of_Z)");
+      // }
       scaled_ksvd_of_Z.emplace_back(rank1_ksvd.front());
 
       /// the sum of both rank1 KSVDs determines the rank2 KSVD
       mode = Mode::ksvd;
       matrix_type::reinit(scaled_ksvd_of_Z); // TODO
 
-      {
-        print_eigenvalues(schur_tensors_exact, "S (exact up to Lambda)");
-        const auto matrix      = table_to_fullmatrix(Tensors::matrix_to_table(*this), 0);
-        const auto eigenvalues = compute_eigenvalues(matrix);
-        std::cout << "Eigenvalues of (scaled = " << factor << ") rank2 KSVD of S" << std::endl;
-        std::cout << vector_to_string(eigenvalues) << std::endl;
-      }
+      // {
+      //   print_eigenvalues(schur_tensors_exact, "S (exact up to Lambda)");
+      //   const auto matrix      = table_to_fullmatrix(Tensors::matrix_to_table(*this), 0);
+      //   const auto eigenvalues = compute_eigenvalues(matrix);
+      //   std::cout << "Eigenvalues of (scaled = " << factor << ") rank2 KSVD of S" << std::endl;
+      //   std::cout << vector_to_string(eigenvalues) << std::endl;
+      // }
     }
   }
 
