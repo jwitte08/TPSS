@@ -30,7 +30,7 @@ struct TestParameter
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::FullSVD;
   types::global_dof_index dof_limit_min = 1e4;
-  types::global_dof_index dof_limit_max = 5e7;
+  types::global_dof_index dof_limit_max = 1e6;
   EquationData            equation_data;
   double                  local_damping_factor = 1.;
   unsigned                n_smoothing_steps    = 2;
