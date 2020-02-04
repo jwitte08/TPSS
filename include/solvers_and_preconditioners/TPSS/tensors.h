@@ -402,7 +402,7 @@ productT(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
 
 template<int order, typename Number>
 std::vector<std::array<Table<2, Number>, order>>
-scale(const Number factor, const std::vector<std::array<Table<2, Number>, order>> & tensors)
+scale(const Number & factor, const std::vector<std::array<Table<2, Number>, order>> & tensors)
 {
   std::vector<std::array<Table<2, Number>, order>> scaled_tensors(tensors.size());
   for(auto i = 0U; i < tensors.size(); ++i)
