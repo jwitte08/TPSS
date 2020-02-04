@@ -181,6 +181,17 @@ public:
      *   S = M Q Lsqrt Z Lsqrt Q^T M
      *   with Z = (I - Linvsqrt Q^T C Ainv B Q Linvsqrt)
      */
+    const auto identity_tensor = [&]() {
+      std::array<Table<2, Number>, order> tensor;
+      for(auto d = 0U; d < order; ++d)
+      {
+        auto & matrix = tensor[d];
+        matrix.reinit(D_in.m(d), D_in.m(d));
+        for(auto i = 0U; i < D_in.m(d); ++i)
+          matrix(i, i) = 1.;
+      }
+      return tensor;
+    };
     /// compute tensors approximating Z
     {
       /// compute Kronecker approximation of generalized Lambda(D)^{1/2}
@@ -225,17 +236,6 @@ public:
       std::vector<std::array<Table<2, Number>, order>> mass;
       mass.emplace_back(D_in.get_mass());
       M = std::make_shared<TensorProductMatrix<order, Number, n_rows_1d>>(mass);
-      const auto identity_tensor = [&]() {
-        std::array<Table<2, Number>, order> tensor;
-        for(auto d = 0U; d < order; ++d)
-        {
-          auto & matrix = tensor[d];
-          matrix.reinit(D_in.m(d), D_in.m(d));
-          for(auto i = 0U; i < D_in.m(d); ++i)
-            matrix(i, i) = 1.;
-        }
-        return tensor;
-      };
 
       /// Z = (I - L^{-1/2}Q^TCA^{-1}BQL^{-1/2})
       scratch = Tensors::product<order, Number>(minus_C_Ainv_B, eigenvectors);
@@ -258,26 +258,67 @@ public:
       compute_ksvd<Number>(Z_tensors, rank1_ksvd);
       scaled_ksvd_of_Z.emplace_back(rank1_ksvd.front());
       // {
-      //   print_eigenvalues(Z_tensors, "Z");
+      //   // print_eigenvalues(Z_tensors, "Z");
       //   print_eigenvalues(rank1_ksvd, "rank1 KSVD of Z");
       // }
+
+      const auto compute_min_lambda = [](const auto & tensors) {
+        Number min_lambda;
+        for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+        {
+          TensorProductMatrix<order, Number, n_rows_1d> tpmatrix(tensors);
+          const auto         matrix = table_to_fullmatrix(tpmatrix.as_table(), lane);
+          FullMatrix<double> dummy;
+          const auto         eigenvalues = compute_eigenvalues_symm(matrix, dummy);
+          min_lambda[lane]               = eigenvalues[0];
+          // std::cout << eigenvalues(0) << " " << eigenvalues(eigenvalues.size()-1) << std::endl;
+        }
+        return min_lambda;
+      };
 
       /// compute remainder Z - Ztilde1 and scale its identity tensor
       auto tensor_ksvd1    = rank1_ksvd.front();
       tensor_ksvd1.front() = Tensors::scale(-1., tensor_ksvd1.front());
       Z_tensors.emplace_back(tensor_ksvd1);
       // {
-      //   print_eigenvalues(Z_tensors, "Z - rank1_ksvd_of_Z");
+      // 	print_eigenvalues(Z_tensors, "Z - rank1_ksvd_of_Z");
       // }
-      // !!!
-      Z_tensors.front().front() = Tensors::scale(factor, Z_tensors.front().front());
 
-      /// compute rank1 KSVD of scaled remainder Z - Ztilde1
-      compute_ksvd<Number>(Z_tensors, rank1_ksvd);
-      // {
-      //   print_eigenvalues(rank1_ksvd, "rank1 KSVD of (Z - rank1_ksvd_of_Z)");
-      // }
+      Number min_lambda_first    = compute_min_lambda(rank1_ksvd);
+      Number min_lambda_estimate = -1.;
+      Number pd_factor           = 1.;
+      Number delta               = 0.;
+      while(less_than_all_lanes(min_lambda_estimate, static_cast<Number>(0.)))
+      {
+        // !!!
+        pd_factor += delta;
+        Z_tensors.front().front() = matrix_scaling(identity_tensor().front(), pd_factor);
+        // {
+        //   print_eigenvalues(Z_tensors, "scaled Z - rank1_ksvd_of_Z");
+        // }
+
+        /// compute rank1 KSVD of scaled remainder Z - Ztilde1
+        compute_ksvd<Number>(Z_tensors, rank1_ksvd);
+        // {
+        //   print_eigenvalues(rank1_ksvd, "rank1 KSVD of (Z - rank1_ksvd_of_Z)");
+        // }
+
+        Number min_lambda_second = compute_min_lambda(rank1_ksvd);
+        // std::cout << varray_to_string(min_lambda_first) << std::endl;
+        // std::cout << varray_to_string(min_lambda_second) << std::endl;
+        min_lambda_estimate = min_lambda_first + min_lambda_second;
+        std::cout << "estimate of minimal EV: " << varray_to_string(min_lambda_estimate)
+                  << std::endl;
+        const auto flag = less_than(min_lambda_estimate, static_cast<Number>(0.));
+        for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+          if(flag[lane])
+            delta[lane] = factor * abs(min_lambda_estimate[lane]);
+        std::cout << "delta: " << varray_to_string(delta) << std::endl;
+      }
       scaled_ksvd_of_Z.emplace_back(rank1_ksvd.front());
+      // {
+      // 	print_eigenvalues(scaled_ksvd_of_Z, "scaled rank2 KSVD of Z");
+      // }
 
       /// the sum of both rank1 KSVDs determines the rank2 KSVD
       mode = Mode::ksvd;
