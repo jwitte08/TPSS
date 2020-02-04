@@ -145,7 +145,7 @@ std::bitset<VectorizedArray<Number>::n_array_elements>
 less_than(const VectorizedArray<Number> & lhs, const VectorizedArray<Number> & rhs)
 {
   std::bitset<VectorizedArray<Number>::n_array_elements> flag;
-  for (auto lane = 0U; lane < VectorizedArray<Number>::n_array_elements; ++lane)
+  for(auto lane = 0U; lane < VectorizedArray<Number>::n_array_elements; ++lane)
     flag[lane] = lhs[lane] < rhs[lane];
   return flag;
 }
@@ -165,7 +165,7 @@ template<typename NumberType>
 bool
 less_than_all_lanes(const NumberType & lhs, const NumberType & rhs)
 {
-  const auto & flag = less_than(lhs,rhs);
+  const auto & flag = less_than(lhs, rhs);
   return flag.all();
 }
 
