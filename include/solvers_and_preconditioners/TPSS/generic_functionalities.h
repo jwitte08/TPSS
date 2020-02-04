@@ -141,6 +141,35 @@ operator/(const Utilities::MPI::MinMaxAvg & mma_in, const double t)
 
 
 template<typename Number>
+std::bitset<VectorizedArray<Number>::n_array_elements>
+less_than(const VectorizedArray<Number> & lhs, const VectorizedArray<Number> & rhs)
+{
+  std::bitset<VectorizedArray<Number>::n_array_elements> flag;
+  for (auto lane = 0U; lane < VectorizedArray<Number>::n_array_elements; ++lane)
+    flag[lane] = lhs[lane] < rhs[lane];
+  return flag;
+}
+
+
+template<typename Number>
+std::bitset<1>
+less_than(const Number & lhs, const Number & rhs)
+{
+  std::bitset<1> flag;
+  flag[0] = lhs < rhs;
+  return flag;
+}
+
+
+template<typename NumberType>
+bool
+less_than_all_lanes(const NumberType & lhs, const NumberType & rhs)
+{
+  const auto & flag = less_than(lhs,rhs);
+  return flag.all();
+}
+
+template<typename Number>
 Number
 scalar_value(const Number & value, const unsigned int /*dummy*/ = 0)
 {
