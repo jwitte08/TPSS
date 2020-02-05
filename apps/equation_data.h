@@ -150,7 +150,8 @@ public:
 template<>
 class ZeroDirichletUnitCube<2> : public Function<2>
 {
-  static constexpr int dim = 2;
+  static constexpr int    dim = 2;
+  static constexpr double a   = 100.;
 
 public:
   virtual double
@@ -159,7 +160,7 @@ public:
     const double pi  = dealii::numbers::PI;
     const auto & x   = p[0];
     const auto & y   = p[1];
-    double       val = std::sin(pi * x * x) * std::sin(pi * y);
+    double       val = a * std::sin(pi * x * x) * std::sin(pi * y) * std::sin(pi * y);
     return val;
   }
 
@@ -170,9 +171,9 @@ public:
     const auto & x  = p[0];
     const auto & y  = p[1];
 
-    double lapl = -2. * std::cos(pi * x * x);
-    lapl += pi * (1. + 4. * x * x) * std::sin(pi * x * x);
-    lapl *= -pi * std::sin(pi * y);
+    double lapl = std::cos(pi * x * x) * std::sin(pi * y) * std::sin(pi * y);
+    lapl += pi * (-x * x + (1. + x * x) * std::cos(2 * pi * y)) * std::sin(pi * x * x);
+    lapl *= 2. * pi * a;
     return lapl;
   }
 };
