@@ -184,9 +184,9 @@ public:
     const auto &     x  = p[0];
     const auto &     y  = p[1];
     const auto &     z  = p[2];
-    const Point<2> p_xy(x, y);
-    const auto &        val_xy = func_2d.value(p_xy) / a;
-    value_type          val    = a * val_xy * std::sin(pi * z) * std::sin(pi * z);
+    const Point<2>   p_xy(x, y);
+    const auto &     val_xy = func_2d.value(p_xy) / a;
+    value_type       val    = a * val_xy * std::sin(pi * z) * std::sin(pi * z);
     return val;
   }
 
@@ -197,9 +197,9 @@ public:
     const auto &     x  = p[0];
     const auto &     y  = p[1];
     const auto &     z  = p[2];
-    const Point<2> p_xy(x, y);
-    const auto &        lapl_xy = func_2d.laplacian(p_xy) / a;
-    const auto &        exp_y   = std::exp(y * (y - 1.) * (y - 1.));
+    const Point<2>   p_xy(x, y);
+    const auto &     lapl_xy = func_2d.laplacian(p_xy) / a;
+    const auto &     exp_y   = std::exp(y * (y - 1.) * (y - 1.));
 
     value_type lapl = -lapl_xy + (-1 + exp_y) * 2. * pi * pi * std::sin(pi * x * x);
     lapl *= -std::sin(pi * z) * std::sin(pi * z);
