@@ -160,7 +160,6 @@ namespace RT
 bool
 Parameter::exceeds_dof_limits(const types::global_dof_index n_dofs) const
 {
-  // if(dof_limits == std::make_pair<types::global_dof_index, types::global_dof_index>(0, 0))
   if(dof_limits == std::make_pair(numbers::invalid_dof_index, numbers::invalid_dof_index))
     return false;
   Assert(dof_limits.first < dof_limits.second, ExcMessage("Invalid closed range."));
