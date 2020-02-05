@@ -10,6 +10,8 @@
 
 #include <deal.II/base/tensor_function.h>
 
+#include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
+
 #include "utilities.h"
 
 using namespace dealii;
@@ -117,6 +119,60 @@ public:
 private:
   Solution<dim> solution_function;
 };
+
+template<int dim>
+class ZeroDirichletUnitCube : public Function<dim>
+{
+public:
+  virtual double
+  value(const Point<dim> & p, const unsigned int = 0) const override final
+  {
+    const double pi  = dealii::numbers::PI;
+    double       val = 1.;
+    for(auto d = 0; d < dim; ++d)
+      val *= std::sin(pi * p[d]);
+    return val;
+  }
+
+  virtual double
+  laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
+  {
+    const double pi   = dealii::numbers::PI;
+    double       lapl = -dim * pi * pi * value(p);
+    return lapl;
+  }
+};
+
+template<int dim>
+class ManufacturedLoad : public Function<dim>
+{
+public:
+  ManufacturedLoad(const std::shared_ptr<const Function<dim>> solution_function_in)
+    : Function<dim>(), solution_function(solution_function_in)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int = 0) const override final
+  {
+    return -solution_function->laplacian(p);
+  }
+
+private:
+  std::shared_ptr<const Function<dim>> solution_function;
+};
+
+template<int dim>
+class RandomLoad : public Function<dim>
+{
+public:
+  virtual double
+  value(const Point<dim> &, const unsigned int) const override final
+  {
+    return make_random_value<double>();
+  }
+};
+
 } // end namespace Laplace
 
 namespace LinElasticity
@@ -217,6 +273,21 @@ public:
 private:
   const EquationData equation_data;
 };
+
+template<int dim>
+class VolumeForceRandom : public TensorFunction<1, dim>
+{
+public:
+  Tensor<1, dim>
+  value(const Point<dim> &) const override final
+  {
+    Tensor<1, dim> val;
+    for(auto d = 0U; d < dim; ++d)
+      val[d] = abs(make_random_value<double>());
+    return val;
+  }
+};
+
 } // end namespace LinElasticity
 
 
