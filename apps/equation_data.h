@@ -151,29 +151,36 @@ template<>
 class ZeroDirichletUnitCube<2> : public Function<2>
 {
   static constexpr int    dim = 2;
-  static constexpr double a   = 100.;
+  static constexpr double a   = 5.;
+  using value_type            = Point<dim>::value_type;
 
 public:
-  virtual double
+  virtual value_type
   value(const Point<dim> & p, const unsigned int = 0) const override final
   {
-    const double pi  = dealii::numbers::PI;
-    const auto & x   = p[0];
-    const auto & y   = p[1];
-    double       val = a * std::sin(pi * x * x) * std::sin(pi * y) * std::sin(pi * y);
+    const value_type pi    = dealii::numbers::PI;
+    const auto &     x     = p[0];
+    const auto &     y     = p[1];
+    const auto &     exp_y = std::exp(y * (y - 1.) * (y - 1.));
+    value_type       val   = a * std::sin(pi * x * x) * (exp_y - 1.);
     return val;
   }
 
-  virtual double
+  virtual value_type
   laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
   {
-    const double pi = dealii::numbers::PI;
-    const auto & x  = p[0];
-    const auto & y  = p[1];
+    const value_type pi    = dealii::numbers::PI;
+    const auto &     x     = p[0];
+    const auto &     y     = p[1];
+    const auto &     exp_y = std::exp(y * (y - 1.) * (y - 1.));
 
-    double lapl = std::cos(pi * x * x) * std::sin(pi * y) * std::sin(pi * y);
-    lapl += pi * (-x * x + (1. + x * x) * std::cos(2 * pi * y)) * std::sin(pi * x * x);
-    lapl *= 2. * pi * a;
+    value_type lapl = 4. * pi * pi * x * x;
+    lapl +=
+      (-3. - 4. * pi * pi * x * x - 2. * y + 22. * y * y - 24. * y * y * y + 9 * y * y * y * y) *
+      exp_y;
+    lapl *= std::sin(pi * x * x);
+    lapl += 2. * pi * (exp_y - 1.) * std::cos(pi * x * x);
+    lapl *= a;
     return lapl;
   }
 };
