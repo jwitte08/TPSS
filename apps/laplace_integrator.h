@@ -14,6 +14,7 @@
 
 #include <deal.II/matrix_free/fe_evaluation.h>
 #include <deal.II/matrix_free/matrix_free.h>
+#include <deal.II/matrix_free/operators.h>
 
 #include <deal.II/integrators/laplace.h>
 #include <deal.II/meshworker/dof_info.h>
@@ -37,6 +38,17 @@ double pre_factor = 1.0;
 
 namespace Laplace
 {
+// TODO namespace DG
+/*
+ * Linear operators describing the SIPG disretization with respect to the
+ * negative Laplacian:
+ *
+ * (MW) MeshWorker
+ * (MF) MatrixFree
+ * (FD) FastDiagonalization
+ */
+
+
 /*
  * A MeshWorker-based MatrixIntegrator to assemble the DG Laplace
  * system matrix. Originates from step-39.
@@ -742,88 +754,62 @@ struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
   using MFOperator::Tvmult;
 };
 
+/*
+ * Linear operators describing the standard finite element discretization of
+ * the negative Laplacian:
+ *
+ * (MF) MatrixFree
+ * (FD) FastDiagonalization // TODO
+ */
 namespace Std
 {
+/*
+ * MatrixFree operator based on MatrixFreeOperators interface
+ */
 namespace MF
 {
-template<int dim, typename number>
-void
-adjust_ghost_range_if_necessary(const MatrixFree<dim, number> &                    data,
-                                const LinearAlgebra::distributed::Vector<number> & vec)
-{
-  if(vec.get_partitioner().get() == data.get_dof_info(0).vector_partitioner.get())
-    return;
-
-  LinearAlgebra::distributed::Vector<number> copy_vec(vec);
-  const_cast<LinearAlgebra::distributed::Vector<number> &>(vec).reinit(
-    data.get_dof_info(0).vector_partitioner);
-  const_cast<LinearAlgebra::distributed::Vector<number> &>(vec).copy_locally_owned_data_from(
-    copy_vec);
-}
-
 template<int dim, int fe_degree, typename Number>
-class Operator : public LinearOperatorBase
+class Operator : public MatrixFreeOperators::Base<dim, LinearAlgebra::distributed::Vector<Number>>
 {
 public:
-  using value_type = Number;
-
-  Operator() = default;
+  using Base = MatrixFreeOperators::Base<dim, LinearAlgebra::distributed::Vector<Number>>;
+  using Base::size_type;
+  using Base::value_type;
 
   void
-  initialize(std::shared_ptr<const MatrixFree<dim, Number>> data);
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage);
 
   void
   clear();
 
-  types::global_dof_index
-  m() const;
-
-  types::global_dof_index
-  n() const;
-
-  void
-  initialize_dof_vector(LinearAlgebra::distributed::Vector<Number> & vec) const;
-
-  std::shared_ptr<const MatrixFree<dim, Number>>
-  get_matrix_free() const;
+  virtual void
+  compute_diagonal() override
+  {
+    AssertThrow(false, ExcMessage("Assembly of diagonal is not implemented."));
+  }
 
   std::vector<TimeInfo>
   get_time_data() const;
 
-  void
-  vmult(LinearAlgebra::distributed::Vector<Number> &       dst,
-        const LinearAlgebra::distributed::Vector<Number> & src) const;
-
-  void
-  Tvmult(LinearAlgebra::distributed::Vector<Number> &       dst,
-         const LinearAlgebra::distributed::Vector<Number> & src) const;
-
   Number
   get_penalty_factor() const
   {
-    return 1.0 * IP::pre_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
+    return IP::pre_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
   }
+
+protected:
+  void
+  apply_add(LinearAlgebra::distributed::Vector<Number> &       dst,
+            const LinearAlgebra::distributed::Vector<Number> & src) const override final;
 
 private:
   void
-  apply_cell(const MatrixFree<dim, Number> &                    data,
+  apply_cell(const MatrixFree<dim, Number> &                    mf_storage,
              LinearAlgebra::distributed::Vector<Number> &       dst,
              const LinearAlgebra::distributed::Vector<Number> & src,
              const std::pair<unsigned int, unsigned int> &      cell_range) const;
 
-  // void
-  // apply_face(const MatrixFree<dim, Number> &                    data,
-  //            LinearAlgebra::distributed::Vector<Number> &       dst,
-  //            const LinearAlgebra::distributed::Vector<Number> & src,
-  //            const std::pair<unsigned int, unsigned int> &      face_range) const;
-
-  // void
-  // apply_boundary(const MatrixFree<dim, Number> &                    data,
-  //                LinearAlgebra::distributed::Vector<Number> &       dst,
-  //                const LinearAlgebra::distributed::Vector<Number> & src,
-  //                const std::pair<unsigned int, unsigned int> &      face_range) const;
-
-  std::shared_ptr<const MatrixFree<dim, Number>> data;
+  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
   mutable std::vector<TimeInfo>                  time_infos;
 };
 
@@ -831,27 +817,21 @@ template<int dim, int fe_degree, typename Number>
 void
 Operator<dim, fe_degree, Number>::clear()
 {
-  data.reset();
+  mf_storage.reset();
   time_infos.clear();
+  Base::clear();
 }
 
 
 
 template<int dim, int fe_degree, typename Number>
 void
-Operator<dim, fe_degree, Number>::initialize(std::shared_ptr<const MatrixFree<dim, Number>> data)
+Operator<dim, fe_degree, Number>::initialize(
+  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in)
 {
-  this->data = data;
+  Base::initialize(mf_storage_in);
+  mf_storage = mf_storage_in;
   time_infos = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
-}
-
-
-
-template<int dim, int fe_degree, typename Number>
-std::shared_ptr<const MatrixFree<dim, Number>>
-Operator<dim, fe_degree, Number>::get_matrix_free() const
-{
-  return data;
 }
 
 
@@ -867,48 +847,17 @@ Operator<dim, fe_degree, Number>::get_time_data() const
 
 template<int dim, int fe_degree, typename Number>
 void
-Operator<dim, fe_degree, Number>::initialize_dof_vector(
-  LinearAlgebra::distributed::Vector<Number> & vec) const
-{
-  data->initialize_dof_vector(vec);
-}
-
-
-
-template<int dim, int fe_degree, typename Number>
-types::global_dof_index
-Operator<dim, fe_degree, Number>::m() const
-{
-  Assert(data.get() != nullptr, ExcNotInitialized());
-  return data->get_dof_handler().n_dofs();
-}
-
-
-
-template<int dim, int fe_degree, typename Number>
-types::global_dof_index
-Operator<dim, fe_degree, Number>::n() const
-{
-  return m();
-}
-
-
-
-template<int dim, int fe_degree, typename Number>
-void
-Operator<dim, fe_degree, Number>::vmult(
+Operator<dim, fe_degree, Number>::apply_add(
   LinearAlgebra::distributed::Vector<Number> &       dst,
   const LinearAlgebra::distributed::Vector<Number> & src) const
 {
   Timer timer;
   timer.restart();
-  adjust_ghost_range_if_necessary(*data, dst);
-  adjust_ghost_range_if_necessary(*data, src);
-  data->cell_loop(&Operator::apply_cell,
-                  this,
-                  dst,
-                  src,
-                  /*zero_dst*/ true);
+  mf_storage->cell_loop(&Operator::apply_cell,
+                        this,
+                        dst,
+                        src,
+                        /*zero_dst*/ true);
   time_infos[0].add_time(timer.wall_time());
 }
 
@@ -916,24 +865,13 @@ Operator<dim, fe_degree, Number>::vmult(
 
 template<int dim, int fe_degree, typename Number>
 void
-Operator<dim, fe_degree, Number>::Tvmult(
-  LinearAlgebra::distributed::Vector<Number> &       dst,
-  const LinearAlgebra::distributed::Vector<Number> & src) const
-{
-  vmult(dst, src);
-}
-
-
-
-template<int dim, int fe_degree, typename Number>
-void
 Operator<dim, fe_degree, Number>::apply_cell(
-  const MatrixFree<dim, Number> &                    data,
+  const MatrixFree<dim, Number> &                    mf_storage,
   LinearAlgebra::distributed::Vector<Number> &       dst,
   const LinearAlgebra::distributed::Vector<Number> & src,
   const std::pair<unsigned int, unsigned int> &      cell_range) const
 {
-  FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number> phi(data);
+  FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number> phi(mf_storage);
   for(unsigned int cell = cell_range.first; cell < cell_range.second; ++cell)
   {
     phi.reinit(cell);
@@ -947,6 +885,7 @@ Operator<dim, fe_degree, Number>::apply_cell(
 }
 
 } // end namespace MF
+
 } // end namespace Std
 
 } // end namespace Laplace
