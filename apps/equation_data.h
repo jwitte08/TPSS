@@ -127,18 +127,52 @@ public:
   virtual double
   value(const Point<dim> & p, const unsigned int = 0) const override final
   {
+    // const double pi  = dealii::numbers::PI;
+    // double       val = 1.;
+    // for(auto d = 0; d < dim; ++d)
+    //   val *= std::sin(pi * p[d]);
+    // return val;
+    AssertThrow(false, ExcMessage("Not implemented."));
+    return 0.;
+  }
+
+  virtual double
+  laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
+  {
+    // const double pi   = dealii::numbers::PI;
+    // double       lapl = -dim * pi * pi * value(p);
+    // return lapl;
+    AssertThrow(false, ExcMessage("Not implemented."));
+    return 0.;
+  }
+};
+
+template<>
+class ZeroDirichletUnitCube<2> : public Function<2>
+{
+  static constexpr int dim = 2;
+
+public:
+  virtual double
+  value(const Point<dim> & p, const unsigned int = 0) const override final
+  {
     const double pi  = dealii::numbers::PI;
-    double       val = 1.;
-    for(auto d = 0; d < dim; ++d)
-      val *= std::sin(pi * p[d]);
+    const auto & x   = p[0];
+    const auto & y   = p[1];
+    double       val = std::sin(pi * x * x) * std::sin(pi * y);
     return val;
   }
 
   virtual double
   laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
   {
-    const double pi   = dealii::numbers::PI;
-    double       lapl = -dim * pi * pi * value(p);
+    const double pi = dealii::numbers::PI;
+    const auto & x  = p[0];
+    const auto & y  = p[1];
+
+    double lapl = -2. * std::cos(pi * x * x);
+    lapl += pi * (1. + 4. * x * x) * std::sin(pi * x * x);
+    lapl *= -pi * std::sin(pi * y);
     return lapl;
   }
 };

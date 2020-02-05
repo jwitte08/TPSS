@@ -107,7 +107,7 @@ main(int argc, char * argv[])
   // rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
 
   PoissonProblem poisson_problem{rt_parameters};
-  poisson_problem.load_function = std::make_shared<Laplace::RandomLoad<dim>>();
+  // poisson_problem.load_function = std::make_shared<Laplace::RandomLoad<dim>>();
 
   const bool is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
   const auto pcout         = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);
