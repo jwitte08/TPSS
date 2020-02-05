@@ -570,7 +570,8 @@ struct ModelProblem : public Subscriptor
   {
     double                                                 global_error = 0;
     FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number> phi(*mf_storage);
-    const auto &                                           uh = system_u;
+    system_u.update_ghost_values();
+    const auto & uh = system_u;
     for(unsigned int cell = 0; cell < mf_storage->n_macro_cells(); ++cell)
     {
       phi.reinit(cell);

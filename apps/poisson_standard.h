@@ -535,7 +535,9 @@ struct ModelProblem : public Subscriptor
 
     iterative_solver.set_control(solver_control);
     iterative_solver.select(rt_parameters.solver.variant);
+    constraints.set_zero(system_u);
     iterative_solver.solve(system_matrix, system_u, system_rhs, preconditioner);
+    constraints.distribute(system_u);
 
     double n_frac                    = 0.;
     double reduction_rate            = 0.;
@@ -555,12 +557,13 @@ struct ModelProblem : public Subscriptor
   {
     double                                                 global_error = 0;
     FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number> phi(*mf_storage);
-    const auto &                                           uh = system_u;
+    system_u.update_ghost_values();
+    const auto & uh = system_u;
     for(unsigned int cell = 0; cell < mf_storage->n_macro_cells(); ++cell)
     {
       phi.reinit(cell);
       phi.gather_evaluate(uh, true, false);
-      VectorizedArray<Number> local_error = VectorizedArray<Number>();
+      VectorizedArray<Number> local_error = 0.;
       for(unsigned int q = 0; q < phi.n_q_points; ++q)
       {
         const auto value_u  = VHelper::value(*analytic_solution, phi.quadrature_point(q));
