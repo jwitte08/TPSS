@@ -120,39 +120,22 @@ private:
   Solution<dim> solution_function;
 };
 
-template<int dim>
-class ZeroDirichletUnitCube : public Function<dim>
+struct ZeroDirichletUnitCubeData
 {
-public:
-  virtual double
-  value(const Point<dim> & p, const unsigned int = 0) const override final
-  {
-    // const double pi  = dealii::numbers::PI;
-    // double       val = 1.;
-    // for(auto d = 0; d < dim; ++d)
-    //   val *= std::sin(pi * p[d]);
-    // return val;
-    AssertThrow(false, ExcMessage("Not implemented."));
-    return 0.;
-  }
+  static constexpr double a = 1.;
+};
 
-  virtual double
-  laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
-  {
-    // const double pi   = dealii::numbers::PI;
-    // double       lapl = -dim * pi * pi * value(p);
-    // return lapl;
-    AssertThrow(false, ExcMessage("Not implemented."));
-    return 0.;
-  }
+template<int dim>
+class ZeroDirichletUnitCube : public Function<dim>, private ZeroDirichletUnitCubeData
+{
 };
 
 template<>
-class ZeroDirichletUnitCube<2> : public Function<2>
+class ZeroDirichletUnitCube<2> : public Function<2>, private ZeroDirichletUnitCubeData
 {
-  static constexpr int    dim = 2;
-  static constexpr double a   = 5.;
-  using value_type            = Point<dim>::value_type;
+private:
+  static constexpr int dim = 2;
+  using value_type         = Point<dim>::value_type;
 
 public:
   virtual value_type
@@ -180,6 +163,48 @@ public:
       exp_y;
     lapl *= std::sin(pi * x * x);
     lapl += 2. * pi * (exp_y - 1.) * std::cos(pi * x * x);
+    lapl *= a;
+    return lapl;
+  }
+};
+
+template<>
+class ZeroDirichletUnitCube<3> : public Function<3>, private ZeroDirichletUnitCubeData
+{
+private:
+  static constexpr int dim = 3;
+  using value_type         = Point<dim>::value_type;
+  const ZeroDirichletUnitCube<2> func_2d;
+
+public:
+  virtual value_type
+  value(const Point<dim> & p, const unsigned int = 0) const override final
+  {
+    const value_type pi = dealii::numbers::PI;
+    const auto &     x  = p[0];
+    const auto &     y  = p[1];
+    const auto &     z  = p[2];
+    const Point<2> p_xy(x, y);
+    const auto &        val_xy = func_2d.value(p_xy) / a;
+    value_type          val    = a * val_xy * std::sin(pi * z) * std::sin(pi * z);
+    return val;
+  }
+
+  virtual value_type
+  laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
+  {
+    const value_type pi = dealii::numbers::PI;
+    const auto &     x  = p[0];
+    const auto &     y  = p[1];
+    const auto &     z  = p[2];
+    const Point<2> p_xy(x, y);
+    const auto &        lapl_xy = func_2d.laplacian(p_xy) / a;
+    const auto &        exp_y   = std::exp(y * (y - 1.) * (y - 1.));
+
+    value_type lapl = -lapl_xy + (-1 + exp_y) * 2. * pi * pi * std::sin(pi * x * x);
+    lapl *= -std::sin(pi * z) * std::sin(pi * z);
+    lapl +=
+      2. * (-1 + exp_y) * pi * pi * std::cos(pi * z) * std::cos(pi * z) * std::sin(pi * x * x);
     lapl *= a;
     return lapl;
   }
