@@ -30,6 +30,7 @@ enable_testing()
 
 set (src_files
   apps_poisson.cc
+  apps_laplace_integrator.cc
   apps_linelasticity.cc
   apps_linelasticity_integrator.cc
   apps_coloring.cc
