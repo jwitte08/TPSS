@@ -71,7 +71,7 @@ protected:
       new_problem->create_triangulation();
       new_problem->distribute_dofs();
       new_problem->prepare_linear_system(/*compute_rhs?*/ true);
-      // new_problem->prepare_multigrid();
+      new_problem->prepare_multigrid();
     };
 
     poisson_problem.reset();
@@ -87,8 +87,16 @@ protected:
   {
     AssertThrow(poisson_problem, ExcMessage("Not initialized."));
     const auto & system_matrix_mf = poisson_problem->system_matrix;
-    // FullMatrix<double> matrix(system_matrix_mf.m(), system_matrix_mf.n());
-    const auto table = Tensors::matrix_to_table(system_matrix_mf);
+    const auto   table            = Tensors::matrix_to_table(system_matrix_mf);
+    return table_to_fullmatrix(table);
+  }
+
+  FullMatrix<double>
+  assemble_level_matrix(const unsigned int level) const
+  {
+    AssertThrow(poisson_problem, ExcMessage("Not initialized."));
+    const auto & level_matrix_mf = poisson_problem->mg_matrices[level];
+    const auto   table           = Tensors::matrix_to_table(level_matrix_mf);
     return table_to_fullmatrix(table);
   }
 
@@ -97,7 +105,9 @@ protected:
   {
     initialize();
     const auto & system_matrix = assemble_system_matrix();
-    compare_matrix(system_matrix, system_matrix);
+    const auto   global_level  = poisson_problem->level;
+    const auto & level_matrix  = assemble_level_matrix(global_level);
+    compare_matrix(system_matrix, level_matrix);
   }
 
   void
