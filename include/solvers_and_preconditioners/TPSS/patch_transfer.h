@@ -223,7 +223,7 @@ public:
   operator=(const PatchTransfer & other) = delete;
 };
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, typename Number, int fe_degree>
 class PatchTransferBlock
 {
 public:
@@ -502,8 +502,8 @@ inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
 
 // -----------------------------   PatchTransferBlock   ----------------------------
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
-inline PatchTransferBlock<dim, fe_degree, n_q_points_1d, Number>::PatchTransferBlock(
+template<int dim, typename Number, int fe_degree>
+inline PatchTransferBlock<dim, Number, fe_degree>::PatchTransferBlock(
   const SubdomainHandler<dim, Number> & sd_handler_in)
   : n_components(sd_handler_in.n_components()), patch_id(static_cast<unsigned int>(-1))
 {
