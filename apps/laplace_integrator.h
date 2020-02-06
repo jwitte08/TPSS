@@ -780,6 +780,11 @@ public:
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage);
 
   void
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage,
+             const MGConstrainedDoFs &                      mg_constrained_dofs,
+             const unsigned int                             level);
+
+  void
   clear();
 
   virtual void
@@ -848,6 +853,17 @@ Operator<dim, fe_degree, Number>::initialize(
   time_infos = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
 }
 
+template<int dim, int fe_degree, typename Number>
+void
+Operator<dim, fe_degree, Number>::initialize(
+  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
+  const MGConstrainedDoFs &                      mg_constrained_dofs,
+  const unsigned int                             level)
+{
+  Base::initialize(mf_storage_in, mg_constrained_dofs, level);
+  mf_storage = mf_storage_in;
+  time_infos = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
+}
 
 
 template<int dim, int fe_degree, typename Number>
