@@ -24,6 +24,7 @@
 #include <deal.II/matrix_free/matrix_free.h>
 
 #include <deal.II/multigrid/mg_coarse.h>
+#include <deal.II/multigrid/mg_constrained_dofs.h>
 #include <deal.II/multigrid/mg_matrix.h>
 #include <deal.II/multigrid/mg_smoother.h>
 #include <deal.II/multigrid/mg_tools.h>
@@ -60,9 +61,9 @@ struct ModelProblem : public Subscriptor
   using VECTOR        = typename LinearAlgebra::distributed::Vector<Number>;
   using SYSTEM_MATRIX = Laplace::Std::MF::Operator<dim, fe_degree, Number>;
 
-  // using value_type_mg = Number;
-  // using LEVEL_MATRIX  = Laplace::CombinedOperator<dim, fe_degree, value_type_mg>;
-  // using MG_TRANSFER   = MGTransferMatrixFree<dim, value_type_mg>;
+  using value_type_mg = Number;
+  using LEVEL_MATRIX  = Laplace::Std::MF::Operator<dim, fe_degree, value_type_mg>;
+  using MG_TRANSFER   = MGTransferMatrixFree<dim, value_type_mg>;
   // using PATCH_MATRIX  = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>,
   // n_patch_dofs>; using SCHWARZ_PRECONDITIONER = SchwarzPreconditioner<dim, LEVEL_MATRIX, VECTOR,
   // PATCH_MATRIX>; using SCHWARZ_SMOOTHER       = SchwarzSmoother<dim, LEVEL_MATRIX,
@@ -97,9 +98,10 @@ struct ModelProblem : public Subscriptor
   ReductionControl                               solver_control;
   SolverSelector<VECTOR>                         iterative_solver;
 
-  // // *** multigrid
-  // MGLevelObject<LEVEL_MATRIX>                mg_matrices;
-  // MG_TRANSFER                                mg_transfer;
+  // *** multigrid
+  MGConstrainedDoFs           mg_constrained_dofs;
+  MGLevelObject<LEVEL_MATRIX> mg_matrices;
+  MG_TRANSFER                 mg_transfer;
   // RedBlackColoring<dim>                      red_black_coloring;
   // std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_pre;
   // std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_post;
@@ -194,13 +196,9 @@ struct ModelProblem : public Subscriptor
 
   template<typename OtherNumber>
   std::shared_ptr<const MatrixFree<dim, OtherNumber>>
-  build_mf_storage(const unsigned level = static_cast<unsigned>(-1)) const
+  build_mf_storage() const
   {
-    AssertThrow(level == -1, ExcMessage("Not implemented"));
-
     typename MatrixFree<dim, OtherNumber>::AdditionalData additional_data;
-    if(level != static_cast<unsigned>(-1))
-      additional_data.mg_level = level;
     additional_data.tasks_parallel_scheme = MatrixFree<dim, OtherNumber>::AdditionalData::none;
     additional_data.mapping_update_flags =
       (update_gradients | update_JxW_values | update_quadrature_points);
@@ -209,6 +207,36 @@ struct ModelProblem : public Subscriptor
 
     const auto mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
     mf_storage->reinit(mapping, dof_handler, constraints, quadrature, additional_data);
+
+    return mf_storage;
+  }
+
+
+  template<typename OtherNumber>
+  std::shared_ptr<const MatrixFree<dim, OtherNumber>>
+  build_mf_storage(const unsigned level) const
+  {
+    AssertIndexRange(level, this->level);
+
+    typename MatrixFree<dim, OtherNumber>::AdditionalData additional_data;
+    additional_data.mg_level              = level;
+    additional_data.tasks_parallel_scheme = MatrixFree<dim, OtherNumber>::AdditionalData::none;
+    additional_data.mapping_update_flags =
+      (update_gradients | update_JxW_values | update_quadrature_points);
+
+    /// TODO check if this is more efficient than using
+    /// MGConstrainedDoFs::get_level_constraints() in case of using MPI
+    IndexSet relevant_dofs;
+    DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, relevant_dofs);
+    AffineConstraints<double> level_constraints;
+    level_constraints.reinit(relevant_dofs);
+    level_constraints.add_lines(mg_constrained_dofs.get_boundary_indices(level));
+    level_constraints.close();
+
+    QGauss<1> quadrature(n_qpoints);
+
+    const auto mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
+    mf_storage->reinit(mapping, dof_handler, level_constraints, quadrature, additional_data);
 
     return mf_storage;
   }
@@ -426,72 +454,83 @@ struct ModelProblem : public Subscriptor
   // }
 
 
-  // void
-  // prepare_multigrid()
-  // {
-  //   // *** clear multigrid infrastructure
-  //   multigrid.reset();
-  //   mg_matrix_wrapper.reset();
-  //   coarse_grid_solver.clear();
-  //   mg_smoother_post = nullptr;
-  //   mg_smoother_pre  = nullptr;
-  //   mg_schwarz_smoother_pre.reset();
-  //   mg_schwarz_smoother_post.reset();
-  //   mg_transfer.clear();
-  //   mg_matrices.clear_elements();
+  void
+  prepare_multigrid()
+  {
+    // *** clear multigrid infrastructure
+    // multigrid.reset();
+    // mg_matrix_wrapper.reset();
+    // coarse_grid_solver.clear();
+    // mg_smoother_post = nullptr;
+    // mg_smoother_pre  = nullptr;
+    // mg_schwarz_smoother_pre.reset();
+    // mg_schwarz_smoother_post.reset();
+    mg_transfer.clear();
+    mg_matrices.clear_elements();
+    mg_constrained_dofs.clear();
 
-  //   // *** setup multigrid data
-  //   const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
-  //   const unsigned mg_level_max = this->level;
-  //   pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
+    // *** setup multigrid data
+    const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
+    const unsigned mg_level_max = this->level;
+    pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
 
-  //   // *** initialize level matrices A_l
-  //   mg_matrices.resize(mg_level_min, mg_level_max);
-  //   for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
-  //   {
-  //     const auto mf_storage_level = build_mf_storage<value_type_mg>(level);
-  //     mg_matrices[level].initialize(mf_storage_level);
-  //   }
+    // *** initialize multigrid constraints
+    mg_constrained_dofs.initialize(dof_handler);
+    std::set<types::boundary_id> mg_boundary_ids;
+    mg_boundary_ids.insert(dirichlet_id);
+    mg_constrained_dofs.make_zero_boundary_constraints(dof_handler, mg_boundary_ids);
 
-  //   // *** initialize multigrid transfer R_l
-  //   mg_transfer.build(dof_handler);
+    // *** initialize level matrices A_l
+    mg_matrices.resize(mg_level_min, mg_level_max);
+    for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
+    {
+      const auto mf_storage_level = build_mf_storage<value_type_mg>(level);
+      mg_matrices[level].initialize(mf_storage_level, mg_constrained_dofs, level);
+    }
 
-  //   // *** initialize Schwarz smoother S_l
-  //   prepare_mg_smoothers();
+    // *** initialize multigrid transfer R_l
+    mg_transfer.initialize_constraints(mg_constrained_dofs);
+    mg_transfer.build(dof_handler);
 
-  //   /// set pre-smoother
-  //   pp_data.n_colors_system.push_back(n_colors_system());
-  //   if(rt_parameters.multigrid.pre_smoother.variant ==
-  //   SmootherParameter::SmootherVariant::Schwarz)
-  //   {
-  //     AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Schwarz pre-smoother is uninitialized."));
-  //     mg_smoother_pre = mg_schwarz_smoother_pre.get();
-  //   }
-  //   else
-  //     AssertThrow(false, ExcMessage("TODO .. "));
-  //   /// set post-smoother
-  //   if(rt_parameters.multigrid.post_smoother.variant ==
-  //   SmootherParameter::SmootherVariant::Schwarz)
-  //   {
-  //     AssertThrow(mg_schwarz_smoother_post, ExcMessage("Schwarz post-smoother is
-  //     uninitialized.")); mg_smoother_post = mg_schwarz_smoother_post.get();
-  //   }
-  //   else
-  //     AssertThrow(false, ExcMessage("TODO .. "));
+    // // *** initialize Schwarz smoother S_l
+    // prepare_mg_smoothers();
 
-  //   // *** initialize coarse grid solver
-  //   coarse_grid_solver.initialize(mg_matrices[mg_level_min],
-  //   rt_parameters.multigrid.coarse_grid); mg_coarse_grid = &coarse_grid_solver;
+    // /// set pre-smoother
+    // pp_data.n_colors_system.push_back(n_colors_system());
+    // if(rt_parameters.multigrid.pre_smoother.variant ==
+    // SmootherParameter::SmootherVariant::Schwarz)
+    // {
+    //   AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Schwarz pre-smoother is uninitialized."));
+    //   mg_smoother_pre = mg_schwarz_smoother_pre.get();
+    // }
+    // else
+    //   AssertThrow(false, ExcMessage("TODO .. "));
+    // /// set post-smoother
+    // if(rt_parameters.multigrid.post_smoother.variant ==
+    // SmootherParameter::SmootherVariant::Schwarz)
+    // {
+    //   AssertThrow(mg_schwarz_smoother_post, ExcMessage("Schwarz post-smoother is
+    //   uninitialized.")); mg_smoother_post = mg_schwarz_smoother_post.get();
+    // }
+    // else
+    //   AssertThrow(false, ExcMessage("TODO .. "));
 
-  //   mg_matrix_wrapper.initialize(mg_matrices);
-  //   multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
-  //                                                   *mg_coarse_grid,
-  //                                                   mg_transfer,
-  //                                                   *mg_smoother_pre,
-  //                                                   *mg_smoother_post,
-  //                                                   mg_level_min,
-  //                                                   mg_level_max);
-  // }
+    // // *** initialize coarse grid solver
+    // coarse_grid_solver.initialize(mg_matrices[mg_level_min],
+    // rt_parameters.multigrid.coarse_grid); mg_coarse_grid = &coarse_grid_solver;
+
+    // mg_matrix_wrapper.initialize(mg_matrices);
+    // multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
+    //                                                 *mg_coarse_grid,
+    //                                                 mg_transfer,
+    //                                                 *mg_smoother_pre,
+    //                                                 *mg_smoother_post,
+    //                                                 mg_level_min,
+    //                                                 mg_level_max);
+
+    // *** clear obsolete data
+    mg_constrained_dofs.clear();
+  }
 
 
   // const GMG_PRECONDITIONER &
