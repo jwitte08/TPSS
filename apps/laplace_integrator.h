@@ -797,6 +797,20 @@ public:
     return IP::pre_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
   }
 
+  void
+  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
+                ExcMessage("No MPI possible."));
+    LinearAlgebra::distributed::Vector<Number> dst;
+    Base::initialize_dof_vector(dst);
+    LinearAlgebra::distributed::Vector<Number> src;
+    Base::initialize_dof_vector(src);
+    std::copy(src_view.begin(), src_view.end(), src.begin());
+    Base::vmult(dst, src);
+    std::copy(dst.begin(), dst.end(), dst_view.begin());
+  }
+
 protected:
   void
   apply_add(LinearAlgebra::distributed::Vector<Number> &       dst,
