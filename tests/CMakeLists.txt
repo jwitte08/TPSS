@@ -35,6 +35,7 @@ set (src_files
   apps_linelasticity_integrator.cc
   apps_coloring.cc
   block_matrix.cc
+  patch_transfer.cc
   tensors.cc
   tensor_product_matrix.cc
   Tkroneckersvd.cc
