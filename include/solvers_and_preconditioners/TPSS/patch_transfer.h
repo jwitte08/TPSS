@@ -15,7 +15,6 @@ using namespace dealii;
 
 namespace TPSS
 {
-// TODO replace FEEvaluation with read-write-operations -> reduces
 // templates
 // TODO merge Base and Derived PatchTransfer !!!
 /**
@@ -39,7 +38,7 @@ namespace TPSS
  * direction. In other words, the map @p cell_to_patch_indices has to
  * be provided at construction by the deriving class.
  */
-template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
+template<int dim, typename Number, int fe_degree>
 class PatchTransferBase
 {
 public:
@@ -204,11 +203,11 @@ private:
  * Handling the transfer between patch-local and global degrees of
  * freedom depending on the underlying SubdomainHandler.
  */
-template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
-class PatchTransfer : public PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>
+template<int dim, typename Number, int fe_degree>
+class PatchTransfer : public PatchTransferBase<dim, Number, fe_degree>
 {
 public:
-  using Base = PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>;
+  using Base = PatchTransferBase<dim, Number, fe_degree>;
 
   // TODO construct indices at compile time ?
   struct GetIndexing;
@@ -330,7 +329,7 @@ public:
   }
 
 private:
-  using transfer_type = PatchTransfer<dim, fe_degree, n_q_points_1d, 1, Number>;
+  using transfer_type = PatchTransfer<dim, Number, fe_degree>;
   // template<typename UnaryFunctionType, typename InputType>
   // void
   // blockwise_unary(const UnaryFunctionType & unary_func, InputType && input) const
@@ -347,8 +346,8 @@ private:
 
 // ++++++++++++++++++++++++++++++   inline functors   ++++++++++++++++++++++++++++++
 
-template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
-struct PatchTransfer<dim, fe_degree, n_q_points_1d, n_comp, Number>::GetIndexing
+template<int dim, typename Number, int fe_degree>
+struct PatchTransfer<dim, Number, fe_degree>::GetIndexing
 {
   std::vector<unsigned int>
   operator()(const TPSS::PatchVariant patch_variant, const bool dg = true) const
@@ -444,8 +443,8 @@ struct PatchTransfer<dim, fe_degree, n_q_points_1d, n_comp, Number>::GetIndexing
 
 // --------------------------------   PatchTransferBase   --------------------------------
 
-template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
-inline PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::PatchTransferBase(
+template<int dim, typename Number, int fe_degree>
+inline PatchTransferBase<dim, Number, fe_degree>::PatchTransferBase(
   const SubdomainHandler<dim, Number> & sd_handler_in,
   std::vector<unsigned int> &&          cell_to_patch_indexing,
   const unsigned int                    dofh_index_in)
@@ -459,15 +458,15 @@ inline PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::PatchTr
     patch_id(-1),
     patch_worker(sd_handler_in.get_patch_info())
 {
-  static_assert(n_comp == 1, "Handles only one scalar DoFHandler.");
+  // static_assert(n_comp == 1, "Handles only one scalar DoFHandler.");
   AssertThrow(!cell_to_patch_indices.empty(),
               ExcMessage("The cell to patch index map is uninitialized!"));
   constraints.close();
 }
 
-template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
+template<int dim, typename Number, int fe_degree>
 inline void
-PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(const unsigned int patch)
+PatchTransferBase<dim, Number, fe_degree>::reinit(const unsigned int patch)
 {
   AssertIndexRange(patch, n_subdomains);
   patch_id = patch;
@@ -478,9 +477,9 @@ PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(const u
   }
 }
 
-template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
+template<int dim, typename Number, int fe_degree>
 inline void
-PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit_local_vector(
+PatchTransferBase<dim, Number, fe_degree>::reinit_local_vector(
   AlignedVector<VectorizedArray<Number>> & vec) const
 {
   Assert(patch_id != static_cast<unsigned int>(-1), ExcNotInitialized());
@@ -489,8 +488,8 @@ PatchTransferBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit_local_v
 
 // -----------------------------   PatchTransfer   ----------------------------
 
-template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
-inline PatchTransfer<dim, fe_degree, n_q_points_1d, n_comp, Number>::PatchTransfer(
+template<int dim, typename Number, int fe_degree>
+inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
   const SubdomainHandler<dim, Number> & sd_handler,
   const unsigned int                    dofh_index_in)
   : Base(sd_handler,
