@@ -1,9 +1,9 @@
 /**
  * poisson.h
  *
- * DG poisson problem
+ * standard FEM poisson problem
  *
- *  Created on: Sep 12, 2019
+ *  Created on: Feb 03, 2020
  *      Author: witte
  */
 
@@ -53,7 +53,8 @@ namespace Std
 template<int dim, int fe_degree, typename Number = double, int n_patch_dofs = -1>
 struct ModelProblem : public Subscriptor
 {
-  static constexpr unsigned int fe_order = fe_degree + 1;
+  static constexpr unsigned int fe_order  = fe_degree + 1;
+  static constexpr unsigned int n_qpoints = fe_degree + 1;
 
   using value_type    = Number;
   using VECTOR        = typename LinearAlgebra::distributed::Vector<Number>;
@@ -91,6 +92,7 @@ struct ModelProblem : public Subscriptor
   std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
   SYSTEM_MATRIX                                  system_matrix;
   VECTOR                                         system_u;
+  VECTOR                                         system_delta_u;
   VECTOR                                         system_rhs;
   ReductionControl                               solver_control;
   SolverSelector<VECTOR>                         iterative_solver;
@@ -199,12 +201,11 @@ struct ModelProblem : public Subscriptor
     typename MatrixFree<dim, OtherNumber>::AdditionalData additional_data;
     if(level != static_cast<unsigned>(-1))
       additional_data.mg_level = level;
-    additional_data.tasks_parallel_scheme = MatrixFree<dim, double>::AdditionalData::none;
+    additional_data.tasks_parallel_scheme = MatrixFree<dim, OtherNumber>::AdditionalData::none;
     additional_data.mapping_update_flags =
       (update_gradients | update_JxW_values | update_quadrature_points);
 
-    unsigned int n_qpoints = fe_degree + 1;
-    QGauss<1>    quadrature(n_qpoints);
+    QGauss<1> quadrature(n_qpoints);
 
     const auto mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
     mf_storage->reinit(mapping, dof_handler, constraints, quadrature, additional_data);
@@ -279,6 +280,7 @@ struct ModelProblem : public Subscriptor
     *pcout << create_mesh(triangulation, mesh_prms);
     this->level = triangulation.n_global_levels() - 1;
     pp_data.n_cells_global.push_back(triangulation.n_global_active_cells());
+    pp_data.n_dimensions = dim;
 
     return true;
   }
@@ -297,28 +299,26 @@ struct ModelProblem : public Subscriptor
   compute_rhs(const MatrixFree<dim, Number> * mf_storage, const Function<dim> & load_function)
   {
     system_rhs = 0.;
+    system_u   = 0.;
+    constraints.distribute(system_u);
+    system_u.update_ghost_values();
 
     FEEvaluation<dim, fe_degree> phi(*mf_storage);
     for(unsigned int cell = 0; cell < mf_storage->n_cell_batches(); ++cell)
     {
       phi.reinit(cell);
+      phi.read_dof_values_plain(system_u);
+      phi.evaluate(false, true);
       for(unsigned int q = 0; q < phi.n_q_points; ++q)
       {
-        // VectorizedArray<Number>             rhs_val     = 0.;
         Point<dim, VectorizedArray<Number>> point_batch = phi.quadrature_point(q);
-        const auto &                        rhs_val = VHelper::value(load_function, point_batch);
-        // for(unsigned int v = 0; v < VectorizedArray<Number>::n_array_elements; ++v)
-        // {
-        //   Point<dim> single_point;
-        //   for(unsigned int d = 0; d < dim; ++d)
-        //     single_point[d] = point_batch[d][v];
-        //   rhs_val[v] = load_function.value(single_point);
-        // }
-        phi.submit_value(rhs_val, q);
+        const auto &                        load_value = VHelper::value(load_function, point_batch);
+        phi.submit_value(load_value, q);
+        phi.submit_gradient(-phi.get_gradient(q), q);
       }
-      phi.integrate_scatter(true, false, system_rhs);
+      phi.integrate(true, true);
+      phi.distribute_local_to_global(system_rhs);
     }
-
     system_rhs.compress(VectorOperation::add);
   }
 
@@ -327,9 +327,9 @@ struct ModelProblem : public Subscriptor
   prepare_linear_system(const bool do_compute_rhs = true)
   {
     /// initialize constraints (strong B.C.)
+    constraints.clear();
     IndexSet locally_relevant_dofs;
     DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
-    constraints.clear();
     constraints.reinit(locally_relevant_dofs);
     VectorTools::interpolate_boundary_values(
       mapping, dof_handler, dirichlet_id, *analytical_solution, constraints);
@@ -339,6 +339,7 @@ struct ModelProblem : public Subscriptor
     system_matrix.initialize(mf_storage);
     pp_data.n_dofs_global.push_back(system_matrix.m());
     mf_storage->initialize_dof_vector(system_u);
+    mf_storage->initialize_dof_vector(system_delta_u);
     if(do_compute_rhs)
     {
       mf_storage->initialize_dof_vector(system_rhs);
@@ -535,9 +536,9 @@ struct ModelProblem : public Subscriptor
 
     iterative_solver.set_control(solver_control);
     iterative_solver.select(rt_parameters.solver.variant);
-    constraints.set_zero(system_u);
-    iterative_solver.solve(system_matrix, system_u, system_rhs, preconditioner);
-    constraints.distribute(system_u);
+    constraints.set_zero(system_delta_u);
+    iterative_solver.solve(system_matrix, system_delta_u, system_rhs, preconditioner);
+    system_u += system_delta_u;
 
     double n_frac                    = 0.;
     double reduction_rate            = 0.;
@@ -555,14 +556,15 @@ struct ModelProblem : public Subscriptor
   compute_l2_error(const MatrixFree<dim, Number> * mf_storage,
                    const Function<dim> *           analytic_solution) const
   {
-    double                                                 global_error = 0;
-    FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number> phi(*mf_storage);
+    double                                             global_error = 0;
+    FEEvaluation<dim, fe_degree, n_qpoints, 1, Number> phi(*mf_storage);
     system_u.update_ghost_values();
     const auto & uh = system_u;
     for(unsigned int cell = 0; cell < mf_storage->n_macro_cells(); ++cell)
     {
       phi.reinit(cell);
-      phi.gather_evaluate(uh, true, false);
+      phi.read_dof_values_plain(uh);
+      phi.evaluate(true, false);
       VectorizedArray<Number> local_error = 0.;
       for(unsigned int q = 0; q < phi.n_q_points; ++q)
       {

@@ -51,12 +51,18 @@ write_ppdata_to_string(const PostProcessData & pp_data)
     // info_table.add_value("n_colors", pp_data.n_colors_system.at(run));
     info_table.add_value("n_iter", pp_data.n_iterations_system.at(run));
     info_table.add_value("reduction", pp_data.average_reduction_system.at(run));
+    info_table.add_value("L2_error", pp_data.L2_error.at(run));
   }
-
   info_table.set_scientific("reduction", true);
   info_table.set_precision("reduction", 3);
+  info_table.set_scientific("L2_error", true);
+  info_table.set_precision("L2_error", 3);
+  info_table.evaluate_convergence_rates("L2_error", ConvergenceTable::reduction_rate);
+  info_table.evaluate_convergence_rates("L2_error",
+                                        "n_dofs",
+                                        ConvergenceTable::reduction_rate_log2,
+                                        pp_data.n_dimensions);
   info_table.write_text(oss);
-
   return oss.str();
 }
 
@@ -107,7 +113,10 @@ main(int argc, char * argv[])
   // rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
 
   PoissonProblem poisson_problem{rt_parameters};
-  // poisson_problem.load_function = std::make_shared<Laplace::RandomLoad<dim>>();
+  /// set reference solution with non-zero Dirichlet boundary
+  poisson_problem.analytical_solution = std::make_shared<Laplace::Solution<dim>>();
+  poisson_problem.load_function =
+    std::make_shared<Laplace::ManufacturedLoad<dim>>(poisson_problem.analytical_solution);
 
   const bool is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
   const auto pcout         = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);
