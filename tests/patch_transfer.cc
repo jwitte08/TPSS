@@ -36,6 +36,7 @@ protected:
   {
     unsigned int       n_refinements = 0;
     TPSS::PatchVariant patch_variant = TPSS::PatchVariant::cell;
+    bool               compressed    = false;
   };
 
 
@@ -62,6 +63,7 @@ protected:
   test()
   {
     rt_parameters.mesh.n_refinements = params.n_refinements;
+    rt_parameters.compressed         = params.compressed;
 
     rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = params.patch_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
@@ -71,8 +73,6 @@ protected:
     poisson_problem->pcout     = pcout;
     poisson_problem->create_triangulation();
     poisson_problem->distribute_dofs();
-    // poisson_problem->prepare_linear_system();
-    // poisson_problem->prepare_multigrid();
 
     // *** patch transfer
     const auto global_level      = poisson_problem->level;
@@ -117,6 +117,15 @@ TYPED_TEST_P(TestPatchTransferDG, CellPatch)
   Fixture::test();
 }
 
+TYPED_TEST_P(TestPatchTransferDG, CellPatchCompressed)
+{
+  using Fixture = TestPatchTransferDG<TypeParam>;
+
+  Fixture::params.n_refinements = 2U;
+  Fixture::params.compressed    = true;
+  Fixture::test();
+}
+
 TYPED_TEST_P(TestPatchTransferDG, VertexPatch)
 {
   using Fixture = TestPatchTransferDG<TypeParam>;
@@ -130,7 +139,25 @@ TYPED_TEST_P(TestPatchTransferDG, VertexPatch)
   Fixture::test();
 }
 
-REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferDG, CellPatch, VertexPatch);
+TYPED_TEST_P(TestPatchTransferDG, VertexPatchCompressed)
+{
+  using Fixture = TestPatchTransferDG<TypeParam>;
+
+  // There is only one vertex patch possible such that each degree of freedom
+  // uniquely belongs to one patch
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::params.n_refinements                = 0U;
+  Fixture::params.patch_variant                = TPSS::PatchVariant::vertex;
+  Fixture::params.compressed                   = true;
+  Fixture::test();
+}
+
+REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferDG,
+                            CellPatch,
+                            CellPatchCompressed,
+                            VertexPatch,
+                            VertexPatchCompressed);
 
 using TestParamsLinear      = testing::Types<Util::NonTypeParams<2, 1>>;
 using TestParamsHigherOrder = testing::Types<Util::NonTypeParams<2, 3>, Util::NonTypeParams<2, 4>>;
@@ -156,6 +183,7 @@ protected:
   {
     unsigned int       n_refinements = 0;
     TPSS::PatchVariant patch_variant = TPSS::PatchVariant::cell;
+    bool               compressed    = false;
   };
 
 
@@ -182,6 +210,7 @@ protected:
   test()
   {
     rt_parameters.mesh.n_refinements = params.n_refinements;
+    rt_parameters.compressed         = params.compressed;
 
     rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = params.patch_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
@@ -190,8 +219,6 @@ protected:
     const auto elasticity_problem = std::make_shared<ElasticityProblem>(*pcout, rt_parameters);
     elasticity_problem->create_triangulation();
     elasticity_problem->distribute_dofs();
-    elasticity_problem->prepare_system();
-    elasticity_problem->prepare_multigrid();
 
     const auto level      = elasticity_problem->level;
     const auto mf_storage = elasticity_problem->template build_mf_storage<double>(level);
@@ -257,6 +284,15 @@ TYPED_TEST_P(TestPatchTransferBlockDG, CellPatch)
   Fixture::test();
 }
 
+TYPED_TEST_P(TestPatchTransferBlockDG, CellPatchCompressed)
+{
+  using Fixture = TestPatchTransferBlockDG<TypeParam>;
+
+  Fixture::params.n_refinements = 2U;
+  Fixture::params.compressed    = true;
+  Fixture::test();
+}
+
 TYPED_TEST_P(TestPatchTransferBlockDG, VertexPatch)
 {
   using Fixture = TestPatchTransferBlockDG<TypeParam>;
@@ -270,7 +306,25 @@ TYPED_TEST_P(TestPatchTransferBlockDG, VertexPatch)
   Fixture::test();
 }
 
-REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferBlockDG, CellPatch, VertexPatch);
+TYPED_TEST_P(TestPatchTransferBlockDG, VertexPatchCompressed)
+{
+  using Fixture = TestPatchTransferBlockDG<TypeParam>;
+
+  // There is only one vertex patch possible such that each degree of freedom
+  // uniquely belongs to one patch
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::params.n_refinements                = 0U;
+  Fixture::params.patch_variant                = TPSS::PatchVariant::vertex;
+  Fixture::params.compressed                   = true;
+  Fixture::test();
+}
+
+REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferBlockDG,
+                            CellPatch,
+                            VertexPatch,
+                            CellPatchCompressed,
+                            VertexPatchCompressed);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferBlockDG, TestParamsLinear);
 
