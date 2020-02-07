@@ -68,7 +68,7 @@ public:
   get_additional_data() const;
 
   const dealii::DoFHandler<dim> &
-  get_dof_handler() const;
+  get_dof_handler(const unsigned int dofh_index = 0) const;
 
   const dealii::Quadrature<1> &
   get_quadrature(int dimension = 0) const;
@@ -236,9 +236,10 @@ SubdomainHandler<dim, number>::get_additional_data() const
   return additional_data;
 }
 
+// TODO access different dof_handlers ...
 template<int dim, typename number>
 inline const dealii::DoFHandler<dim> &
-SubdomainHandler<dim, number>::get_dof_handler() const
+SubdomainHandler<dim, number>::get_dof_handler(const unsigned int dofh_index) const
 {
   Assert(dof_handler != nullptr, dealii::ExcNotInitialized());
   return *dof_handler;
