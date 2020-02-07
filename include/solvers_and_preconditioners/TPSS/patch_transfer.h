@@ -34,8 +34,121 @@ get_dof_layout(const FiniteElement<dim> & finite_element)
   return dof_layout;
 }
 
-// templates
-// TODO merge Base and Derived PatchTransfer !!!
+// TODO could be constexpr
+template<int order>
+struct TensorHelper
+{
+  using IntType = unsigned int;
+
+  TensorHelper(const std::array<IntType, order> & sizes) : n(sizes)
+  {
+  }
+
+  TensorHelper(const IntType size)
+    : n([size]() {
+        std::array<IntType, order> sizes;
+        sizes.fill(size);
+        return sizes;
+      }())
+  {
+  }
+
+  std::array<IntType, order>
+  multi_index(const IntType index)
+  {
+    return Tensors::uni_to_multiindex<order, IntType>(index, n);
+  }
+
+  IntType
+  uni_index(const std::array<IntType, order> & multi_index)
+  {
+    return Tensors::multi_to_uniindex<order, IntType>(multi_index, n);
+  }
+
+  const std::array<IntType, order> n;
+};
+
+template<int n_dimensions>
+class PatchLocalIndexHelper
+{
+public:
+  PatchLocalIndexHelper(const TensorHelper<n_dimensions> & cell_tensor_in,
+                        const TensorHelper<n_dimensions> & cell_local_dof_tensor_in,
+                        const DoFLayout                    dof_layout_in)
+    : cell_local_dof_tensor(&cell_local_dof_tensor_in),
+      cell_tensor(&cell_tensor_in),
+      dof_layout(dof_layout_in)
+  {
+  }
+
+  unsigned int
+  dof_index_1d(const unsigned int cell_no,
+               const unsigned int cell_local_dof_index,
+               const int          dimension)
+  {
+    if(dof_layout == DoFLayout::DGQ)
+      return dof_index_1d_dgq_impl(cell_no, cell_local_dof_index, dimension);
+    else if(dof_layout == DoFLayout::Q)
+      return dof_index_1d_q_impl(cell_no, cell_local_dof_index, dimension);
+    AssertThrow(false, ExcMessage("Finite element not supported."));
+    return numbers::invalid_unsigned_int;
+  }
+
+private:
+  unsigned int
+  dof_index_1d_q_impl(const unsigned int cell_no,
+                      const unsigned int cell_local_dof_index,
+                      const int          dimension)
+  {
+    AssertIndexRange(cell_no, cell_tensor->n[dimension]);
+    AssertIndexRange(cell_local_dof_index, cell_local_dof_tensor->n[dimension]);
+    AssertIndexRange(dimension, n_dimensions);
+    const auto & n_dofs_per_cell_1d = cell_local_dof_tensor->n[dimension];
+    return cell_no * n_dofs_per_cell_1d + cell_local_dof_index - cell_no;
+  }
+
+  unsigned int
+  dof_index_1d_dgq_impl(const unsigned int cell_no,
+                        const unsigned int cell_local_dof_index,
+                        const int          dimension)
+  {
+    AssertIndexRange(cell_no, cell_tensor->n[dimension]);
+    AssertIndexRange(cell_local_dof_index, cell_local_dof_tensor->n[dimension]);
+    AssertIndexRange(dimension, n_dimensions);
+    const auto & n_dofs_per_cell_1d = cell_local_dof_tensor->n[dimension];
+    return cell_no * n_dofs_per_cell_1d + cell_local_dof_index;
+  }
+
+  const TensorHelper<n_dimensions> * cell_local_dof_tensor;
+  const TensorHelper<n_dimensions> * cell_tensor;
+  const DoFLayout                    dof_layout;
+};
+
+template<int n_dimensions>
+class PatchLocalTensorHelper : public PatchLocalIndexHelper<n_dimensions>,
+                               public TensorHelper<n_dimensions>
+{
+public:
+  using IndexHelperBase  = PatchLocalIndexHelper<n_dimensions>;
+  using TensorHelperBase = TensorHelper<n_dimensions>;
+
+  PatchLocalTensorHelper(const TensorHelper<n_dimensions> & cell_tensor_in,
+                         const TensorHelper<n_dimensions> & cell_local_dof_tensor_in,
+                         const DoFLayout                    dof_layout_in)
+    : IndexHelperBase(cell_tensor_in, cell_local_dof_tensor_in, dof_layout_in),
+      TensorHelperBase([&]() {
+        std::array<unsigned int, n_dimensions> sizes;
+        for(auto d = 0U; d < n_dimensions; ++d)
+          sizes[d] = IndexHelperBase::dof_index_1d(cell_tensor_in.n[d] - 1,
+                                                   cell_local_dof_tensor_in.n[d] - 1,
+                                                   d) +
+                     1;
+        return sizes;
+      }())
+  {
+  }
+};
+
 /**
  * Base class providing the interface to model the (mathematical)
  * restriction operator from global degrees of freedom onto subdomain
@@ -144,13 +257,17 @@ private:
    * has a cell-based lexicographical ordering.
    */
   ArrayView<const unsigned int>
-  patch_dofs_on_cell(const unsigned int cell_no) const;
+  patch_local_dof_indices_on_cell(const unsigned int cell_no) const;
 
   /**
    * TODO compressed mode ...
    */
   void
-  reinit_patch_to_global_indices(const unsigned int patch_id);
+  fill_global_dof_indices(const unsigned int patch_id);
+
+  TensorHelper<dim> cell_local_dof_tensor;
+
+  TensorHelper<dim> cell_tensor;
 
   /**
    * A bijective map between local cell dofs (lexicographical) for
@@ -160,19 +277,6 @@ private:
    *    local_cell_dof < cell_no
    */
   std::vector<unsigned int> cell_to_patch_indices;
-
-  /**
-   * Empty constraints used to read and distribute global dof values
-   * cell-by-cell.
-   */
-  AffineConstraints<Number> empty_constraints;
-
-  /**
-   * A bijective map between patch-local dof indices (random access index) and
-   * their associated global dof indices. The data field has patch-based
-   * lexicographical ordering.
-   */
-  std::vector<std::array<types::global_dof_index, macro_size>> patch_to_global_indices;
 
   /**
    * A flag activating compressed mode. Then, the first global dof index of each
@@ -185,9 +289,24 @@ private:
   const unsigned int dofh_index;
 
   /**
+   * Empty constraints used to read and distribute global dof values
+   * cell-by-cell.
+   */
+  AffineConstraints<Number> empty_constraints;
+
+  /**
+   * A bijective map between patch-local dof indices (random access index) and
+   * their associated global dof indices. The data field has patch-based
+   * lexicographical ordering.
+   */
+  std::vector<std::array<types::global_dof_index, macro_size>> global_dof_indices;
+
+  /**
    * Current patch id identifying a unique patch given by @p subdomain_handler.
    */
   unsigned int patch_id;
+
+  PatchLocalTensorHelper<dim> patch_local_dof_tensor;
 
   /**
    * An interface accessing patch information given by @p subdomain_handler.
@@ -428,12 +547,18 @@ inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
     n_subdomains(subdomain_handler_in.get_patch_info().subdomain_partition_data.n_subdomains()),
     n_colors(subdomain_handler_in.get_patch_info().subdomain_partition_data.n_colors()),
     dof_layout(get_dof_layout(subdomain_handler_in.get_dof_handler().get_fe())),
+    // assume isotropic elements like Q or DGQ
+    cell_local_dof_tensor(PatchTransfer<dim, Number, fe_degree>::fe_order),
+    // assume isotropic patches
+    cell_tensor(UniversalInfo<dim>::n_cells_per_direction(
+      subdomain_handler_in.get_additional_data().patch_variant)),
     cell_to_patch_indices(
       std::move(GetIndexing{}(subdomain_handler_in.get_additional_data().patch_variant,
                               dof_layout == DoFLayout::DGQ))),
     compressed(subdomain_handler_in.get_additional_data().compressed),
     dofh_index(dofh_index_in),
     patch_id(numbers::invalid_unsigned_int),
+    patch_local_dof_tensor(cell_tensor, cell_local_dof_tensor, dof_layout),
     patch_worker(subdomain_handler_in.get_patch_info()),
     subdomain_handler(subdomain_handler_in)
 {
@@ -444,6 +569,11 @@ inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
     AssertThrow(dof_layout == DoFLayout::DGQ,
                 ExcMessage("Uncompressed mode only implemented for DGQ elements."));
   empty_constraints.close();
+
+  // std::cout << patch_local_dof_tensor.dof_index_1d(0,0,0) << std::endl;
+  // std::cout << patch_local_dof_tensor.uni_index(std::array<unsigned int, dim>{}) << std::endl;
+  for(auto d = 0U; d < dim; ++d)
+    std::cout << patch_local_dof_tensor.n[d] << " n_dofs per direction " << d << std::endl;
 }
 
 
@@ -456,8 +586,8 @@ PatchTransfer<dim, Number, fe_degree>::reinit(const unsigned int patch)
   patch_id = patch;
   if(compressed)
   {
-    reinit_patch_to_global_indices(patch_id);
-    AssertDimension(patch_to_global_indices.size(), n_dofs_per_patch());
+    fill_global_dof_indices(patch_id);
+    AssertDimension(global_dof_indices.size(), n_dofs_per_patch());
   }
 }
 
@@ -483,7 +613,8 @@ PatchTransfer<dim, Number, fe_degree>::n_dofs_per_patch() const
 
 template<int dim, typename Number, int fe_degree>
 inline ArrayView<const unsigned int>
-PatchTransfer<dim, Number, fe_degree>::patch_dofs_on_cell(const unsigned int cell_no) const
+PatchTransfer<dim, Number, fe_degree>::patch_local_dof_indices_on_cell(
+  const unsigned int cell_no) const
 {
   const auto begin = cell_to_patch_indices.data() + cell_no * n_dofs_per_cell;
   AssertIndexRange((cell_no + 1) * n_dofs_per_cell, cell_to_patch_indices.size() + 1);
@@ -492,22 +623,22 @@ PatchTransfer<dim, Number, fe_degree>::patch_dofs_on_cell(const unsigned int cel
 
 template<int dim, typename Number, int fe_degree>
 inline void
-PatchTransfer<dim, Number, fe_degree>::reinit_patch_to_global_indices(const unsigned int patch_id)
+PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned int patch_id)
 {
   AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
-  patch_to_global_indices.resize(cell_to_patch_indices.size());
+  global_dof_indices.resize(cell_to_patch_indices.size());
   std::vector<std::array<types::global_dof_index, macro_size>> first_dofs =
     patch_worker.get_dof_collection(patch_id);
   const unsigned n_cells = first_dofs.size();
   for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
   {
     const auto macro_dofs = first_dofs[cell_no];
-    const auto patch_dofs = patch_dofs_on_cell(cell_no);
+    const auto patch_dofs = patch_local_dof_indices_on_cell(cell_no);
     for(unsigned int cell_dof = 0; cell_dof < n_dofs_per_cell; ++cell_dof)
     {
       const unsigned int patch_dof = patch_dofs[cell_dof];
       for(unsigned int lane = 0; lane < macro_size; ++lane)
-        patch_to_global_indices[patch_dof][lane] = macro_dofs[lane] + cell_dof;
+        global_dof_indices[patch_dof][lane] = macro_dofs[lane] + cell_dof;
     }
   }
 }

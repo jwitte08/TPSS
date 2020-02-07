@@ -23,7 +23,7 @@ PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
       Assert(n_cells > 0, ExcMessage("No cell contained in collection."));
       for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
       {
-        const ArrayView<const unsigned> &    patch_dofs = patch_dofs_on_cell(cell_no);
+        const ArrayView<const unsigned> &    patch_dofs = patch_local_dof_indices_on_cell(cell_no);
         const CellIterator &                 cell       = cell_view[cell_no];
         std::vector<types::global_dof_index> global_dofs_on_cell;
         global_dofs_on_cell.resize(n_dofs_per_cell);
@@ -47,8 +47,8 @@ PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
   }
   else // compressed
   {
-    AssertDimension(dst.size(), patch_to_global_indices.size());
-    auto global_dof = patch_to_global_indices.cbegin();
+    AssertDimension(dst.size(), global_dof_indices.size());
+    auto global_dof = global_dof_indices.cbegin();
     for(auto dst_value = dst.begin(); dst_value != dst.end(); ++global_dof, ++dst_value)
       for(unsigned int lane = 0; lane < macro_size; ++lane)
         (*dst_value)[lane] = src((*global_dof)[lane]);
@@ -110,7 +110,7 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
       Assert(n_cells > 0, ExcMessage("No cell contained in collection."));
       for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
       {
-        const ArrayView<const unsigned> &    patch_dofs = patch_dofs_on_cell(cell_no);
+        const ArrayView<const unsigned> &    patch_dofs = patch_local_dof_indices_on_cell(cell_no);
         const CellIterator &                 cell       = cell_view[cell_no];
         std::vector<types::global_dof_index> global_dofs_on_cell;
         global_dofs_on_cell.resize(n_dofs_per_cell);
@@ -124,8 +124,8 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
   }
   else // compressed
   {
-    AssertDimension(src.size(), patch_to_global_indices.size());
-    auto global_dof = patch_to_global_indices.cbegin();
+    AssertDimension(src.size(), global_dof_indices.size());
+    auto global_dof = global_dof_indices.cbegin();
     for(auto src_value = src.cbegin(); src_value != src.cend(); ++global_dof, ++src_value)
       for(unsigned int lane = 0; lane < patch_worker.n_lanes_filled(patch_id); ++lane)
         dst((*global_dof)[lane]) += (*src_value)[lane];
