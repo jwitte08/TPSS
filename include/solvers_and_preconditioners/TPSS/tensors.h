@@ -50,8 +50,9 @@ multiindex_to_string(const std::array<IntType, order> multiindex)
 }
 
 /*
- * transforms an (anisotropic) multi-index into the canonical
- * uni-index with respect to lexicographical order.
+ * transforms an (anisotropic) multi-index into the canonical uni-index with
+ * respect to lexicographical order. That is the first index of the multi-index
+ * runs faster than second and so on.
  *
  * order : the order of the multi-index
  * sizes  : (anisotropic) size of each independent variable (mode)
@@ -78,8 +79,9 @@ multi_to_uniindex(const std::array<IntType, order> & multiindex,
 }
 
 /*
- * transforms an (isotropic) multi-index into the canonical
- * uni-index with respect to lexicographical order.
+ * transforms an (isotropic) multi-index into the canonical uni-index with
+ * respect to lexicographical order. That is the first index of the multi-index
+ * runs faster than second and so on.
  *
  * order : the order of the multi-index
  * size  : isotropic size of each index set (mode)
@@ -94,8 +96,9 @@ multi_to_uniindex(const std::array<IntType, order> & multiindex, const IntType s
 }
 
 /*
- * transforms an uni-index into the canonical (anisotropic)
- * multi-index with respect to lexicographical order.
+ * transforms an uni-index into the canonical (anisotropic) multi-index with
+ * respect to lexicographical order. That is the first index of the multi-index
+ * runs faster than second and so on.
  *
  * order : the order of the multi-index
  * sizes : sizes of each independent variable (mode)
@@ -121,8 +124,9 @@ uni_to_multiindex(IntType index, const std::array<IntType, order> & sizes)
 }
 
 /*
- * transforms an uni-index into the canonical (isotropic)
- * multi-index with respect to lexicographical order.
+ * transforms an uni-index into the canonical (isotropic) multi-index with
+ * respect to lexicographical order. That is the first index of the multi-index
+ * runs faster than second and so on.
  *
  * order : the order of the multi-index
  * size  : isotropic size of each index set (mode)
@@ -137,9 +141,10 @@ uni_to_multiindex(IntType index, const IntType size)
 }
 
 /*
- * returns the fibre of (uni)-indices of an @p order -order
- * (isotropic) multiindex running along the @p mode mode with
- * respect to lexicographical order.
+ * returns the fibre of (uni)-indices of an @p order -order (isotropic)
+ * multiindex running along the @p mode mode with respect to lexicographical
+ * order. That is the first index of the multi-index runs faster than second and
+ * so on.
  *
  * order : the order of the multi-index
  * mode  : traversing mode of the fibre
