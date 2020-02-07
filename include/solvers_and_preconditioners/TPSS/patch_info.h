@@ -564,6 +564,13 @@ public:
   void
   connect_to_matrixfree(MatrixFreeConnect<dim, number> & mf_connect);
 
+
+  std::array<unsigned int, GeometryInfo<dim>::faces_per_cell>
+  get_at_boundary_masks_flat(const unsigned int patch) const;
+
+  std::array<std::bitset<PatchWorker<dim, number>::macro_size>, GeometryInfo<dim>::faces_per_cell>
+  get_at_boundary_masks(const unsigned int patch) const;
+
   /**
    * Returns the collection of batch-index-and-lane pairs describing
    * the macro cell collection @p patch_id in MatrixFree speak.
@@ -997,6 +1004,29 @@ PatchWorker<dim, number>::get_partition_data() const
   return patch_info->subdomain_partition_data;
 }
 
+template<int dim, typename number>
+inline std::array<unsigned int, GeometryInfo<dim>::faces_per_cell>
+PatchWorker<dim, number>::get_at_boundary_masks_flat(const unsigned int patch) const
+{
+  Assert(patch_info != nullptr, ExcNotInitialized());
+  AssertIndexRange(patch, patch_info->subdomain_partition_data.n_subdomains());
+  std::array<unsigned int, GeometryInfo<dim>::faces_per_cell> at_bdry_mask;
+  std::copy_n(patch_info->at_boundary_mask.data() + GeometryInfo<dim>::faces_per_cell * patch,
+              GeometryInfo<dim>::faces_per_cell,
+              at_bdry_mask.begin());
+  return at_bdry_mask;
+}
+
+template<int dim, typename number>
+inline std::array<std::bitset<PatchWorker<dim, number>::macro_size>,
+                  GeometryInfo<dim>::faces_per_cell>
+PatchWorker<dim, number>::get_at_boundary_masks(const unsigned int patch) const
+{
+  std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> at_bdry_mask;
+  const auto & at_bdry_mask_flat = get_at_boundary_masks_flat(patch);
+  std::copy(at_bdry_mask_flat.cbegin(), at_bdry_mask_flat.cend(), at_bdry_mask.begin());
+  return at_bdry_mask;
+}
 
 template<int dim, typename number>
 inline std::vector<
