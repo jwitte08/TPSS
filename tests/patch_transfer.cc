@@ -159,14 +159,17 @@ REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferDG,
                             VertexPatch,
                             VertexPatchCompressed);
 
-using TestParamsLinear      = testing::Types<Util::NonTypeParams<2, 1>>;
-using TestParamsHigherOrder = testing::Types<Util::NonTypeParams<2, 3>, Util::NonTypeParams<2, 4>>;
+using TestParamsLinear2D = testing::Types<Util::NonTypeParams<2, 1>>;
+using TestParamsHigherOrder2D =
+  testing::Types<Util::NonTypeParams<2, 3>, Util::NonTypeParams<2, 4>>;
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferDG, TestParamsLinear2D);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferDG, TestParamsHigherOrder2D);
 
-INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferDG, TestParamsLinear);
-
-INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferDG, TestParamsHigherOrder);
-
-
+using TestParamsLinear3D = testing::Types<Util::NonTypeParams<3, 1>>;
+using TestParamsHigherOrder3D =
+  testing::Types<Util::NonTypeParams<3, 3>, Util::NonTypeParams<3, 4>>;
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransferDG, TestParamsLinear3D);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestPatchTransferDG, TestParamsHigherOrder3D);
 
 template<typename T>
 class TestPatchTransferBlockDG : public testing::Test
@@ -326,9 +329,11 @@ REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferBlockDG,
                             CellPatchCompressed,
                             VertexPatchCompressed);
 
-INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferBlockDG, TestParamsLinear);
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferBlockDG, TestParamsLinear2D);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferBlockDG, TestParamsHigherOrder2D);
 
-INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferBlockDG, TestParamsHigherOrder);
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransferBlockDG, TestParamsLinear3D);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestPatchTransferBlockDG, TestParamsHigherOrder3D);
 
 
 
