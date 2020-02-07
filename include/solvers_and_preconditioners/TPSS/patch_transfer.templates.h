@@ -3,10 +3,10 @@ namespace TPSS
 template<int dim, typename Number, int fe_degree>
 template<typename VectorType>
 AlignedVector<VectorizedArray<Number>>
-PatchTransferBase<dim, Number, fe_degree>::gather(const VectorType & src) const
+PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
 {
-  AssertIndexRange(patch_id, sd_handler.get_partition_data().n_subdomains());
-  AssertDimension(src.size(), sd_handler.get_dof_handler().n_dofs(level));
+  AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
+  AssertDimension(src.size(), subdomain_handler.get_dof_handler().n_dofs(level));
 
   AlignedVector<VectorizedArray<Number>> dst(n_dofs_per_patch());
 
@@ -30,10 +30,10 @@ PatchTransferBase<dim, Number, fe_degree>::gather(const VectorType & src) const
         cell->get_active_or_mg_dof_indices(global_dofs_on_cell);
         std::vector<Number> global_values;
         global_values.resize(n_dofs_per_cell);
-        constraints.get_dof_values(src,
-                                   global_dofs_on_cell.cbegin(),
-                                   global_values.begin(),
-                                   global_values.end());
+        empty_constraints.get_dof_values(src,
+                                         global_dofs_on_cell.cbegin(),
+                                         global_values.begin(),
+                                         global_values.end());
         auto dof = patch_dofs.cbegin();
         for(auto value = global_values.cbegin(); value != global_values.cend(); ++value, ++dof)
           dst[*dof][lane] = *value;
@@ -61,8 +61,8 @@ PatchTransferBase<dim, Number, fe_degree>::gather(const VectorType & src) const
 template<int dim, typename Number, int fe_degree>
 template<typename VectorType>
 void
-PatchTransferBase<dim, Number, fe_degree>::gather_add(const ArrayView<VectorizedArray<Number>> dst,
-                                                      const VectorType & src) const
+PatchTransfer<dim, Number, fe_degree>::gather_add(const ArrayView<VectorizedArray<Number>> dst,
+                                                  const VectorType & src) const
 {
   AssertDimension(dst.size(), n_dofs_per_patch());
   const auto & src_local = gather(src);
@@ -76,8 +76,8 @@ PatchTransferBase<dim, Number, fe_degree>::gather_add(const ArrayView<Vectorized
 template<int dim, typename Number, int fe_degree>
 template<typename VectorType>
 void
-PatchTransferBase<dim, Number, fe_degree>::gather_add(AlignedVector<VectorizedArray<Number>> & dst,
-                                                      const VectorType & src) const
+PatchTransfer<dim, Number, fe_degree>::gather_add(AlignedVector<VectorizedArray<Number>> & dst,
+                                                  const VectorType & src) const
 {
   AssertDimension(dst.size(), n_dofs_per_patch());
   const auto dst_view = make_array_view<VectorizedArray<Number>>(dst.begin(), dst.end());
@@ -87,12 +87,12 @@ PatchTransferBase<dim, Number, fe_degree>::gather_add(AlignedVector<VectorizedAr
 template<int dim, typename Number, int fe_degree>
 template<typename VectorType>
 void
-PatchTransferBase<dim, Number, fe_degree>::scatter_add(
+PatchTransfer<dim, Number, fe_degree>::scatter_add(
   VectorType &                                   dst,
   const ArrayView<const VectorizedArray<Number>> src) const
 {
-  AssertIndexRange(patch_id, sd_handler.get_partition_data().n_subdomains());
-  AssertDimension(dst.size(), sd_handler.get_dof_handler().n_dofs(level));
+  AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
+  AssertDimension(dst.size(), subdomain_handler.get_dof_handler().n_dofs(level));
   AssertDimension(src.size(), n_dofs_per_patch());
 
   if(!compressed)
@@ -118,7 +118,7 @@ PatchTransferBase<dim, Number, fe_degree>::scatter_add(
         const unsigned * dof = patch_dofs.begin();
         for(auto out = src_per_cell.begin(); out != src_per_cell.end(); ++out, ++dof)
           *out = src[*dof][lane];
-        constraints.distribute_local_to_global(src_per_cell, global_dofs_on_cell, dst);
+        empty_constraints.distribute_local_to_global(src_per_cell, global_dofs_on_cell, dst);
       }
     }
   }
@@ -135,7 +135,7 @@ PatchTransferBase<dim, Number, fe_degree>::scatter_add(
 template<int dim, typename Number, int fe_degree>
 template<typename VectorType>
 void
-PatchTransferBase<dim, Number, fe_degree>::scatter_add(
+PatchTransfer<dim, Number, fe_degree>::scatter_add(
   VectorType &                                   dst,
   const AlignedVector<VectorizedArray<Number>> & src) const
 {

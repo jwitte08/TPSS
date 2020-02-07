@@ -15,6 +15,25 @@ using namespace dealii;
 
 namespace TPSS
 {
+enum class DoFLayout
+{
+  invalid,
+  DGQ,
+  Q
+};
+
+template<int dim>
+DoFLayout
+get_dof_layout(const FiniteElement<dim> & finite_element)
+{
+  auto dof_layout = DoFLayout::invalid;
+  if(finite_element.get_name().find("FE_DGQ") != std::string::npos)
+    dof_layout = DoFLayout::DGQ;
+  else if(finite_element.get_name().find("FE_Q") != std::string::npos)
+    dof_layout = DoFLayout::Q;
+  return dof_layout;
+}
+
 // templates
 // TODO merge Base and Derived PatchTransfer !!!
 /**
@@ -39,7 +58,7 @@ namespace TPSS
  * be provided at construction by the deriving class.
  */
 template<int dim, typename Number, int fe_degree>
-class PatchTransferBase
+class PatchTransfer
 {
 public:
   using CellIterator                            = typename PatchInfo<dim>::CellIterator;
@@ -47,11 +66,18 @@ public:
   static constexpr unsigned int n_dofs_per_cell = Utilities::pow(fe_order, dim);
   static constexpr unsigned int macro_size      = VectorizedArray<Number>::n_array_elements;
 
-  unsigned int
-  n_dofs_per_patch() const
-  {
-    return cell_to_patch_indices.empty() ? 0 : cell_to_patch_indices.size();
-  }
+  // TODO construct indices at compile time ?
+  struct GetIndexing;
+
+  PatchTransfer(const SubdomainHandler<dim, Number> & subdomain_handler,
+                const unsigned int                    dofh_index = 0);
+
+  ~PatchTransfer() = default;
+
+  PatchTransfer(const PatchTransfer & other) = delete;
+
+  PatchTransfer &
+  operator=(const PatchTransfer & other) = delete;
 
   /**
    * Reinitialize information of the (macro) patch with unique id @p patch.
@@ -66,40 +92,43 @@ public:
   reinit_local_vector(AlignedVector<VectorizedArray<Number>> & vec) const;
 
   /**
-   * Extract from the global dof values @p src the patch relevant dof values and return them.
+   * Extract from the global dof values @p src the patch relevant dof values.
    */
   template<typename VectorType>
   AlignedVector<VectorizedArray<Number>>
   gather(const VectorType & src) const;
 
   /**
-   * Same as above, but the global dof values @p src are added to @p dst.
+   * Same as above, but the patch relevant dof values from global vector @p src
+   * are added to @p dst.
    */
   template<typename VectorType>
   void
   gather_add(AlignedVector<VectorizedArray<Number>> & dst, const VectorType & src) const;
 
   /**
-   * Same as above, but the updated local dof values @p dst are passed
-   * as ArrayView.
+   * Same as above, but @p dst is passed as ArrayView.
    */
   template<typename VectorType>
   void
   gather_add(const ArrayView<VectorizedArray<Number>> dst, const VectorType & src) const;
 
   /**
-   * Add patch intern dof values @o src to the global dof values @p dst.
+   * Add patch relevant dof values @p src to the global dof values @p dst.
+   */
+  template<typename VectorType>
+  void
+  scatter_add(VectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const;
+
+  /**
+   * Same as above, but @p dst is passed as ArrayView.
    */
   template<typename VectorType>
   void
   scatter_add(VectorType & dst, const ArrayView<const VectorizedArray<Number>> src) const;
 
-  /**
-   * Add patch intern dof values @o src to the global dof values @p dst.
-   */
-  template<typename VectorType>
-  void
-  scatter_add(VectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const;
+  unsigned int
+  n_dofs_per_patch() const;
 
   /**
    * Domain decomposition information.
@@ -107,63 +136,21 @@ public:
   const unsigned int level;
   const unsigned int n_subdomains;
   const unsigned int n_colors;
-
-protected:
-  /**
-   * Pass the SubdomainHandler to obtain an interface to the
-   * MatrixFree infrastructure through the underlying
-   * MatrixFreeConnect object. The bijective map @p
-   * cell_to_patch_indexing maps the pair (local_cell_dof, cell_no)
-   * onto local_patch_dof.
-   */
-  PatchTransferBase(const SubdomainHandler<dim, Number> & sd_handler,
-                    std::vector<unsigned int> &&          cell_to_patch_indexing,
-                    const unsigned int                    dofh_index_in = 0);
-
-  ~PatchTransferBase() = default;
-
-  PatchTransferBase(const PatchTransferBase & other) = delete;
-
-  PatchTransferBase &
-  operator=(const PatchTransferBase & other) = delete;
-
-  ArrayView<const unsigned int>
-  patch_dofs_on_cell(const unsigned int cell_no) const
-  {
-    const auto begin = cell_to_patch_indices.data() + cell_no * n_dofs_per_cell;
-    AssertIndexRange((cell_no + 1) * n_dofs_per_cell, cell_to_patch_indices.size() + 1);
-    return ArrayView<const unsigned>(begin, n_dofs_per_cell);
-  }
-
-  /**
-   * The underlying SubdomainHandler object.
-   */
-  const SubdomainHandler<dim, Number> & sd_handler;
+  const DoFLayout    dof_layout;
 
 private:
-  /*
-   * TODO
+  /**
+   * Read access to patch-local dof indices of cell @cell_no. The returned array
+   * has a cell-based lexicographical ordering.
+   */
+  ArrayView<const unsigned int>
+  patch_dofs_on_cell(const unsigned int cell_no) const;
+
+  /**
+   * TODO compressed mode ...
    */
   void
-  reinit_patch_to_global_indices(const unsigned int patch_id)
-  {
-    AssertIndexRange(patch_id, sd_handler.get_partition_data().n_subdomains());
-    patch_to_global_indices.resize(cell_to_patch_indices.size());
-    std::vector<std::array<types::global_dof_index, macro_size>> first_dofs =
-      patch_worker.get_dof_collection(patch_id);
-    const unsigned n_cells = first_dofs.size();
-    for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
-    {
-      const auto macro_dofs = first_dofs[cell_no];
-      const auto patch_dofs = patch_dofs_on_cell(cell_no);
-      for(unsigned int cell_dof = 0; cell_dof < n_dofs_per_cell; ++cell_dof)
-      {
-        const unsigned int patch_dof = patch_dofs[cell_dof];
-        for(unsigned int lane = 0; lane < macro_size; ++lane)
-          patch_to_global_indices[patch_dof][lane] = macro_dofs[lane] + cell_dof;
-      }
-    }
-  }
+  reinit_patch_to_global_indices(const unsigned int patch_id);
 
   /**
    * A bijective map between local cell dofs (lexicographical) for
@@ -174,62 +161,57 @@ private:
    */
   std::vector<unsigned int> cell_to_patch_indices;
 
-  /*
-   * A bijective map between the patch-local DoF indices (lexicographical) and
-   * the associated global DoF indices.
+  /**
+   * Empty constraints used to read and distribute global dof values
+   * cell-by-cell.
+   */
+  AffineConstraints<Number> empty_constraints;
+
+  /**
+   * A bijective map between patch-local dof indices (random access index) and
+   * their associated global dof indices. The data field has patch-based
+   * lexicographical ordering.
    */
   std::vector<std::array<types::global_dof_index, macro_size>> patch_to_global_indices;
 
+  /**
+   * A flag activating compressed mode. Then, the first global dof index of each
+   * cell is stored. From this all global dof indices per cell are reconstructed
+   * depending on the underlying finite element.
+   */
   const bool compressed;
 
   // TODO dofh_index is not used
   const unsigned int dofh_index;
 
-  /*
-   * Integer identifying the (macro) patch stored within the underlying SubdomainHandler.
+  /**
+   * Current patch id identifying a unique patch given by @p subdomain_handler.
    */
   unsigned int patch_id;
 
-  /*
-   * Provides an interface to the information stored within the underlying SubdomainHandler.
+  /**
+   * An interface accessing patch information given by @p subdomain_handler.
    */
   PatchWorker<dim, Number> patch_worker;
 
-  // TODO pass meaningful constraints from the MatrixFree/SubdomainHandler
-  AffineConstraints<Number> constraints;
+  /**
+   * The underlying SubdomainHandler object.
+   */
+  const SubdomainHandler<dim, Number> & subdomain_handler;
 };
+
+
 
 /**
- * Handling the transfer between patch-local and global degrees of
- * freedom depending on the underlying SubdomainHandler.
+ * TODO description
  */
-template<int dim, typename Number, int fe_degree>
-class PatchTransfer : public PatchTransferBase<dim, Number, fe_degree>
-{
-public:
-  using Base = PatchTransferBase<dim, Number, fe_degree>;
-
-  // TODO construct indices at compile time ?
-  struct GetIndexing;
-
-  PatchTransfer(const SubdomainHandler<dim, Number> & sd_handler,
-                const unsigned int                    dofh_index = 0);
-
-  ~PatchTransfer() = default;
-
-  PatchTransfer(const PatchTransfer & other) = delete;
-
-  PatchTransfer &
-  operator=(const PatchTransfer & other) = delete;
-};
-
 template<int dim, typename Number, int fe_degree>
 class PatchTransferBlock
 {
 public:
   using BlockVectorType = typename LinearAlgebra::distributed::BlockVector<Number>;
 
-  PatchTransferBlock(const SubdomainHandler<dim, Number> & sd_handler);
+  PatchTransferBlock(const SubdomainHandler<dim, Number> & subdomain_handler);
 
   ~PatchTransferBlock() = default;
 
@@ -270,7 +252,7 @@ public:
   void
   reinit_local_vector(AlignedVector<VectorizedArray<Number>> & vec) const
   {
-    Assert(patch_id != static_cast<unsigned int>(-1), ExcNotInitialized());
+    Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
     vec.resize(n_dofs_per_patch());
   }
 
@@ -330,18 +312,12 @@ public:
 
 private:
   using transfer_type = PatchTransfer<dim, Number, fe_degree>;
-  // template<typename UnaryFunctionType, typename InputType>
-  // void
-  // blockwise_unary(const UnaryFunctionType & unary_func, InputType && input) const
-  // {
-  //   for(unsigned int b = 0; b < n_components; ++b)
-  //     unary_func(std::forward<InputType>(input));
-  // }
 
   const unsigned int                          n_components;
   std::vector<std::shared_ptr<transfer_type>> transfers;
   unsigned int                                patch_id;
 };
+
 
 
 // ++++++++++++++++++++++++++++++   inline functors   ++++++++++++++++++++++++++++++
@@ -372,7 +348,7 @@ struct PatchTransfer<dim, Number, fe_degree>::GetIndexing
   dg_cell_patch_index_map_impl() const
   {
     // TODO extract dof information from underlying SubdomainHandler
-    const std::size_t         n_dofs_per_subdomain = Base::n_dofs_per_cell;
+    const std::size_t         n_dofs_per_subdomain = n_dofs_per_cell;
     std::vector<unsigned int> indices;
     indices.resize(n_dofs_per_subdomain);
     std::iota(indices.begin(), indices.end(), 0);
@@ -426,12 +402,12 @@ struct PatchTransfer<dim, Number, fe_degree>::GetIndexing
 
     constexpr unsigned int vpatch_size = 1 << dim;
     // TODO extract dof information from underlying SubdomainHandler
-    const std::size_t         n_dofs_per_subdomain = Utilities::pow(2, dim) * Base::n_dofs_per_cell;
+    const std::size_t         n_dofs_per_subdomain = Utilities::pow(2, dim) * n_dofs_per_cell;
     std::vector<unsigned int> indices;
     indices.resize(n_dofs_per_subdomain);
     auto patch_index = indices.begin();
     for(unsigned int cell = 0; cell < vpatch_size; ++cell)
-      for(unsigned int dof = 0; dof < Base::n_dofs_per_cell; ++dof, ++patch_index)
+      for(unsigned int dof = 0; dof < n_dofs_per_cell; ++dof, ++patch_index)
         *patch_index = cell_to_patch_index(dof, cell);
     return indices;
   }
@@ -441,32 +417,40 @@ struct PatchTransfer<dim, Number, fe_degree>::GetIndexing
 
 // ++++++++++++++++++++++++++++++   inline functions   ++++++++++++++++++++++++++++++
 
-// --------------------------------   PatchTransferBase   --------------------------------
+// -----------------------------   PatchTransfer   ----------------------------
 
+// TODO use dofh_index
 template<int dim, typename Number, int fe_degree>
-inline PatchTransferBase<dim, Number, fe_degree>::PatchTransferBase(
-  const SubdomainHandler<dim, Number> & sd_handler_in,
-  std::vector<unsigned int> &&          cell_to_patch_indexing,
+inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
+  const SubdomainHandler<dim, Number> & subdomain_handler_in,
   const unsigned int                    dofh_index_in)
-  : level(sd_handler_in.get_additional_data().level),
-    n_subdomains(sd_handler_in.get_patch_info().subdomain_partition_data.n_subdomains()),
-    n_colors(sd_handler_in.get_patch_info().subdomain_partition_data.n_colors()),
-    sd_handler(sd_handler_in),
-    cell_to_patch_indices(std::move(cell_to_patch_indexing)),
-    compressed(sd_handler_in.get_additional_data().compressed),
+  : level(subdomain_handler_in.get_additional_data().level),
+    n_subdomains(subdomain_handler_in.get_patch_info().subdomain_partition_data.n_subdomains()),
+    n_colors(subdomain_handler_in.get_patch_info().subdomain_partition_data.n_colors()),
+    dof_layout(get_dof_layout(subdomain_handler_in.get_dof_handler().get_fe())),
+    cell_to_patch_indices(
+      std::move(GetIndexing{}(subdomain_handler_in.get_additional_data().patch_variant,
+                              dof_layout == DoFLayout::DGQ))),
+    compressed(subdomain_handler_in.get_additional_data().compressed),
     dofh_index(dofh_index_in),
-    patch_id(-1),
-    patch_worker(sd_handler_in.get_patch_info())
+    patch_id(numbers::invalid_unsigned_int),
+    patch_worker(subdomain_handler_in.get_patch_info()),
+    subdomain_handler(subdomain_handler_in)
 {
-  // static_assert(n_comp == 1, "Handles only one scalar DoFHandler.");
   AssertThrow(!cell_to_patch_indices.empty(),
               ExcMessage("The cell to patch index map is uninitialized!"));
-  constraints.close();
+  AssertThrow(dof_layout != DoFLayout::invalid, ExcMessage("The finite element is not supported."));
+  if(!compressed)
+    AssertThrow(dof_layout == DoFLayout::DGQ,
+                ExcMessage("Uncompressed mode only implemented for DGQ elements."));
+  empty_constraints.close();
 }
+
+
 
 template<int dim, typename Number, int fe_degree>
 inline void
-PatchTransferBase<dim, Number, fe_degree>::reinit(const unsigned int patch)
+PatchTransfer<dim, Number, fe_degree>::reinit(const unsigned int patch)
 {
   AssertIndexRange(patch, n_subdomains);
   patch_id = patch;
@@ -477,40 +461,69 @@ PatchTransferBase<dim, Number, fe_degree>::reinit(const unsigned int patch)
   }
 }
 
+
+
 template<int dim, typename Number, int fe_degree>
 inline void
-PatchTransferBase<dim, Number, fe_degree>::reinit_local_vector(
+PatchTransfer<dim, Number, fe_degree>::reinit_local_vector(
   AlignedVector<VectorizedArray<Number>> & vec) const
 {
-  Assert(patch_id != static_cast<unsigned int>(-1), ExcNotInitialized());
+  Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
   vec.resize(n_dofs_per_patch());
 }
 
-// -----------------------------   PatchTransfer   ----------------------------
 
 template<int dim, typename Number, int fe_degree>
-inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
-  const SubdomainHandler<dim, Number> & sd_handler,
-  const unsigned int                    dofh_index_in)
-  : Base(sd_handler,
-         GetIndexing{}(sd_handler.get_additional_data().patch_variant, true /*is DG?*/),
-         dofh_index_in)
+inline unsigned int
+PatchTransfer<dim, Number, fe_degree>::n_dofs_per_patch() const
 {
+  return cell_to_patch_indices.size();
 }
 
+
+template<int dim, typename Number, int fe_degree>
+inline ArrayView<const unsigned int>
+PatchTransfer<dim, Number, fe_degree>::patch_dofs_on_cell(const unsigned int cell_no) const
+{
+  const auto begin = cell_to_patch_indices.data() + cell_no * n_dofs_per_cell;
+  AssertIndexRange((cell_no + 1) * n_dofs_per_cell, cell_to_patch_indices.size() + 1);
+  return ArrayView<const unsigned>(begin, n_dofs_per_cell);
+}
+
+template<int dim, typename Number, int fe_degree>
+inline void
+PatchTransfer<dim, Number, fe_degree>::reinit_patch_to_global_indices(const unsigned int patch_id)
+{
+  AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
+  patch_to_global_indices.resize(cell_to_patch_indices.size());
+  std::vector<std::array<types::global_dof_index, macro_size>> first_dofs =
+    patch_worker.get_dof_collection(patch_id);
+  const unsigned n_cells = first_dofs.size();
+  for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
+  {
+    const auto macro_dofs = first_dofs[cell_no];
+    const auto patch_dofs = patch_dofs_on_cell(cell_no);
+    for(unsigned int cell_dof = 0; cell_dof < n_dofs_per_cell; ++cell_dof)
+    {
+      const unsigned int patch_dof = patch_dofs[cell_dof];
+      for(unsigned int lane = 0; lane < macro_size; ++lane)
+        patch_to_global_indices[patch_dof][lane] = macro_dofs[lane] + cell_dof;
+    }
+  }
+}
 
 
 // -----------------------------   PatchTransferBlock   ----------------------------
 
 template<int dim, typename Number, int fe_degree>
 inline PatchTransferBlock<dim, Number, fe_degree>::PatchTransferBlock(
-  const SubdomainHandler<dim, Number> & sd_handler_in)
-  : n_components(sd_handler_in.n_components()), patch_id(static_cast<unsigned int>(-1))
+  const SubdomainHandler<dim, Number> & subdomain_handler_in)
+  : n_components(subdomain_handler_in.n_components()), patch_id(numbers::invalid_unsigned_int)
 {
-  const unsigned n_components = sd_handler_in.n_components();
+  const unsigned n_components = subdomain_handler_in.n_components();
   transfers.resize(n_components);
   for(unsigned int dofh_index = 0; dofh_index < n_components; ++dofh_index)
-    transfers[dofh_index] = std::make_shared<transfer_type>(sd_handler_in, dofh_index);
+    transfers[dofh_index] = std::make_shared<transfer_type>(subdomain_handler_in, dofh_index);
 }
 
 
