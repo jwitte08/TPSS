@@ -23,7 +23,7 @@ PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
       Assert(n_cells > 0, ExcMessage("No cell contained in collection."));
       for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
       {
-        const ArrayView<const unsigned> &    patch_dofs = patch_local_dof_indices_on_cell(cell_no);
+        const ArrayView<const unsigned> &    patch_dofs = patch_dof_indices_on_cell(cell_no);
         const CellIterator &                 cell       = cell_view[cell_no];
         std::vector<types::global_dof_index> global_dofs_on_cell;
         global_dofs_on_cell.resize(n_dofs_per_cell);
@@ -110,7 +110,7 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
       Assert(n_cells > 0, ExcMessage("No cell contained in collection."));
       for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
       {
-        const ArrayView<const unsigned> &    patch_dofs = patch_local_dof_indices_on_cell(cell_no);
+        const ArrayView<const unsigned> &    patch_dofs = patch_dof_indices_on_cell(cell_no);
         const CellIterator &                 cell       = cell_view[cell_no];
         std::vector<types::global_dof_index> global_dofs_on_cell;
         global_dofs_on_cell.resize(n_dofs_per_cell);
