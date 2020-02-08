@@ -70,6 +70,9 @@ public:
   const dealii::DoFHandler<dim> &
   get_dof_handler(const unsigned int dofh_index = 0) const;
 
+  const TPSS::DoFInfo<dim> &
+  get_dof_info(const unsigned int dofh_index = 0) const;
+
   TPSS::DoFLayout
   get_dof_layout(const unsigned int dofh_index = 0) const;
 
@@ -162,6 +165,7 @@ private:
   std::vector<const dealii::DoFHandler<dim> *>           dof_handlers;
 
   TPSS::PatchInfo<dim>                                            patch_info;
+  std::vector<TPSS::DoFInfo<dim>>                                 dof_infos;
   TPSS::MatrixFreeConnect<dim, number>                            mf_connect;
   TPSS::MappingInfo<dim, number>                                  mapping_info;
   std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> vector_partitioners;
@@ -207,6 +211,7 @@ SubdomainHandler<dim, number>::clear()
   dof_handlers.clear();
 
   patch_info.clear();
+  dof_infos.clear();
   mf_connect = TPSS::MatrixFreeConnect<dim, number>{};
   mapping_info.clear();
 
@@ -249,6 +254,15 @@ SubdomainHandler<dim, number>::get_dof_handler(const unsigned int dofh_index) co
   AssertIndexRange(dofh_index, dofh_indices.size());
   const auto unique_dofh_index = dofh_indices[dofh_index];
   return *(dof_handlers[unique_dofh_index]);
+}
+
+template<int dim, typename number>
+inline const TPSS::DoFInfo<dim> &
+SubdomainHandler<dim, number>::get_dof_info(const unsigned int dofh_index) const
+{
+  AssertIndexRange(dofh_index, dofh_indices.size());
+  const auto unique_dofh_index = dofh_indices[dofh_index];
+  return dof_infos[unique_dofh_index];
 }
 
 template<int dim, typename number>

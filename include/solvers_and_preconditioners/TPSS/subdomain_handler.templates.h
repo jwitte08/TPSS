@@ -102,7 +102,12 @@ SubdomainHandler<dim, number>::internal_reinit()
   // *** constructor partitions patches with respect to vectorization
   TPSS::PatchWorker<dim, number> patch_worker{patch_info};
 
-  // *** map the patch batches to MatrixFree's cell batches (used for the patch-local transfers)
+  // *** (partially) store dofs
+  dof_infos.resize(dof_handlers.size());
+  for(auto i = 0U; i < dof_infos.size(); ++i)
+    dof_infos.at(i).initialize(dof_handlers.at(i), &patch_info);
+
+  // *** map the patch batches to MatrixFree's cell batches
   patch_worker.connect_to_matrixfree(mf_connect);
 
   // *** initialize the MPI-partitioner
