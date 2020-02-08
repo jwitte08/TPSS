@@ -5,6 +5,8 @@
 #include <deal.II/base/timer.h>
 #include <deal.II/base/utilities.h>
 
+#include <deal.II/fe/fe_tools.h>
+
 #include "TPSS.h"
 #include "subdomain_handler.h"
 
@@ -282,6 +284,9 @@ private:
   {
     if(DoFLayout::DGQ == dof_layout)
       return dof_index_shifts_dgq_impl();
+    else if(DoFLayout::Q == dof_layout)
+      return dof_index_shifts_q_impl();
+
     AssertThrow(false, ExcMessage("Finite element not supported."));
     return std::vector<unsigned int>{};
   }
@@ -295,6 +300,23 @@ private:
     return shifts;
   }
 
+  std::vector<unsigned int>
+  dof_index_shifts_q_impl() const
+  {
+    AssertDimension(cell_dof_tensor.n_flat(), n_dofs_per_cell);
+    std::shared_ptr<FiniteElementData<dim>> fe_data = std::make_shared<FE_Q<dim>>(fe_degree);
+    const auto l2h = FETools::lexicographic_to_hierarchic_numbering(*fe_data);
+    // const auto h2l = FETools::hierarchic_to_lexicographic_numbering(*fe_data);
+    // for (auto i = 0U; i < l2h.size(); ++i)
+    //   {
+    // 	std::cout << "l: " << i << " to h: " << l2h[i] << std::endl;
+    // 	std::cout << "l: " << h2l[l2h[i]] << " to h: " << l2h[i] << std::endl;
+    //   }
+
+    // std::vector<unsigned int> shifts(cell_dof_tensor.n_flat());
+    // std::iota(shifts.begin(), shifts.end(), 0U);
+    return l2h;
+  }
 
   /**
    * Read access to patch-local dof indices of cell @cell_no. The returned array
@@ -313,14 +335,14 @@ private:
 
   TensorHelper<dim> cell_tensor;
 
-  /**
-   * A bijective map between local cell dofs (lexicographical) for
-   * each cell within a patch and the local patch dofs (lexicographical).
-   * Each element of the array is a unique patch index and the array is
-   * lexicographically ordered as follows:
-   *    local_cell_dof < cell_no
-   */
-  std::vector<unsigned int> cell_to_patch_indices;
+  // /**
+  //  * A bijective map between local cell dofs (lexicographical) for
+  //  * each cell within a patch and the local patch dofs (lexicographical).
+  //  * Each element of the array is a unique patch index and the array is
+  //  * lexicographically ordered as follows:
+  //  *    local_cell_dof < cell_no
+  //  */
+  // std::vector<unsigned int> cell_to_patch_indices;
 
   /**
    * A flag activating compressed mode. Then, the first global dof index of each
@@ -361,6 +383,9 @@ private:
    * The underlying SubdomainHandler object.
    */
   const SubdomainHandler<dim, Number> & subdomain_handler;
+
+  // TODO remove non-compressed mode?
+  mutable std::vector<unsigned int> cell_dof_indices_scratchpad;
 };
 
 
@@ -501,8 +526,8 @@ struct PatchTransfer<dim, Number, fe_degree>::GetIndexing
       else
         Assert(false, ExcNotImplemented());
     }
-    else
-      Assert(false, ExcNotImplemented());
+    // else
+    //   Assert(false, ExcNotImplemented());
 
     return indices;
   }
@@ -596,9 +621,9 @@ inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
     // assume isotropic patches
     cell_tensor(UniversalInfo<dim>::n_cells_per_direction(
       subdomain_handler_in.get_additional_data().patch_variant)),
-    cell_to_patch_indices(
-      std::move(GetIndexing{}(subdomain_handler_in.get_additional_data().patch_variant,
-                              dof_layout == DoFLayout::DGQ))),
+    // cell_to_patch_indices(
+    //   std::move(GetIndexing{}(subdomain_handler_in.get_additional_data().patch_variant,
+    //                           dof_layout == DoFLayout::DGQ))),
     compressed(subdomain_handler_in.get_additional_data().compressed),
     dofh_index(dofh_index_in),
     patch_id(numbers::invalid_unsigned_int),
@@ -606,8 +631,8 @@ inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
     patch_worker(subdomain_handler_in.get_patch_info()),
     subdomain_handler(subdomain_handler_in)
 {
-  AssertThrow(!cell_to_patch_indices.empty(),
-              ExcMessage("The cell to patch index map is uninitialized!"));
+  // AssertThrow(!cell_to_patch_indices.empty(),
+  //             ExcMessage("The cell to patch index map is uninitialized!"));
   AssertThrow(dof_layout != DoFLayout::invalid, ExcMessage("The finite element is not supported."));
   if(!compressed)
     AssertThrow(dof_layout == DoFLayout::DGQ,
@@ -616,10 +641,9 @@ inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
               ExcMessage("Only isotropic elements supported."));
   empty_constraints.close();
 
-  // std::cout << patch_dof_tensor.dof_index_1d(0,0,0) << std::endl;
-  // std::cout << patch_dof_tensor.uni_index(std::array<unsigned int, dim>{}) << std::endl;
-  for(auto d = 0U; d < dim; ++d)
-    std::cout << patch_dof_tensor.n[d] << " n_dofs per direction " << d << std::endl;
+  // DEBUG
+  // dof_index_shifts_q_impl();
+  // patch_worker.get_at_boundary_masks(0);
 }
 
 
@@ -634,6 +658,13 @@ PatchTransfer<dim, Number, fe_degree>::reinit(const unsigned int patch)
   {
     fill_global_dof_indices(patch_id);
     AssertDimension(global_dof_indices.size(), n_dofs_per_patch());
+    // for(auto lane = 0U; lane < macro_size; ++lane)
+    // {
+    //   std::cout << "lane: " << lane << " ";
+    //   for(const auto & dof : global_dof_indices)
+    //     std::cout << dof[lane];
+    //   std::cout << std::endl;
+    // }
   }
 }
 
@@ -649,11 +680,12 @@ PatchTransfer<dim, Number, fe_degree>::reinit_local_vector(
 }
 
 
+// TODO
 template<int dim, typename Number, int fe_degree>
 inline unsigned int
 PatchTransfer<dim, Number, fe_degree>::n_dofs_per_patch() const
 {
-  return cell_to_patch_indices.size();
+  return patch_dof_tensor.n_flat();
 }
 
 
@@ -661,9 +693,17 @@ template<int dim, typename Number, int fe_degree>
 inline ArrayView<const unsigned int>
 PatchTransfer<dim, Number, fe_degree>::patch_dof_indices_on_cell(const unsigned int cell_no) const
 {
-  const auto begin = cell_to_patch_indices.data() + cell_no * n_dofs_per_cell;
-  AssertIndexRange((cell_no + 1) * n_dofs_per_cell, cell_to_patch_indices.size() + 1);
-  return ArrayView<const unsigned>(begin, n_dofs_per_cell);
+  // const auto begin = cell_to_patch_indices.data() + cell_no * n_dofs_per_cell;
+  // AssertIndexRange((cell_no + 1) * n_dofs_per_cell, cell_to_patch_indices.size() + 1);
+  // return ArrayView<const unsigned>(begin, n_dofs_per_cell);
+  const auto n_dofs_per_cell = cell_dof_tensor.n_flat();
+  cell_dof_indices_scratchpad.resize(n_dofs_per_cell);
+  for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell; ++cell_dof_index)
+  {
+    const unsigned int patch_dof_index = patch_dof_tensor.dof_index(cell_no, cell_dof_index);
+    cell_dof_indices_scratchpad[cell_dof_index] = patch_dof_index;
+  }
+  return ArrayView<const unsigned>(cell_dof_indices_scratchpad);
 }
 
 template<int dim, typename Number, int fe_degree>
@@ -689,12 +729,20 @@ PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned in
     {
       const unsigned int patch_dof_index = patch_dof_tensor.dof_index(cell_no, cell_dof_index);
       for(unsigned int lane = 0; lane < macro_size; ++lane)
+      {
+        const auto global_dof_indices_on_cell =
+          patch_worker.get_dof_indices_on_cell(patch_id, cell_no, lane);
+        // const auto global_dof_index = first_cell_dof_index[lane] + shifts[cell_dof_index];
+        // global_dof_indices_plain[patch_dof_index][lane] = global_dof_index;
         global_dof_indices_plain[patch_dof_index][lane] =
-          first_cell_dof_index[lane] + shifts[cell_dof_index];
+          global_dof_indices_on_cell[cell_dof_index];
+      }
     }
   }
 
-  if (dof_layout == DoFLayout::DGQ)
+  if(dof_layout == DoFLayout::DGQ)
+    std::swap(global_dof_indices, global_dof_indices_plain);
+  else if(dof_layout == DoFLayout::Q)
     std::swap(global_dof_indices, global_dof_indices_plain);
   else
     AssertThrow(false, ExcMessage("Finite element is not supported."));

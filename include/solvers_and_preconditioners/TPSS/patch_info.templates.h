@@ -28,7 +28,9 @@ PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
 
   /// extract first dof index for each cell iterator stored
   if(additional_data.compressed)
-    extract_dof_indices(this->internal_data);
+    extract_dof_indices(dof_handler, this->internal_data);
+  if(additional_data.compressed)
+    extract_dof_indices_(dof_handler, this->internal_data);
 
   /// check validity
   const auto n_colors_mpimin =

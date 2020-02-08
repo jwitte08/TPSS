@@ -47,7 +47,7 @@ protected:
     const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
     pcout                    = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
     rt_parameters.mesh.n_subdivisions.resize(dim, 1);
-    rt_parameters.mesh.n_subdivisions.at(0) = 2;
+    rt_parameters.mesh.n_subdivisions.at(0) = 3;
     rt_parameters.mesh.geometry_variant     = MeshParameter::GeometryVariant::CuboidSubdivided;
   }
 
