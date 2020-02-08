@@ -17,25 +17,6 @@ using namespace dealii;
 
 namespace TPSS
 {
-enum class DoFLayout
-{
-  invalid,
-  DGQ,
-  Q
-};
-
-template<int dim>
-DoFLayout
-get_dof_layout(const FiniteElement<dim> & finite_element)
-{
-  auto dof_layout = DoFLayout::invalid;
-  if(finite_element.get_name().find("FE_DGQ") != std::string::npos)
-    dof_layout = DoFLayout::DGQ;
-  else if(finite_element.get_name().find("FE_Q") != std::string::npos)
-    dof_layout = DoFLayout::Q;
-  return dof_layout;
-}
-
 // TODO could be constexpr
 template<int order>
 struct TensorHelper
@@ -724,7 +705,7 @@ PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned in
   const auto   n_dofs_per_cell = cell_dof_tensor.n_flat();
   for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
   {
-    const auto first_cell_dof_index = first_dof_index_per_cell[cell_no];
+    // const auto first_cell_dof_index = first_dof_index_per_cell[cell_no];
     for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell; ++cell_dof_index)
     {
       const unsigned int patch_dof_index = patch_dof_tensor.dof_index(cell_no, cell_dof_index);

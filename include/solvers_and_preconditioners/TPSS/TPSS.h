@@ -12,6 +12,25 @@
 
 namespace TPSS
 {
+enum class DoFLayout
+{
+  invalid,
+  DGQ,
+  Q
+};
+
+template<int dim>
+DoFLayout
+get_dof_layout(const FiniteElement<dim> & finite_element)
+{
+  auto dof_layout = DoFLayout::invalid;
+  if(finite_element.get_name().find("FE_DGQ") != std::string::npos)
+    dof_layout = DoFLayout::DGQ;
+  else if(finite_element.get_name().find("FE_Q") != std::string::npos)
+    dof_layout = DoFLayout::Q;
+  return dof_layout;
+}
+
 // *** ENUM: Patch Variant
 enum class PatchVariant
 {
