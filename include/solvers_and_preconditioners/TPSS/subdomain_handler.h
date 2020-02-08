@@ -70,6 +70,9 @@ public:
   const dealii::DoFHandler<dim> &
   get_dof_handler(const unsigned int dofh_index = 0) const;
 
+  TPSS::DoFLayout
+  get_dof_layout(const unsigned int dofh_index = 0) const;
+
   const dealii::Quadrature<1> &
   get_quadrature(int dimension = 0) const;
 
@@ -154,8 +157,9 @@ private:
   initialize_vector_partitioner(const TPSS::PatchWorker<dim, number> & patch_worker) const;
 
   const dealii::MatrixFree<dim, number> *                mf_storage;
-  std::shared_ptr<const dealii::MatrixFree<dim, number>> owned_mf_storage;
-  const dealii::DoFHandler<dim> *                        dof_handler;
+  std::shared_ptr<const dealii::MatrixFree<dim, number>> mf_storage_owned;
+  std::vector<unsigned int>                              dofh_indices;
+  std::vector<const dealii::DoFHandler<dim> *>           dof_handlers;
 
   TPSS::PatchInfo<dim>                                            patch_info;
   TPSS::MatrixFreeConnect<dim, number>                            mf_connect;
@@ -198,8 +202,9 @@ inline void
 SubdomainHandler<dim, number>::clear()
 {
   mf_storage = nullptr;
-  owned_mf_storage.reset();
-  dof_handler = nullptr;
+  mf_storage_owned.reset();
+  dofh_indices.clear();
+  dof_handlers.clear();
 
   patch_info.clear();
   mf_connect = TPSS::MatrixFreeConnect<dim, number>{};
@@ -241,8 +246,17 @@ template<int dim, typename number>
 inline const dealii::DoFHandler<dim> &
 SubdomainHandler<dim, number>::get_dof_handler(const unsigned int dofh_index) const
 {
-  Assert(dof_handler != nullptr, dealii::ExcNotInitialized());
-  return *dof_handler;
+  AssertIndexRange(dofh_index, dofh_indices.size());
+  const auto unique_dofh_index = dofh_indices[dofh_index];
+  return *(dof_handlers[unique_dofh_index]);
+}
+
+template<int dim, typename number>
+inline TPSS::DoFLayout
+SubdomainHandler<dim, number>::get_dof_layout(const unsigned int dofh_index) const
+{
+  const auto & dof_handler = get_dof_handler(dofh_index);
+  return TPSS::get_dof_layout(dof_handler.get_fe());
 }
 
 template<int dim, typename number>
@@ -281,7 +295,7 @@ template<int dim, typename number>
 inline const dealii::MatrixFree<dim, number> &
 SubdomainHandler<dim, number>::get_matrix_free() const
 {
-  return *(mf_connect.mf_storage);
+  return *mf_storage;
 }
 
 template<int dim, typename number>

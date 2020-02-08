@@ -8,8 +8,8 @@ SubdomainHandler<dim, number>::reinit(
   clear();
 
   // *** submit the input (take ownership of matrix-free storage)
-  owned_mf_storage = mf_storage_in;
-  mf_storage       = owned_mf_storage.get();
+  mf_storage_owned = mf_storage_in;
+  mf_storage       = mf_storage_owned.get();
   additional_data  = additional_data_in;
 
   internal_reinit();
@@ -38,23 +38,56 @@ SubdomainHandler<dim, number>::internal_reinit()
   Assert(additional_data.patch_variant != TPSS::PatchVariant::invalid, ExcInvalidState());
   Assert(additional_data.smoother_variant != TPSS::SmootherVariant::invalid, ExcInvalidState());
 
-  // *** set internal data
-  mf_connect.mf_storage   = mf_storage;
-  dof_handler             = &(mf_storage->get_dof_handler());
+  // *** initialize internal data
+  mf_connect.mf_storage = mf_storage;
+  for(auto i = 0U; i < mf_storage->n_components(); ++i)
+  {
+    const auto   dof_handler    = &(mf_storage->get_dof_handler(i));
+    const auto & finite_element = dof_handler->get_fe();
+    Assert(mf_storage->is_supported(finite_element), ExcMessage("Finite element not supported."));
+    AssertDimension(Utilities::fixed_power<dim>(finite_element.tensor_degree() + 1),
+                    finite_element.n_dofs_per_cell());
+    AssertIndexRange(additional_data.level, dof_handler->get_triangulation().n_global_levels());
+    AssertDimension(finite_element.n_base_elements(), 1);
+    dof_handlers.push_back(dof_handler);
+  }
+  {
+    std::reverse(dof_handlers.begin(), dof_handlers.end());
+    std::vector<const dealii::DoFHandler<dim> *> unique_dof_handlers;
+    unique_dof_handlers.push_back(dof_handlers.back());
+    dof_handlers.pop_back();
+    dofh_indices.push_back(0);
+    for(const auto dofh : dof_handlers)
+    {
+      const auto         it         = std::find_if(unique_dof_handlers.begin(),
+                                   unique_dof_handlers.end(),
+                                   [&](const auto unique_dofh) {
+                                     return dofh->get_fe() == unique_dofh->get_fe();
+                                   });
+      const unsigned int dofh_index = std::distance(unique_dof_handlers.begin(), it);
+      if(dofh_index < unique_dof_handlers.size()) // dofh is not unique
+      {
+        dofh_indices.push_back(dofh_index);
+      }
+      else // dofh is unique
+      {
+        dofh_indices.push_back(dofh_index);
+        unique_dof_handlers.push_back(dofh);
+      }
+    }
+    AssertDimension(dof_handlers.size() + 1, dofh_indices.size());
+    dof_handlers = unique_dof_handlers;
+  }
+
+  // std::cout << "n_dof_handlers: " << dofh_indices.size() << std::endl;
+  // std::cout << "n_dof_handlers (unique): " << dof_handlers.size() << std::endl;
+
+  // TODO
   const auto & shape_info = mf_storage->get_shape_info();
   for(int d = 0; d < dim; ++d)
     quadrature_storage.emplace_back(shape_info.quadrature);
 
-  // *** requirements: tensor product elements, ...
-  Assert(mf_storage->is_supported(dof_handler->get_fe()), ExcNotImplemented());
-  AssertDimension(Utilities::fixed_power<dim>(dof_handler->get_fe().tensor_degree() + 1),
-                  dof_handler->get_fe().n_dofs_per_cell());
-
-  const auto level = additional_data.level;
-  (void)level;
-  AssertIndexRange(level, dof_handler->get_triangulation().n_global_levels());
-
-  // *** gather patches (in vectorization batches) & colorize them
+  // *** gather patches as vectorized batches and colorize them
   typename TPSS::PatchInfo<dim>::AdditionalData patch_info_data;
   patch_info_data.patch_variant         = additional_data.patch_variant;
   patch_info_data.smoother_variant      = additional_data.smoother_variant;
@@ -63,10 +96,9 @@ SubdomainHandler<dim, number>::internal_reinit()
   patch_info_data.manual_gathering_func = additional_data.manual_gathering_func;
   patch_info_data.compressed            = additional_data.compressed;
   patch_info_data.print_details         = additional_data.print_details;
-  patch_info.initialize(dof_handler, patch_info_data);
+  patch_info.initialize(dof_handlers.front(), patch_info_data);
   for(const auto & info : patch_info.time_data)
     time_data.emplace_back(info.time, info.description, info.unit);
-
   // *** constructor partitions patches with respect to vectorization
   TPSS::PatchWorker<dim, number> patch_worker{patch_info};
 
@@ -112,7 +144,7 @@ SubdomainHandler<dim, number>::initialize_vector_partitioner(
     partitioner = get_matrix_free().get_vector_partitioner();
   else
   {
-    const IndexSet owned_indices = std::move(dof_handler->locally_owned_mg_dofs(level));
+    const IndexSet owned_indices = std::move(dof_handlers.front()->locally_owned_mg_dofs(level));
 
     // Note: For certain meshes (in particular in 3D and with many
     // processors), it is really necessary to cache intermediate data. After
@@ -155,7 +187,7 @@ SubdomainHandler<dim, number>::initialize_vector_partitioner(
     ghost_indices.add_indices(dofs_on_ghosts.begin(), end_without_duplicates);
     ghost_indices.compress();
     IndexSet larger_ghost_indices(owned_indices.size());
-    DoFTools::extract_locally_relevant_level_dofs(*dof_handler, level, larger_ghost_indices);
+    DoFTools::extract_locally_relevant_level_dofs(get_dof_handler(0), level, larger_ghost_indices);
     larger_ghost_indices.subtract_set(owned_indices);
 
     const auto tmp_partitioner =
@@ -213,7 +245,7 @@ SubdomainHandler<dim, number>::guess_grain_size(const unsigned int n_subdomain_b
     // increase the grain size
     //    const unsigned int minimum_parallel_grain_size = 400; //Martin:200 // J:?
     const unsigned int minimum_parallel_grain_size = 200; // Martin:200 // J:?
-    const unsigned int dofs_per_cell               = dof_handler->get_fe().dofs_per_cell;
+    const unsigned int dofs_per_cell               = get_dof_handler(0).get_fe().dofs_per_cell;
     if(dofs_per_cell * grain_size < minimum_parallel_grain_size)
       grain_size = (minimum_parallel_grain_size / dofs_per_cell + 1);
     if(dofs_per_cell * grain_size > 10000) // J:?
