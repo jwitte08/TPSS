@@ -361,6 +361,11 @@ private:
   PatchWorker<dim, Number> patch_worker;
 
   /**
+   * An interface accessing patch information given by @p subdomain_handler.
+   */
+  PatchDoFWorker<dim, Number> patch_dof_worker;
+
+  /**
    * The underlying SubdomainHandler object.
    */
   const SubdomainHandler<dim, Number> & subdomain_handler;
@@ -610,6 +615,7 @@ inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
     patch_id(numbers::invalid_unsigned_int),
     patch_dof_tensor(cell_tensor, cell_dof_tensor, dof_layout),
     patch_worker(subdomain_handler_in.get_patch_info()),
+    patch_dof_worker(subdomain_handler_in.get_dof_info(dofh_index_in)),
     subdomain_handler(subdomain_handler_in)
 {
   // AssertThrow(!cell_to_patch_indices.empty(),
@@ -694,10 +700,10 @@ PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned in
   AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
   std::vector<std::array<types::global_dof_index, macro_size>> global_dof_indices_plain(
     patch_dof_tensor.n_flat());
-  std::vector<std::array<types::global_dof_index, macro_size>> first_dof_index_per_cell =
-    patch_worker.get_dof_collection(patch_id);
+  // std::vector<std::array<types::global_dof_index, macro_size>> first_dof_index_per_cell =
+  //   patch_worker.get_dof_collection(patch_id);
   const unsigned n_cells = cell_tensor.n_flat();
-  AssertDimension(n_cells, first_dof_index_per_cell.size());
+  // AssertDimension(n_cells, first_dof_index_per_cell.size());
 
   /// Dof indices on each cell are reconstructed by means of the first dof index
   /// and these shifts
@@ -711,10 +717,10 @@ PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned in
       const unsigned int patch_dof_index = patch_dof_tensor.dof_index(cell_no, cell_dof_index);
       for(unsigned int lane = 0; lane < macro_size; ++lane)
       {
+        // const auto global_dof_indices_on_cell =
+        //   patch_worker.get_dof_indices_on_cell(patch_id, cell_no, lane);
         const auto global_dof_indices_on_cell =
-          patch_worker.get_dof_indices_on_cell(patch_id, cell_no, lane);
-        // const auto global_dof_index = first_cell_dof_index[lane] + shifts[cell_dof_index];
-        // global_dof_indices_plain[patch_dof_index][lane] = global_dof_index;
+          patch_dof_worker.get_dof_indices_on_cell(patch_id, cell_no, lane);
         global_dof_indices_plain[patch_dof_index][lane] =
           global_dof_indices_on_cell[cell_dof_index];
       }

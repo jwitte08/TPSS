@@ -2,8 +2,8 @@ namespace TPSS
 {
 template<int dim>
 void
-PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
-                           const AdditionalData            additional_data_in)
+PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
+                           const AdditionalData    additional_data_in)
 {
   clear();
   additional_data = additional_data_in;
@@ -25,6 +25,7 @@ PatchInfo<dim>::initialize(const dealii::DoFHandler<dim> * dof_handler,
   else
     AssertThrow(false, dealii::ExcNotImplemented());
   internal_data.cell_iterators.shrink_to_fit();
+  internal_data.triangulation = &(dof_handler->get_triangulation());
 
   /// extract first dof index for each cell iterator stored
   if(additional_data.compressed)
