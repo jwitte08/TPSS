@@ -175,6 +175,8 @@ protected:
   const unsigned int patch_size = 0;
 
   const MatrixFreeConnect<dim, number> * const mf_connect = nullptr;
+
+  mutable std::vector<CellIterator> cell_iterators_scratchpad;
 };
 
 
@@ -385,7 +387,7 @@ PatchWorker<dim, number>::get_cell_collection(unsigned int patch_id) const
   };
 
   std::vector<std::array<CellIterator, macro_size>> cell_collect(patch_size);
-  for(auto cell_no = 0; cell_no < cell_collect.size(); ++cell_no)
+  for(auto cell_no = 0U; cell_no < cell_collect.size(); ++cell_no)
     for(auto lane = 0U; lane < macro_size; ++lane)
     {
       const auto cell_position    = get_cell_position_filled(cell_no, lane);
@@ -402,18 +404,32 @@ PatchWorker<dim, number>::get_cell_collection_views(unsigned int patch_id) const
   Assert(patch_info != nullptr, ExcNotInitialized());
   AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
 
-  std::vector<ArrayView<const CellIterator>> views;
-  const auto & cell_iterators = patch_info->get_internal_data()->cell_iterators;
-  const auto & patch_starts   = patch_info->patch_starts;
-  const auto   begin          = cell_iterators.data() + patch_starts[patch_id];
+  const auto get_views = [&](const auto & begin) {
+    std::vector<ArrayView<const CellIterator>> views;
+    for(unsigned int m = 0; m < n_lanes_filled(patch_id); ++m)
+    {
+      const auto first = begin + m * patch_size;
+      views.emplace_back(ArrayView<const CellIterator>(first, patch_size));
+    }
+    return views;
+  };
 
-  for(unsigned int m = 0; m < n_lanes_filled(patch_id); ++m)
+  if(!patch_info->get_internal_data()->cell_iterators.empty()) // cached
   {
-    const auto first = begin + m * patch_size;
-    views.emplace_back(ArrayView<const CellIterator>(first, patch_size));
+    const auto & cell_iterators = patch_info->get_internal_data()->cell_iterators;
+    const auto & patch_starts   = patch_info->patch_starts;
+    const auto   begin          = cell_iterators.data() + patch_starts[patch_id];
+    return get_views(begin);
   }
 
-  return views;
+  cell_iterators_scratchpad.clear();
+  for(auto lane = 0U; lane < n_lanes_filled(patch_id); ++lane)
+    for(auto cell_no = 0U; cell_no < patch_size; ++cell_no)
+    {
+      const auto cell_position = get_cell_position(patch_id, cell_no, lane);
+      cell_iterators_scratchpad.emplace_back(patch_info->get_cell_iterator(cell_position));
+    }
+  return get_views(cell_iterators_scratchpad.data());
 }
 
 
@@ -527,7 +543,7 @@ PatchWorker<dim, number>::compute_partition_data(
 
   if(patch_starts)
   {
-    AssertDimension(start, internal_data->cell_iterators.size());
+    AssertDimension(start, internal_data->n_cells_plain());
     AssertDimension(patch_starts->size(), partition_data.n_subdomains());
     patch_starts->emplace_back(start); // endpoint required by n_lanes_filled()
   }

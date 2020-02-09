@@ -81,6 +81,12 @@ public:
   get_cell_level_and_index(const unsigned int cell_position) const
   {
     AssertIndexRange(cell_position, n_cells_plain());
+    if(level_and_index_is_cached)
+    {
+      AssertDimension(n_cells_plain(), get_internal_data()->cell_level_and_index_pairs.size());
+      return (get_internal_data()->cell_level_and_index_pairs)[cell_position];
+    }
+    AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
     const auto & cell = (get_internal_data()->cell_iterators)[cell_position];
     return std::make_pair<int, int>(cell->level(), cell->index());
   }
@@ -89,6 +95,11 @@ public:
   get_cell_iterator(const unsigned int cell_position) const
   {
     AssertIndexRange(cell_position, n_cells_plain());
+    if(iterator_is_cached)
+    {
+      AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
+      return (get_internal_data()->cell_iterators)[cell_position];
+    }
     const auto & tria                   = get_triangulation();
     const auto [cell_level, cell_index] = get_cell_level_and_index(cell_position);
     // // TODO we should not need dof handler here
@@ -108,7 +119,7 @@ public:
   unsigned int
   n_cells_plain() const
   {
-    return internal_data.cell_iterators.size();
+    return get_internal_data()->n_cells_plain();
   }
 
   /**
@@ -310,6 +321,9 @@ private:
    * Specific information like coloring schemes, etc.
    */
   AdditionalData additional_data;
+
+  bool iterator_is_cached        = false;
+  bool level_and_index_is_cached = false;
 };
 
 
@@ -332,8 +346,9 @@ struct PatchInfo<dim>::AdditionalData
                      const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> &
                        colored_iterators,
                      const std::string)>
-       visualize_coloring;
-  bool print_details = false; // DEBUG
+                        visualize_coloring;
+  TPSS::CachingStrategy caching_strategy = TPSS::CachingStrategy::Cached;
+  bool                  print_details    = false; // DEBUG
 };
 
 
@@ -469,6 +484,12 @@ struct PatchInfo<dim>::InternalData
 
   bool
   empty_on_all() const;
+
+  unsigned int
+  n_cells_plain() const
+  {
+    return std::max(cell_iterators.size(), cell_level_and_index_pairs.size());
+  }
 
   unsigned int level = numbers::invalid_unsigned_int;
 
@@ -705,6 +726,7 @@ PatchInfo<dim>::InternalData::clear()
   n_physical_subdomains.clear();
   n_physical_subdomains_total = SubdomainData{};
   cell_iterators.clear();
+  cell_level_and_index_pairs.clear();
   triangulation = nullptr;
   dof_handler   = nullptr;
 }
@@ -720,7 +742,7 @@ template<int dim>
 inline bool
 PatchInfo<dim>::InternalData::empty() const
 {
-  return cell_iterators.empty();
+  return cell_iterators.empty() && cell_level_and_index_pairs.empty();
 }
 
 
@@ -729,7 +751,9 @@ inline bool
 PatchInfo<dim>::InternalData::empty_on_all() const
 {
   const auto n_iterators_mpimax = Utilities::MPI::max(cell_iterators.size(), MPI_COMM_WORLD);
-  return (n_iterators_mpimax == 0);
+  const auto n_pairs_mpimax =
+    Utilities::MPI::max(cell_level_and_index_pairs.size(), MPI_COMM_WORLD);
+  return (n_iterators_mpimax == 0) && (n_pairs_mpimax);
 }
 
 

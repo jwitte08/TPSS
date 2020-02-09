@@ -91,15 +91,16 @@ PatchWorker<dim, number>::connect_to_matrixfree(MatrixFreeConnect<dim, number> &
    * For each cell iterator we store the associated macro cell (batch) and the vectorization lane
    * representing the same cell in the MatrixFree framework.
    */
-  const auto & cell_iterators   = patch_info->get_internal_data()->cell_iterators;
-  auto &       bindex_and_bcomp = mf_connect.batch_and_lane;
+  const auto n_cells_patch_info = patch_info->n_cells_plain();
+  auto &     bindex_and_bcomp   = mf_connect.batch_and_lane;
   bindex_and_bcomp.clear();
-  bindex_and_bcomp.reserve(cell_iterators.size());
-  for(const auto & cell : cell_iterators)
+  bindex_and_bcomp.reserve(n_cells_patch_info);
+  for(auto i = 0U; i < n_cells_patch_info; ++i)
   {
-    const auto cindex = cell->index();
+    const auto [cindex, dummy] = patch_info->get_cell_level_and_index(i);
+    (void)dummy;
     bindex_and_bcomp.emplace_back(cindex_to_bindex_bcomp_pair[cindex]);
   }
-  AssertDimension(bindex_and_bcomp.size(), cell_iterators.size());
+  AssertDimension(bindex_and_bcomp.size(), patch_info->n_cells_plain());
 }
 } // end namespace TPSS

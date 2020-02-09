@@ -6,7 +6,6 @@ PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
                            const AdditionalData    additional_data_in)
 {
   clear();
-  additional_data = additional_data_in;
 
   Assert(!(dof_handler->get_triangulation().has_hanging_nodes()),
          ExcMessage("Not implemented for adaptive meshes!"));
@@ -15,21 +14,44 @@ PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
   AssertIndexRange(additional_data_in.level, dof_handler->get_triangulation().n_global_levels());
 
   // *** submit additional data
+  additional_data     = additional_data_in;
   internal_data.level = additional_data.level;
 
-  // *** initialize depending on the patch variant
+  // *** extract and colorize subdomains depending on the patch variant
   if(additional_data.patch_variant == TPSS::PatchVariant::cell)
     initialize_cell_patches(dof_handler, additional_data);
   else if(additional_data.patch_variant == TPSS::PatchVariant::vertex)
     initialize_vertex_patches(dof_handler, additional_data);
   else
     AssertThrow(false, dealii::ExcNotImplemented());
-  internal_data.cell_iterators.shrink_to_fit();
+  const auto n_cells_stored_after_init = internal_data.cell_iterators.size();
+
+  // *** store internal data depending on caching strategies
   internal_data.triangulation = &(dof_handler->get_triangulation());
   // TODO we should not need to store the dof handler
   internal_data.dof_handler = dof_handler;
+  if(CachingStrategy::Cached == additional_data.caching_strategy ||
+     CachingStrategy::CellsCachedDofsFly == additional_data.caching_strategy)
+  {
+    internal_data.cell_iterators.shrink_to_fit();
+  }
+  else if(CachingStrategy::OnTheFly == additional_data.caching_strategy ||
+          CachingStrategy::CellsFlyDofsCached == additional_data.caching_strategy)
+  {
+    internal_data.cell_level_and_index_pairs.clear();
+    std::transform(internal_data.cell_iterators.cbegin(),
+                   internal_data.cell_iterators.cend(),
+                   std::back_inserter(internal_data.cell_level_and_index_pairs),
+                   [](const auto & cell) {
+                     return std::make_pair<int, int>(cell->level(), cell->index());
+                   });
+    internal_data.cell_iterators.clear();
+  }
+  iterator_is_cached        = !internal_data.cell_iterators.empty();
+  level_and_index_is_cached = !internal_data.cell_level_and_index_pairs.empty();
 
   /// check validity
+  AssertDimension(n_cells_stored_after_init, n_cells_plain());
   const auto n_colors_mpimin =
     Utilities::MPI::min(internal_data.n_physical_subdomains.size(), MPI_COMM_WORLD);
   const auto n_colors_mpimax =

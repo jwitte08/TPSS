@@ -94,6 +94,7 @@ SubdomainHandler<dim, number>::internal_reinit()
   patch_info_data.level                 = additional_data.level;
   patch_info_data.coloring_func         = additional_data.coloring_func;
   patch_info_data.manual_gathering_func = additional_data.manual_gathering_func;
+  patch_info_data.caching_strategy      = additional_data.caching_strategy;
   patch_info_data.print_details         = additional_data.print_details;
   patch_info.initialize(dof_handlers.front(), patch_info_data);
   for(const auto & info : patch_info.time_data)

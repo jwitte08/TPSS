@@ -254,7 +254,8 @@ mg_coarse_grid(nullptr)*/
     fdss_additional_data.level = level;
     if(rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring)
       fdss_additional_data.coloring_func = std::ref(red_black_coloring);
-    rt_parameters.fill_schwarz_smoother_data(fdss_additional_data, is_pre_smoother);
+    rt_parameters.template fill_schwarz_smoother_data<dim, OtherNumber>(fdss_additional_data,
+                                                                        is_pre_smoother);
 
     const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
     patch_storage->reinit(mf_storage, fdss_additional_data);
