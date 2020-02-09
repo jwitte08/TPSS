@@ -23,6 +23,7 @@
 #include <deal.II/multigrid/mg_constrained_dofs.h>
 
 #include "TPSS.h"
+#include "dof_info.h"
 #include "mapping_info.h"
 #include "patch_info.h"
 #include "solvers_and_preconditioners/TPSS/time_info.h"
