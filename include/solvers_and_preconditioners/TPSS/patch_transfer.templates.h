@@ -58,6 +58,7 @@ PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
   return dst;
 }
 
+
 template<int dim, typename Number, int fe_degree>
 template<typename VectorType>
 void
@@ -73,6 +74,7 @@ PatchTransfer<dim, Number, fe_degree>::gather_add(const ArrayView<VectorizedArra
                  [](const auto & dst, const auto & src) { return dst + src; });
 }
 
+
 template<int dim, typename Number, int fe_degree>
 template<typename VectorType>
 void
@@ -83,6 +85,7 @@ PatchTransfer<dim, Number, fe_degree>::gather_add(AlignedVector<VectorizedArray<
   const auto dst_view = make_array_view<VectorizedArray<Number>>(dst.begin(), dst.end());
   gather_add(dst_view, src);
 }
+
 
 template<int dim, typename Number, int fe_degree>
 template<typename VectorType>
@@ -127,10 +130,11 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
     AssertDimension(src.size(), global_dof_indices.size());
     auto global_dof = global_dof_indices.cbegin();
     for(auto src_value = src.cbegin(); src_value != src.cend(); ++global_dof, ++src_value)
-      for(unsigned int lane = 0; lane < patch_worker.n_lanes_filled(patch_id); ++lane)
+      for(unsigned int lane = 0; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
         dst((*global_dof)[lane]) += (*src_value)[lane];
   }
 }
+
 
 template<int dim, typename Number, int fe_degree>
 template<typename VectorType>
@@ -142,5 +146,7 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
   const auto src_view = make_array_view<const VectorizedArray<Number>>(src.begin(), src.end());
   scatter_add(dst, src_view);
 }
+
+
 
 } // end namespace TPSS

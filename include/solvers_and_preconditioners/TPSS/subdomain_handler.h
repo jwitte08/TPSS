@@ -269,8 +269,10 @@ template<int dim, typename number>
 inline TPSS::DoFLayout
 SubdomainHandler<dim, number>::get_dof_layout(const unsigned int dofh_index) const
 {
-  const auto & dof_handler = get_dof_handler(dofh_index);
-  return TPSS::get_dof_layout(dof_handler.get_fe());
+  // const auto & dof_handler = get_dof_handler(dofh_index);
+  // return TPSS::get_dof_layout(dof_handler.get_fe());
+  const auto & dof_info = get_dof_info(dofh_index);
+  return dof_info.get_dof_layout();
 }
 
 template<int dim, typename number>

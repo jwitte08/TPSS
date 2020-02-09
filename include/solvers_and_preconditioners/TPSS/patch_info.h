@@ -555,6 +555,21 @@ struct DoFInfo
     const auto & finite_element  = dof_handler->get_fe();
     const auto   n_dofs_per_cell = finite_element.n_dofs_per_cell();
 
+    // TODO !!!
+    // AssertDimension(cell_dof_tensor.n_flat(), n_dofs_per_cell);
+    // std::shared_ptr<FiniteElementData<dim>> fe_data = std::make_shared<FE_Q<dim>>(fe_degree);
+    // const auto l2h = FETools::lexicographic_to_hierarchic_numbering(*fe_data);
+    // // const auto h2l = FETools::hierarchic_to_lexicographic_numbering(*fe_data);
+    // // for (auto i = 0U; i < l2h.size(); ++i)
+    // //   {
+    // // 	std::cout << "l: " << i << " to h: " << l2h[i] << std::endl;
+    // // 	std::cout << "l: " << h2l[l2h[i]] << " to h: " << l2h[i] << std::endl;
+    // //   }
+
+    // // std::vector<unsigned int> shifts(cell_dof_tensor.n_flat());
+    // // std::iota(shifts.begin(), shifts.end(), 0U);
+    // return l2h;
+
     dof_indices.reserve(cell_iterators.size());
     std::transform(cell_iterators.cbegin(),
                    cell_iterators.cend(),
@@ -576,7 +591,7 @@ struct DoFInfo
   }
 
   DoFLayout
-  get_dof_layout()
+  get_dof_layout() const
   {
     Assert(dof_handler, ExcMessage("DoF handler not initialized."));
     return TPSS::get_dof_layout(dof_handler->get_fe());
@@ -808,15 +823,8 @@ template<int dim, typename number>
 class PatchDoFWorker : public PatchWorker<dim, number>
 {
 public:
-  using patch_worker = PatchWorker<dim, number>;
-  // static constexpr unsigned int macro_size = dealii::VectorizedArray<number>::n_array_elements;
-  // using CellIterator                       = typename PatchInfo<dim>::CellIterator;
-  // enum class RangeVariant
-  // {
-  //   all,
-  //   complete,
-  //   incomplete
-  // };
+  using patch_worker                       = PatchWorker<dim, number>;
+  static constexpr unsigned int macro_size = patch_worker::macro_size;
 
   PatchDoFWorker() = delete;
 
@@ -834,6 +842,9 @@ public:
   get_dof_indices_on_cell(const unsigned int patch_id,
                           const unsigned int cell_no,
                           const unsigned int lane) const;
+
+  std::array<ArrayView<const types::global_dof_index>, macro_size>
+  get_dof_indices_on_cell(const unsigned int patch_id, const unsigned int cell_no) const;
 
 private:
   const DoFInfo<dim> * const dof_info;
@@ -1488,8 +1499,35 @@ PatchDoFWorker<dim, number>::get_dof_indices_on_cell(const unsigned int patch_id
   ArrayView<const types::global_dof_index> view;
   const auto &                             dof_indices_on_cell = dof_indices[position];
   view.reinit(dof_indices_on_cell.data(), dof_indices_on_cell.size());
-  // return make_array_view<const types::global_dof_index>(dof_indices[position]);
   return view;
+}
+
+
+// template<int dim, typename number>
+// inline std::array<ArrayView<const types::global_dof_index>, PatchWorker<dim, number>::macro_size>
+// PatchDoFWorker<dim, number>::get_dof_indices_on_cell(const unsigned int patch_id,
+// 						     const unsigned int cell_no) const
+// {
+//   std::array<ArrayView<const types::global_dof_index>, macro_size> views;
+//   for(auto lane = 0U; lane < macro_size; ++lane)
+//     views[lane].reinit(get_dof_indices_on_cell(patch_id, cell_no, lane));
+//   return views;
+// }
+
+
+
+template<int dim, typename number>
+inline std::array<ArrayView<const types::global_dof_index>, PatchDoFWorker<dim, number>::macro_size>
+PatchDoFWorker<dim, number>::get_dof_indices_on_cell(const unsigned int patch_id,
+                                                     const unsigned int cell_no) const
+{
+  std::array<ArrayView<const types::global_dof_index>, macro_size> views;
+  for(auto lane = 0U; lane < macro_size; ++lane)
+  {
+    const auto & view = get_dof_indices_on_cell(patch_id, cell_no, lane);
+    views[lane].reinit(view.data(), view.size());
+  }
+  return views;
 }
 
 } // end namespace TPSS
