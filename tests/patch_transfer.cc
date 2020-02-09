@@ -117,15 +117,6 @@ TYPED_TEST_P(TestPatchTransferDG, CellPatch)
   Fixture::test();
 }
 
-TYPED_TEST_P(TestPatchTransferDG, CellPatchCompressed)
-{
-  using Fixture = TestPatchTransferDG<TypeParam>;
-
-  Fixture::params.n_refinements = 2U;
-  Fixture::params.compressed    = true;
-  Fixture::test();
-}
-
 TYPED_TEST_P(TestPatchTransferDG, VertexPatch)
 {
   using Fixture = TestPatchTransferDG<TypeParam>;
@@ -139,25 +130,7 @@ TYPED_TEST_P(TestPatchTransferDG, VertexPatch)
   Fixture::test();
 }
 
-TYPED_TEST_P(TestPatchTransferDG, VertexPatchCompressed)
-{
-  using Fixture = TestPatchTransferDG<TypeParam>;
-
-  // There is only one vertex patch possible such that each degree of freedom
-  // uniquely belongs to one patch
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  Fixture::params.n_refinements                = 0U;
-  Fixture::params.patch_variant                = TPSS::PatchVariant::vertex;
-  Fixture::params.compressed                   = true;
-  Fixture::test();
-}
-
-REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferDG,
-                            CellPatch,
-                            CellPatchCompressed,
-                            VertexPatch,
-                            VertexPatchCompressed);
+REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferDG, CellPatch, VertexPatch);
 
 using TestParamsLinear2D = testing::Types<Util::NonTypeParams<2, 1>>;
 using TestParamsHigherOrder2D =
@@ -287,15 +260,6 @@ TYPED_TEST_P(TestPatchTransferBlockDG, CellPatch)
   Fixture::test();
 }
 
-TYPED_TEST_P(TestPatchTransferBlockDG, CellPatchCompressed)
-{
-  using Fixture = TestPatchTransferBlockDG<TypeParam>;
-
-  Fixture::params.n_refinements = 2U;
-  Fixture::params.compressed    = true;
-  Fixture::test();
-}
-
 TYPED_TEST_P(TestPatchTransferBlockDG, VertexPatch)
 {
   using Fixture = TestPatchTransferBlockDG<TypeParam>;
@@ -309,25 +273,7 @@ TYPED_TEST_P(TestPatchTransferBlockDG, VertexPatch)
   Fixture::test();
 }
 
-TYPED_TEST_P(TestPatchTransferBlockDG, VertexPatchCompressed)
-{
-  using Fixture = TestPatchTransferBlockDG<TypeParam>;
-
-  // There is only one vertex patch possible such that each degree of freedom
-  // uniquely belongs to one patch
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  Fixture::params.n_refinements                = 0U;
-  Fixture::params.patch_variant                = TPSS::PatchVariant::vertex;
-  Fixture::params.compressed                   = true;
-  Fixture::test();
-}
-
-REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferBlockDG,
-                            CellPatch,
-                            VertexPatch,
-                            CellPatchCompressed,
-                            VertexPatchCompressed);
+REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferBlockDG, CellPatch, VertexPatch);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferBlockDG, TestParamsLinear2D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferBlockDG, TestParamsHigherOrder2D);
