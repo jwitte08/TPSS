@@ -149,4 +149,64 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
 
 
 
+// -----------------------------   PatchTransferBlock   ----------------------------
+
+
+
+template<int dim, typename Number, int fe_degree>
+AlignedVector<VectorizedArray<Number>>
+
+PatchTransferBlock<dim, Number, fe_degree>::gather(const BlockVectorType & src) const
+{
+  AlignedVector<VectorizedArray<Number>> dst;
+  reinit_local_vector(dst);
+  auto begin = dst.begin();
+  for(std::size_t b = 0; b < n_components; ++b)
+  {
+    const auto                         transfer = transfers[b];
+    const auto                         size     = transfer->n_dofs_per_patch();
+    ArrayView<VectorizedArray<Number>> dst_block{begin, size};
+    transfer->gather_add(dst_block, src.block(b));
+    begin += size;
+  }
+  AssertThrow(begin == dst.end(), ExcMessage("Inconsistent slicing."));
+  return dst;
+}
+
+
+template<int dim, typename Number, int fe_degree>
+void
+PatchTransferBlock<dim, Number, fe_degree>::gather_add(AlignedVector<VectorizedArray<Number>> & dst,
+                                                       const BlockVectorType & src) const
+{
+  AssertDimension(dst.size(), n_dofs_per_patch());
+  const auto & src_local = gather(src);
+  std::transform(dst.begin(),
+                 dst.end(),
+                 src_local.begin(),
+                 dst.begin(),
+                 [](const auto & dst, const auto & src) { return dst + src; });
+}
+
+
+template<int dim, typename Number, int fe_degree>
+void
+PatchTransferBlock<dim, Number, fe_degree>::scatter_add(
+  BlockVectorType &                              dst,
+  const AlignedVector<VectorizedArray<Number>> & src) const
+{
+  auto begin = src.begin();
+  for(std::size_t b = 0; b < n_components; ++b)
+  {
+    const auto                               transfer = transfers[b];
+    const auto                               size     = transfer->n_dofs_per_patch();
+    ArrayView<const VectorizedArray<Number>> src_block{begin, size};
+    transfer->scatter_add(dst.block(b), src_block);
+    begin += size;
+  }
+  AssertThrow(begin == src.end(), ExcMessage("Inconsistent slicing."));
+}
+
+
+
 } // end namespace TPSS

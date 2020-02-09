@@ -253,7 +253,15 @@ private:
 
 
 /**
- * TODO description
+ * Transfer of patch relevant dof values for block vectors. Transfers for a
+ * fixed block are provided by PatchTransfer object of appropriate component @p
+ * dofh_index.
+ *
+ * Currently, each block has to be subject to a scalar-valued finite element (in
+ * deal.II speak number of base elements equals one).
+ *
+ * TODO class has not been tested on blocks associated to different
+ * scalar-valued finite elements.
  */
 template<int dim, typename Number, int fe_degree>
 class PatchTransferBlock
@@ -270,95 +278,38 @@ public:
   PatchTransferBlock &
   operator=(const PatchTransferBlock & other) = delete;
 
-  /**
-   * Return the number of DoFs per patch accumulated over all components.
-   */
-  unsigned int
-  n_dofs_per_patch() const
-  {
-    const unsigned int n_dofs_total = std::accumulate(transfers.begin(),
-                                                      transfers.end(),
-                                                      0,
-                                                      [](const auto sum, const auto & transfer) {
-                                                        return sum + transfer->n_dofs_per_patch();
-                                                      });
-    return n_dofs_total;
-  }
-
-  /**
-   * Reinitialize information of the (macro) patch with unique id @p patch.
-   */
   void
-  reinit(const unsigned int patch_id)
-  {
-    this->patch_id = patch_id;
-    for(auto transfer : transfers)
-      transfer->reinit(patch_id);
-  }
-
-  /**
-   * Set the size of a patch local vector @p vec with flattened block-structure.
-   */
-  void
-  reinit_local_vector(AlignedVector<VectorizedArray<Number>> & vec) const
-  {
-    Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
-    vec.resize(n_dofs_per_patch());
-  }
+  reinit(const unsigned int patch_id);
 
   /**
    * Extract from the global dof values @p src the patch relevant dof values and return them.
    */
   AlignedVector<VectorizedArray<Number>>
-  gather(const BlockVectorType & src) const
-  {
-    AlignedVector<VectorizedArray<Number>> dst;
-    reinit_local_vector(dst);
-    auto begin = dst.begin();
-    for(std::size_t b = 0; b < n_components; ++b)
-    {
-      const auto                         transfer = transfers[b];
-      const auto                         size     = transfer->n_dofs_per_patch();
-      ArrayView<VectorizedArray<Number>> dst_block{begin, size};
-      transfer->gather_add(dst_block, src.block(b));
-      begin += size;
-    }
-    AssertThrow(begin == dst.end(), ExcMessage("Inconsistent slicing."));
-    return dst;
-  }
+  gather(const BlockVectorType & src) const;
 
   /**
    * Same as above, but the global dof values @p dst are added to @p src.
    */
   void
-  gather_add(AlignedVector<VectorizedArray<Number>> & dst, const BlockVectorType & src) const
-  {
-    AssertDimension(dst.size(), n_dofs_per_patch());
-    const auto & src_local = gather(src);
-    std::transform(dst.begin(),
-                   dst.end(),
-                   src_local.begin(),
-                   dst.begin(),
-                   [](const auto & dst, const auto & src) { return dst + src; });
-  }
+  gather_add(AlignedVector<VectorizedArray<Number>> & dst, const BlockVectorType & src) const;
+
+  /**
+   * Return the number of DoFs per patch accumulated over all components.
+   */
+  unsigned int
+  n_dofs_per_patch() const;
+
+  /**
+   * Set the size of a patch local vector @p vec with flattened block-structure.
+   */
+  void
+  reinit_local_vector(AlignedVector<VectorizedArray<Number>> & vec) const;
 
   /**
    * Add patch intern dof values @o src to the global dof values @p dst.
    */
   void
-  scatter_add(BlockVectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const
-  {
-    auto begin = src.begin();
-    for(std::size_t b = 0; b < n_components; ++b)
-    {
-      const auto                               transfer = transfers[b];
-      const auto                               size     = transfer->n_dofs_per_patch();
-      ArrayView<const VectorizedArray<Number>> src_block{begin, size};
-      transfer->scatter_add(dst.block(b), src_block);
-      begin += size;
-    }
-    AssertThrow(begin == src.end(), ExcMessage("Inconsistent slicing."));
-  }
+  scatter_add(BlockVectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const;
 
 private:
   using transfer_type = PatchTransfer<dim, Number, fe_degree>;
@@ -706,6 +657,40 @@ inline PatchTransferBlock<dim, Number, fe_degree>::PatchTransferBlock(
   transfers.resize(n_components);
   for(unsigned int dofh_index = 0; dofh_index < n_components; ++dofh_index)
     transfers[dofh_index] = std::make_shared<transfer_type>(subdomain_handler_in, dofh_index);
+}
+
+
+template<int dim, typename Number, int fe_degree>
+inline void
+PatchTransferBlock<dim, Number, fe_degree>::reinit(const unsigned int patch_id)
+{
+  this->patch_id = patch_id;
+  for(auto transfer : transfers)
+    transfer->reinit(patch_id);
+}
+
+
+template<int dim, typename Number, int fe_degree>
+inline unsigned int
+PatchTransferBlock<dim, Number, fe_degree>::n_dofs_per_patch() const
+{
+  const unsigned int n_dofs_total = std::accumulate(transfers.begin(),
+                                                    transfers.end(),
+                                                    0,
+                                                    [](const auto sum, const auto & transfer) {
+                                                      return sum + transfer->n_dofs_per_patch();
+                                                    });
+  return n_dofs_total;
+}
+
+
+template<int dim, typename Number, int fe_degree>
+inline void
+PatchTransferBlock<dim, Number, fe_degree>::reinit_local_vector(
+  AlignedVector<VectorizedArray<Number>> & vec) const
+{
+  Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
+  vec.resize(n_dofs_per_patch());
 }
 
 
