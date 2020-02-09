@@ -34,6 +34,7 @@ using namespace dealii;
 //   }
 // };
 
+
 namespace Tensors
 {
 template<int order, typename IntType = unsigned int>
@@ -48,6 +49,7 @@ multiindex_to_string(const std::array<IntType, order> multiindex)
   osstream << multiindex.back() << ")";
   return osstream.str();
 }
+
 
 /*
  * transforms an (anisotropic) multi-index into the canonical uni-index with
@@ -78,6 +80,7 @@ multi_to_uniindex(const std::array<IntType, order> & multiindex,
   return uniindex;
 }
 
+
 /*
  * transforms an (isotropic) multi-index into the canonical uni-index with
  * respect to lexicographical order. That is the first index of the multi-index
@@ -94,6 +97,7 @@ multi_to_uniindex(const std::array<IntType, order> & multiindex, const IntType s
   sizes.fill(size);
   return multi_to_uniindex<order>(multiindex, sizes);
 }
+
 
 /*
  * transforms an uni-index into the canonical (anisotropic) multi-index with
@@ -123,6 +127,7 @@ uni_to_multiindex(IntType index, const std::array<IntType, order> & sizes)
   return multiindex;
 }
 
+
 /*
  * transforms an uni-index into the canonical (isotropic) multi-index with
  * respect to lexicographical order. That is the first index of the multi-index
@@ -139,6 +144,7 @@ uni_to_multiindex(IntType index, const IntType size)
   sizes.fill(size);
   return uni_to_multiindex<order>(index, sizes);
 }
+
 
 /*
  * returns the fibre of (uni)-indices of an @p order -order (isotropic)
@@ -172,6 +178,49 @@ index_fibre(const std::array<IntType, order - 1> index, const int mode, const In
   }
   return fibre;
 }
+
+
+// TODO could be constexpr?
+template<int order, typename IntType = unsigned int>
+struct TensorHelper
+{
+  TensorHelper(const std::array<IntType, order> & sizes) : n(sizes)
+  {
+  }
+
+  TensorHelper(const IntType size)
+    : n([size]() {
+        std::array<IntType, order> sizes;
+        sizes.fill(size);
+        return sizes;
+      }())
+  {
+  }
+
+  std::array<IntType, order>
+  multi_index(const IntType index) const
+  {
+    return Tensors::uni_to_multiindex<order, IntType>(index, n);
+  }
+
+  IntType
+  uni_index(const std::array<IntType, order> & multi_index) const
+  {
+    return Tensors::multi_to_uniindex<order, IntType>(multi_index, n);
+  }
+
+  IntType
+  n_flat() const
+  {
+    return std::accumulate(n.cbegin(),
+                           n.cend(),
+                           static_cast<IntType>(1),
+                           std::multiplies<IntType>());
+  }
+
+  const std::array<IntType, order> n;
+};
+
 
 /**
  * Converts a matrix into a two dimensional table. MatrixType has to fulfill
