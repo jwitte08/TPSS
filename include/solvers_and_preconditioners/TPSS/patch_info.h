@@ -5,8 +5,6 @@
 #include <deal.II/base/graph_coloring.h>
 #include <deal.II/base/timer.h>
 #include <deal.II/base/utilities.h>
-#include <deal.II/dofs/dof_accessor.h>
-#include <deal.II/fe/fe_tools.h>
 #include <deal.II/grid/filtered_iterator.h>
 #include <deal.II/grid/grid_out.h>
 #include <deal.II/matrix_free/matrix_free.h>
@@ -154,61 +152,6 @@ private:
                       });
   }
 
-  void
-  extract_dof_indices_(const DoFHandler<dim> * dof_handler, InternalData & internal_data)
-  {
-    Assert(internal_data.level != numbers::invalid_unsigned_int,
-           ExcMessage("Handles level cells only."));
-
-    const auto & cell_iterators = internal_data.cell_iterators;
-    auto &       dof_indices    = internal_data.dof_indices_new;
-    dof_indices.clear();
-    dof_indices.reserve(cell_iterators.size());
-    const auto & finite_element  = dof_handler->get_fe();
-    const auto   n_dofs_per_cell = finite_element.n_dofs_per_cell();
-
-    std::transform(cell_iterators.cbegin(),
-                   cell_iterators.cend(),
-                   std::back_inserter(dof_indices),
-                   [&](const auto & cell) {
-                     std::vector<types::global_dof_index> level_dof_indices(n_dofs_per_cell);
-                     cell->get_mg_dof_indices(level_dof_indices);
-                     return level_dof_indices;
-                   });
-
-    dof_indices.shrink_to_fit();
-  }
-
-  void
-  extract_dof_indices(const DoFHandler<dim> * dof_handler, InternalData & internal_data)
-  {
-    Assert(internal_data.level != numbers::invalid_unsigned_int,
-           ExcMessage("Handles level cells only."));
-    const auto & cell_iterators    = internal_data.cell_iterators;
-    auto &       first_dof_indices = internal_data.dof_indices;
-    first_dof_indices.clear();
-    first_dof_indices.reserve(cell_iterators.size());
-    const auto &                         finite_element = dof_handler->get_fe();
-    std::vector<types::global_dof_index> level_dof_indices(finite_element.n_dofs_per_cell());
-    for(const auto & cell : cell_iterators)
-    {
-      cell->get_mg_dof_indices(level_dof_indices);
-      first_dof_indices.emplace_back(level_dof_indices[0]);
-      // // DEBUG
-      // std::vector<types::global_dof_index> level_dof_indices_l(finite_element.n_dofs_per_cell());
-      // const auto l2h = FETools::lexicographic_to_hierarchic_numbering(finite_element);
-      // std::transform(l2h.begin(), l2h.end(), level_dof_indices_l.begin(), [&](const auto h) {
-      //   return level_dof_indices[h];
-      // });
-      // std::cout << "level: " << internal_data.level;
-      // std::cout << " cell: " << cell->index() << " " << vector_to_string(level_dof_indices)
-      //           << std::endl;
-      // std::cout << vector_to_string(level_dof_indices_l) << std::endl;
-    }
-    AssertDimension(first_dof_indices.size(), cell_iterators.size());
-    first_dof_indices.shrink_to_fit();
-  }
-
   static std::vector<types::global_dof_index>
   get_face_conflicts(const PatchIterator & patch)
   {
@@ -252,17 +195,10 @@ private:
   initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_handler,
                             const AdditionalData            additional_data);
 
-  // TODO access by public method
-  std::vector<std::pair<unsigned int, unsigned int>>
-  reorder_colors(const std::vector<
-                 std::vector<typename std::vector<std::vector<CellIterator>>::const_iterator>> &
-                   colored_cells) const;
-
-  // TODO access by public print function
-  void
-  write_visual_data(
-    const dealii::DoFHandler<dim> &                            dof_handler,
-    const std::vector<std::pair<unsigned int, unsigned int>> & reordered_colors) const;
+  // void
+  // write_visual_data(
+  //   const dealii::DoFHandler<dim> &                            dof_handler,
+  //   const std::vector<std::pair<unsigned int, unsigned int>> & reordered_colors) const;
 
   template<int regular_size>
   void
@@ -534,16 +470,6 @@ struct PatchInfo<dim>::InternalData
    */
   SubdomainData n_physical_subdomains_total;
 
-  /*
-   * Array storing for each cell in @p cell_iterators the first dof index.
-   */
-  std::vector<types::global_dof_index> dof_indices;
-
-  /*
-   * Array storing for each cell in @p cell_iterators the first dof index.
-   */
-  std::vector<std::vector<types::global_dof_index>> dof_indices_new;
-
   /**
    * Underlying triangulation cell iterators are based on.
    */
@@ -610,8 +536,6 @@ public:
 
   PatchWorker(const PatchInfo<dim> & patch_info);
 
-  // PatchWorker(const PatchInfo<dim> & patch_info, const DoFInfo<dim> & dof_info);
-
   PatchWorker(const PatchInfo<dim> & patch_info, const MatrixFreeConnect<dim, number> & mf_connect);
 
   PatchWorker(const PatchWorker &) = delete;
@@ -667,14 +591,6 @@ public:
     AssertIndexRange(lane, n_lanes_filled(patch_id));
     return patch_info->patch_starts[patch_id] + lane * patch_size + cell_no;
   }
-
-  std::vector<std::array<types::global_dof_index, macro_size>>
-  get_dof_collection(unsigned int patch_id) const;
-
-  ArrayView<const types::global_dof_index>
-  get_dof_indices_on_cell(const unsigned int patch_id,
-                          const unsigned int cell_no,
-                          const unsigned int lane) const;
 
   const typename PatchInfo<dim>::PartitionData &
   get_partition_data() const;
@@ -751,8 +667,6 @@ protected:
   const unsigned int patch_size = 0;
 
   const MatrixFreeConnect<dim, number> * const mf_connect = nullptr;
-
-  std::vector<types::global_dof_index> dof_indices_scratchpad;
 };
 
 
@@ -1187,58 +1101,6 @@ PatchWorker<dim, number>::get_cell_collection_views(unsigned int patch_id) const
   }
 
   return views;
-}
-
-
-template<int dim, typename number>
-inline ArrayView<const types::global_dof_index>
-PatchWorker<dim, number>::get_dof_indices_on_cell(const unsigned int patch_id,
-                                                  const unsigned int cell_no,
-                                                  const unsigned int lane) const
-{
-  const unsigned int n_lanes_filled = this->n_lanes_filled(patch_id);
-  const unsigned int position       = [&]() {
-    AssertIndexRange(lane, macro_size);
-    if(lane < n_lanes_filled)
-      return get_cell_position(patch_id, cell_no, lane);
-    else
-      return get_cell_position(patch_id, cell_no, 0);
-  }();
-  const auto & dof_indices = patch_info->get_internal_data()->dof_indices_new;
-  ArrayView<const types::global_dof_index> view;
-  const auto &                             dof_indices_on_cell = dof_indices[position];
-  view.reinit(dof_indices_on_cell.data(), dof_indices_on_cell.size());
-  // return make_array_view<const types::global_dof_index>(dof_indices[position]);
-  return view;
-}
-
-
-template<int dim, typename number>
-inline std::vector<std::array<types::global_dof_index, PatchWorker<dim, number>::macro_size>>
-PatchWorker<dim, number>::get_dof_collection(unsigned int patch_id) const
-{
-  Assert(patch_info != nullptr, ExcNotInitialized());
-  AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
-
-  std::vector<std::array<types::global_dof_index, macro_size>> collection;
-  const auto & dof_indices  = patch_info->get_internal_data()->dof_indices;
-  const auto & patch_starts = patch_info->patch_starts;
-  const auto   begin        = dof_indices.data() + patch_starts[patch_id];
-
-  collection.resize(patch_size);
-  const unsigned int n_lanes_filled = this->n_lanes_filled(patch_id);
-  for(unsigned int m = 0; m < n_lanes_filled; ++m)
-  {
-    auto dof = begin + m * patch_size;
-    for(auto macro_dof = collection.begin(); macro_dof != collection.end(); ++macro_dof, ++dof)
-      (*macro_dof)[m] = *dof;
-  }
-  //: fill non-physical lanes by mirroring dofs of first lane
-  for(unsigned int m = n_lanes_filled; m < macro_size; ++m)
-    for(auto & macro_dof : collection)
-      macro_dof[m] = macro_dof[0];
-
-  return collection;
 }
 
 

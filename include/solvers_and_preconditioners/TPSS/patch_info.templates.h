@@ -27,12 +27,6 @@ PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
   internal_data.cell_iterators.shrink_to_fit();
   internal_data.triangulation = &(dof_handler->get_triangulation());
 
-  /// extract first dof index for each cell iterator stored
-  if(additional_data.compressed)
-    extract_dof_indices(dof_handler, this->internal_data);
-  if(additional_data.compressed)
-    extract_dof_indices_(dof_handler, this->internal_data);
-
   /// check validity
   const auto n_colors_mpimin =
     Utilities::MPI::min(internal_data.n_physical_subdomains.size(), MPI_COMM_WORLD);
@@ -474,17 +468,6 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
     }
   } // end switch
 
-  // TODO
-  // *** REORDER COLORING: work in progress ...
-  // pair is (# of cells, initial color)
-  std::vector<std::pair<unsigned int, unsigned int>> reordered_colors;
-  if(/*do_color_reordering?*/ false)
-    reordered_colors = reorder_colors(colored_iterators);
-  else
-    for(unsigned int color = 0; color < colored_iterators.size(); ++color)
-      reordered_colors.emplace_back(colored_iterators[color].size(), color);
-  AssertDimension(colored_iterators.size(), reordered_colors.size());
-
   std::ostringstream oss;
   oss << "Vertex patch coloring (" << str_coloring_algorithm << ")";
   time.stop();
@@ -501,8 +484,7 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
   const unsigned int n_colors = colored_iterators.size();
   for(unsigned int cc = 0; cc < n_colors; ++cc)
   {
-    const unsigned int color = reordered_colors[cc].second;
-    AssertDimension(colored_iterators[color].size(), reordered_colors[cc].first);
+    const unsigned int color = cc;
     submit_patches<regular_vpatch_size>(colored_iterators[color]);
   }
   count_physical_subdomains();
@@ -538,104 +520,54 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
 }
 
 
-template<int dim>
-std::vector<std::pair<unsigned int, unsigned int>>
-PatchInfo<dim>::reorder_colors(
-  const std::vector<std::vector<typename std::vector<std::vector<CellIterator>>::const_iterator>> &
-    colored_cells) const
-{
-  const unsigned int level = internal_data.level;
-  (void)level;
-  Assert(level != static_cast<unsigned int>(-1), dealii::ExcInvalidState());
+// template<int dim>
+// void
+// PatchInfo<dim>::write_visual_data(
+//   const dealii::DoFHandler<dim> &                            dof_handler,
+//   const std::vector<std::pair<unsigned int, unsigned int>> & reordered_colors) const
+// {
+//   constexpr auto     regular_vpatch_size = UniversalInfo<dim>::n_cells(PatchVariant::vertex);
+//   const auto &       tria                = dof_handler.get_triangulation();
+//   const unsigned int level               = internal_data.level;
 
-  const auto n_colors = colored_cells.size();
-  std::vector<std::pair<unsigned int, unsigned int>>
-    count_per_color; // temporary field storing the amount of patches per color
-  for(unsigned int color = 0; color < n_colors; ++color)
-    count_per_color.emplace_back(colored_cells[color].size(), color);
+//   if(level == tria.n_levels() - 1)
+//   {
+//     GridOutFlags::Svg gridout_flags;
+//     gridout_flags.coloring           = GridOutFlags::Svg::Coloring::material_id;
+//     gridout_flags.label_level_number = false;
+//     gridout_flags.label_cell_index   = false;
+//     gridout_flags.label_material_id  = true;
+//     GridOut gridout;
+//     gridout.set_flags(gridout_flags);
 
-  std::vector<unsigned int> new_order; // set new order
-  // // if (!permuted_colors->empty() && colored_cells.size () == permuted_colors->at(level).size
-  // ())
-  // //   new_order = permuted_colors->at(level);
-  // if (permuted_colors->size () == 1 && colored_cells.size () == permuted_colors->at (0).size ())
-  //   new_order = permuted_colors->front ();
-  // if (permuted_colors->size () == 2 && colored_cells.size () == permuted_colors->at (0).size ()
-  //     && colored_cells.size () == permuted_colors->at (1).size ())
-  // {
-  //   if (*activate_post_smooth)
-  //     new_order = permuted_colors->at (1);
-  //   else
-  //     new_order = permuted_colors->at (0);
-  // }
+//     // *** set all material ids to void
+//     const unsigned int void_id = 999;
+//     CellIterator       cell = dof_handler.begin_mg(level), end_cell = dof_handler.end_mg(level);
+//     for(; cell != end_cell; ++cell)
+//       cell->set_material_id(void_id);
 
-  if(n_colors != new_order.size()) // leave if new_order does not match
-    return count_per_color;
+//     auto               cell_it  = internal_data.cell_iterators.cbegin();
+//     const unsigned int n_colors = reordered_colors.size();
+//     for(unsigned int color = 0; color < n_colors; ++color)
+//     {
+//       std::string filename = "make_graph_coloring_";
+//       filename             = filename + "L" + Utilities::int_to_string(level) + "_COLOR" +
+//                  Utilities::int_to_string(color, 2);
+//       std::ofstream output((filename + ".svg").c_str());
 
-  AssertDimension(colored_cells.size() - 1,
-                  *std::max_element(new_order.cbegin(), new_order.cend()));
+//       unsigned int n_colored_cells = reordered_colors[color].first * regular_vpatch_size;
+//       for(unsigned int c = 0; c < n_colored_cells; ++cell_it, ++c)
+//         (*cell_it)->set_material_id(color);
+//       gridout.write_svg(tria, output);
 
-  const auto & do_color_reorder = [&](const auto & p1, const auto & p2) {
-    const auto dist1 =
-      std::distance(new_order.cbegin(), std::find(new_order.cbegin(), new_order.cend(), p1.second));
-    const auto dist2 =
-      std::distance(new_order.cbegin(), std::find(new_order.cbegin(), new_order.cend(), p2.second));
-    return dist1 < dist2;
-  };
-  std::sort(count_per_color.begin(), count_per_color.end(), do_color_reorder);
-
-  return count_per_color;
-}
-
-
-template<int dim>
-void
-PatchInfo<dim>::write_visual_data(
-  const dealii::DoFHandler<dim> &                            dof_handler,
-  const std::vector<std::pair<unsigned int, unsigned int>> & reordered_colors) const
-{
-  constexpr auto     regular_vpatch_size = UniversalInfo<dim>::n_cells(PatchVariant::vertex);
-  const auto &       tria                = dof_handler.get_triangulation();
-  const unsigned int level               = internal_data.level;
-
-  if(level == tria.n_levels() - 1)
-  {
-    GridOutFlags::Svg gridout_flags;
-    gridout_flags.coloring           = GridOutFlags::Svg::Coloring::material_id;
-    gridout_flags.label_level_number = false;
-    gridout_flags.label_cell_index   = false;
-    gridout_flags.label_material_id  = true;
-    GridOut gridout;
-    gridout.set_flags(gridout_flags);
-
-    // *** set all material ids to void
-    const unsigned int void_id = 999;
-    CellIterator       cell = dof_handler.begin_mg(level), end_cell = dof_handler.end_mg(level);
-    for(; cell != end_cell; ++cell)
-      cell->set_material_id(void_id);
-
-    auto               cell_it  = internal_data.cell_iterators.cbegin();
-    const unsigned int n_colors = reordered_colors.size();
-    for(unsigned int color = 0; color < n_colors; ++color)
-    {
-      std::string filename = "make_graph_coloring_";
-      filename             = filename + "L" + Utilities::int_to_string(level) + "_COLOR" +
-                 Utilities::int_to_string(color, 2);
-      std::ofstream output((filename + ".svg").c_str());
-
-      unsigned int n_colored_cells = reordered_colors[color].first * regular_vpatch_size;
-      for(unsigned int c = 0; c < n_colored_cells; ++cell_it, ++c)
-        (*cell_it)->set_material_id(color);
-      gridout.write_svg(tria, output);
-
-      // *** reset all material ids to void
-      CellIterator cell = dof_handler.begin_mg(level), end_cell = dof_handler.end_mg(level);
-      for(; cell != end_cell; ++cell)
-        cell->set_material_id(void_id);
-    }
-    Assert(internal_data.cell_iterators.cend() == cell_it, ExcInternalError());
-  }
-}
+//       // *** reset all material ids to void
+//       CellIterator cell = dof_handler.begin_mg(level), end_cell = dof_handler.end_mg(level);
+//       for(; cell != end_cell; ++cell)
+//         cell->set_material_id(void_id);
+//     }
+//     Assert(internal_data.cell_iterators.cend() == cell_it, ExcInternalError());
+//   }
+// }
 
 
 template<int dim, typename number>
