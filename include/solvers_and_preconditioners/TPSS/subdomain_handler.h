@@ -26,6 +26,7 @@
 #include "dof_info.h"
 #include "mapping_info.h"
 #include "patch_info.h"
+#include "patch_worker.h"
 #include "solvers_and_preconditioners/TPSS/time_info.h"
 
 #include <array>

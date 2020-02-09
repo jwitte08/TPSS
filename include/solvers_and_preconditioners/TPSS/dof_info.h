@@ -8,6 +8,7 @@
 #include "TPSS.h"
 #include "generic_functionalities.h"
 #include "patch_info.h"
+#include "patch_worker.h"
 
 #include <array>
 #include <memory>
