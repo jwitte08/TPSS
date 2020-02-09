@@ -76,6 +76,20 @@ public:
   const AdditionalData &
   get_additional_data() const;
 
+  std::pair<int, int>
+  get_cell_level_and_index(const unsigned int cell_position) const
+  {
+    AssertIndexRange(cell_position, n_cells_plain());
+    const auto & cell = (get_internal_data()->cell_iterators)[cell_position];
+    return std::make_pair<int, int>(cell->level(), cell->index());
+  }
+
+  const unsigned int
+  n_cells_plain() const
+  {
+    return internal_data.cell_iterators.size();
+  }
+
   /**
    * An array of strides to access the CellIterator collections
    * (=patch) within the flat array @p cell_iterators. In other words
@@ -546,39 +560,22 @@ struct DoFInfo
   {
     Assert(patch_info_in->get_internal_data()->level != numbers::invalid_unsigned_int,
            ExcMessage("Handles level cells only."));
+    Assert(DoFLayout::invalid != get_dof_layout(dof_handler_in->get_fe()),
+           ExcMessage("Finite element is not supported."));
+
     clear();
     dof_handler = dof_handler_in;
     patch_info  = patch_info_in;
 
-    const auto & internal_data   = *(patch_info->get_internal_data());
-    const auto & cell_iterators  = internal_data.cell_iterators;
-    const auto & finite_element  = dof_handler->get_fe();
-    const auto   n_dofs_per_cell = finite_element.n_dofs_per_cell();
+    /// fill the lexicographic-to-hierarchic-numbering map
+    if(DoFLayout::Q == get_dof_layout())
+      l2h = FETools::lexicographic_to_hierarchic_numbering(finite_element);
 
-    // TODO !!!
-    // AssertDimension(cell_dof_tensor.n_flat(), n_dofs_per_cell);
-    // std::shared_ptr<FiniteElementData<dim>> fe_data = std::make_shared<FE_Q<dim>>(fe_degree);
-    // const auto l2h = FETools::lexicographic_to_hierarchic_numbering(*fe_data);
-    // // const auto h2l = FETools::hierarchic_to_lexicographic_numbering(*fe_data);
-    // // for (auto i = 0U; i < l2h.size(); ++i)
-    // //   {
-    // // 	std::cout << "l: " << i << " to h: " << l2h[i] << std::endl;
-    // // 	std::cout << "l: " << h2l[l2h[i]] << " to h: " << l2h[i] << std::endl;
-    // //   }
-
-    // // std::vector<unsigned int> shifts(cell_dof_tensor.n_flat());
-    // // std::iota(shifts.begin(), shifts.end(), 0U);
-    // return l2h;
-
-    dof_indices.reserve(cell_iterators.size());
-    std::transform(cell_iterators.cbegin(),
-                   cell_iterators.cend(),
-                   std::back_inserter(dof_indices),
-                   [&](const auto & cell) {
-                     std::vector<types::global_dof_index> level_dof_indices(n_dofs_per_cell);
-                     cell->get_mg_dof_indices(level_dof_indices);
-                     return level_dof_indices;
-                   });
+    /// store global dof indices
+    const auto n_cells = patch_info->n_cells_plain();
+    dof_indices.reserve(n_cells);
+    for(auto i = 0U; i < n_cells; ++i)
+      dof_indices.emplace_back(get_level_dof_indices(i));
     dof_indices.shrink_to_fit();
   }
 
@@ -588,6 +585,7 @@ struct DoFInfo
     patch_info = nullptr;
     dof_indices.clear();
     dof_handler = nullptr;
+    l2h.clear();
   }
 
   DoFLayout
@@ -605,6 +603,40 @@ struct DoFInfo
   std::vector<std::vector<types::global_dof_index>> dof_indices;
 
   const PatchInfo<dim> * patch_info = nullptr;
+
+  DoFAccessor<dim, DoFHandler<dim>, true>
+  get_level_dof_accessor(const unsigned int cell_position) const
+  {
+    Assert(patch_info, ExcMessage("Patch info not initialized."));
+    const auto [cell_level, cell_index] = patch_info->get_cell_level_and_index(cell_position);
+    const auto & tria                   = dof_handler->get_triangulation();
+    return DoFAccessor<dim, DoFHandler<dim>, true>(&tria, cell_level, cell_index, dof_handler);
+  }
+
+  std::vector<types::global_dof_index>
+  get_level_dof_indices(const unsigned int cell_position) const
+  {
+    const auto                           n_dofs_per_cell = dof_handler->get_fe().n_dofs_per_cell();
+    std::vector<types::global_dof_index> level_dof_indices(n_dofs_per_cell);
+    const auto &                         cell = get_level_dof_accessor(cell_position);
+    cell.get_mg_dof_indices(cell.level(), level_dof_indices);
+
+    /// reorder level dof indices lexicographically
+    if(DoFLayout::Q == get_dof_layout())
+    {
+      AssertDimension(level_dof_indices.size(), l2h.size());
+      std::vector<types::global_dof_index> level_dof_indices_lxco;
+      std::transform(l2h.cbegin(),
+                     l2h.cend(),
+                     std::back_inserter(level_dof_indices_lxco),
+                     [&](const auto & h) { return level_dof_indices[h]; });
+      return level_dof_indices_lxco;
+    }
+
+    return level_dof_indices;
+  }
+
+  std::vector<types::global_dof_index> l2h;
 };
 
 
@@ -784,14 +816,6 @@ public:
   n_lanes_filled(const unsigned int patch_id) const;
 
 protected:
-  // DoFAccessor<dim, DoFHandler<dim>, true>
-  // get_level_dof_accessor(const unsigned int position, const unsigned int dofh_index = 0) const
-  // {
-  //   const auto & cell = patch_info->cell_iterators[position];
-  //   const auto & dofh = patch_info
-  //   return DoFAccessor<dim, DoFHandler<dim>, true>()
-  // }
-
   /**
    * This method partitions the (unvectorized) patches, contained in
    * PatchInfo, into interior/boundary, incomplete/complete groups,
