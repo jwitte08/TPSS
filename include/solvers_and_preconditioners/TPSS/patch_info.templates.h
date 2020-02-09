@@ -26,6 +26,8 @@ PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
     AssertThrow(false, dealii::ExcNotImplemented());
   internal_data.cell_iterators.shrink_to_fit();
   internal_data.triangulation = &(dof_handler->get_triangulation());
+  // TODO we should not need to store the dof handler
+  internal_data.dof_handler = dof_handler;
 
   /// check validity
   const auto n_colors_mpimin =

@@ -85,6 +85,26 @@ public:
     return std::make_pair<int, int>(cell->level(), cell->index());
   }
 
+  CellIterator
+  get_cell_iterator(const unsigned int cell_position) const
+  {
+    AssertIndexRange(cell_position, n_cells_plain());
+    const auto & tria                   = get_triangulation();
+    const auto [cell_level, cell_index] = get_cell_level_and_index(cell_position);
+    // TODO we should not need dof handler here
+    const auto dof_handler = get_internal_data()->dof_handler;
+    Assert(dof_handler, ExcMessage("DoFHandler not set."));
+    return CellIterator(&tria, cell_level, cell_index, nullptr);
+  }
+
+  const Triangulation<dim> &
+  get_triangulation() const
+  {
+    const auto ptr_to_tria = get_internal_data()->triangulation;
+    Assert(ptr_to_tria, ExcMessage("Triangulation not set."));
+    return *ptr_to_tria;
+  }
+
   unsigned int
   n_cells_plain() const
   {
@@ -477,6 +497,8 @@ struct PatchInfo<dim>::InternalData
    * Underlying triangulation cell iterators are based on.
    */
   const Triangulation<dim> * triangulation = nullptr;
+  // TODO we should not need dof handler !
+  const DoFHandler<dim> * dof_handler = nullptr;
 };
 
 
@@ -675,6 +697,7 @@ PatchInfo<dim>::InternalData::clear()
   n_physical_subdomains_total = SubdomainData{};
   cell_iterators.clear();
   triangulation = nullptr;
+  dof_handler   = nullptr;
 }
 
 template<int dim>

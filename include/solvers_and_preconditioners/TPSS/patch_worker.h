@@ -373,19 +373,24 @@ inline std::vector<
   std::array<typename PatchWorker<dim, number>::CellIterator, PatchWorker<dim, number>::macro_size>>
 PatchWorker<dim, number>::get_cell_collection(unsigned int patch_id) const
 {
-  std::vector<std::array<CellIterator, macro_size>> cell_collect(patch_size);
-  const auto &                                      views = get_cell_collection_views(patch_id);
-  const auto                                        n_lanes_filled = this->n_lanes_filled(patch_id);
-  for(unsigned int cell_no = 0; cell_no < cell_collect.size(); ++cell_no)
-  {
-    auto & macro_cell = cell_collect[cell_no];
-    for(unsigned int m = 0; m < n_lanes_filled; ++m)
-      macro_cell[m] = views[m][cell_no];
-    //: fill non-physical lanes by mirroring cells of first lane
-    for(unsigned int lane = n_lanes_filled; lane < macro_size; ++lane)
-      macro_cell[lane] = macro_cell[0];
-  }
+  Assert(patch_info, ExcMessage("Patch info not set."));
+  const auto n_lanes_filled = this->n_lanes_filled(patch_id);
+  /// fill the empty vectorization lanes by copying the first lane
+  const auto get_cell_position_filled = [&](const auto cell_no, const auto lane) {
+    AssertIndexRange(lane, this->macro_size);
+    if(lane < n_lanes_filled)
+      return this->get_cell_position(patch_id, cell_no, lane);
+    else
+      return this->get_cell_position(patch_id, cell_no, 0);
+  };
 
+  std::vector<std::array<CellIterator, macro_size>> cell_collect(patch_size);
+  for(auto cell_no = 0; cell_no < cell_collect.size(); ++cell_no)
+    for(auto lane = 0U; lane < macro_size; ++lane)
+    {
+      const auto cell_position    = get_cell_position_filled(cell_no, lane);
+      cell_collect[cell_no][lane] = patch_info->get_cell_iterator(cell_position);
+    }
   return cell_collect;
 }
 
