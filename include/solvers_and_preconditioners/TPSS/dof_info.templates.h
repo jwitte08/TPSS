@@ -7,7 +7,7 @@ DoFInfo<dim>::initialize(const DoFHandler<dim> * dof_handler_in,
 {
   Assert(patch_info_in->get_internal_data()->level != numbers::invalid_unsigned_int,
          ExcMessage("Handles level cells only."));
-  Assert(DoFLayout::invalid != get_dof_layout(dof_handler_in->get_fe()),
+  Assert(DoFLayout::invalid != TPSS::get_dof_layout(dof_handler_in->get_fe()),
          ExcMessage("Finite element is not supported."));
 
   clear();
