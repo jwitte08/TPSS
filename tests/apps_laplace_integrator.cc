@@ -27,6 +27,7 @@ protected:
   static constexpr int fe_degree = T::template value<1>();
   using PoissonProblem           = typename Poisson::Std::ModelProblem<dim, fe_degree>;
   using SystemMatrix             = typename PoissonProblem::SYSTEM_MATRIX;
+  using vector_type              = typename PoissonProblem::VECTOR;
   // using LevelMatrix              = typename PoissonProblem::LEVEL_MATRIX;
   // using PatchTransfer                      = typename LevelMatrix::transfer_type;
   // using VectorizedMatrixType               = Table<2, VectorizedArray<double>>;
@@ -37,7 +38,7 @@ protected:
   {
     unsigned int n_refinements = 0;
     // EquationData       equation_data;
-    TPSS::PatchVariant patch_variant = TPSS::PatchVariant::cell;
+    TPSS::PatchVariant patch_variant = TPSS::PatchVariant::vertex;
   };
 
   void
@@ -47,14 +48,12 @@ protected:
     const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
     pcout_owned              = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
 
-    rt_parameters.mesh.n_subdivisions.resize(dim, 1);
-    rt_parameters.mesh.n_subdivisions.at(0) = 2;
-    rt_parameters.mesh.geometry_variant     = MeshParameter::GeometryVariant::CuboidSubdivided;
+    rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+    rt_parameters.mesh.n_repetitions    = 2U;
 
-    // rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = params.patch_variant;
-    // rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
-    // TPSS::SmootherVariant::additive; rt_parameters.multigrid.post_smoother.schwarz =
-    // rt_parameters.multigrid.pre_smoother.schwarz;
+    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = params.patch_variant;
+    rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
+    rt_parameters.multigrid.post_smoother.schwarz = rt_parameters.multigrid.pre_smoother.schwarz;
   }
 
   void
@@ -71,7 +70,7 @@ protected:
       new_problem->create_triangulation();
       new_problem->distribute_dofs();
       new_problem->prepare_linear_system(/*compute_rhs?*/ true);
-      new_problem->prepare_multigrid();
+      new_problem->prepare_multigrid(/*compress*/ false); // do not clear MGConstrainedDoFs
     };
 
     poisson_problem.reset();
@@ -100,6 +99,24 @@ protected:
     return table_to_fullmatrix(table);
   }
 
+  template<typename PatchTransfer, typename VectorType>
+  std::vector<unsigned int>
+  extract_dof_indices_per_patch(const unsigned int patch,
+                                PatchTransfer &    patch_transfer,
+                                VectorType &       vector,
+                                const unsigned int lane = 0)
+  {
+    patch_transfer.reinit(patch);
+    for(auto i = 0U; i < vector.size(); ++i)
+      vector(i) = static_cast<double>(i) + 0.1;
+    const auto                indices      = patch_transfer.gather(vector);
+    const auto                indices_view = make_array_view(indices.begin(), indices.end());
+    const auto                indices_lane = array_view_to_vector(indices_view, lane);
+    std::vector<unsigned int> indices_per_patch;
+    std::copy(indices_lane.begin(), indices_lane.end(), std::back_inserter(indices_per_patch));
+    return indices_per_patch;
+  }
+
   void
   test()
   {
@@ -108,6 +125,18 @@ protected:
     const auto   global_level  = poisson_problem->level;
     const auto & level_matrix  = assemble_level_matrix(global_level);
     compare_matrix(system_matrix, level_matrix);
+
+    const auto mf_storage_level = poisson_problem->template build_mf_storage<double>(global_level);
+    const auto patch_storage_level =
+      poisson_problem->template build_patch_storage<double>(global_level, mf_storage_level);
+    TPSS::PatchTransfer<dim, double, fe_degree> patch_transfer(*patch_storage_level);
+    vector_type                                 tmp_vector;
+    mf_storage_level->initialize_dof_vector(tmp_vector);
+    const auto         dof_indices = extract_dof_indices_per_patch(0, patch_transfer, tmp_vector);
+    FullMatrix<double> patch_matrix_reference(dof_indices.size());
+    std::cout << vector_to_string(dof_indices) << std::endl;
+    patch_matrix_reference.extract_submatrix_from(level_matrix, dof_indices, dof_indices);
+    compare_matrix(patch_matrix_reference, patch_matrix_reference);
   }
 
   void
@@ -116,13 +145,6 @@ protected:
   {
     Util::compare_matrix(patch_matrix_full, other, *pcout_owned);
   }
-
-  // void
-  // compare_matrix(const FullMatrix<double> & other) const
-  // {
-  //   const auto patch_matrix_full = table_to_fullmatrix(patch_matrix.as_table());
-  //   compare_matrix(patch_matrix_full, other);
-  // }
 
   // void
   // compare_inverse_matrix(const FullMatrix<double> & inverse_patch_matrix,

@@ -54,7 +54,6 @@ namespace RT
 {
 struct Parameter
 {
-  bool                                                        compressed = false;
   std::pair<types::global_dof_index, types::global_dof_index> dof_limits =
     {numbers::invalid_dof_index, numbers::invalid_dof_index};
   MeshParameter   mesh;
@@ -84,12 +83,18 @@ struct Parameter
     reset(multigrid.post_smoother.schwarz);
   }
 
-  void
-  set_compressed(const bool flag = true);
-
   std::string
   to_string() const;
-}; // namespace RT
+
+  template<int dim, typename Number>
+  void
+  fill_schwarz_smoother_data(
+    typename SubdomainHandler<dim, Number>::AdditionalData & additional_data,
+    const bool                                               pre_smoother) const;
+};
+
+
+
 } // namespace RT
 
 // +++++++++++++++++++++++++++++++++++ DEFINITIONS +++++++++++++++++++++++++++++++++++
@@ -167,19 +172,22 @@ Parameter::exceeds_dof_limits(const types::global_dof_index n_dofs) const
   return exceeds;
 }
 
+template<int dim, typename Number>
 void
-Parameter::set_compressed(const bool flag)
+Parameter::fill_schwarz_smoother_data(
+  typename SubdomainHandler<dim, Number>::AdditionalData & additional_data,
+  const bool                                               pre_smoother) const
 {
-  compressed                         = flag;
-  multigrid.pre_smoother.compressed  = flag;
-  multigrid.post_smoother.compressed = flag;
+  if(pre_smoother)
+    ::fill_schwarz_smoother_data<dim, Number>(additional_data, multigrid.pre_smoother.schwarz);
+  else // post smoother
+    ::fill_schwarz_smoother_data<dim, Number>(additional_data, multigrid.post_smoother.schwarz);
 }
 
 std::string
 Parameter::to_string() const
 {
   std::ostringstream oss;
-  oss << Util::parameter_to_fstring("Compressed mode:", compressed);
   oss << Util::parameter_to_fstring("Number of run cycles:", n_cycles);
   oss << std::endl;
   oss << mesh.to_string() << std::endl;

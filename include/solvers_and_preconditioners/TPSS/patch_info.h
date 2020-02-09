@@ -91,18 +91,18 @@ public:
     AssertIndexRange(cell_position, n_cells_plain());
     const auto & tria                   = get_triangulation();
     const auto [cell_level, cell_index] = get_cell_level_and_index(cell_position);
-    // TODO we should not need dof handler here
-    const auto dof_handler = get_internal_data()->dof_handler;
-    Assert(dof_handler, ExcMessage("DoFHandler not set."));
+    // // TODO we should not need dof handler here
+    // const auto dof_handler = get_internal_data()->dof_handler;
+    // Assert(dof_handler, ExcMessage("DoFHandler not set."));
     return CellIterator(&tria, cell_level, cell_index, nullptr);
   }
 
   const Triangulation<dim> &
   get_triangulation() const
   {
-    const auto ptr_to_tria = get_internal_data()->triangulation;
-    Assert(ptr_to_tria, ExcMessage("Triangulation not set."));
-    return *ptr_to_tria;
+    const auto tria = get_internal_data()->triangulation;
+    Assert(tria, ExcMessage("Triangulation not set."));
+    return *tria;
   }
 
   unsigned int
@@ -333,7 +333,6 @@ struct PatchInfo<dim>::AdditionalData
                        colored_iterators,
                      const std::string)>
        visualize_coloring;
-  bool compressed    = false;
   bool print_details = false; // DEBUG
 };
 
@@ -482,6 +481,16 @@ struct PatchInfo<dim>::InternalData
    * Lexicographical:  cell number  <  lane  <  patch id  <   color
    */
   mutable std::vector<CellIterator> cell_iterators;
+
+  /**
+   * Flat array that stores all CellIterators for the construction of
+   * (macro) patches. The successive alignment of CellIterators is
+   * such that all interior subdomains are stored first, then the ones
+   * at the physical boundary
+   *
+   * Lexicographical:  cell number  <  lane  <  patch id  <   color
+   */
+  mutable std::vector<std::pair<int, int>> cell_level_and_index_pairs;
 
   /**
    * Numbers of physical subdomains for each color.

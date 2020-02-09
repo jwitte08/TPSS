@@ -36,7 +36,6 @@ protected:
   {
     unsigned int       n_refinements = 0;
     TPSS::PatchVariant patch_variant = TPSS::PatchVariant::cell;
-    bool               compressed    = false;
   };
 
 
@@ -63,7 +62,6 @@ protected:
   test()
   {
     rt_parameters.mesh.n_refinements = params.n_refinements;
-    rt_parameters.compressed         = params.compressed;
 
     rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = params.patch_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
@@ -159,7 +157,6 @@ protected:
   {
     unsigned int       n_refinements = 0;
     TPSS::PatchVariant patch_variant = TPSS::PatchVariant::cell;
-    bool               compressed    = false;
   };
 
 
@@ -186,7 +183,6 @@ protected:
   test()
   {
     rt_parameters.mesh.n_refinements = params.n_refinements;
-    rt_parameters.compressed         = params.compressed;
 
     rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = params.patch_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;

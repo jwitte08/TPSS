@@ -191,14 +191,14 @@ struct SubdomainHandler<dim, number>::AdditionalData
   std::function<void(const DoFHandler<dim> *                             dof_handler,
                      const typename TPSS::PatchInfo<dim>::AdditionalData additional_data,
                      std::vector<std::vector<CellIterator>> &            cell_collections)>
-               manual_gathering_func;
-  unsigned int n_q_points_surrogate      = 5;
-  bool         normalize_surrogate_patch = false;
-  bool         use_arc_length            = true;
-  unsigned int n_threads                 = 0;
-  unsigned int grain_size                = 0;
-  bool         compressed                = false;
-  bool         print_details             = false;
+                        manual_gathering_func;
+  unsigned int          n_q_points_surrogate      = 5;
+  bool                  normalize_surrogate_patch = false;
+  bool                  use_arc_length            = true;
+  unsigned int          n_threads                 = 0;
+  unsigned int          grain_size                = 0;
+  TPSS::CachingStrategy caching_strategy          = TPSS::CachingStrategy::Cached;
+  bool                  print_details             = false;
 };
 
 /*********************************** inline functions ***********************************/

@@ -90,7 +90,7 @@ public:
     is_copyable &= sdhandler.n_q_points_surrogate == other_data.n_q_points_surrogate;
     is_copyable &= sdhandler.normalize_surrogate_patch == other_data.normalize_surrogate_patch;
     is_copyable &= sdhandler.use_arc_length == other_data.use_arc_length;
-    is_copyable &= sdhandler.compressed == other_data.compressed;
+    is_copyable &= sdhandler.caching_strategy == other_data.caching_strategy;
     return is_copyable;
   }
 

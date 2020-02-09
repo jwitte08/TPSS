@@ -33,8 +33,7 @@ protected:
   SetUp() override
   {
     //: misc
-    rt_parameters.compressed = false;
-    rt_parameters.n_cycles   = 3;
+    rt_parameters.n_cycles = 3;
 
     //: discretization
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;

@@ -36,6 +36,7 @@
 #include "equation_data.h"
 #include "laplace_integrator.h"
 #include "mesh.h"
+#include "multigrid.h"
 #include "postprocess.h"
 #include "rt_parameter.h"
 #include "utilities.h"
@@ -90,7 +91,7 @@ struct ModelProblem : public Subscriptor
   // *** multigrid
   MGLevelObject<LEVEL_MATRIX>                mg_matrices;
   MG_TRANSFER                                mg_transfer;
-  RedBlackColoring<dim>                      red_black_coloring;
+  mutable RedBlackColoring<dim>              red_black_coloring;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_pre;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_post;
   const MGSmootherBase<VECTOR> *             mg_smoother_pre;
@@ -213,25 +214,16 @@ struct ModelProblem : public Subscriptor
   template<typename OtherNumber>
   std::shared_ptr<const SubdomainHandler<dim, OtherNumber>>
   build_patch_storage(const unsigned                                            level,
-                      const std::shared_ptr<const MatrixFree<dim, OtherNumber>> mf_storage)
+                      const std::shared_ptr<const MatrixFree<dim, OtherNumber>> mf_storage,
+                      const bool is_pre_smoother = true) const
   {
     typename SubdomainHandler<dim, OtherNumber>::AdditionalData fdss_additional_data;
-    fdss_additional_data.level         = level;
-    fdss_additional_data.compressed    = rt_parameters.compressed;
-    fdss_additional_data.patch_variant = rt_parameters.multigrid.pre_smoother.schwarz.patch_variant;
-    fdss_additional_data.smoother_variant =
-      rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant;
-    fdss_additional_data.print_details = rt_parameters.multigrid.pre_smoother.schwarz.print_details;
+    fdss_additional_data.level = level;
     if(rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring)
-    {
       fdss_additional_data.coloring_func = std::ref(red_black_coloring);
-    }
-    fdss_additional_data.n_q_points_surrogate =
-      rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate;
-    fdss_additional_data.normalize_surrogate_patch =
-      rt_parameters.multigrid.pre_smoother.schwarz.normalize_surrogate_patch;
-    fdss_additional_data.use_arc_length =
-      rt_parameters.multigrid.pre_smoother.schwarz.use_arc_length;
+    rt_parameters.fill_schwarz_smoother_data<dim, OtherNumber>(fdss_additional_data,
+                                                               is_pre_smoother);
+
     const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
     patch_storage->reinit(mf_storage, fdss_additional_data);
     return patch_storage;
@@ -417,12 +409,15 @@ struct ModelProblem : public Subscriptor
       /// initialize (independent) post-smoother
       else
       {
-        auto sdhandler_data = fill_schwarz_smoother_data<dim, typename LEVEL_MATRIX::value_type>(
-          rt_parameters.multigrid.post_smoother.schwarz);
-        sdhandler_data.compressed = rt_parameters.multigrid.post_smoother.compressed;
-        sdhandler_data.level      = mg_matrices.max_level();
+        typename SubdomainHandler<dim, typename LEVEL_MATRIX::value_type>::AdditionalData
+          sd_handler_data;
+        rt_parameters.template fill_schwarz_smoother_data<dim, typename LEVEL_MATRIX::value_type>(
+          sd_handler_data, false);
+        sd_handler_data.level = mg_matrices.max_level();
+        if(rt_parameters.multigrid.post_smoother.schwarz.manual_coloring)
+          sd_handler_data.coloring_func = std::ref(red_black_coloring);
         const bool is_shallow_copyable =
-          mg_schwarz_smoother_pre->get_preconditioner(level)->is_shallow_copyable(sdhandler_data);
+          mg_schwarz_smoother_pre->get_preconditioner(level)->is_shallow_copyable(sd_handler_data);
 
         if(is_shallow_copyable)
         {
