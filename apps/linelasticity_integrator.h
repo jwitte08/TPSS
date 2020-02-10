@@ -164,6 +164,14 @@ public:
     equation_data = equation_data_in;
   }
 
+  double
+  pre_factor() const
+  {
+    if(equation_data.ip_variant == EquationData::PenaltyVariant::tensor)
+      return equation_data.lambda;
+    return 1.;
+  }
+
   const EquationData &
   get_equation_data() const
   {
@@ -272,14 +280,23 @@ public:
   template<typename Evaluator>
   struct NitscheStrain
   {
-    NitscheStrain(const EquationData & equation_data_in, const int component_in)
-      : mu(equation_data_in.mu),
-        lambda(equation_data_in.lambda),
-        ip_factor(equation_data_in.ip_factor),
+    NitscheStrain(const MatrixIntegrator * integrator, const int component_in)
+      : mu(integrator->equation_data.mu),
+        lambda(integrator->equation_data.lambda),
+        ip_factor(integrator->equation_data.ip_factor),
         component(component_in)
     {
       AssertIndexRange(component, dim);
     }
+
+    // NitscheStrain(const EquationData & equation_data_in, const int component_in)
+    //   : mu(equation_data_in.mu),
+    //     lambda(equation_data_in.lambda),
+    //     ip_factor(equation_data_in.ip_factor),
+    //     component(component_in)
+    // {
+    //   AssertIndexRange(component, dim);
+    // }
 
     void
     operator()(const Evaluator &                   eval_ansatz,
@@ -595,7 +612,7 @@ public:
       cell_strain_operations.emplace_back(equation_data, comp);
     std::vector<NitscheStrain<EvaluatorType>> nitsche_strain_operations;
     for(unsigned int comp = 0; comp < dim; ++comp)
-      nitsche_strain_operations.emplace_back(equation_data, comp);
+      nitsche_strain_operations.emplace_back(/*equation_data*/ this, comp);
 
     std::vector<CellGradDiv<EvaluatorType>> cell_graddiv_operations;
     for(unsigned int comp = 0; comp < dim; ++comp)
@@ -650,7 +667,7 @@ public:
       cell_strain_op.emplace_back(equation_data, comp);
     std::vector<NitscheStrain<EvaluatorType>> nitsche_strain_op;
     for(unsigned int comp = 0; comp < dim; ++comp)
-      nitsche_strain_op.emplace_back(equation_data, comp);
+      nitsche_strain_op.emplace_back(/*equation_data*/ this, comp);
 
     std::vector<CellGradDiv<EvaluatorType>> cell_graddiv_op;
     for(unsigned int comp = 0; comp < dim; ++comp)
@@ -854,10 +871,11 @@ operator()(const Evaluator &                   eval_ansatz,
 
   const auto normal = make_vectorized_array<Number>(face_no == 0 ? -1. : 1.);
   // !!!
-  // const auto penalty =
-  //   ip_factor * FaceLaplace::compute_penalty(eval, direction, cell_no, cell_no, bdry_mask);
   const auto penalty =
-    lambda * ip_factor * FaceLaplace::compute_penalty(eval, direction, cell_no, cell_no, bdry_mask);
+    ip_factor * FaceLaplace::compute_penalty(eval, direction, cell_no, cell_no, bdry_mask);
+  // const auto penalty =
+  //   lambda * ip_factor * FaceLaplace::compute_penalty(eval, direction, cell_no, cell_no,
+  //   bdry_mask);
   auto chi_e = make_vectorized_array<Number>(0.);
   for(unsigned int lane = 0; lane < macro_size; ++lane)
     chi_e[lane] = bdry_mask[lane] ? 1. : 0.5;
@@ -875,7 +893,8 @@ operator()(const Evaluator &                   eval_ansatz,
 
       value_on_face = -1. * chi_e * symgrad_factor * (v * normal * grad_u + grad_v * u * normal);
       // !!!
-      value_on_face += symgrad_factor * penalty * v * u * normal * normal;
+      value_on_face += penalty * v * u * normal * normal;
+      // value_on_face += symgrad_factor * penalty * v * u * normal * normal;
       cell_matrix(dof_v, dof_u) += 2. * mu * value_on_face;
     }
   }
@@ -903,8 +922,9 @@ operator()(const Evaluator &                   eval_ansatz,
   const auto normal1 = make_vectorized_array<Number>(-1.);
   /*** boundary mask is obiviously 0(=all interior), cell_no = 0 and cell_no_neighbor = 1 ***/
   // !!!
-  // const auto penalty = ip_factor * FaceLaplace::compute_penalty(eval, direction, 0, 1, 0);
-  const auto penalty = lambda * ip_factor * FaceLaplace::compute_penalty(eval, direction, 0, 1, 0);
+  const auto penalty = ip_factor * FaceLaplace::compute_penalty(eval, direction, 0, 1, 0);
+  // const auto penalty = lambda * ip_factor * FaceLaplace::compute_penalty(eval, direction, 0, 1,
+  // 0);
   const Number chi_e = 0.5;
   /*** diagonal term of grad(u)^T : v ^ n ***/
   const Number symgrad_factor = (component == direction) ? 1. : 0.5;
@@ -932,8 +952,10 @@ operator()(const Evaluator &                   eval_ansatz,
         (v1 * normal1 * grad_u0 + grad_v1 * u0 * normal0); // consistency + symmetry
 
       // !!!
-      value_on_interface01 += symgrad_factor * penalty * v0 * u1 * normal0 * normal1; // penalty
-      value_on_interface10 += symgrad_factor * penalty * v1 * u0 * normal1 * normal0; // penalty
+      // value_on_interface01 += symgrad_factor * penalty * v0 * u1 * normal0 * normal1; // penalty
+      // value_on_interface10 += symgrad_factor * penalty * v1 * u0 * normal1 * normal0; // penalty
+      value_on_interface01 += penalty * v0 * u1 * normal0 * normal1; // penalty
+      value_on_interface10 += penalty * v1 * u0 * normal1 * normal0; // penalty
 
       cell_matrix01(dof_v, dof_u) += 2. * mu * value_on_interface01;
       cell_matrix10(dof_v, dof_u) += 2. * mu * value_on_interface10;
