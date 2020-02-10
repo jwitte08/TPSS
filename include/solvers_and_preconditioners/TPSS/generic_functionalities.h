@@ -13,10 +13,10 @@
 #include <deal.II/base/utilities.h>
 #include <deal.II/base/vectorization.h>
 
+#include <bitset>
 #include <iomanip>
 #include <string>
 #include <type_traits>
-
 
 
 using namespace dealii;
@@ -170,7 +170,26 @@ less_than_all_lanes(const NumberType & lhs, const NumberType & rhs)
 }
 
 template<typename Number>
-Number
+Number &
+scalar_value(Number & value, const unsigned int /*dummy*/ = 0)
+{
+  using UnvectorizedNumber = typename ExtractScalarType<Number>::type;
+  static_assert(std::is_same<Number, UnvectorizedNumber>::value == true,
+                "Implemented for unvectorized number type.");
+  return value;
+}
+
+
+template<typename Number>
+Number &
+scalar_value(VectorizedArray<Number> & value, const unsigned int lane = 0)
+{
+  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
+  return value[lane];
+}
+
+template<typename Number>
+const Number &
 scalar_value(const Number & value, const unsigned int /*dummy*/ = 0)
 {
   using UnvectorizedNumber = typename ExtractScalarType<Number>::type;
@@ -181,13 +200,12 @@ scalar_value(const Number & value, const unsigned int /*dummy*/ = 0)
 
 
 template<typename Number>
-Number
+const Number &
 scalar_value(const VectorizedArray<Number> & value, const unsigned int lane = 0)
 {
   AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
   return value[lane];
 }
-
 
 template<typename Number = double>
 Number
