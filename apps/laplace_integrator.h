@@ -14,6 +14,7 @@
 
 #include <deal.II/matrix_free/fe_evaluation.h>
 #include <deal.II/matrix_free/matrix_free.h>
+#include <deal.II/matrix_free/operators.h>
 
 #include <deal.II/integrators/laplace.h>
 #include <deal.II/meshworker/dof_info.h>
@@ -37,6 +38,17 @@ double pre_factor = 1.0;
 
 namespace Laplace
 {
+// TODO namespace DG
+/*
+ * Linear operators describing the SIPG disretization with respect to the
+ * negative Laplacian:
+ *
+ * (MW) MeshWorker
+ * (MF) MatrixFree
+ * (FD) FastDiagonalization
+ */
+
+
 /*
  * A MeshWorker-based MatrixIntegrator to assemble the DG Laplace
  * system matrix. Originates from step-39.
@@ -115,7 +127,7 @@ class MatrixIntegrator
 public:
   using This          = MatrixIntegrator<dim, fe_degree, Number>;
   using value_type    = Number;
-  using transfer_type = typename TPSS::PatchTransfer<dim, fe_degree, fe_degree + 1, 1, Number>;
+  using transfer_type = typename TPSS::PatchTransfer<dim, Number, fe_degree>;
 
   static constexpr int fe_order   = fe_degree + 1;
   static constexpr int macro_size = VectorizedArray<Number>::n_array_elements;
@@ -317,7 +329,7 @@ operator()(const Evaluator &,
   AssertDimension(cell_matrix.n_rows(), cell_matrix.n_cols());
   AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
 
-  const auto normal{make_vectorized_array<Number>(face_no == 0 ? -1. : 1.)};
+  const auto normal = fd_eval.get_normal(face_no);
   const auto penalty{compute_penalty(fd_eval, direction, cell_no, cell_no, bdry_mask)};
 
   /*** factor varies on interior and boundary cells ***/
@@ -747,6 +759,170 @@ struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
 
   using MFOperator::Tvmult;
 };
+
+/*
+ * Linear operators describing the standard finite element discretization of
+ * the negative Laplacian:
+ *
+ * (MF) MatrixFree
+ * (FD) FastDiagonalization // TODO
+ */
+namespace Std
+{
+/*
+ * MatrixFree operator based on MatrixFreeOperators interface
+ */
+namespace MF
+{
+template<int dim, int fe_degree, typename Number>
+class Operator : public MatrixFreeOperators::Base<dim, LinearAlgebra::distributed::Vector<Number>>
+{
+public:
+  using Base = MatrixFreeOperators::Base<dim, LinearAlgebra::distributed::Vector<Number>>;
+  using Base::size_type;
+  using Base::value_type;
+
+  void
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage);
+
+  void
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage,
+             const MGConstrainedDoFs &                      mg_constrained_dofs,
+             const unsigned int                             level);
+
+  void
+  clear();
+
+  virtual void
+  compute_diagonal() override
+  {
+    AssertThrow(false, ExcMessage("Assembly of diagonal is not implemented."));
+  }
+
+  std::vector<TimeInfo>
+  get_time_data() const;
+
+  Number
+  get_penalty_factor() const
+  {
+    return IP::pre_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
+  }
+
+  void
+  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
+                ExcMessage("No MPI possible."));
+    LinearAlgebra::distributed::Vector<Number> dst;
+    Base::initialize_dof_vector(dst);
+    LinearAlgebra::distributed::Vector<Number> src;
+    Base::initialize_dof_vector(src);
+    std::copy(src_view.begin(), src_view.end(), src.begin());
+    Base::vmult(dst, src);
+    std::copy(dst.begin(), dst.end(), dst_view.begin());
+  }
+
+protected:
+  void
+  apply_add(LinearAlgebra::distributed::Vector<Number> &       dst,
+            const LinearAlgebra::distributed::Vector<Number> & src) const override final;
+
+private:
+  void
+  apply_cell(const MatrixFree<dim, Number> &                    mf_storage,
+             LinearAlgebra::distributed::Vector<Number> &       dst,
+             const LinearAlgebra::distributed::Vector<Number> & src,
+             const std::pair<unsigned int, unsigned int> &      cell_range) const;
+
+  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
+  mutable std::vector<TimeInfo>                  time_infos;
+};
+
+template<int dim, int fe_degree, typename Number>
+void
+Operator<dim, fe_degree, Number>::clear()
+{
+  mf_storage.reset();
+  time_infos.clear();
+  Base::clear();
+}
+
+
+
+template<int dim, int fe_degree, typename Number>
+void
+Operator<dim, fe_degree, Number>::initialize(
+  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in)
+{
+  Base::initialize(mf_storage_in);
+  mf_storage = mf_storage_in;
+  time_infos = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
+}
+
+template<int dim, int fe_degree, typename Number>
+void
+Operator<dim, fe_degree, Number>::initialize(
+  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
+  const MGConstrainedDoFs &                      mg_constrained_dofs,
+  const unsigned int                             level)
+{
+  Base::initialize(mf_storage_in, mg_constrained_dofs, level);
+  mf_storage = mf_storage_in;
+  time_infos = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
+}
+
+
+template<int dim, int fe_degree, typename Number>
+std::vector<TimeInfo>
+Operator<dim, fe_degree, Number>::get_time_data() const
+{
+  return time_infos;
+}
+
+
+
+template<int dim, int fe_degree, typename Number>
+void
+Operator<dim, fe_degree, Number>::apply_add(
+  LinearAlgebra::distributed::Vector<Number> &       dst,
+  const LinearAlgebra::distributed::Vector<Number> & src) const
+{
+  Timer timer;
+  timer.restart();
+  mf_storage->cell_loop(&Operator::apply_cell,
+                        this,
+                        dst,
+                        src,
+                        /*zero_dst*/ true);
+  time_infos[0].add_time(timer.wall_time());
+}
+
+
+
+template<int dim, int fe_degree, typename Number>
+void
+Operator<dim, fe_degree, Number>::apply_cell(
+  const MatrixFree<dim, Number> &                    mf_storage,
+  LinearAlgebra::distributed::Vector<Number> &       dst,
+  const LinearAlgebra::distributed::Vector<Number> & src,
+  const std::pair<unsigned int, unsigned int> &      cell_range) const
+{
+  FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number> phi(mf_storage);
+  for(unsigned int cell = cell_range.first; cell < cell_range.second; ++cell)
+  {
+    phi.reinit(cell);
+    phi.read_dof_values(src);
+    phi.evaluate(false, true);
+    for(unsigned int q = 0; q < phi.n_q_points; ++q)
+      phi.submit_gradient(phi.get_gradient(q), q);
+    phi.integrate(false, true);
+    phi.distribute_local_to_global(dst);
+  }
+}
+
+} // end namespace MF
+
+} // end namespace Std
 
 } // end namespace Laplace
 

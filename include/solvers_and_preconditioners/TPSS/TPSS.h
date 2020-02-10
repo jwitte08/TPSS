@@ -12,6 +12,42 @@
 
 namespace TPSS
 {
+enum class CachingStrategy
+{
+  Cached,
+  OnTheFly,
+  CellsCachedDofsFly,
+  CellsFlyDofsCached
+};
+std::string
+str_caching_strategy(CachingStrategy caching_strategy)
+{
+  std::string str[] = {"cached",
+                       "on-the-fly",
+                       "cells cached and dofs on-the-fly",
+                       "cells on-the-fly and dofs cached"};
+  return str[(int)caching_strategy];
+}
+
+enum class DoFLayout
+{
+  invalid,
+  DGQ,
+  Q
+};
+
+template<int dim>
+DoFLayout
+get_dof_layout(const FiniteElement<dim> & finite_element)
+{
+  auto dof_layout = DoFLayout::invalid;
+  if(finite_element.get_name().find("FE_DGQ") != std::string::npos)
+    dof_layout = DoFLayout::DGQ;
+  else if(finite_element.get_name().find("FE_Q") != std::string::npos)
+    dof_layout = DoFLayout::Q;
+  return dof_layout;
+}
+
 // *** ENUM: Patch Variant
 enum class PatchVariant
 {

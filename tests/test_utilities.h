@@ -126,12 +126,38 @@ compare_inverse_matrix(const FullMatrix<Number> & inverse_matrix,
   pcout << oss.str();
 }
 
-/// Compare inverse matrix by multiplying with reference matrix, both of
-/// FullMatrix type
+/// Compare two deal.II Vectors element-wise
 template<typename Number>
 void
 compare_vector(const Vector<Number> &     vector,
                const Vector<Number> &     other,
+               const ConditionalOStream & pcout = ConditionalOStream(std::cout, true))
+{
+  AssertDimension(vector.size(), other.size());
+  std::ostringstream oss;
+  oss << "Vector:\n";
+  vector.print(oss, PrintFormat::precision, PrintFormat::scientific);
+  oss << "Reference vector:\n";
+  other.print(oss, PrintFormat::precision, PrintFormat::scientific);
+  for(auto i = 0U; i < vector.size(); ++i)
+  {
+    const auto value       = vector[i];
+    const auto other_value = other[i];
+    const auto diff        = std::abs(value - other_value);
+    EXPECT_PRED_FORMAT2(testing::FloatLE,
+                        diff,
+                        std::numeric_limits<Number>::epsilon() * std::max(1000., other_value))
+      << oss.str();
+  }
+  pcout << oss.str();
+}
+
+/// Compare two vectors of VectorType element-wise.
+/// VectorType has to provide size() and operator[]() for element access
+template<typename VectorType, typename Number = typename VectorType::value_type>
+void
+compare_vector(const VectorType &         vector,
+               const VectorType &         other,
                const ConditionalOStream & pcout = ConditionalOStream(std::cout, true))
 {
   AssertDimension(vector.size(), other.size());

@@ -38,6 +38,12 @@ public:
   const VectorizedArray<Number> &
   get_h(const int direction, const int cell_no) const;
 
+  VectorizedArray<Number>
+  get_normal(const int face_no) const
+  {
+    return make_vectorized_array<Number>(face_no == 0 ? -1. : 1.);
+  }
+
   std::bitset<macro_size>
   get_boundary_mask(const int direction, const int cell_no, const int face_no) const
   {
@@ -128,7 +134,7 @@ protected:
   const MatrixFree<dim, Number> &                                           mf_storage;
   const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> & shape_info;
 
-  unsigned int patch_id = -1;
+  unsigned int patch_id = numbers::invalid_unsigned_int;
 
   /**
    * lexicographical ordering: face_no_1d < direction

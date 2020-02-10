@@ -3,9 +3,9 @@ namespace TPSS
 {
 template<int dim, typename number>
 typename MappingInfo<dim, number>::LocalData
-MappingInfo<dim, number>::extract_cartesian_scaling(FEValues<dim> &                  fe_values,
-                                                    const PatchWorker<dim, number> & patch_worker,
-                                                    const unsigned int               patch_id) const
+MappingInfo<dim, number>::extract_cartesian_scaling(FEValues<dim> &                    fe_values,
+                                                    const PatchMFWorker<dim, number> & patch_worker,
+                                                    const unsigned int patch_id) const
 {
   Assert(patch_size != -1, ExcInternalError());
   Assert(n_cells_per_direction != -1, ExcInternalError());
@@ -41,9 +41,9 @@ MappingInfo<dim, number>::extract_cartesian_scaling(FEValues<dim> &             
 
 template<int dim, typename number>
 typename MappingInfo<dim, number>::LocalData
-MappingInfo<dim, number>::compute_average_scaling(FEValues<dim> &                  fe_values,
-                                                  const PatchWorker<dim, number> & patch_worker,
-                                                  const unsigned int               patch_id) const
+MappingInfo<dim, number>::compute_average_scaling(FEValues<dim> &                    fe_values,
+                                                  const PatchMFWorker<dim, number> & patch_worker,
+                                                  const unsigned int                 patch_id) const
 {
   using namespace dealii;
 
@@ -254,9 +254,9 @@ MappingInfo<dim, number>::initialize_storage(const PatchInfo<dim> &             
     AssertThrow(!patch_info.empty(), ExcMessage("No data stored in the PatchInfo."));
 
   // *** check if patch_info's PartitionData is valid
-  PatchWorker<dim, number> patch_worker{patch_info, mf_connect};
-  const auto               patch_variant  = patch_info.get_additional_data().patch_variant;
-  const auto &             partition_data = patch_info.subdomain_partition_data;
+  PatchMFWorker<dim, number> patch_worker{mf_connect};
+  const auto                 patch_variant  = patch_info.get_additional_data().patch_variant;
+  const auto &               partition_data = patch_info.subdomain_partition_data;
 
   // *** set input information
   this->mf_storage        = mf_connect.mf_storage;

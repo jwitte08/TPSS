@@ -10,6 +10,8 @@
 
 #include <deal.II/base/tensor_function.h>
 
+#include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
+
 #include "utilities.h"
 
 using namespace dealii;
@@ -117,6 +119,127 @@ public:
 private:
   Solution<dim> solution_function;
 };
+
+struct ZeroDirichletUnitCubeData
+{
+  static constexpr double a = 1.;
+};
+
+template<int dim>
+class ZeroDirichletUnitCube : public Function<dim>, private ZeroDirichletUnitCubeData
+{
+};
+
+template<>
+class ZeroDirichletUnitCube<2> : public Function<2>, private ZeroDirichletUnitCubeData
+{
+private:
+  static constexpr int dim = 2;
+  using value_type         = Point<dim>::value_type;
+
+public:
+  virtual value_type
+  value(const Point<dim> & p, const unsigned int = 0) const override final
+  {
+    const value_type pi    = dealii::numbers::PI;
+    const auto &     x     = p[0];
+    const auto &     y     = p[1];
+    const auto &     exp_y = std::exp(y * (y - 1.) * (y - 1.));
+    value_type       val   = a * std::sin(pi * x * x) * (exp_y - 1.);
+    return val;
+  }
+
+  virtual value_type
+  laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
+  {
+    const value_type pi    = dealii::numbers::PI;
+    const auto &     x     = p[0];
+    const auto &     y     = p[1];
+    const auto &     exp_y = std::exp(y * (y - 1.) * (y - 1.));
+
+    value_type lapl = 4. * pi * pi * x * x;
+    lapl +=
+      (-3. - 4. * pi * pi * x * x - 2. * y + 22. * y * y - 24. * y * y * y + 9 * y * y * y * y) *
+      exp_y;
+    lapl *= std::sin(pi * x * x);
+    lapl += 2. * pi * (exp_y - 1.) * std::cos(pi * x * x);
+    lapl *= a;
+    return lapl;
+  }
+};
+
+template<>
+class ZeroDirichletUnitCube<3> : public Function<3>, private ZeroDirichletUnitCubeData
+{
+private:
+  static constexpr int dim = 3;
+  using value_type         = Point<dim>::value_type;
+  const ZeroDirichletUnitCube<2> func_2d;
+
+public:
+  virtual value_type
+  value(const Point<dim> & p, const unsigned int = 0) const override final
+  {
+    const value_type pi = dealii::numbers::PI;
+    const auto &     x  = p[0];
+    const auto &     y  = p[1];
+    const auto &     z  = p[2];
+    const Point<2>   p_xy(x, y);
+    const auto &     val_xy = func_2d.value(p_xy) / a;
+    value_type       val    = a * val_xy * std::sin(pi * z) * std::sin(pi * z);
+    return val;
+  }
+
+  virtual value_type
+  laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
+  {
+    const value_type pi = dealii::numbers::PI;
+    const auto &     x  = p[0];
+    const auto &     y  = p[1];
+    const auto &     z  = p[2];
+    const Point<2>   p_xy(x, y);
+    const auto &     lapl_xy = func_2d.laplacian(p_xy) / a;
+    const auto &     exp_y   = std::exp(y * (y - 1.) * (y - 1.));
+
+    value_type lapl = -lapl_xy + (-1 + exp_y) * 2. * pi * pi * std::sin(pi * x * x);
+    lapl *= -std::sin(pi * z) * std::sin(pi * z);
+    lapl +=
+      2. * (-1 + exp_y) * pi * pi * std::cos(pi * z) * std::cos(pi * z) * std::sin(pi * x * x);
+    lapl *= a;
+    return lapl;
+  }
+};
+
+template<int dim>
+class ManufacturedLoad : public Function<dim>
+{
+public:
+  ManufacturedLoad(const std::shared_ptr<const Function<dim>> solution_function_in)
+    : Function<dim>(), solution_function(solution_function_in)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int = 0) const override final
+  {
+    return -solution_function->laplacian(p);
+  }
+
+private:
+  std::shared_ptr<const Function<dim>> solution_function;
+};
+
+template<int dim>
+class RandomLoad : public Function<dim>
+{
+public:
+  virtual double
+  value(const Point<dim> &, const unsigned int) const override final
+  {
+    return make_random_value<double>();
+  }
+};
+
 } // end namespace Laplace
 
 namespace LinElasticity
@@ -225,6 +348,21 @@ public:
 private:
   const EquationData equation_data;
 };
+
+template<int dim>
+class VolumeForceRandom : public TensorFunction<1, dim>
+{
+public:
+  Tensor<1, dim>
+  value(const Point<dim> &) const override final
+  {
+    Tensor<1, dim> val;
+    for(auto d = 0U; d < dim; ++d)
+      val[d] = abs(make_random_value<double>());
+    return val;
+  }
+};
+
 } // end namespace LinElasticity
 
 

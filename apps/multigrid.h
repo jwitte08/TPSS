@@ -20,15 +20,11 @@
 
 using namespace dealii;
 
-// ++++++++++++++++++++++++++++++++ FREE FUNCTIONS +++++++++++++++++++++++++++++++++++
-
-template<int dim, typename Number>
-typename SubdomainHandler<dim, Number>::AdditionalData
-fill_schwarz_smoother_data(const SchwarzSmootherData & data);
-
 
 
 // +++++++++++++++++++++++++++++++ CLASSES & STRUCTS +++++++++++++++++++++++++++++++++
+
+
 
 struct SmootherParameter
 {
@@ -39,8 +35,7 @@ struct SmootherParameter
   static std::string
   str_smoother_variant(const SmootherVariant variant);
 
-  bool                               compressed = false;
-  SmootherParameter::SmootherVariant variant    = SmootherParameter::SmootherVariant::Schwarz;
+  SmootherParameter::SmootherVariant variant = SmootherParameter::SmootherVariant::Schwarz;
   int                                n_smoothing_steps = 1;
   SchwarzSmootherData                schwarz;
 
@@ -48,7 +43,6 @@ struct SmootherParameter
   operator==(const SmootherParameter & other) const
   {
     bool is_equal = true;
-    is_equal &= compressed == other.compressed;
     is_equal &= variant == other.variant;
     is_equal &= n_smoothing_steps == other.n_smoothing_steps;
     is_equal &= schwarz == other.schwarz;
@@ -223,16 +217,15 @@ public:
     const auto & prms = additional_data.parameters;
 
     /// Fill additional data of SubdomainHandler
-    typename SubdomainHandler<dim, OtherNumber>::AdditionalData sdhandler_data =
-      fill_schwarz_smoother_data<dim, OtherNumber>(prms.schwarz);
-    sdhandler_data.level      = level;
-    sdhandler_data.compressed = prms.compressed;
+    typename SubdomainHandler<dim, OtherNumber>::AdditionalData sd_handler_data;
+    fill_schwarz_smoother_data<dim, OtherNumber>(sd_handler_data, prms.schwarz);
+    sd_handler_data.level = level;
     if(prms.schwarz.manual_coloring)
-      sdhandler_data.coloring_func = additional_data.coloring_func;
+      sd_handler_data.coloring_func = additional_data.coloring_func;
 
     /// Initialize SubdomainHandler
     const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
-    patch_storage->reinit(mf_storage, sdhandler_data);
+    patch_storage->reinit(mf_storage, sd_handler_data);
     return patch_storage;
   }
 
@@ -306,15 +299,13 @@ public:
     /// of underlying Schwarz preconditioners
     const unsigned int mg_level_min = other.min_level();
     const unsigned int mg_level_max = other.max_level();
-    // bool is_shallow_copyable = true;
-    auto sdhandler_data =
-      fill_schwarz_smoother_data<dim, typename MatrixType::value_type>(schwarz_data);
-    sdhandler_data.compressed = prms.compressed;
+    typename SubdomainHandler<dim, typename MatrixType::value_type>::AdditionalData sd_handler_data;
+    fill_schwarz_smoother_data<dim, typename MatrixType::value_type>(sd_handler_data, schwarz_data);
     for(unsigned level = mg_level_min; level <= mg_level_max; ++level)
     {
-      sdhandler_data.level         = level;
-      sdhandler_data.coloring_func = additional_data.coloring_func;
-      AssertThrow(other.get_preconditioner(level)->is_shallow_copyable(sdhandler_data),
+      sd_handler_data.level         = level;
+      sd_handler_data.coloring_func = additional_data.coloring_func;
+      AssertThrow(other.get_preconditioner(level)->is_shallow_copyable(sd_handler_data),
                   ExcMessage("Is not shallow copyable. Check the SchwarzSmootherData settings."));
     }
 
@@ -378,25 +369,6 @@ private:
 };
 
 // +++++++++++++++++++++++++++++++++++ DEFINITIONS +++++++++++++++++++++++++++++++++++
-
-template<int dim, typename Number>
-typename SubdomainHandler<dim, Number>::AdditionalData
-fill_schwarz_smoother_data(const SchwarzSmootherData & data)
-{
-  typename SubdomainHandler<dim, Number>::AdditionalData sdhandler_data;
-
-  /// Schwarz operator
-  sdhandler_data.patch_variant    = data.patch_variant;
-  sdhandler_data.smoother_variant = data.smoother_variant;
-  /// Surrogates
-  sdhandler_data.n_q_points_surrogate      = data.n_q_points_surrogate;
-  sdhandler_data.normalize_surrogate_patch = data.normalize_surrogate_patch;
-  sdhandler_data.use_arc_length            = data.use_arc_length;
-  /// Misc
-  sdhandler_data.print_details = data.print_details;
-
-  return sdhandler_data;
-}
 
 
 

@@ -56,6 +56,8 @@ test_index_map_anisotropic_impl(const std::array<unsigned int, order> & sizes)
     const auto ii     = Tensors::multi_to_uniindex<order>(multii, sizes);
     EXPECT_EQ(i, ii)
       << "The composition of the multi-index map and its inverse isn't mismatches the identity map.";
+    // std::cout << "i = " << i << " -> ii = " << Tensors::multiindex_to_string<order>(multii) <<
+    // std::endl;
   }
 }
 

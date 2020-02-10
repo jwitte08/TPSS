@@ -23,8 +23,10 @@
 #include <deal.II/multigrid/mg_constrained_dofs.h>
 
 #include "TPSS.h"
+#include "dof_info.h"
 #include "mapping_info.h"
-#include "patch_info.h"
+#include "matrix_free_connect.h"
+#include "patch_worker.h"
 #include "solvers_and_preconditioners/TPSS/time_info.h"
 
 #include <array>
@@ -67,8 +69,17 @@ public:
   const AdditionalData &
   get_additional_data() const;
 
+  unsigned int
+  get_unique_dofh_index(const unsigned int dofh_index = 0) const;
+
   const dealii::DoFHandler<dim> &
-  get_dof_handler() const;
+  get_dof_handler(const unsigned int dofh_index = 0) const;
+
+  const TPSS::DoFInfo<dim> &
+  get_dof_info(const unsigned int dofh_index = 0) const;
+
+  TPSS::DoFLayout
+  get_dof_layout(const unsigned int dofh_index = 0) const;
 
   const dealii::Quadrature<1> &
   get_quadrature(int dimension = 0) const;
@@ -91,13 +102,17 @@ public:
   std::shared_ptr<const Utilities::MPI::Partitioner>
   get_vector_partitioner(const unsigned int dofh_index = 0) const
   {
-    return vector_partitioners[dofh_index];
+    const auto & dof_info = get_dof_info(dofh_index);
+    return dof_info.vector_partitioner;
   }
 
-  const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> &
+  std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>>
   get_vector_partitioners() const
   {
-    return vector_partitioners;
+    std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners;
+    for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
+      partitioners.push_back(get_vector_partitioner(dofh_index));
+    return partitioners;
   }
 
   std::vector<TimeInfo>
@@ -150,17 +165,15 @@ private:
   void
   internal_reinit();
 
-  std::shared_ptr<const Utilities::MPI::Partitioner>
-  initialize_vector_partitioner(const TPSS::PatchWorker<dim, number> & patch_worker) const;
-
   const dealii::MatrixFree<dim, number> *                mf_storage;
-  std::shared_ptr<const dealii::MatrixFree<dim, number>> owned_mf_storage;
-  const dealii::DoFHandler<dim> *                        dof_handler;
+  std::shared_ptr<const dealii::MatrixFree<dim, number>> mf_storage_owned;
+  std::vector<unsigned int>                              dofh_indices;
+  std::vector<const dealii::DoFHandler<dim> *>           dof_handlers;
 
-  TPSS::PatchInfo<dim>                                            patch_info;
-  TPSS::MatrixFreeConnect<dim, number>                            mf_connect;
-  TPSS::MappingInfo<dim, number>                                  mapping_info;
-  std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> vector_partitioners;
+  TPSS::PatchInfo<dim>                 patch_info;
+  std::vector<TPSS::DoFInfo<dim>>      dof_infos;
+  TPSS::MatrixFreeConnect<dim, number> mf_connect;
+  TPSS::MappingInfo<dim, number>       mapping_info;
 
   // TODO
   std::vector<dealii::Quadrature<1>> quadrature_storage;
@@ -181,14 +194,14 @@ struct SubdomainHandler<dim, number>::AdditionalData
   std::function<void(const DoFHandler<dim> *                             dof_handler,
                      const typename TPSS::PatchInfo<dim>::AdditionalData additional_data,
                      std::vector<std::vector<CellIterator>> &            cell_collections)>
-               manual_gathering_func;
-  unsigned int n_q_points_surrogate      = 5;
-  bool         normalize_surrogate_patch = false;
-  bool         use_arc_length            = true;
-  unsigned int n_threads                 = 0;
-  unsigned int grain_size                = 0;
-  bool         compressed                = false;
-  bool         print_details             = false;
+                        manual_gathering_func;
+  unsigned int          n_q_points_surrogate      = 5;
+  bool                  normalize_surrogate_patch = false;
+  bool                  use_arc_length            = true;
+  unsigned int          n_threads                 = 0;
+  unsigned int          grain_size                = 0;
+  TPSS::CachingStrategy caching_strategy          = TPSS::CachingStrategy::Cached;
+  bool                  print_details             = false;
 };
 
 /*********************************** inline functions ***********************************/
@@ -198,10 +211,12 @@ inline void
 SubdomainHandler<dim, number>::clear()
 {
   mf_storage = nullptr;
-  owned_mf_storage.reset();
-  dof_handler = nullptr;
+  mf_storage_owned.reset();
+  dofh_indices.clear();
+  dof_handlers.clear();
 
   patch_info.clear();
+  dof_infos.clear();
   mf_connect = TPSS::MatrixFreeConnect<dim, number>{};
   mapping_info.clear();
 
@@ -237,11 +252,35 @@ SubdomainHandler<dim, number>::get_additional_data() const
 }
 
 template<int dim, typename number>
-inline const dealii::DoFHandler<dim> &
-SubdomainHandler<dim, number>::get_dof_handler() const
+unsigned int
+SubdomainHandler<dim, number>::get_unique_dofh_index(const unsigned int dofh_index) const
 {
-  Assert(dof_handler != nullptr, dealii::ExcNotInitialized());
-  return *dof_handler;
+  AssertIndexRange(dofh_index, dofh_indices.size());
+  return dofh_indices[dofh_index];
+}
+
+template<int dim, typename number>
+inline const dealii::DoFHandler<dim> &
+SubdomainHandler<dim, number>::get_dof_handler(const unsigned int dofh_index) const
+{
+  const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
+  return *(dof_handlers[unique_dofh_index]);
+}
+
+template<int dim, typename number>
+inline const TPSS::DoFInfo<dim> &
+SubdomainHandler<dim, number>::get_dof_info(const unsigned int dofh_index) const
+{
+  const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
+  return dof_infos[unique_dofh_index];
+}
+
+template<int dim, typename number>
+inline TPSS::DoFLayout
+SubdomainHandler<dim, number>::get_dof_layout(const unsigned int dofh_index) const
+{
+  const auto & dof_info = get_dof_info(dofh_index);
+  return dof_info.get_dof_layout();
 }
 
 template<int dim, typename number>
@@ -280,7 +319,7 @@ template<int dim, typename number>
 inline const dealii::MatrixFree<dim, number> &
 SubdomainHandler<dim, number>::get_matrix_free() const
 {
-  return *(mf_connect.mf_storage);
+  return *mf_storage;
 }
 
 template<int dim, typename number>

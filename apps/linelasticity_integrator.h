@@ -125,7 +125,7 @@ class MatrixIntegrator
 {
 public:
   using value_type    = Number;
-  using transfer_type = typename TPSS::PatchTransferBlock<dim, fe_degree, fe_degree + 1, Number>;
+  using transfer_type = typename TPSS::PatchTransferBlock<dim, Number, fe_degree>;
   static constexpr int n_patch_dofs_1d = -1;
   using BlockMatrixDiagonal =
     typename Tensors::BlockMatrixDiagonal<dim, VectorizedArray<Number>, n_patch_dofs_1d>;

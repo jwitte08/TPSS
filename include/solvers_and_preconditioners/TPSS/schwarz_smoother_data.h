@@ -15,6 +15,7 @@
 
 #include "TPSS.h"
 #include "generic_functionalities.h"
+#include "subdomain_handler.h"
 
 struct SchwarzSmootherData
 {
@@ -30,6 +31,7 @@ struct SchwarzSmootherData
       use_arc_length(true),
       reverse_smoothing(false),
       symmetrize_smoothing(false),
+      caching_strategy(TPSS::CachingStrategy::Cached),
       print_details(false)
   {
   }
@@ -63,6 +65,8 @@ struct SchwarzSmootherData
     print_parameter(pcout, "Number of quad points (surrogate)", n_q_points_surrogate);
     print_parameter(pcout, "Normalize surrogate patches", normalize_surrogate_patch);
     print_parameter(pcout, "Compute arc length (surrogate)", use_arc_length);
+
+    print_parameter(pcout, "Caching strategy", TPSS::str_caching_strategy(caching_strategy));
   }
 
   bool
@@ -79,6 +83,7 @@ struct SchwarzSmootherData
     is_equal &= reverse_smoothing == other.reverse_smoothing;
     is_equal &= symmetrize_smoothing == other.symmetrize_smoothing;
     is_equal &= print_details == other.print_details;
+    is_equal &= caching_strategy == other.caching_strategy;
     return is_equal;
   }
 
@@ -117,9 +122,32 @@ struct SchwarzSmootherData
   // symmetrizes the multiplicative Schwarz preconditioner
   bool symmetrize_smoothing;
 
+  // which patch related data is cached or computed on-the-fly
+  TPSS::CachingStrategy caching_strategy;
+
   // print detailed information regarding the patch distribution, etc.
   bool print_details;
 };
+
+
+
+template<int dim, typename Number>
+void
+fill_schwarz_smoother_data(typename SubdomainHandler<dim, Number>::AdditionalData & additional_data,
+                           const SchwarzSmootherData & schwarz_smoother_data)
+{
+  /// Schwarz operator
+  additional_data.patch_variant    = schwarz_smoother_data.patch_variant;
+  additional_data.smoother_variant = schwarz_smoother_data.smoother_variant;
+  /// Surrogates
+  additional_data.n_q_points_surrogate      = schwarz_smoother_data.n_q_points_surrogate;
+  additional_data.normalize_surrogate_patch = schwarz_smoother_data.normalize_surrogate_patch;
+  additional_data.use_arc_length            = schwarz_smoother_data.use_arc_length;
+  /// Misc
+  additional_data.caching_strategy = schwarz_smoother_data.caching_strategy;
+  additional_data.print_details    = schwarz_smoother_data.print_details;
+}
+
 
 
 #endif /* INCLUDE_SOLVERS_AND_PRECONDITIONERS_SCHWARZDATA_H_ */
