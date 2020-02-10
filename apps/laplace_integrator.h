@@ -329,7 +329,7 @@ operator()(const Evaluator &,
   AssertDimension(cell_matrix.n_rows(), cell_matrix.n_cols());
   AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
 
-  const auto normal{make_vectorized_array<Number>(face_no == 0 ? -1. : 1.)};
+  const auto normal = fd_eval.get_normal(face_no);
   const auto penalty{compute_penalty(fd_eval, direction, cell_no, cell_no, bdry_mask)};
 
   /*** factor varies on interior and boundary cells ***/
