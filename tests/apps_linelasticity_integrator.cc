@@ -625,7 +625,8 @@ protected:
 
   //   const std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> mass_matrices =
   //     ass.assemble_mass_matrices();
-  //   const std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> elasticity_matrices =
+  //   const std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> elasticity_matrices
+  //   =
   //     ass.assemble_elasticity_matrices();
   //   const std::vector<std::vector<std::array<VectorizedMatrixType, dim>>> mixed_tensors10 =
   //     ass.assemble_block10();
@@ -668,7 +669,8 @@ protected:
   //                      macro_tensors10.cend(),
   //                      std::back_inserter(tensors10),
   //                      [lane](const auto & t) -> std::array<Table<2, double>, dim> {
-  //                        return {table_to_fullmatrix(t[0], lane), table_to_fullmatrix(t[1], lane)};
+  //                        return {table_to_fullmatrix(t[0], lane), table_to_fullmatrix(t[1],
+  //                        lane)};
   //                      });
   //       patch_matrix.get_block(1U, 0U).reinit(tensors10);
 
@@ -687,7 +689,8 @@ protected:
   //     AssertDimension(level_dof_indices.size(), patch_matrix.m());
   //     AssertDimension(level_dof_indices.size(), patch_matrix.n());
   //     FullMatrix<double> extracted_matrix(patch_matrix.m(), patch_matrix.n());
-  //     extracted_matrix.extract_submatrix_from(*level_matrix, level_dof_indices, level_dof_indices);
+  //     extracted_matrix.extract_submatrix_from(*level_matrix, level_dof_indices,
+  //     level_dof_indices);
 
   //     if(test_variant == TestVariant::matrix)
   //       compare_matrix(extracted_matrix);

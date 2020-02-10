@@ -124,8 +124,8 @@ template<int dim, int fe_degree, typename Number>
 class MatrixIntegrator
 {
 public:
-  using value_type    = Number;
-  using transfer_type = typename TPSS::PatchTransferBlock<dim, Number, fe_degree>;
+  using value_type                     = Number;
+  using transfer_type                  = typename TPSS::PatchTransferBlock<dim, Number, fe_degree>;
   static constexpr int n_patch_dofs_1d = -1;
   using BlockMatrixDiagonal =
     typename Tensors::BlockMatrixDiagonal<dim, VectorizedArray<Number>, n_patch_dofs_1d>;
@@ -1268,6 +1268,7 @@ private:
   std::shared_ptr<const MatrixFree<dim, Number>> data;
   VectorizedArray<Number>                        mu;
   VectorizedArray<Number>                        lambda;
+  EquationData::PenaltyVariant                   ip_variant;
   Number                                         ip_factor;
   mutable std::vector<TimeInfo>                  time_infos;
   bool                                           is_valid = false;
@@ -1416,6 +1417,25 @@ public:
   }
 
 private:
+  Tensor<1, dim, VectorizedArray<Number>>
+  get_value_mod(const Tensor<1, dim, VectorizedArray<Number>> & value,
+                const Tensor<1, dim, VectorizedArray<Number>> & normal) const
+  {
+    auto value_mod = value;
+    for(unsigned comp = 0; comp < dim; ++comp)
+    {
+      Tensor<1, dim, Number> face_identifier;
+      face_identifier[comp]              = 1.;
+      const auto              inner_prod = abs(face_identifier * normal);
+      std::bitset<macro_size> flag;
+      for(auto lane = 0U; lane < macro_size; ++lane)
+        flag[lane] = inner_prod[lane] < 1.e-6;
+      for(auto lane = 0U; lane < macro_size; ++lane)
+        if(flag[lane])
+          value_mod[comp][lane] = 0.5 * value[comp][lane];
+    }
+  }
+
   void
   apply_cell(const MatrixFree<dim, Number> &                         data,
              LinearAlgebra::distributed::BlockVector<Number> &       dst,
@@ -1454,6 +1474,7 @@ Operator<dim, fe_degree, Number>::initialize(
   this->data = data_in;
   mu         = make_vectorized_array<Number>(equation_data_in.mu);
   lambda     = make_vectorized_array<Number>(equation_data_in.lambda);
+  ip_variant = equation_data_in.ip_variant;
   ip_factor  = equation_data_in.ip_factor;
   time_infos = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
   is_valid   = static_cast<bool>(data);
@@ -1670,28 +1691,18 @@ Operator<dim, fe_degree, Number>::apply_face(
         const auto & e_u     = get_symmetric_gradient(u, q);
         const auto & value_u = get_value(u, q);
 
-        // !!!
-        auto value_u_newpen = value_u;
-        for(unsigned comp = 0; comp < dim; ++comp)
+        if(EquationData::PenaltyVariant::basic == ip_variant)
+          return 2. * mu *
+                 (sigma * contract<1, 0>(outer_product(value_u, normal_u), normal_v) -
+                  contract<1, 0>(0.5 * e_u, normal_v));
+        else if(EquationData::PenaltyVariant::tensor == ip_variant)
         {
-          Tensor<1, dim, Number> face_identifier;
-          face_identifier[comp]              = 1.;
-          const auto              inner_prod = abs(face_identifier * normal_u);
-          std::bitset<macro_size> flag;
-          for(auto lane = 0U; lane < macro_size; ++lane)
-            flag[lane] = inner_prod[lane] < 1.e-6;
-          for(auto lane = 0U; lane < macro_size; ++lane)
-            if(flag[lane])
-              value_u_newpen[comp][lane] = 0.5 * value_u[comp][lane];
+          const auto value_u_mod = get_value_mod(value_u, normal_u);
+          return 2. * mu *
+                 (lambda * sigma * contract<1, 0>(outer_product(value_u_mod, normal_u), normal_v) -
+                  contract<1, 0>(0.5 * e_u, normal_v));
         }
-
-        // !!!
-        // return 2. * mu *
-        //        (sigma * contract<1, 0>(outer_product(value_u_newpen, normal_u), normal_v) -
-        //         contract<1, 0>(0.5 * e_u, normal_v));
-        return 2. * mu *
-               (lambda * sigma * contract<1, 0>(outer_product(value_u_newpen, normal_u), normal_v) -
-                contract<1, 0>(0.5 * e_u, normal_v));
+        return Tensor<1, dim, VectorizedArray<Number>>{};
       };
 
     /*
@@ -1840,27 +1851,14 @@ Operator<dim, fe_degree, Number>::apply_boundary(
       const auto e_u     = get_symmetric_gradient(u, q);
       const auto normal  = u[0]->get_normal_vector(q);
       const auto value_u = get_value(u, q);
-      // !!!
-      auto value_u_newpen = value_u;
-      for(unsigned comp = 0; comp < dim; ++comp)
+
+      if(EquationData::PenaltyVariant::basic == ip_variant)
+        submit_value(v, 2. * mu * (sigma * value_u - contract<0, 0>(normal, e_u)), q);
+      else if(EquationData::PenaltyVariant::tensor == ip_variant)
       {
-        Tensor<1, dim, Number> face_identifier;
-        face_identifier[comp]              = 1.;
-        const auto              normal     = u[0]->get_normal_vector(0);
-        const auto              inner_prod = abs(face_identifier * normal);
-        std::bitset<macro_size> flag;
-        for(auto lane = 0U; lane < macro_size; ++lane)
-          flag[lane] = inner_prod[lane] < 1.e-6;
-        for(auto lane = 0U; lane < macro_size; ++lane)
-          if(flag[lane])
-            value_u_newpen[comp][lane] = 0.5 * value_u[comp][lane];
-
-        // std::cout << lane << "face " << face << " is not directed in " << comp << std::endl;
+        const auto value_u_mod = get_value_mod(value_u, normal);
+        submit_value(v, 2. * mu * (lambda * sigma * value_u_mod - contract<0, 0>(normal, e_u)), q);
       }
-
-      // !!!
-      // submit_value(v, 2. * mu * (sigma * value_u_newpen - contract<0, 0>(normal, e_u)), q);
-      submit_value(v, 2. * mu * (lambda * sigma * value_u_newpen - contract<0, 0>(normal, e_u)), q);
       submit_symmetric_gradient(v, -2. * mu * outer_product(value_u, normal), q);
     }
     for(unsigned comp = 0; comp < dim; ++comp)

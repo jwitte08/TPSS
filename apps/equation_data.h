@@ -246,12 +246,19 @@ namespace LinElasticity
 {
 struct EquationData
 {
-  double mu             = 1.;
-  double lambda         = 1.;
-  double ip_factor      = 10.; // required to stabilize discretization !!
-  int    lambda_rank    = -1.;
-  int    kronecker_rank = 2.;
-  double factor         = 1.;
+  enum class PenaltyVariant
+  {
+    basic,
+    tensor
+  };
+
+  double         mu             = 1.;
+  double         lambda         = 1.;
+  PenaltyVariant ip_variant     = PenaltyVariant::basic;
+  double         ip_factor      = 10.; // required to stabilize discretization !!
+  int            lambda_rank    = -1.;
+  int            kronecker_rank = 2.;
+  double         factor         = 1.;
 
   std::string
   to_string() const

@@ -92,6 +92,7 @@ struct TestLinElasticity : public BasicSetup<dim, fe_degree, Number>
     const bool    is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
     const auto    pcout         = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
 
+    equation_data.ip_factor = 1.;
     LinElasticityOperator linelasticity_problem(*pcout, rt_parameters, equation_data);
     linelasticity_problem.run(true);
 
