@@ -20,16 +20,27 @@ namespace TPSS
 template<int dim>
 struct DoFInfo
 {
+  struct AdditionalData;
+
   void
-  initialize(const DoFHandler<dim> * dof_handler_in, const PatchInfo<dim> * patch_info_in);
+  initialize(const DoFHandler<dim> * dof_handler,
+             const PatchInfo<dim> *  patch_info,
+             const AdditionalData &  additional_data = AdditionalData{});
 
   void
   clear()
   {
     patch_info = nullptr;
     dof_indices.clear();
-    dof_handler = nullptr;
+    dof_handler     = nullptr;
+    additional_data = AdditionalData{};
     l2h.clear();
+  }
+
+  const AdditionalData &
+  get_additional_data() const
+  {
+    return additional_data;
   }
 
   DoFLayout
@@ -47,6 +58,8 @@ struct DoFInfo
   std::vector<std::vector<types::global_dof_index>> dof_indices;
 
   const PatchInfo<dim> * patch_info = nullptr;
+
+  std::shared_ptr<const Utilities::MPI::Partitioner> vector_partitioner;
 
   DoFAccessor<dim, DoFHandler<dim>, true>
   get_level_dof_accessor(const unsigned int cell_position) const
@@ -80,7 +93,17 @@ struct DoFInfo
     return level_dof_indices;
   }
 
+  AdditionalData additional_data;
+
   std::vector<types::global_dof_index> l2h;
+};
+
+
+
+template<int dim>
+struct DoFInfo<dim>::AdditionalData
+{
+  unsigned int level = numbers::invalid_unsigned_int;
 };
 
 
@@ -89,8 +112,8 @@ template<int dim, typename number>
 class PatchDoFWorker : public PatchWorker<dim, number>
 {
 public:
-  using patch_worker                       = PatchWorker<dim, number>;
-  static constexpr unsigned int macro_size = patch_worker::macro_size;
+  using patch_worker_type                  = PatchWorker<dim, number>;
+  static constexpr unsigned int macro_size = patch_worker_type::macro_size;
 
   PatchDoFWorker() = delete;
 
@@ -109,6 +132,9 @@ public:
   std::array<ArrayView<const types::global_dof_index>, macro_size>
   get_dof_indices_on_cell(const unsigned int patch_id, const unsigned int cell_no) const;
 
+  std::shared_ptr<const Utilities::MPI::Partitioner>
+  initialize_vector_partitioner() const;
+
 private:
   const DoFInfo<dim> * const dof_info;
 };
@@ -123,6 +149,8 @@ template<int dim, typename number>
 inline PatchDoFWorker<dim, number>::PatchDoFWorker(const DoFInfo<dim> & dof_info_in)
   : PatchWorker<dim, number>(*(dof_info_in.patch_info)), dof_info(&dof_info_in)
 {
+  Assert(dof_info->get_additional_data().level != numbers::invalid_unsigned_int,
+         ExcMessage("Implemented for level cells only."));
 }
 
 

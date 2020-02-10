@@ -333,7 +333,7 @@ struct PatchInfo<dim>::AdditionalData
 {
   TPSS::PatchVariant    patch_variant    = TPSS::PatchVariant::invalid;
   TPSS::SmootherVariant smoother_variant = TPSS::SmootherVariant::invalid;
-  unsigned int          level            = -1;
+  unsigned int          level            = numbers::invalid_unsigned_int;
   std::function<
     std::vector<std::vector<PatchIterator>>(const std::vector<std::vector<CellIterator>> & patches,
                                             const AdditionalData additional_data)>

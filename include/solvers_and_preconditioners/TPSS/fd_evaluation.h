@@ -128,7 +128,7 @@ protected:
   const MatrixFree<dim, Number> &                                           mf_storage;
   const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> & shape_info;
 
-  unsigned int patch_id = -1;
+  unsigned int patch_id = numbers::invalid_unsigned_int;
 
   /**
    * lexicographical ordering: face_no_1d < direction

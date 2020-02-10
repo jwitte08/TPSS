@@ -69,6 +69,9 @@ public:
   const AdditionalData &
   get_additional_data() const;
 
+  unsigned int
+  get_unique_dofh_index(const unsigned int dofh_index = 0) const;
+
   const dealii::DoFHandler<dim> &
   get_dof_handler(const unsigned int dofh_index = 0) const;
 
@@ -99,13 +102,17 @@ public:
   std::shared_ptr<const Utilities::MPI::Partitioner>
   get_vector_partitioner(const unsigned int dofh_index = 0) const
   {
-    return vector_partitioners[dofh_index];
+    const auto & dof_info = get_dof_info(dofh_index);
+    return dof_info.vector_partitioner;
   }
 
-  const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> &
+  std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>>
   get_vector_partitioners() const
   {
-    return vector_partitioners;
+    std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners;
+    for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
+      partitioners.push_back(get_vector_partitioner(dofh_index));
+    return partitioners;
   }
 
   std::vector<TimeInfo>
@@ -158,19 +165,15 @@ private:
   void
   internal_reinit();
 
-  std::shared_ptr<const Utilities::MPI::Partitioner>
-  initialize_vector_partitioner(const TPSS::PatchWorker<dim, number> & patch_worker) const;
-
   const dealii::MatrixFree<dim, number> *                mf_storage;
   std::shared_ptr<const dealii::MatrixFree<dim, number>> mf_storage_owned;
   std::vector<unsigned int>                              dofh_indices;
   std::vector<const dealii::DoFHandler<dim> *>           dof_handlers;
 
-  TPSS::PatchInfo<dim>                                            patch_info;
-  std::vector<TPSS::DoFInfo<dim>>                                 dof_infos;
-  TPSS::MatrixFreeConnect<dim, number>                            mf_connect;
-  TPSS::MappingInfo<dim, number>                                  mapping_info;
-  std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> vector_partitioners;
+  TPSS::PatchInfo<dim>                 patch_info;
+  std::vector<TPSS::DoFInfo<dim>>      dof_infos;
+  TPSS::MatrixFreeConnect<dim, number> mf_connect;
+  TPSS::MappingInfo<dim, number>       mapping_info;
 
   // TODO
   std::vector<dealii::Quadrature<1>> quadrature_storage;
@@ -248,13 +251,19 @@ SubdomainHandler<dim, number>::get_additional_data() const
   return additional_data;
 }
 
-// TODO access different dof_handlers ...
+template<int dim, typename number>
+unsigned int
+SubdomainHandler<dim, number>::get_unique_dofh_index(const unsigned int dofh_index) const
+{
+  AssertIndexRange(dofh_index, dofh_indices.size());
+  return dofh_indices[dofh_index];
+}
+
 template<int dim, typename number>
 inline const dealii::DoFHandler<dim> &
 SubdomainHandler<dim, number>::get_dof_handler(const unsigned int dofh_index) const
 {
-  AssertIndexRange(dofh_index, dofh_indices.size());
-  const auto unique_dofh_index = dofh_indices[dofh_index];
+  const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
   return *(dof_handlers[unique_dofh_index]);
 }
 
@@ -262,8 +271,7 @@ template<int dim, typename number>
 inline const TPSS::DoFInfo<dim> &
 SubdomainHandler<dim, number>::get_dof_info(const unsigned int dofh_index) const
 {
-  AssertIndexRange(dofh_index, dofh_indices.size());
-  const auto unique_dofh_index = dofh_indices[dofh_index];
+  const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
   return dof_infos[unique_dofh_index];
 }
 
@@ -271,8 +279,6 @@ template<int dim, typename number>
 inline TPSS::DoFLayout
 SubdomainHandler<dim, number>::get_dof_layout(const unsigned int dofh_index) const
 {
-  // const auto & dof_handler = get_dof_handler(dofh_index);
-  // return TPSS::get_dof_layout(dof_handler.get_fe());
   const auto & dof_info = get_dof_info(dofh_index);
   return dof_info.get_dof_layout();
 }

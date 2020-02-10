@@ -39,48 +39,40 @@ SubdomainHandler<dim, number>::internal_reinit()
   Assert(additional_data.smoother_variant != TPSS::SmootherVariant::invalid, ExcInvalidState());
 
   // *** initialize internal data
-  mf_connect.mf_storage = mf_storage;
-  for(auto i = 0U; i < mf_storage->n_components(); ++i)
-  {
-    const auto   dof_handler    = &(mf_storage->get_dof_handler(i));
-    const auto & finite_element = dof_handler->get_fe();
-    Assert(mf_storage->is_supported(finite_element), ExcMessage("Finite element not supported."));
-    AssertDimension(Utilities::fixed_power<dim>(finite_element.tensor_degree() + 1),
-                    finite_element.n_dofs_per_cell());
+  const auto check_dof_handler = [&](const auto dof_handler) {
+    AssertThrow(mf_storage->is_supported(dof_handler->get_fe()),
+                ExcMessage("Finite element not supported."));
+    AssertDimension(Utilities::fixed_power<dim>(dof_handler->get_fe().tensor_degree() + 1),
+                    dof_handler->get_fe().n_dofs_per_cell());
     AssertIndexRange(additional_data.level, dof_handler->get_triangulation().n_global_levels());
-    AssertDimension(finite_element.n_base_elements(), 1);
-    dof_handlers.push_back(dof_handler);
-  }
+    AssertDimension(dof_handler->get_fe().n_base_elements(), 1);
+  };
+
+  // *** compress dof handlers
   {
-    std::reverse(dof_handlers.begin(), dof_handlers.end());
     std::vector<const dealii::DoFHandler<dim> *> unique_dof_handlers;
-    unique_dof_handlers.push_back(dof_handlers.back());
-    dof_handlers.pop_back();
-    dofh_indices.push_back(0);
-    for(const auto dofh : dof_handlers)
+    const auto                                   first_dofh_index = 0U;
+    const auto & first_dofh = mf_storage->get_dof_handler(first_dofh_index);
+    check_dof_handler(&first_dofh);
+    unique_dof_handlers.push_back(&first_dofh);
+    dofh_indices.push_back(first_dofh_index);
+    for(auto dofh_index = 1U; dofh_index < mf_storage->n_components(); ++dofh_index)
     {
-      const auto         it         = std::find_if(unique_dof_handlers.begin(),
+      const auto & dofh = mf_storage->get_dof_handler(dofh_index);
+      check_dof_handler(&dofh);
+      const auto         it                = std::find_if(unique_dof_handlers.begin(),
                                    unique_dof_handlers.end(),
                                    [&](const auto unique_dofh) {
-                                     return dofh->get_fe() == unique_dofh->get_fe();
+                                     return dofh.get_fe() == unique_dofh->get_fe();
                                    });
-      const unsigned int dofh_index = std::distance(unique_dof_handlers.begin(), it);
-      if(dofh_index < unique_dof_handlers.size()) // dofh is not unique
-      {
-        dofh_indices.push_back(dofh_index);
-      }
-      else // dofh is unique
-      {
-        dofh_indices.push_back(dofh_index);
-        unique_dof_handlers.push_back(dofh);
-      }
+      const unsigned int unique_dofh_index = std::distance(unique_dof_handlers.begin(), it);
+      if(unique_dofh_index == unique_dof_handlers.size()) // dofh is unique
+        unique_dof_handlers.push_back(&dofh);
+      dofh_indices.push_back(unique_dofh_index);
     }
-    AssertDimension(dof_handlers.size() + 1, dofh_indices.size());
-    dof_handlers = unique_dof_handlers;
+    AssertDimension(mf_storage->n_components(), dofh_indices.size());
+    this->dof_handlers = unique_dof_handlers;
   }
-
-  // std::cout << "n_dof_handlers: " << dofh_indices.size() << std::endl;
-  // std::cout << "n_dof_handlers (unique): " << dof_handlers.size() << std::endl;
 
   // TODO
   const auto & shape_info = mf_storage->get_shape_info();
@@ -102,22 +94,37 @@ SubdomainHandler<dim, number>::internal_reinit()
   // *** constructor partitions patches with respect to vectorization
   TPSS::PatchWorker<dim, number> patch_worker{patch_info};
 
-  // *** (partially) store dofs
-  dof_infos.resize(dof_handlers.size());
-  for(auto i = 0U; i < dof_infos.size(); ++i)
-    dof_infos.at(i).initialize(dof_handlers.at(i), &patch_info);
-
   // *** map the patch batches to MatrixFree's cell batches
   mf_connect.initialize(mf_storage, &patch_info);
 
-  // *** initialize the MPI-partitioner
-  vector_partitioners.resize(n_components());
-  vector_partitioners[0] = initialize_vector_partitioner(patch_worker);
-  // TODO different dof handlers !?
-  for(unsigned int dofh_index = 1; dofh_index < n_components(); ++dofh_index)
-    vector_partitioners[dofh_index] = vector_partitioners[0];
-  AssertThrow(vector_partitioners.size() == n_components(),
-              ExcMessage("Mismatching number of partitioners."));
+  // *** (partially) store dofs
+  dof_infos.resize(dof_handlers.size());
+  typename TPSS::DoFInfo<dim>::AdditionalData dof_info_data;
+  dof_info_data.level = additional_data.level;
+  for(auto i = 0U; i < dof_infos.size(); ++i)
+    dof_infos.at(i).initialize(dof_handlers.at(i), &patch_info, dof_info_data);
+  // *** initialize MPI vector partitioner
+  if(TPSS::PatchVariant::cell == additional_data.patch_variant)
+  {
+    // Note, it is okay to pass vector partitioners more than once to the same
+    // dof_info (because partitioners are passed as shared pointers). In other
+    // words, we don't care about uniqueness here as long as we query the
+    // correct partitioner from mf_storage.
+    for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
+    {
+      const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
+      auto &     dof_info          = dof_infos[unique_dofh_index];
+      dof_info.vector_partitioner  = mf_storage->get_vector_partitioner(unique_dofh_index);
+    }
+  }
+  else // entirely assemble vector partitioners
+  {
+    for(auto & dof_info : dof_infos)
+    {
+      TPSS::PatchDoFWorker<dim, number> patch_dof_worker(dof_info);
+      dof_info.vector_partitioner = patch_dof_worker.initialize_vector_partitioner();
+    }
+  }
 
   // *** compute the surrogate patches which pertain the tensor structure
   typename TPSS::MappingInfo<dim, number>::AdditionalData mapping_info_data;
@@ -135,97 +142,6 @@ SubdomainHandler<dim, number>::internal_reinit()
   // // *** if possible compress the data
   // if(additional_data.compressed)
   //   patch_info.get_internal_data()->compress();
-}
-
-template<int dim, typename number>
-std::shared_ptr<const Utilities::MPI::Partitioner>
-SubdomainHandler<dim, number>::initialize_vector_partitioner(
-  const TPSS::PatchWorker<dim, number> & patch_worker) const
-{
-  const auto &                                       additional_data = get_additional_data();
-  const unsigned                                     level           = additional_data.level;
-  const auto                                         patch_variant = additional_data.patch_variant;
-  std::shared_ptr<const Utilities::MPI::Partitioner> partitioner;
-  if(TPSS::PatchVariant::cell == patch_variant)
-    partitioner = get_matrix_free().get_vector_partitioner();
-  else
-  {
-    const IndexSet owned_indices = std::move(dof_handlers.front()->locally_owned_mg_dofs(level));
-
-    // Note: For certain meshes (in particular in 3D and with many
-    // processors), it is really necessary to cache intermediate data. After
-    // trying several objects such as std::set, a vector that is always kept
-    // sorted, and a vector that is initially unsorted and sorted once at the
-    // end, the latter has been identified to provide the best performance.
-    // Martin Kronbichler
-    const auto   my_subdomain_id   = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
-    const auto & is_ghost_on_level = [my_subdomain_id](const auto & cell) {
-      const bool is_owned      = cell->level_subdomain_id() == my_subdomain_id;
-      const bool is_artificial = cell->level_subdomain_id() == numbers::artificial_subdomain_id;
-      return !is_owned && !is_artificial;
-    };
-    std::vector<types::global_dof_index> dof_indices;
-    std::vector<types::global_dof_index> dofs_on_ghosts;
-    const unsigned int                   n_colors = patch_worker.get_partition_data().n_colors();
-    for(unsigned int color = 0; color < n_colors; ++color)
-    {
-      const auto range = patch_worker.get_ghost_range(color);
-      for(unsigned int patch_id = range.first; patch_id < range.second; ++patch_id)
-      {
-        const auto & collection_views = patch_worker.get_cell_collection_views(patch_id);
-        for(const auto & collection : collection_views)
-          for(const auto & cell : collection)
-            if(is_ghost_on_level(cell))
-            {
-              dof_indices.resize(cell->get_fe().dofs_per_cell);
-              cell->get_mg_dof_indices(dof_indices);
-              for(const auto dof_index : dof_indices)
-                if(!owned_indices.is_element(dof_index))
-                  dofs_on_ghosts.push_back(dof_index);
-            }
-      }
-    }
-
-    // sort, compress out duplicates, fill into index set
-    std::sort(dofs_on_ghosts.begin(), dofs_on_ghosts.end());
-    IndexSet   ghost_indices(owned_indices.size());
-    const auto end_without_duplicates = std::unique(dofs_on_ghosts.begin(), dofs_on_ghosts.end());
-    ghost_indices.add_indices(dofs_on_ghosts.begin(), end_without_duplicates);
-    ghost_indices.compress();
-    IndexSet larger_ghost_indices(owned_indices.size());
-    DoFTools::extract_locally_relevant_level_dofs(get_dof_handler(0), level, larger_ghost_indices);
-    larger_ghost_indices.subtract_set(owned_indices);
-
-    const auto tmp_partitioner =
-      std::make_shared<Utilities::MPI::Partitioner>(owned_indices, MPI_COMM_WORLD);
-    tmp_partitioner->set_ghost_indices(ghost_indices, larger_ghost_indices);
-    // tmp_partitioner->set_ghost_indices(larger_ghost_indices);
-    partitioner = tmp_partitioner;
-
-    // // DEBUG
-    // std::ostringstream oss;
-    // oss << "info on mpi proc " << Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) << " on level
-    // " << level << std::endl; oss << "ghost index set:" << std::endl; for (const auto i :
-    // ghost_indices)
-    //   oss << i << " ";
-    // oss << std::endl;
-    // oss << "larger ghost index set:" << std::endl;
-    // for (const auto i : larger_ghost_indices)
-    //   oss << i << " ";
-    // oss << std::endl;
-    // const auto import_targets = partitioner->import_targets();
-    // oss << "import targets: (proc, n_targets)" << std::endl;
-    // for (const auto p : import_targets)
-    //   oss << "(" << p.first << ", " << p.second << ") ";
-    // oss << std::endl;
-    // const auto ghost_targets = partitioner->ghost_targets();
-    // oss << "ghost targets: (proc, n_targets)" << std::endl;
-    // for (const auto p : ghost_targets)
-    //   oss << "(" << p.first << ", " << p.second << ") ";
-    // oss << std::endl;
-    // std::cout << oss.str() << std::endl;
-  }
-  return partitioner;
 }
 
 template<int dim, typename number>
