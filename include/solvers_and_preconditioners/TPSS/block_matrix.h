@@ -307,13 +307,13 @@ public:
         // std::cout << varray_to_string(min_lambda_first) << std::endl;
         // std::cout << varray_to_string(min_lambda_second) << std::endl;
         min_lambda_estimate = min_lambda_first + min_lambda_second;
-        std::cout << "estimate of minimal EV: " << varray_to_string(min_lambda_estimate)
-                  << std::endl;
+        // std::cout << "estimate of minimal EV: " << varray_to_string(min_lambda_estimate)
+        //           << std::endl;
         const auto flag = less_than(min_lambda_estimate, static_cast<Number>(0.));
         for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
           if(flag[lane])
             delta[lane] = factor * abs(min_lambda_estimate[lane]);
-        std::cout << "delta: " << varray_to_string(delta) << std::endl;
+        // std::cout << "delta: " << varray_to_string(delta) << std::endl;
       }
       scaled_ksvd_of_Z.emplace_back(rank1_ksvd.front());
       // {
