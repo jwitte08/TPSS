@@ -533,25 +533,6 @@ struct PatchInfo<dim>::InternalData
 
 
 
-template<int dim, typename number>
-struct MatrixFreeConnect
-{
-  /**
-   * The underlying MatrixFree object used to map matrix-free infrastructure
-   * to the patch distribution stored in PatchInfo
-   */
-  const dealii::MatrixFree<dim, number> * mf_storage = nullptr;
-
-  /**
-   * The batch index and vectorization lane pairs identifying cells
-   * stored in the underlying MatrixFree object and corresponding to
-   * cells stored in the field @p cell_iterators.
-   */
-  std::vector<std::pair<unsigned int, unsigned int>> batch_and_lane;
-};
-
-
-
 // --------------------------------   PatchInfo   --------------------------------
 
 

@@ -17,6 +17,7 @@
 #include <memory>
 
 #include "TPSS.h"
+#include "matrix_free_connect.h"
 #include "patch_info.h"
 #include "tensors.h"
 
@@ -55,14 +56,14 @@ public:
 
 private:
   LocalData
-  extract_cartesian_scaling(FEValues<dim> &                  fe_values,
-                            const PatchWorker<dim, number> & patch_worker,
-                            const unsigned int               patch_id) const;
+  extract_cartesian_scaling(FEValues<dim> &                    fe_values,
+                            const PatchMFWorker<dim, number> & patch_worker,
+                            const unsigned int                 patch_id) const;
 
   LocalData
-  compute_average_scaling(FEValues<dim> &                  fe_values,
-                          const PatchWorker<dim, number> & patch_worker,
-                          const unsigned int               patch_id) const;
+  compute_average_scaling(FEValues<dim> &                    fe_values,
+                          const PatchMFWorker<dim, number> & patch_worker,
+                          const unsigned int                 patch_id) const;
 
   void
   submit_local_data(const LocalData & local_data);

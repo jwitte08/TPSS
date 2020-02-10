@@ -3,8 +3,11 @@
 
 #include "patch_info.h"
 
+
+
 namespace TPSS
 {
+// TODO revise description
 /**
  * A worker class re-interpreting the raw patch data in PatchInfo with
  * respect to a vectorized structure. The new alignment is uniquely
@@ -44,8 +47,6 @@ public:
 
   PatchWorker(const PatchInfo<dim> & patch_info);
 
-  PatchWorker(const PatchInfo<dim> & patch_info, const MatrixFreeConnect<dim, number> & mf_connect);
-
   PatchWorker(const PatchWorker &) = delete;
 
   PatchWorker &
@@ -61,22 +62,11 @@ public:
                          const typename PatchInfo<dim>::InternalData * internal_data,
                          std::vector<unsigned int> * patch_starts = nullptr) const;
 
-  void
-  connect_to_matrixfree(MatrixFreeConnect<dim, number> & mf_connect);
-
-
   std::array<unsigned int, GeometryInfo<dim>::faces_per_cell>
   get_at_boundary_masks_flat(const unsigned int patch) const;
 
   std::array<std::bitset<PatchWorker<dim, number>::macro_size>, GeometryInfo<dim>::faces_per_cell>
   get_at_boundary_masks(const unsigned int patch) const;
-
-  /**
-   * Returns the collection of batch-index-and-lane pairs describing
-   * the macro cell collection @p patch_id in MatrixFree speak.
-   */
-  std::vector<std::array<std::pair<unsigned int, unsigned int>, macro_size>>
-  get_batch_collection(unsigned int patch_id) const;
 
   /**
    * Returns the collection of macro cells describing the macro patch
@@ -174,8 +164,6 @@ protected:
 
   const unsigned int patch_size = 0;
 
-  const MatrixFreeConnect<dim, number> * const mf_connect = nullptr;
-
   mutable std::vector<CellIterator> cell_iterators_scratchpad;
 };
 
@@ -187,24 +175,6 @@ template<int dim, typename number>
 PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
   : patch_info(&patch_info_in),
     patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant))
-{
-  AssertThrow(patch_info_in.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
-              ExcInvalidState());
-  typename PatchInfo<dim>::PartitionData subdomain_partition_data;
-  compute_partition_data(subdomain_partition_data, patch_info_in.get_internal_data());
-  const bool partition_data_is_valid =
-    subdomain_partition_data.is_compatible(patch_info_in.subdomain_partition_data);
-  (void)partition_data_is_valid;
-  Assert(partition_data_is_valid, ExcMessage("The PartitionData does not fit the InternalData."));
-}
-
-
-template<int dim, typename number>
-PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> &                 patch_info_in,
-                                      const MatrixFreeConnect<dim, number> & mf_connect_in)
-  : patch_info(&patch_info_in),
-    patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant)),
-    mf_connect(&mf_connect_in)
 {
   AssertThrow(patch_info_in.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
               ExcInvalidState());
@@ -257,28 +227,6 @@ inline unsigned int
 PatchWorker<dim, number>::n_physical_subdomains() const
 {
   Assert(patch_info != nullptr, ExcNotInitialized());
-  // const auto n_physical_subdomains_per_partition = [this](const unsigned int partition,
-  //                                                         const unsigned int color) {
-  //   const auto & partition_data = patch_info->subdomain_partition_data;
-  //   const auto & range          = partition_data.get_patch_range(partition, color);
-
-  //   // TODO
-  //   unsigned int n_subdomains = 0;
-  //   for(unsigned id = range.first; id < range.second; ++id)
-  //     n_subdomains += n_lanes_filled(id);
-  //   return n_subdomains;
-  //   // return (range.second - range.first) * macro_size;
-  // };
-
-  // unsigned     n_subdomains   = 0;
-  // const auto & partition_data = patch_info->subdomain_partition_data;
-  // const auto   n_colors       = partition_data.n_colors();
-  // for(unsigned color = 0; color < n_colors; ++color)
-  // {
-  //   const auto n_partitions = partition_data.n_partitions(color);
-  //   for(unsigned partition = 0; partition < n_partitions; ++partition)
-  //     n_subdomains += n_physical_subdomains_per_partition(partition, color);
-  // }
   const auto &       subdomain_data = patch_info->get_internal_data()->n_physical_subdomains_total;
   const unsigned int n_subdomains   = subdomain_data.n_interior + subdomain_data.n_boundary;
 
@@ -312,6 +260,7 @@ PatchWorker<dim, number>::n_lanes_filled_impl(const unsigned int patch_id) const
   return n_physical_subdomains;
 }
 
+
 template<int dim, typename number>
 inline const typename PatchInfo<dim>::PartitionData &
 PatchWorker<dim, number>::get_partition_data() const
@@ -319,6 +268,7 @@ PatchWorker<dim, number>::get_partition_data() const
   Assert(patch_info != nullptr, ExcNotInitialized());
   return patch_info->subdomain_partition_data;
 }
+
 
 template<int dim, typename number>
 inline std::array<unsigned int, GeometryInfo<dim>::faces_per_cell>
@@ -333,6 +283,7 @@ PatchWorker<dim, number>::get_at_boundary_masks_flat(const unsigned int patch) c
   return at_bdry_mask;
 }
 
+
 template<int dim, typename number>
 inline std::array<std::bitset<PatchWorker<dim, number>::macro_size>,
                   GeometryInfo<dim>::faces_per_cell>
@@ -342,31 +293,6 @@ PatchWorker<dim, number>::get_at_boundary_masks(const unsigned int patch) const
   const auto & at_bdry_mask_flat = get_at_boundary_masks_flat(patch);
   std::copy(at_bdry_mask_flat.cbegin(), at_bdry_mask_flat.cend(), at_bdry_mask.begin());
   return at_bdry_mask;
-}
-
-template<int dim, typename number>
-inline std::vector<
-  std::array<std::pair<unsigned int, unsigned int>, PatchWorker<dim, number>::macro_size>>
-PatchWorker<dim, number>::get_batch_collection(unsigned int patch_id) const
-{
-  Assert(patch_info != nullptr, ExcNotInitialized());
-  Assert(mf_connect != nullptr, ExcMessage("No MatrixFreeConnect set. Check constructor."));
-  AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
-
-  const auto & patch_starts = patch_info->patch_starts;
-  std::vector<std::array<std::pair<unsigned int, unsigned int>, macro_size>> collection(patch_size);
-  const auto & batch_and_lane = mf_connect->batch_and_lane;
-  auto         batch_pair     = batch_and_lane.cbegin() + patch_starts[patch_id];
-  const auto   n_lanes_filled = this->n_lanes_filled(patch_id);
-  for(unsigned int lane = 0; lane < n_lanes_filled; ++lane)
-    for(unsigned int cell_no = 0; cell_no < patch_size; ++batch_pair, ++cell_no)
-      collection[cell_no][lane] = *batch_pair;
-  //: fill non-physical lanes by mirroring first lane
-  for(unsigned int lane = n_lanes_filled; lane < macro_size; ++lane)
-    for(auto & macro_cell : collection)
-      macro_cell[lane] = macro_cell[0];
-
-  return collection;
 }
 
 

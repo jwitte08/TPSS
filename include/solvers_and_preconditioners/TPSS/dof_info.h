@@ -13,6 +13,8 @@
 #include <array>
 #include <memory>
 
+
+
 namespace TPSS
 {
 template<int dim>
@@ -122,6 +124,7 @@ inline PatchDoFWorker<dim, number>::PatchDoFWorker(const DoFInfo<dim> & dof_info
   : PatchWorker<dim, number>(*(dof_info_in.patch_info)), dof_info(&dof_info_in)
 {
 }
+
 
 template<int dim, typename number>
 inline ArrayView<const types::global_dof_index>

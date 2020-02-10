@@ -108,7 +108,7 @@ SubdomainHandler<dim, number>::internal_reinit()
     dof_infos.at(i).initialize(dof_handlers.at(i), &patch_info);
 
   // *** map the patch batches to MatrixFree's cell batches
-  patch_worker.connect_to_matrixfree(mf_connect);
+  mf_connect.initialize(mf_storage, &patch_info);
 
   // *** initialize the MPI-partitioner
   vector_partitioners.resize(n_components());
