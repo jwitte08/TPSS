@@ -580,12 +580,12 @@ protected:
     Util::compare_matrix(patch_matrix_full, other, *pcout_owned);
   }
 
-  void
-  compare_matrix(const FullMatrix<double> & other) const
-  {
-    const auto patch_matrix_full = table_to_fullmatrix(patch_matrix.as_table());
-    compare_matrix(patch_matrix_full, other);
-  }
+  // void
+  // compare_matrix(const FullMatrix<double> & other) const
+  // {
+  //   const auto patch_matrix_full = table_to_fullmatrix(patch_matrix.as_table());
+  //   compare_matrix(patch_matrix_full, other);
+  // }
 
   void
   compare_inverse_matrix(const FullMatrix<double> & inverse_patch_matrix,
@@ -594,12 +594,12 @@ protected:
     Util::compare_inverse_matrix(inverse_patch_matrix, other, *pcout_owned);
   }
 
-  void
-  compare_inverse_matrix(const FullMatrix<double> & other) const
-  {
-    const auto inverse_patch_matrix = table_to_fullmatrix(patch_matrix.as_inverse_table());
-    compare_inverse_matrix(inverse_patch_matrix, other);
-  }
+  // void
+  // compare_inverse_matrix(const FullMatrix<double> & other) const
+  // {
+  //   const auto inverse_patch_matrix = table_to_fullmatrix(patch_matrix.as_inverse_table());
+  //   compare_inverse_matrix(inverse_patch_matrix, other);
+  // }
 
   template<typename OtherNumber>
   std::vector<std::array<Table<2, OtherNumber>, dim>>
@@ -617,84 +617,84 @@ protected:
     return zeros;
   }
 
-  void
-  manual_assembly(const TestVariant test_variant = TestVariant::matrix)
-  {
-    using State = typename Tensors::TensorProductMatrix<dim, double>::State;
-    initialize();
+  // void
+  // manual_assembly(const TestVariant test_variant = TestVariant::matrix)
+  // {
+  //   using State = typename Tensors::TensorProductMatrix<dim, double>::State;
+  //   initialize();
 
-    const std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> mass_matrices =
-      ass.assemble_mass_matrices();
-    const std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> elasticity_matrices =
-      ass.assemble_elasticity_matrices();
-    const std::vector<std::vector<std::array<VectorizedMatrixType, dim>>> mixed_tensors10 =
-      ass.assemble_block10();
+  //   const std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> mass_matrices =
+  //     ass.assemble_mass_matrices();
+  //   const std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> elasticity_matrices =
+  //     ass.assemble_elasticity_matrices();
+  //   const std::vector<std::vector<std::array<VectorizedMatrixType, dim>>> mixed_tensors10 =
+  //     ass.assemble_block10();
 
-    const auto level_matrix        = ass.assemble_level_matrix();
-    const auto cell_to_patch_index = ex.map_cell_to_patch_index();
-    const auto cell_to_dofs        = ex.map_cell_to_dof_indices();
-    // patch_matrix.resize(dim, dim);
-    for(auto cell = 0U; cell < cell_to_patch_index.size(); ++cell)
-    {
-      patch_matrix.resize(dim, dim);
-      auto [patch, lane] = cell_to_patch_index[cell];
+  //   const auto level_matrix        = ass.assemble_level_matrix();
+  //   const auto cell_to_patch_index = ex.map_cell_to_patch_index();
+  //   const auto cell_to_dofs        = ex.map_cell_to_dof_indices();
+  //   // patch_matrix.resize(dim, dim);
+  //   for(auto cell = 0U; cell < cell_to_patch_index.size(); ++cell)
+  //   {
+  //     patch_matrix.resize(dim, dim);
+  //     auto [patch, lane] = cell_to_patch_index[cell];
 
-      /// block diagonal
-      for(auto comp = 0U; comp < dim; ++comp)
-      {
-        const auto & mass_tensor_comp = mass_matrices[patch][comp];
-        const auto & elas_tensor_comp = elasticity_matrices[patch][comp];
-        std::vector<std::array<Table<2, double>, dim>> tensors_comp;
-        std::array<Table<2, double>, dim>              masses;
-        std::transform(mass_tensor_comp.cbegin(),
-                       mass_tensor_comp.cend(),
-                       masses.begin(),
-                       [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
-        std::array<Table<2, double>, dim> elases;
-        std::transform(elas_tensor_comp.cbegin(),
-                       elas_tensor_comp.cend(),
-                       elases.begin(),
-                       [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
-        tensors_comp.emplace_back(masses);
-        tensors_comp.emplace_back(elases);
-        patch_matrix.get_block(comp, comp).reinit(tensors_comp, State::skd);
-      }
+  //     /// block diagonal
+  //     for(auto comp = 0U; comp < dim; ++comp)
+  //     {
+  //       const auto & mass_tensor_comp = mass_matrices[patch][comp];
+  //       const auto & elas_tensor_comp = elasticity_matrices[patch][comp];
+  //       std::vector<std::array<Table<2, double>, dim>> tensors_comp;
+  //       std::array<Table<2, double>, dim>              masses;
+  //       std::transform(mass_tensor_comp.cbegin(),
+  //                      mass_tensor_comp.cend(),
+  //                      masses.begin(),
+  //                      [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
+  //       std::array<Table<2, double>, dim> elases;
+  //       std::transform(elas_tensor_comp.cbegin(),
+  //                      elas_tensor_comp.cend(),
+  //                      elases.begin(),
+  //                      [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
+  //       tensors_comp.emplace_back(masses);
+  //       tensors_comp.emplace_back(elases);
+  //       patch_matrix.get_block(comp, comp).reinit(tensors_comp, State::skd);
+  //     }
 
-      /// block off-diagonals
-      {
-        const auto &                                   macro_tensors10 = mixed_tensors10[patch];
-        std::vector<std::array<Table<2, double>, dim>> tensors10;
-        std::transform(macro_tensors10.cbegin(),
-                       macro_tensors10.cend(),
-                       std::back_inserter(tensors10),
-                       [lane](const auto & t) -> std::array<Table<2, double>, dim> {
-                         return {table_to_fullmatrix(t[0], lane), table_to_fullmatrix(t[1], lane)};
-                       });
-        patch_matrix.get_block(1U, 0U).reinit(tensors10);
+  //     /// block off-diagonals
+  //     {
+  //       const auto &                                   macro_tensors10 = mixed_tensors10[patch];
+  //       std::vector<std::array<Table<2, double>, dim>> tensors10;
+  //       std::transform(macro_tensors10.cbegin(),
+  //                      macro_tensors10.cend(),
+  //                      std::back_inserter(tensors10),
+  //                      [lane](const auto & t) -> std::array<Table<2, double>, dim> {
+  //                        return {table_to_fullmatrix(t[0], lane), table_to_fullmatrix(t[1], lane)};
+  //                      });
+  //       patch_matrix.get_block(1U, 0U).reinit(tensors10);
 
-        std::vector<std::array<Table<2, double>, dim>> tensors01;
-        std::transform(macro_tensors10.cbegin(),
-                       macro_tensors10.cend(),
-                       std::back_inserter(tensors01),
-                       [lane](const auto & t) -> std::array<Table<2, double>, dim> {
-                         return {table_to_fullmatrix(Tensors::transpose(t[0]), lane),
-                                 table_to_fullmatrix(Tensors::transpose(t[1]), lane)};
-                       });
-        patch_matrix.get_block(0U, 1U).reinit(tensors01);
-      }
+  //       std::vector<std::array<Table<2, double>, dim>> tensors01;
+  //       std::transform(macro_tensors10.cbegin(),
+  //                      macro_tensors10.cend(),
+  //                      std::back_inserter(tensors01),
+  //                      [lane](const auto & t) -> std::array<Table<2, double>, dim> {
+  //                        return {table_to_fullmatrix(Tensors::transpose(t[0]), lane),
+  //                                table_to_fullmatrix(Tensors::transpose(t[1]), lane)};
+  //                      });
+  //       patch_matrix.get_block(0U, 1U).reinit(tensors01);
+  //     }
 
-      const auto & level_dof_indices = cell_to_dofs[cell];
-      AssertDimension(level_dof_indices.size(), patch_matrix.m());
-      AssertDimension(level_dof_indices.size(), patch_matrix.n());
-      FullMatrix<double> extracted_matrix(patch_matrix.m(), patch_matrix.n());
-      extracted_matrix.extract_submatrix_from(*level_matrix, level_dof_indices, level_dof_indices);
+  //     const auto & level_dof_indices = cell_to_dofs[cell];
+  //     AssertDimension(level_dof_indices.size(), patch_matrix.m());
+  //     AssertDimension(level_dof_indices.size(), patch_matrix.n());
+  //     FullMatrix<double> extracted_matrix(patch_matrix.m(), patch_matrix.n());
+  //     extracted_matrix.extract_submatrix_from(*level_matrix, level_dof_indices, level_dof_indices);
 
-      if(test_variant == TestVariant::matrix)
-        compare_matrix(extracted_matrix);
-      else if(test_variant == TestVariant::inverse)
-        compare_inverse_matrix(extracted_matrix);
-    }
-  }
+  //     if(test_variant == TestVariant::matrix)
+  //       compare_matrix(extracted_matrix);
+  //     else if(test_variant == TestVariant::inverse)
+  //       compare_inverse_matrix(extracted_matrix);
+  //   }
+  // }
 
   void
   tpss_assembly(const TestVariant test_variant = TestVariant::matrix)
@@ -802,7 +802,7 @@ protected:
   std::shared_ptr<const LinElasticityProblem> linelasticity_problem;
   Extractor                                   ex;
   Assembler                                   ass;
-  Tensors::BlockMatrix<dim, double>           patch_matrix;
+  // Tensors::BlockMatrix<dim, double>           patch_matrix;
 };
 
 
@@ -815,7 +815,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, ManualAssemblyCellPatch)
   Fixture::params.n_refinements        = 0U;
   Fixture::params.equation_data.lambda = 1.;
   Fixture::params.equation_data.mu     = 1.;
-  Fixture::manual_assembly();
+  // Fixture::manual_assembly();
 
   Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::rt_parameters.mesh.n_repetitions    = 2U;
@@ -823,7 +823,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, ManualAssemblyCellPatch)
   Fixture::params.equation_data.lambda         = 1.234;
   Fixture::params.equation_data.mu             = 9.876;
   Fixture::params.equation_data.ip_factor      = 1.99;
-  Fixture::manual_assembly();
+  // Fixture::manual_assembly();
 }
 
 TYPED_TEST_P(TestLinElasticityIntegratorFD, ManualInvertCellPatch)
@@ -833,7 +833,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, ManualInvertCellPatch)
   Fixture::params.n_refinements        = 0U;
   Fixture::params.equation_data.lambda = 1.;
   Fixture::params.equation_data.mu     = 1.;
-  Fixture::manual_assembly(Fixture::TestVariant::inverse);
+  // Fixture::manual_assembly(Fixture::TestVariant::inverse);
 
   Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::rt_parameters.mesh.n_repetitions    = 2U;
@@ -841,7 +841,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, ManualInvertCellPatch)
   Fixture::params.equation_data.lambda         = 1.234;
   Fixture::params.equation_data.mu             = 9.876;
   Fixture::params.equation_data.ip_factor      = 2.99;
-  Fixture::manual_assembly(Fixture::TestVariant::inverse);
+  // Fixture::manual_assembly(Fixture::TestVariant::inverse);
 }
 
 /// ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
