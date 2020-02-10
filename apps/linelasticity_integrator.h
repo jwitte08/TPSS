@@ -1456,6 +1456,7 @@ private:
         if(flag[lane])
           value_mod[comp][lane] = 0.5 * value[comp][lane];
     }
+    return value_mod;
   }
 
   void
