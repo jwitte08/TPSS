@@ -90,16 +90,17 @@ public:
     return sd_handler;
   }
 
-  unsigned int
-  n_dofs_per_cell(int direction, int cell_no)
-  {
-    AssertIndexRange(direction, dim);
-    AssertIndexRange(cell_no, n_cells_per_direction);
-    // assuming isotropy ... TODO
-    (void)cell_no;
-    (void)direction;
-    return fe_order;
-  }
+  // constexpr unsigned int
+  // n_dofs_per_cell(int direction = -1, int cell_no = -1) const
+  // {
+  //   // assuming isotropy ... TODO
+  //   if(direction == -1 && cell_no == -1)
+  //     return fe_order;
+  //   AssertIndexRange(direction, dim);
+  //   AssertIndexRange(cell_no, n_cells_per_direction);
+  //   AssertThrow(false, ExcMessage("TODO..."));
+  //   return 0U;
+  // }
 
   const VectorizedArray<Number> &
   shape_value(const int dof, const int qpoint_no, const int direction, const int cell_no) const;
