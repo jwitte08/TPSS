@@ -202,6 +202,10 @@ public:
         lambda += evs_1d[d][ii[d]];
       eigenvalues[i] = lambda;
     }
+    // TODO
+    const bool has_zero_eigenvalues =
+      std::any_of(eigenvalues.begin(), eigenvalues.end(), Tensors::is_nearly_zero_value<Number>);
+    AssertThrow(!has_zero_eigenvalues, ExcMessage("Has zero eigenvalues."));
 
     return eigenvalues;
   }
@@ -276,6 +280,16 @@ public:
       return SKDMatrix::eigenvalues[dimension].size();
     Assert(elementary_tensors.size() > 0, ExcMessage("Not initialized."));
     return elementary_tensors.front()[dimension].n_rows();
+  }
+
+  unsigned int
+  n(unsigned int dimension) const
+  {
+    AssertIndexRange(dimension, order);
+    if(state == State::skd)
+      return SKDMatrix::eigenvalues[dimension].size();
+    Assert(elementary_tensors.size() > 0, ExcMessage("Not initialized."));
+    return elementary_tensors.front()[dimension].n_cols();
   }
 
   void
