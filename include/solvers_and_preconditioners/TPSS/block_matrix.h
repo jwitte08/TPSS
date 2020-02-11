@@ -74,6 +74,74 @@ public:
     return minus_C_Ainv_B;
   }
 
+  std::array<Table<2, Number>, order>
+  identity_tensor(const matrix_type & matrix_in)
+  {
+    std::array<Table<2, Number>, order> tensor;
+    for(auto d = 0U; d < order; ++d)
+    {
+      auto & matrix = tensor[d];
+      matrix.reinit(matrix_in.m(d), matrix_in.m(d));
+      for(auto i = 0U; i < matrix_in.m(d); ++i)
+        matrix(i, i) = 1.;
+    }
+    return tensor;
+  };
+
+  std::vector<std::array<Table<2, Number>, order>>
+  init_Z(const std::vector<std::array<Table<2, Number>, order>> & minus_C_Ainv_B,
+         const matrix_type &                                      D_in,
+         const int                                                lambda_rank)
+  {
+    /// compute Kronecker approximation of generalized Lambda(D)^{1/2}
+    const auto & eigenvalues      = D_in.get_eigenvalues();
+    const auto   sqrt_of_Lambda_  = std::make_shared<AlignedVector<Number>>(eigenvalues.size());
+    auto &       sqrt_eigenvalues = *sqrt_of_Lambda_;
+    std::transform(eigenvalues.begin(),
+                   eigenvalues.end(),
+                   sqrt_eigenvalues.begin(),
+                   [](const auto & lambda) { return sqrt(lambda); });
+    sqrt_of_Lambda = sqrt_of_Lambda_;
+
+
+    /// compute Kronecker approximation of generalized Lambda(D)^{-1/2}
+    const auto invsqrt_of_Lambda_ = std::make_shared<AlignedVector<Number>>(eigenvalues.size());
+    auto &     inverse_sqrt_eigenvalues = *invsqrt_of_Lambda_;
+    std::transform(eigenvalues.begin(),
+                   eigenvalues.end(),
+                   inverse_sqrt_eigenvalues.begin(),
+                   [](const auto & lambda) { return 1. / sqrt(lambda); });
+    invsqrt_of_Lambda = invsqrt_of_Lambda_;
+    /// TODO replace Table with efficient format for diagonals (e.g. vectors)
+    const auto lambda_rank_D = lambda_rank == -1 ? get_lambda_rank_max(D_in) : lambda_rank;
+    std::vector<std::array<Table<2, Number>, order>> inverse_Lsqrt(lambda_rank);
+    for(auto & tensor : inverse_Lsqrt)
+      for(auto d = 0U; d < order; ++d)
+        tensor[d].reinit(D_in.m(d), D_in.m(d));
+    compute_ksvd<Number>(inverse_sqrt_eigenvalues, inverse_Lsqrt);
+    remove_zeros(inverse_Lsqrt);
+
+
+    /// Kronecker decomposition of generalized eigenvectors(D) and mass(D)
+    std::vector<std::array<Table<2, Number>, order>> eigenvectors;
+    eigenvectors.emplace_back(D_in.get_eigenvectors());
+    Q = std::make_shared<TensorProductMatrix<order, Number, n_rows_1d>>(eigenvectors);
+    std::vector<std::array<Table<2, Number>, order>> mass;
+    mass.emplace_back(D_in.get_mass());
+    M = std::make_shared<TensorProductMatrix<order, Number, n_rows_1d>>(mass);
+
+
+
+    /// Z = (I - L^{-1/2}Q^TCA^{-1}BQL^{-1/2})
+    scratch = Tensors::product<order, Number>(minus_C_Ainv_B, eigenvectors);
+    scratch = Tensors::product<order, Number>(scratch, inverse_Lsqrt);
+    scratch = Tensors::Tproduct<order, Number>(eigenvectors, scratch);
+    scratch = Tensors::product<order, Number>(inverse_Lsqrt, scratch);
+    scratch.emplace_back(identity_tensor(D_in));
+    std::reverse(scratch.begin(), scratch.end());
+    return scratch;
+  }
+
   void
   reinit(const matrix_type & A_in,
          const matrix_type & B_in,
@@ -116,16 +184,16 @@ public:
     //   std::cout << "Eigenvalues of " << name << " (symm)" << std::endl;
     //   std::cout << vector_to_string(evs) << std::endl;
     // };
-    const auto remove_zeros = [](std::vector<std::array<Table<2, Number>, order>> & tensors) {
-      std::vector<std::array<Table<2, Number>, order>> tmp;
-      std::remove_copy_if(tensors.cbegin(),
-                          tensors.cend(),
-                          std::back_inserter(tmp),
-                          Tensors::is_nearly_zero<order, Number>);
-      std::swap(tensors, tmp);
-    };
+    // const auto remove_zeros = [](std::vector<std::array<Table<2, Number>, order>> & tensors) {
+    //   std::vector<std::array<Table<2, Number>, order>> tmp;
+    //   std::remove_copy_if(tensors.cbegin(),
+    //                       tensors.cend(),
+    //                       std::back_inserter(tmp),
+    //                       Tensors::is_nearly_zero<order, Number>);
+    //   std::swap(tensors, tmp);
+    // };
 
-    static_assert(order == 2);
+    AssertThrow(order == 2, ExcMessage("Require two dimensions."));
     using State = typename matrix_type::State;
 
     AssertThrow(lambda_rank == -1 || lambda_rank > 0, ExcMessage("Invalid lambda_rank."));
@@ -134,38 +202,15 @@ public:
                 ExcMessage("Not a separable Kronecker decomposition."));
 
     /// compute tensors approximating -BAinvC
-    // const int                                        lambda_rank_max = A_in.m(0);
-    // std::vector<std::array<Table<2, Number>, order>> minus_C_Ainv_B;
-    // {
-    //   /// compute KSVD of A's inverse eigenvalues
-    //   const auto            eigenvalues = A_in.get_eigenvalues();
-    //   AlignedVector<Number> inverse_eigenvalues(eigenvalues.size());
-    //   std::transform(eigenvalues.begin(),
-    //                  eigenvalues.end(),
-    //                  inverse_eigenvalues.begin(),
-    //                  [](const auto & lambda) { return 1. / lambda; });
-    //   std::vector<std::array<Table<2, Number>, order>> ksvd_eigenvalues(
-    //     lambda_rank == -1 ? lambda_rank_max : lambda_rank);
-    //   for(auto & tensor : ksvd_eigenvalues)
-    //     for(auto d = 0U; d < order; ++d)
-    //       tensor[d].reinit(A_in.m(d), A_in.m(d));
-    //   compute_ksvd<Number>(inverse_eigenvalues, ksvd_eigenvalues);
-    //   remove_zeros(ksvd_eigenvalues);
-
-    //   /// compute elementary tensors representing approximation of -A^{-1}
-    //   std::vector<std::array<Table<2, Number>, order>> eigenvectors;
-    //   eigenvectors.emplace_back(A_in.get_eigenvectors());
-    //   scratch = Tensors::productT<order, Number>(ksvd_eigenvalues, eigenvectors);
-    //   const auto & minus_eigenvectors = Tensors::scale<order, Number>(-1., eigenvectors);
-    //   scratch        = Tensors::product<order, Number>(minus_eigenvectors, scratch);
-    //   scratch        = Tensors::product<order, Number>(scratch, B_in.get_elementary_tensors());
-    //   minus_C_Ainv_B = Tensors::product<order, Number>(C_in.get_elementary_tensors(), scratch);
-    // }
     const auto lambda_rank_A  = lambda_rank == -1 ? get_lambda_rank_max(A_in) : lambda_rank;
     auto       minus_C_Ainv_B = get_minusCAinvB(A_in, B_in, C_in, lambda_rank_A);
 
-    /// Mode: exact
-    /// compute Schur complement S (exact up to Lambda) and (fully) invert S
+    /*
+     * Mode: exact
+     *
+     * Compute Schur complement S (exact up to Lambda) and basic inverse of S
+     */
+
     if(kronecker_rank == -1)
     {
       mode                   = Mode::exact;
@@ -175,8 +220,6 @@ public:
       return;
     }
 
-
-    const int kronecker_rank_max = D_in.get_elementary_tensors().size() + minus_C_Ainv_B.size();
     /// DEBUG
     auto schur_tensors_exact = D_in.get_elementary_tensors();
     std::copy(minus_C_Ainv_B.cbegin(),
@@ -185,42 +228,39 @@ public:
 
 
 
-    /// Mode: ksvd_inv
-    /// compute KSVD of the inverse Schur complement S (exact up to Lambda)
+    /*
+     * Mode: ksvd_inv
+     *
+     * Compute KSVD of the inverse Schur complement S (exact up to Lambda).
+     */
+
     if(factor < 0.)
     {
+      /// compute exact inverse
       mode                   = Mode::exact;
       const auto & D_tensors = D_in.get_elementary_tensors();
       std::copy(D_tensors.cbegin(), D_tensors.cend(), std::back_inserter(minus_C_Ainv_B));
       matrix_type::reinit(minus_C_Ainv_B);
-
       const auto & inverse_exact = Tensors::inverse_matrix_to_table(*this);
-      std::vector<std::array<Table<2, Number>, order>> inverse_ksvd(
-        kronecker_rank == -1 ? kronecker_rank_max : kronecker_rank);
+
+      /// KSVD of exact inverse
+      const int  kronecker_rank_max  = D_in.get_elementary_tensors().size() + minus_C_Ainv_B.size();
+      const auto kronecker_rank_Sinv = kronecker_rank == -1 ? kronecker_rank_max : kronecker_rank;
+      std::vector<std::array<Table<2, Number>, order>> inverse_ksvd(kronecker_rank_Sinv);
       for(auto & tensor : inverse_ksvd)
         for(auto d = 0U; d < order; ++d)
           tensor[d].reinit(D_in.m(d), D_in.m(d));
       compute_ksvd<Number>(inverse_exact, inverse_ksvd);
 
-      // {
-      //   // const auto matrix      = table_to_fullmatrix(Tensors::matrix_to_table(*this), 0);
-      //   const auto matrix      = table_to_fullmatrix(inverse_exact, 0);
-      //   const auto eigenvalues = compute_eigenvalues(matrix);
-      //   std::cout << "Eigenvalues of S^{-1}" << std::endl;
-      //   std::cout << vector_to_string(eigenvalues) << std::endl;
-      //   print_eigenvalues(inverse_ksvd, "KSVD of S^{-1}");
-      // }
-
+      /// set KSVD of exact inverse
       matrix_type::reinit(inverse_ksvd);
       mode = Mode::ksvd_inv;
       return;
     }
 
 
-    AssertThrow(D_in.get_state() == State::skd,
-                ExcMessage("Not a separable Kronecker decomposition."));
-    /// Mode: ksvd
-    /*
+    /* Mode: ksvd
+     *
      * compute the KSVD of the Schur complement S
      *
      * generalized eigenproblem regarding D:
@@ -233,17 +273,20 @@ public:
      *   S = M Q Lsqrt Z Lsqrt Q^T M
      *   with Z = (I - Linvsqrt Q^T C Ainv B Q Linvsqrt)
      */
-    const auto identity_tensor = [&]() {
-      std::array<Table<2, Number>, order> tensor;
-      for(auto d = 0U; d < order; ++d)
-      {
-        auto & matrix = tensor[d];
-        matrix.reinit(D_in.m(d), D_in.m(d));
-        for(auto i = 0U; i < D_in.m(d); ++i)
-          matrix(i, i) = 1.;
-      }
-      return tensor;
-    };
+
+    AssertThrow(D_in.get_state() == State::skd,
+                ExcMessage("Not a separable Kronecker decomposition."));
+    // const auto identity_tensor = [&]() {
+    //   std::array<Table<2, Number>, order> tensor;
+    //   for(auto d = 0U; d < order; ++d)
+    //   {
+    //     auto & matrix = tensor[d];
+    //     matrix.reinit(D_in.m(d), D_in.m(d));
+    //     for(auto i = 0U; i < D_in.m(d); ++i)
+    //       matrix(i, i) = 1.;
+    //   }
+    //   return tensor;
+    // };
 
 
 
@@ -293,7 +336,7 @@ public:
       scratch = Tensors::product<order, Number>(scratch, inverse_Lsqrt);
       scratch = Tensors::Tproduct<order, Number>(eigenvectors, scratch);
       scratch = Tensors::product<order, Number>(inverse_Lsqrt, scratch);
-      scratch.emplace_back(identity_tensor());
+      scratch.emplace_back(identity_tensor(D_in));
       std::reverse(scratch.begin(), scratch.end());
     }
 
@@ -303,7 +346,9 @@ public:
     {
       std::vector<std::array<Table<2, Number>, order>> scaled_ksvd_of_Z;
       /// compute rank1 KSVD of Z, namely Ztilde_1
-      auto &                                           Z_tensors = scratch;
+      // auto                                           Z_tensors = scratch;
+      const auto lambda_rank_D = lambda_rank == -1 ? get_lambda_rank_max(D_in) : lambda_rank;
+      auto       Z_tensors     = init_Z(minus_C_Ainv_B, D_in, lambda_rank_D);
       std::vector<std::array<Table<2, Number>, order>> rank1_ksvd(1);
       for(auto & tensor : rank1_ksvd)
         for(auto d = 0U; d < order; ++d)
@@ -362,7 +407,7 @@ public:
         {
           // !!!
           pd_factor += delta;
-          Z_tensors.front().front() = matrix_scaling(identity_tensor().front(), pd_factor);
+          Z_tensors.front().front() = matrix_scaling(identity_tensor(D_in).front(), pd_factor);
           {
             print_eigenvalues(Z_tensors, "scaled Z - rank1_ksvd_of_Z");
           }
