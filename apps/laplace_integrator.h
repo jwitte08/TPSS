@@ -137,9 +137,6 @@ compute_penalty(const Evaluator & eval,
                      degree_factor / eval.get_h(direction, cell_no_neighbor);
 
   penalty = 0.5 * (penalty + penalty_neighbor);
-  // for(unsigned int lane = 0; lane < VectorizedArray<Number>::n_array_elements; ++lane)
-  //   penalty[lane] *= eval.get_boundary_mask()[lane] ? 2. : 1.;
-
   return 2. * penalty;
 }
 
@@ -157,19 +154,12 @@ public:
   template<typename Evaluator>
   struct CellMass
   {
-    CellMass(const Table<2, VectorizedArray<Number>> & unit_mass_matrix)
-      : cell_mass_unit(unit_mass_matrix)
-    {
-    }
-
     void
-    operator()(const Evaluator &,
-               const Evaluator &                   fd_eval,
+    operator()(const Evaluator &                   eval_ansatz,
+               const Evaluator &                   eval,
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no) const;
-
-    const Table<2, VectorizedArray<Number>> cell_mass_unit;
   };
 
   template<typename Evaluator>
@@ -177,7 +167,7 @@ public:
   {
     void
     operator()(const Evaluator &,
-               const Evaluator &                   fd_eval,
+               const Evaluator &                   eval,
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no) const;
@@ -188,7 +178,7 @@ public:
   {
     void
     operator()(const Evaluator &,
-               const Evaluator &                   fd_eval,
+               const Evaluator &                   eval,
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no,
@@ -197,69 +187,39 @@ public:
 
     void
     operator()(const Evaluator &,
-               const Evaluator &                   fd_eval,
+               const Evaluator &                   eval,
                Table<2, VectorizedArray<Number>> & cell_matrix01,
                Table<2, VectorizedArray<Number>> & cell_matrix10,
                const int                           direction) const;
-
-    // TODO consider penalty w.r.t. to real cell or surrogate cell ?!
-    // template <typename Evaluator>
-    VectorizedArray<Number> static compute_penalty(const Evaluator &             fd_eval,
-                                                   const int                     direction,
-                                                   const int                     cell_no,
-                                                   const int                     cell_no_neighbor,
-                                                   const std::bitset<macro_size> at_boundary_mask);
   };
 
   template<typename TPMatrix, typename OperatorType>
   void
-  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & data,
-                             std::vector<TPMatrix> &               inverses,
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
+                             std::vector<TPMatrix> &               local_matrices,
                              const OperatorType &,
                              const std::pair<unsigned int, unsigned int> subdomain_range) const
   {
-    const auto & assemble_subspace_inverses_impl = [&](auto && fd_eval) {
-      using EVALUATOR = typename std::decay<decltype(fd_eval)>::type;
+    using Evaluator = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
 
-      Table<2, VectorizedArray<Number>> cell_mass_unit{fe_order, fe_order};
-      fd_eval.compute_unit_mass(make_array_view(cell_mass_unit));
-      // const auto cell_operation_mass = [&](const auto &                        fd_eval,
-      //                                      Table<2, VectorizedArray<Number>> & cell_matrix,
-      //                                      const int                           direction,
-      //                                      const int                           cell_no) {
-      //   AssertIndexRange(direction, static_cast<int>(dim));
-      //   EVALUATOR::CellAssembler::scale_matrix(fd_eval.get_h(direction, cell_no),
-      //                                          make_array_view(cell_mass_unit),
-      //                                          make_array_view(cell_matrix));
-      // };
-      CellMass<EVALUATOR>    cell_mass_assembler{cell_mass_unit};
-      CellLaplace<EVALUATOR> cell_laplace_assembler;
+    Evaluator              eval(subdomain_handler);
+    CellMass<Evaluator>    cell_mass_operation;
+    CellLaplace<Evaluator> cell_laplace_operation;
+    FaceLaplace<Evaluator> nitsche_operation;
 
-      for(unsigned int id = subdomain_range.first; id < subdomain_range.second; ++id)
-      {
-        fd_eval.reinit(id);
-        fd_eval.evaluate(true);
-
-        const std::array<Table<2, VectorizedArray<Number>>, dim> & mass_matrices =
-          fd_eval.patch_action(cell_mass_assembler);
-
-        const std::array<Table<2, VectorizedArray<Number>>, dim> & laplace_matrices =
-          fd_eval.patch_action(cell_laplace_assembler,
-                               FaceLaplace<EVALUATOR>{},
-                               FaceLaplace<EVALUATOR>{});
-
-        inverses[id].reinit(mass_matrices, laplace_matrices);
-      }
-    };
-
-    auto && evaluator = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>{data};
-    assemble_subspace_inverses_impl(evaluator);
+    for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
+    {
+      eval.reinit(patch);
+      const auto & mass_matrices = eval.patch_action(cell_mass_operation);
+      const auto & laplace_matrices =
+        eval.patch_action(cell_laplace_operation, nitsche_operation, nitsche_operation);
+      local_matrices[patch].reinit(mass_matrices, laplace_matrices);
+    }
   }
 
   std::shared_ptr<transfer_type>
   get_patch_transfer(const SubdomainHandler<dim, Number> & patch_storage) const
   {
-    // if (patch_transfer == nullptr)
     return std::make_shared<transfer_type>(patch_storage);
   }
 };
@@ -272,20 +232,26 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::CellMass<Evaluator>::
-operator()(const Evaluator &,
-           const Evaluator &                   fd_eval,
+operator()(const Evaluator &                   eval_ansatz,
+           const Evaluator &                   eval_test,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no) const
 {
-  AssertIndexRange(direction, dim);
-  AssertIndexRange(cell_no, fd_eval.patch_variant == TPSS::PatchVariant::cell ? 1 : 2);
-  AssertDimension(cell_matrix.n_rows(), cell_matrix.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
-
-  Evaluator::CellAssembler::scale_matrix(fd_eval.get_h(direction, cell_no),
-                                         make_array_view(cell_mass_unit),
-                                         make_array_view(cell_matrix));
+  VectorizedArray<Number> integral;
+  for(int dof_u = 0; dof_u < fe_order; ++dof_u)
+    for(int dof_v = 0; dof_v < fe_order; ++dof_v)
+    {
+      integral = 0.;
+      for(unsigned int q = 0; q < Evaluator::n_q_points; ++q)
+      {
+        const auto & value_u = eval_ansatz.shape_value(dof_u, q, direction, cell_no);
+        const auto & value_v = eval_test.shape_value(dof_v, q, direction, cell_no);
+        const auto & dx      = eval_test.get_JxW(q, direction, cell_no);
+        integral += value_u * value_v * dx;
+      }
+      cell_matrix(dof_v, dof_u) += integral;
+    }
 }
 
 template<int dim, int fe_degree, typename Number>
@@ -293,16 +259,11 @@ template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::CellLaplace<Evaluator>::
 operator()(const Evaluator &,
-           const Evaluator &                   fd_eval,
+           const Evaluator &                   eval,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no) const
 {
-  AssertIndexRange(direction, dim);
-  AssertIndexRange(cell_no, fd_eval.patch_variant == TPSS::PatchVariant::cell ? 1 : 2);
-  AssertDimension(cell_matrix.n_rows(), cell_matrix.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
-
   auto integral{make_vectorized_array<Number>(0.)};
   for(int dof_u = 0; dof_u < fe_order; ++dof_u) // u is ansatz function & v is test function
     for(int dof_v = 0; dof_v < fe_order; ++dof_v)
@@ -310,26 +271,13 @@ operator()(const Evaluator &,
       integral = 0.;
       for(unsigned int q = 0; q < Evaluator::n_q_points; ++q)
       {
-        const auto & grad_u = fd_eval.shape_gradient(dof_u, q, direction, cell_no);
-        const auto & grad_v = fd_eval.shape_gradient(dof_v, q, direction, cell_no);
-        const auto & dx     = fd_eval.get_JxW(q, direction, cell_no);
+        const auto & grad_u = eval.shape_gradient(dof_u, q, direction, cell_no);
+        const auto & grad_v = eval.shape_gradient(dof_v, q, direction, cell_no);
+        const auto & dx     = eval.get_JxW(q, direction, cell_no);
         integral += grad_u * grad_v * dx;
       }
       cell_matrix(dof_v, dof_u) += integral;
     }
-
-  // // FUTURE WORK efficiency gain with assembler?
-  // auto&& gradients_view = make_array_view (
-  //   &(fd_eval.shape_gradient (0, 0, direction, cell_no)),
-  //   &(fd_eval.shape_gradient (fe_degree, n_q_points_1d - 1, direction, cell_no)) + 1);
-  // auto&& dx_view =
-  //   make_array_view (&(fd_eval.get_JxW (0, direction, cell_no)),
-  //                            &(fd_eval.get_JxW (n_q_points_1d - 1, direction, cell_no)) + 1);
-  // auto&& matrix_view =
-  //   make_array_view (&(cell_matrix (0, 0)), &(cell_matrix (fe_degree, fe_degree)) + 1);
-
-  // TPSS::MatrixEvaluator<fe_order, n_q_points_1d, VectorizedArray<Number>>::
-  //   template assemble<false> (gradients_view, gradients_view, dx_view, matrix_view);
 }
 
 template<int dim, int fe_degree, typename Number>
@@ -337,41 +285,33 @@ template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::FaceLaplace<Evaluator>::
 operator()(const Evaluator &,
-           const Evaluator &                   fd_eval,
+           const Evaluator &                   eval_test,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no,
            const int                           face_no,
            const std::bitset<macro_size>       bdry_mask) const
 {
-  using namespace dealii;
-
-  AssertIndexRange(direction, dim);
-  AssertIndexRange(face_no, 2);
-  AssertDimension(cell_matrix.n_rows(), cell_matrix.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
-
-  const auto normal = fd_eval.get_normal(face_no);
-  const auto penalty{compute_penalty(fd_eval, direction, cell_no, cell_no, bdry_mask)};
-
-  /*** factor varies on interior and boundary cells ***/
-  auto factor{make_vectorized_array<Number>(0.)};
-  for(unsigned int vv = 0; vv < macro_size; ++vv)
-    factor[vv] = bdry_mask[vv] ? -1. : -0.5;
+  const auto normal         = eval_test.get_normal(face_no);
+  const auto average_factor = eval_test.get_average_factor(direction, cell_no, face_no);
+  const auto penalty =
+    IP::pre_factor * average_factor * compute_penalty(eval_test, direction, cell_no, cell_no);
 
   auto value_on_face{make_vectorized_array<Number>(0.)};
   for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz function & v is test function
   {
-    const auto & v      = fd_eval.shape_value_face(dof_v, face_no, direction, cell_no);
-    const auto & grad_v = fd_eval.shape_gradient_face(dof_v, face_no, direction, cell_no);
+    const auto & v      = eval_test.shape_value_face(dof_v, face_no, direction, cell_no);
+    const auto & grad_v = eval_test.shape_gradient_face(dof_v, face_no, direction, cell_no);
     for(int dof_u = 0; dof_u < fe_order; ++dof_u)
     {
-      const auto & u      = fd_eval.shape_value_face(dof_u, face_no, direction, cell_no);
-      const auto & grad_u = fd_eval.shape_gradient_face(dof_u, face_no, direction, cell_no);
+      const auto & u      = eval_test.shape_value_face(dof_u, face_no, direction, cell_no);
+      const auto & grad_u = eval_test.shape_gradient_face(dof_u, face_no, direction, cell_no);
 
-      value_on_face =
-        factor * (v * normal * grad_u + grad_v * u * normal); // consistency + symmetry
-      value_on_face += penalty * v * u;                       // penalty
+      /// consistency + symmetry
+      value_on_face = -average_factor * (v * normal * grad_u + grad_v * u * normal);
+
+      value_on_face += penalty * v * u;
+
       cell_matrix(dof_v, dof_u) += value_on_face;
     }
   }
@@ -382,81 +322,43 @@ template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::FaceLaplace<Evaluator>::
 operator()(const Evaluator &,
-           const Evaluator &                   fd_eval,
+           const Evaluator &                   eval_test,
            Table<2, VectorizedArray<Number>> & cell_matrix01,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
            const int                           direction) const
 {
-  using namespace dealii;
-
-  AssertIndexRange(direction, dim);
-  AssertDimension(cell_matrix01.n_rows(), cell_matrix01.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix01.n_rows()), fe_order);
-  AssertDimension(cell_matrix01.n_rows(), cell_matrix10.n_rows());
-  AssertDimension(cell_matrix01.n_cols(), cell_matrix10.n_cols());
-
-  /*** the outward normal on face 1 seen from cell 0 ***/
-  const auto normal0{make_vectorized_array<Number>(1.)};
-  /*** the outward normal on face 0 seen from cell 1 ***/
-  const auto normal1{make_vectorized_array<Number>(-1.)};
-  /*** boundary mask is obiviously 0(=all interior), cell_no = 0 and cell_no_neighbor = 1 ***/
-  const auto penalty{compute_penalty(fd_eval, direction, 0, 1, 0)};
+  const auto normal0        = eval_test.get_normal(1); // on cell 0
+  const auto normal1        = eval_test.get_normal(0); // on cell 1
+  const auto average_factor = eval_test.get_average_factor(direction, 0, 1);
+  const auto penalty =
+    IP::pre_factor * average_factor * Laplace::FD::compute_penalty(eval_test, direction, 0, 1);
 
   auto value_on_interface01{make_vectorized_array<Number>(0.)};
   auto value_on_interface10{make_vectorized_array<Number>(0.)};
   for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz & v is test shape function
   {
-    const auto & v0      = fd_eval.shape_value_face(dof_v, 1, direction, 0);
-    const auto & grad_v0 = fd_eval.shape_gradient_face(dof_v, 1, direction, 0);
-    const auto & v1      = fd_eval.shape_value_face(dof_v, 0, direction, 1);
-    const auto & grad_v1 = fd_eval.shape_gradient_face(dof_v, 0, direction, 1);
+    const auto & v0      = eval_test.shape_value_face(dof_v, 1, direction, 0);
+    const auto & grad_v0 = eval_test.shape_gradient_face(dof_v, 1, direction, 0);
+    const auto & v1      = eval_test.shape_value_face(dof_v, 0, direction, 1);
+    const auto & grad_v1 = eval_test.shape_gradient_face(dof_v, 0, direction, 1);
     for(int dof_u = 0; dof_u < fe_order; ++dof_u)
     {
-      const auto & u0      = fd_eval.shape_value_face(dof_u, 1, direction, 0);
-      const auto & grad_u0 = fd_eval.shape_gradient_face(dof_u, 1, direction, 0);
-      const auto & u1      = fd_eval.shape_value_face(dof_u, 0, direction, 1);
-      const auto & grad_u1 = fd_eval.shape_gradient_face(dof_u, 0, direction, 1);
+      const auto & u0      = eval_test.shape_value_face(dof_u, 1, direction, 0);
+      const auto & grad_u0 = eval_test.shape_gradient_face(dof_u, 1, direction, 0);
+      const auto & u1      = eval_test.shape_value_face(dof_u, 0, direction, 1);
+      const auto & grad_u1 = eval_test.shape_gradient_face(dof_u, 0, direction, 1);
 
-      value_on_interface01 =
-        -0.5 * (v0 * normal0 * grad_u1 + grad_v0 * u1 * normal1); // consistency + symmetry
-      value_on_interface10 =
-        -0.5 * (v1 * normal1 * grad_u0 + grad_v1 * u0 * normal0); // consistency + symmetry
+      /// consistency + symmetry
+      value_on_interface01 = -average_factor * (v0 * normal0 * grad_u1 + grad_v0 * u1 * normal1);
+      value_on_interface10 = -average_factor * (v1 * normal1 * grad_u0 + grad_v1 * u0 * normal0);
 
-      value_on_interface01 -= penalty * v0 * u1; // penalty
-      value_on_interface10 -= penalty * v1 * u0; // penalty
+      value_on_interface01 -= penalty * v0 * u1;
+      value_on_interface10 -= penalty * v1 * u0;
 
       cell_matrix01(dof_v, dof_u) += value_on_interface01;
       cell_matrix10(dof_v, dof_u) += value_on_interface10;
     }
   }
-}
-
-// TODO consider penalty w.r.t. to real cell or surrogate cell ?!
-template<int dim, int fe_degree, typename Number>
-template<typename Evaluator>
-VectorizedArray<Number>
-MatrixIntegrator<dim, fe_degree, Number>::FaceLaplace<Evaluator>::compute_penalty(
-  const Evaluator &             fd_eval,
-  const int                     direction,
-  const int                     cell_no,
-  const int                     cell_no_neighbor,
-  const std::bitset<macro_size> at_boundary_mask)
-{
-  using namespace dealii;
-
-  constexpr auto          degree_factor = static_cast<Number>(fe_degree * (fe_degree + 1.));
-  VectorizedArray<Number> penalty       = fe_degree == 0 ?
-                                      make_vectorized_array<Number>(1.) :
-                                      degree_factor / fd_eval.get_h(direction, cell_no);
-  const VectorizedArray<Number> penalty_neighbor =
-    fe_degree == 0 ? make_vectorized_array<Number>(1.) :
-                     degree_factor / fd_eval.get_h(direction, cell_no_neighbor);
-
-  penalty = 0.5 * (penalty + penalty_neighbor);
-  for(unsigned int vv = 0; vv < VectorizedArray<Number>::n_array_elements; ++vv)
-    penalty[vv] *= at_boundary_mask[vv] ? 2. : 1.;
-
-  return IP::pre_factor * penalty;
 }
 
 } // end namespace FD
