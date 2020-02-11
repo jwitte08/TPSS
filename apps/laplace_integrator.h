@@ -121,6 +121,28 @@ MatrixIntegrator<dim>::face(dealii::MeshWorker::DoFInfo<dim> &                  
 
 namespace FD
 {
+template<typename Evaluator, typename Number = typename Evaluator::value_type>
+VectorizedArray<Number>
+compute_penalty(const Evaluator & eval,
+                const int         direction,
+                const int         cell_no,
+                const int         cell_no_neighbor)
+{
+  constexpr auto          fe_degree     = static_cast<Number>(Evaluator::fe_order - 1);
+  constexpr auto          degree_factor = fe_degree * (fe_degree + 1.);
+  VectorizedArray<Number> penalty       = fe_degree == 0 ? make_vectorized_array<Number>(1.) :
+                                                     degree_factor / eval.get_h(direction, cell_no);
+  const VectorizedArray<Number> penalty_neighbor =
+    fe_degree == 0 ? make_vectorized_array<Number>(1.) :
+                     degree_factor / eval.get_h(direction, cell_no_neighbor);
+
+  penalty = 0.5 * (penalty + penalty_neighbor);
+  // for(unsigned int lane = 0; lane < VectorizedArray<Number>::n_array_elements; ++lane)
+  //   penalty[lane] *= eval.get_boundary_mask()[lane] ? 2. : 1.;
+
+  return 2. * penalty;
+}
+
 template<int dim, int fe_degree, typename Number>
 class MatrixIntegrator
 {
