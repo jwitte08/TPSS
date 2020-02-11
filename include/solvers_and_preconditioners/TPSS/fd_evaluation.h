@@ -44,6 +44,15 @@ public:
     return make_vectorized_array<Number>(face_no == 0 ? -1. : 1.);
   }
 
+  Tensor<1, dim, VectorizedArray<Number>>
+  get_normal_vector(const int face_no, const int direction)
+  {
+    Tensor<1, dim, VectorizedArray<Number>> normal_vector;
+    normal_vector *= 0.;
+    normal_vector[direction] = get_normal(face_no);
+    return normal_vector;
+  }
+
   std::bitset<macro_size>
   get_boundary_mask(const int direction, const int cell_no, const int face_no) const
   {
@@ -60,14 +69,36 @@ public:
         return std::bitset<macro_size>{bdry_mask_id[direction * 2 + face_no]};
     }
     else
-      Assert(false, ExcNotImplemented());
+      AssertThrow(false, ExcNotImplemented());
     return std::bitset<macro_size>{0};
+  }
+
+  VectorizedArray<Number>
+  get_average_factor(const int direction, const int cell_no, const int face_no) const
+  {
+    auto         factor      = make_vectorized_array<Number>(0.5);
+    const auto & at_boundary = get_boundary_mask(direction, cell_no, face_no);
+    for(auto lane = 0U; lane < macro_size; ++lane)
+      if(at_boundary[lane])
+        factor[lane] = 1.;
+    return factor;
   }
 
   const SubdomainHandler<dim, Number> &
   get_subdomain_handler() const
   {
     return sd_handler;
+  }
+
+  unsigned int
+  n_dofs_per_cell(int direction, int cell_no)
+  {
+    AssertIndexRange(direction, dim);
+    AssertIndexRange(cell_no, n_cells_per_direction);
+    // assuming isotropy ... TODO
+    (void)cell_no;
+    (void)direction;
+    return fe_order;
   }
 
   const VectorizedArray<Number> &
@@ -216,6 +247,7 @@ class FDEvaluation : public FDEvaluationBase<dim, fe_degree, n_q_points_1d, 1, N
 public:
   using CellAssembler =
     typename TPSS::MatrixEvaluator<fe_degree + 1, n_q_points_1d, VectorizedArray<Number>>;
+  using value_type                              = Number;
   static constexpr unsigned int fe_order        = fe_degree + 1;
   static constexpr unsigned int n_q_points      = n_q_points_1d;
   static constexpr unsigned int n_dofs_per_cell = Utilities::pow(fe_order, dim);
