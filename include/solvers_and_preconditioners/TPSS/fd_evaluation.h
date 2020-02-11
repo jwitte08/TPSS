@@ -45,7 +45,7 @@ public:
   }
 
   Tensor<1, dim, VectorizedArray<Number>>
-  get_normal_vector(const int face_no, const int direction)
+  get_normal_vector(const int face_no, const int direction) const
   {
     Tensor<1, dim, VectorizedArray<Number>> normal_vector;
     normal_vector *= 0.;
