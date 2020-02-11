@@ -65,7 +65,7 @@ compare_matrix(const FullMatrix<Number> & matrix,
   EXPECT_PRED_FORMAT2(testing::FloatLE,
                       diff.frobenius_norm(),
                       std::numeric_limits<Number>::epsilon() *
-                        std::max(100. * n_entries, other.frobenius_norm()))
+                        std::max(100. * n_entries, 10. * other.frobenius_norm()))
     << oss.str();
   pcout << oss.str();
 }
