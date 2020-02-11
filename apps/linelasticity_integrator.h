@@ -316,9 +316,7 @@ public:
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no,
-               const int                           face_no,
-               const std::bitset<macro_size>       bdry_mask) const;
-
+               const int                           face_no) const;
     void
     operator()(const Evaluator &                   eval_ansatz,
                const Evaluator &                   eval_test,
@@ -347,15 +345,14 @@ public:
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no,
-               const int                           face_no,
-               const std::bitset<macro_size>       bdry_mask) const;
+               const int                           face_no) const;
 
     void
-    operator()(const Evaluator &,
-               const Evaluator &,
-               Table<2, VectorizedArray<Number>> &,
-               Table<2, VectorizedArray<Number>> &,
-               const int) const;
+    operator()(const Evaluator &                   eval_ansatz,
+               const Evaluator &                   eval_test,
+               Table<2, VectorizedArray<Number>> & cell_matrix01,
+               Table<2, VectorizedArray<Number>> & cell_matrix10,
+               const int                           direction) const;
 
     const MatrixIntegrator * integrator;
     const int                component_u;
@@ -377,8 +374,7 @@ public:
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no,
-               const int                           face_no,
-               const std::bitset<macro_size>       bdry_mask) const;
+               const int                           face_no) const;
 
     void
     operator()(const Evaluator &                   eval_ansatz,
@@ -408,15 +404,14 @@ public:
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no,
-               const int                           face_no,
-               const std::bitset<macro_size>       bdry_mask) const;
+               const int                           face_no) const;
 
     void
-    operator()(const Evaluator &,
-               const Evaluator &,
-               Table<2, VectorizedArray<Number>> &,
-               Table<2, VectorizedArray<Number>> &,
-               const int) const;
+    operator()(const Evaluator &                   eval_ansatz,
+               const Evaluator &                   eval_test,
+               Table<2, VectorizedArray<Number>> & cell_matrix01,
+               Table<2, VectorizedArray<Number>> & cell_matrix10,
+               const int                           direction) const;
 
     const MatrixIntegrator * integrator;
     const int                component_u;
@@ -604,13 +599,6 @@ public:
       eval_tests.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
 
     std::vector<CellMass<EvaluatorType>> cell_mass_operations(dim);
-    // for(unsigned int comp = 0; comp < dim; ++comp)
-    // {
-    //   auto &               eval_test = *(eval_tests[comp]);
-    //   VectorizedMatrixType cell_mass_unit(fe_order, fe_order);
-    //   eval_test.compute_unit_mass(make_array_view(cell_mass_unit));
-    //   cell_mass_operations.emplace_back(cell_mass_unit);
-    // }
 
     std::vector<CellStrain<EvaluatorType>> cell_strain_operations;
     for(unsigned int comp = 0; comp < dim; ++comp)
@@ -659,13 +647,6 @@ public:
       eval_tests.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
 
     std::vector<CellMass<EvaluatorType>> cell_mass_op(dim);
-    // for(unsigned int comp = 0; comp < dim; ++comp)
-    // {
-    //   const auto &         eval_test = *(eval_tests[comp]);
-    //   VectorizedMatrixType cell_mass_unit(fe_order, fe_order);
-    //   eval_test.compute_unit_mass(make_array_view(cell_mass_unit));
-    //   cell_mass_op.emplace_back(cell_mass_unit);
-    // }
 
     std::vector<CellStrain<EvaluatorType>> cell_strain_op;
     for(unsigned int comp = 0; comp < dim; ++comp)
@@ -879,8 +860,7 @@ operator()(const Evaluator &                   eval_ansatz,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no,
-           const int                           face_no,
-           const std::bitset<macro_size>       bdry_mask) const
+           const int                           face_no) const
 {
   const auto & equation_data  = integrator->equation_data;
   const auto   mu             = equation_data.mu;
@@ -978,8 +958,7 @@ operator()(const Evaluator &                   eval_ansatz,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no,
-           const int                           face_no,
-           const std::bitset<macro_size>       bdry_mask) const
+           const int                           face_no) const
 {
   const auto & equation_data  = integrator->equation_data;
   const auto   mu             = equation_data.mu;
@@ -1051,8 +1030,7 @@ operator()(const Evaluator &                   eval_ansatz,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no,
-           const int                           face_no,
-           const std::bitset<macro_size>       bdry_mask) const
+           const int                           face_no) const
 {
   const auto & equation_data  = integrator->equation_data;
   const auto   lambda         = equation_data.lambda;
@@ -1143,25 +1121,12 @@ operator()(const Evaluator &                   eval_ansatz,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no,
-           const int                           face_no,
-           const std::bitset<macro_size>       bdry_mask) const
+           const int                           face_no) const
 {
   const auto & equation_data  = integrator->equation_data;
   const auto   lambda         = equation_data.lambda;
   const auto   normal_vector  = eval_ansatz.get_normal_vector(face_no, direction);
   const auto   average_factor = eval_test.get_average_factor(direction, cell_no, face_no);
-
-  const bool   is_normal_nonzero_v = (component_v == direction);
-  const bool   is_normal_nonzero_u = (component_u == direction);
-  const Number sign_of_normal      = (face_no == 0 ? -1. : 1.);
-
-  const auto normal_v =
-    sign_of_normal * make_vectorized_array<Number>(is_normal_nonzero_v ? 1. : 0.);
-  const auto normal_u =
-    sign_of_normal * make_vectorized_array<Number>(is_normal_nonzero_u ? 1. : 0.);
-  // auto average_factor = make_vectorized_array<Number>(0.);
-  // for(unsigned int lane = 0; lane < macro_size; ++lane)
-  //   average_factor[lane] = bdry_mask[lane] ? 1. : 0.5;
 
   auto value_on_face{make_vectorized_array<Number>(0.)};
   for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz function & v is test function

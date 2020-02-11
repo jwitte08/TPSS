@@ -182,8 +182,7 @@ public:
                Table<2, VectorizedArray<Number>> & cell_matrix,
                const int                           direction,
                const int                           cell_no,
-               const int                           face_no,
-               const std::bitset<macro_size>       bdry_mask) const;
+               const int                           face_no) const;
 
     void
     operator()(const Evaluator &,
@@ -289,8 +288,7 @@ operator()(const Evaluator &,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no,
-           const int                           face_no,
-           const std::bitset<macro_size>       bdry_mask) const
+           const int                           face_no) const
 {
   const auto normal         = eval_test.get_normal(face_no);
   const auto average_factor = eval_test.get_average_factor(direction, cell_no, face_no);
