@@ -142,11 +142,6 @@ private:
   static constexpr int macro_size       = VectorizedArray<Number>::n_array_elements;
   static constexpr int n_blocks_offdiag = dim * (dim - 1);
 
-public:
-  using LaplaceIntegrator = typename Laplace::FD::MatrixIntegrator<dim, fe_degree, Number>;
-  using CellMass          = typename LaplaceIntegrator::template CellMass<EvaluatorType>;
-  using FaceLaplace       = typename LaplaceIntegrator::template FaceLaplace<EvaluatorType>;
-
 private:
   EquationData equation_data;
 
@@ -249,6 +244,17 @@ public:
 
     const MatrixIntegrator * integrator;
     const int                component;
+  };
+
+  template<typename Evaluator>
+  struct CellMass
+  {
+    void
+    operator()(const Evaluator &                   eval_ansatz,
+               const Evaluator &                   eval_test,
+               Table<2, VectorizedArray<Number>> & cell_matrix,
+               const int                           direction,
+               const int                           cell_no) const;
   };
 
   // d/dx_i u_j * d/dx_j v_i   with i =/= j
@@ -419,7 +425,7 @@ public:
 
   std::array<std::array<VectorizedMatrixType, dim>, dim>
   assemble_mass_tensors(std::vector<std::shared_ptr<EvaluatorType>> & eval_tests,
-                        const std::vector<CellMass> &                 cell_mass_operations,
+                        const std::vector<CellMass<EvaluatorType>> &  cell_mass_operations,
                         const unsigned int                            patch_id) const
   {
     AssertDimension(eval_tests.size(), dim);
@@ -597,14 +603,14 @@ public:
     for(unsigned int comp = 0; comp < dim; ++comp)
       eval_tests.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
 
-    std::vector<CellMass> cell_mass_operations;
-    for(unsigned int comp = 0; comp < dim; ++comp)
-    {
-      auto &               eval_test = *(eval_tests[comp]);
-      VectorizedMatrixType cell_mass_unit(fe_order, fe_order);
-      eval_test.compute_unit_mass(make_array_view(cell_mass_unit));
-      cell_mass_operations.emplace_back(cell_mass_unit);
-    }
+    std::vector<CellMass<EvaluatorType>> cell_mass_operations(dim);
+    // for(unsigned int comp = 0; comp < dim; ++comp)
+    // {
+    //   auto &               eval_test = *(eval_tests[comp]);
+    //   VectorizedMatrixType cell_mass_unit(fe_order, fe_order);
+    //   eval_test.compute_unit_mass(make_array_view(cell_mass_unit));
+    //   cell_mass_operations.emplace_back(cell_mass_unit);
+    // }
 
     std::vector<CellStrain<EvaluatorType>> cell_strain_operations;
     for(unsigned int comp = 0; comp < dim; ++comp)
@@ -652,14 +658,14 @@ public:
     for(unsigned int comp = 0; comp < dim; ++comp)
       eval_tests.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
 
-    std::vector<CellMass> cell_mass_op;
-    for(unsigned int comp = 0; comp < dim; ++comp)
-    {
-      auto &               eval_test = *(eval_tests[comp]);
-      VectorizedMatrixType cell_mass_unit(fe_order, fe_order);
-      eval_test.compute_unit_mass(make_array_view(cell_mass_unit));
-      cell_mass_op.emplace_back(cell_mass_unit);
-    }
+    std::vector<CellMass<EvaluatorType>> cell_mass_op(dim);
+    // for(unsigned int comp = 0; comp < dim; ++comp)
+    // {
+    //   const auto &         eval_test = *(eval_tests[comp]);
+    //   VectorizedMatrixType cell_mass_unit(fe_order, fe_order);
+    //   eval_test.compute_unit_mass(make_array_view(cell_mass_unit));
+    //   cell_mass_op.emplace_back(cell_mass_unit);
+    // }
 
     std::vector<CellStrain<EvaluatorType>> cell_strain_op;
     for(unsigned int comp = 0; comp < dim; ++comp)
@@ -779,6 +785,32 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
+MatrixIntegrator<dim, fe_degree, Number>::CellMass<Evaluator>::
+operator()(const Evaluator &                   eval_ansatz,
+           const Evaluator &                   eval_test,
+           Table<2, VectorizedArray<Number>> & cell_matrix,
+           const int                           direction,
+           const int                           cell_no) const
+{
+  VectorizedArray<Number> integral;
+  for(int dof_u = 0; dof_u < fe_order; ++dof_u)
+    for(int dof_v = 0; dof_v < fe_order; ++dof_v)
+    {
+      integral = 0.;
+      for(unsigned int q = 0; q < Evaluator::n_q_points; ++q)
+      {
+        const auto & value_u = eval_ansatz.shape_value(dof_u, q, direction, cell_no);
+        const auto & value_v = eval_test.shape_value(dof_v, q, direction, cell_no);
+        const auto & dx      = eval_test.get_JxW(q, direction, cell_no);
+        integral += value_u * value_v * dx;
+      }
+      cell_matrix(dof_v, dof_u) += integral;
+    }
+}
+
+template<int dim, int fe_degree, typename Number>
+template<typename Evaluator>
+inline void
 MatrixIntegrator<dim, fe_degree, Number>::CellDerivative<Evaluator>::
 operator()(const Evaluator &                   eval_ansatz,
            const Evaluator &                   eval_test,
@@ -857,11 +889,6 @@ operator()(const Evaluator &                   eval_ansatz,
   const auto   average_factor = eval_test.get_average_factor(direction, cell_no, face_no);
   const auto   penalty        = integrator->ip_factor_strain() * average_factor *
                        integrator->compute_penalty(eval_test, direction, cell_no, cell_no);
-  // !!!
-  // ip_factor * FaceLaplace::compute_penalty(eval_test, direction, cell_no, cell_no, bdry_mask);
-  // const auto penalty =
-  //   lambda * ip_factor * FaceLaplace::compute_penalty(eval_test, direction, cell_no, cell_no,
-  //   bdry_mask);
 
   auto value_on_face = make_vectorized_array<Number>(0.);
   for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz function & v is test function
@@ -903,9 +930,6 @@ operator()(const Evaluator &                   eval_ansatz,
   const auto   normal1        = eval_test.get_normal(0); // on cell 1
   const auto   penalty        = integrator->ip_factor_strain() * average_factor *
                        integrator->compute_penalty(eval_test, direction, 0, 1);
-  // !!!
-  // const auto penalty = lambda * ip_factor * FaceLaplace::compute_penalty(eval_test, direction, 0,
-  // 1, 0);
   /*** diagonal term of grad(u)^T : v ^ n ***/
   const Number symgrad_factor = (component == direction) ? 1. : 0.5;
 

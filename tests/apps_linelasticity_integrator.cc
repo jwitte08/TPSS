@@ -335,12 +335,13 @@ protected:
   {
     using FDMatrixIntegrator = typename FD::MatrixIntegrator<dim, fe_degree, double>;
     using EvaluatorType      = typename FDMatrixIntegrator::EvaluatorType;
-    using CellMass           = typename FDMatrixIntegrator::CellMass;
-    using CellStrain         = typename FDMatrixIntegrator::template CellStrain<EvaluatorType>;
-    using CellDerivative     = typename FDMatrixIntegrator::template CellDerivative<EvaluatorType>;
-    using CellGradDiv        = typename FDMatrixIntegrator::template CellGradDiv<EvaluatorType>;
-    using NitscheStrain      = typename FDMatrixIntegrator::template NitscheStrain<EvaluatorType>;
-    using NitscheGradDiv     = typename FDMatrixIntegrator::template NitscheGradDiv<EvaluatorType>;
+    // using CellMass           = typename FDMatrixIntegrator::CellMass;
+    // using CellStrain         = typename FDMatrixIntegrator::template CellStrain<EvaluatorType>;
+    // using CellDerivative     = typename FDMatrixIntegrator::template
+    // CellDerivative<EvaluatorType>; using CellGradDiv        = typename
+    // FDMatrixIntegrator::template CellGradDiv<EvaluatorType>; using NitscheStrain      = typename
+    // FDMatrixIntegrator::template NitscheStrain<EvaluatorType>; using NitscheGradDiv     =
+    // typename FDMatrixIntegrator::template NitscheGradDiv<EvaluatorType>;
 
 
     std::shared_ptr<const FullMatrix<double>>
@@ -369,153 +370,155 @@ protected:
     }
 
 
-    std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>>
-    assemble_mass_matrices() const
-    {
-      const auto & assembler_mass_matrices =
-        [](const SubdomainHandler<dim, double> &                                 data,
-           std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> & matrices,
-           const bool & /*dummy*/,
-           const std::pair<unsigned int, unsigned int> & subdomain_range) {
-          std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
-          for(unsigned int comp = 0; comp < dim; ++comp)
-            fd_evals.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
+    // std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>>
+    // assemble_mass_matrices() const
+    // {
+    //   const auto & assembler_mass_matrices =
+    //     [](const SubdomainHandler<dim, double> &                                 data,
+    //        std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> & matrices,
+    //        const bool & /*dummy*/,
+    //        const std::pair<unsigned int, unsigned int> & subdomain_range) {
+    //       std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
+    //       for(unsigned int comp = 0; comp < dim; ++comp)
+    //         fd_evals.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
 
-          /// initialize CellMass operation for each component
-          std::vector<CellMass> cell_mass_operations;
-          for(unsigned int comp = 0; comp < dim; ++comp)
-          {
-            auto &               fd_eval = *(fd_evals[comp]);
-            VectorizedMatrixType cell_mass_unit(fe_order, fe_order);
-            fd_eval.compute_unit_mass(make_array_view(cell_mass_unit));
-            cell_mass_operations.emplace_back(cell_mass_unit);
-          }
+    //       /// initialize CellMass operation for each component
+    //       std::vector<CellMass> cell_mass_operations;
+    //       for(unsigned int comp = 0; comp < dim; ++comp)
+    //       {
+    //         auto &               fd_eval = *(fd_evals[comp]);
+    //         VectorizedMatrixType cell_mass_unit(fe_order, fe_order);
+    //         fd_eval.compute_unit_mass(make_array_view(cell_mass_unit));
+    //         cell_mass_operations.emplace_back(cell_mass_unit);
+    //       }
 
-          /// scales 1D unit mass with appropriate h for each component
-          for(unsigned int id = subdomain_range.first; id < subdomain_range.second; ++id)
-            matrices[id] =
-              FDMatrixIntegrator::assemble_mass_tensors(fd_evals, cell_mass_operations, id);
-        };
+    //       /// scales 1D unit mass with appropriate h for each component
+    //       for(unsigned int id = subdomain_range.first; id < subdomain_range.second; ++id)
+    //         matrices[id] =
+    //           FDMatrixIntegrator::assemble_mass_tensors(fd_evals, cell_mass_operations, id);
+    //     };
 
-      const auto & partition_data = patch_storage->get_partition_data();
-      std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> mass_matrices;
-      mass_matrices.resize(partition_data.n_subdomains());
-      for(unsigned int color = 0; color < partition_data.n_colors(); ++color)
-        patch_storage
-          ->template loop<bool,
-                          std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>>>(
-            assembler_mass_matrices, mass_matrices, /*dummy*/ false, color);
+    //   const auto & partition_data = patch_storage->get_partition_data();
+    //   std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> mass_matrices;
+    //   mass_matrices.resize(partition_data.n_subdomains());
+    //   for(unsigned int color = 0; color < partition_data.n_colors(); ++color)
+    //     patch_storage
+    //       ->template loop<bool,
+    //                       std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>>>(
+    //         assembler_mass_matrices, mass_matrices, /*dummy*/ false, color);
 
-      return mass_matrices;
-    }
+    //   return mass_matrices;
+    // }
 
 
-    std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>>
-    assemble_elasticity_matrices() const
-    {
-      /// LAMBDA assemble strain : strain
-      const auto & assembler_strain_matrices =
-        [](const SubdomainHandler<dim, double> &                                 data,
-           std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> & matrices,
-           const EquationData &                                                  equation_data,
-           const std::pair<unsigned int, unsigned int> &                         subdomain_range) {
-          std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
-          for(unsigned int comp = 0; comp < dim; ++comp)
-            fd_evals.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
+    // std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>>
+    // assemble_elasticity_matrices() const
+    // {
+    //   /// LAMBDA assemble strain : strain
+    //   const auto & assembler_strain_matrices =
+    //     [](const SubdomainHandler<dim, double> &                                 data,
+    //        std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> & matrices,
+    //        const EquationData &                                                  equation_data,
+    //        const std::pair<unsigned int, unsigned int> &                         subdomain_range)
+    //        {
+    //       std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
+    //       for(unsigned int comp = 0; comp < dim; ++comp)
+    //         fd_evals.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
 
-          std::vector<CellStrain> cell_strain_operations;
-          for(unsigned int comp = 0; comp < dim; ++comp)
-            cell_strain_operations.emplace_back(equation_data, comp);
-          std::vector<NitscheStrain> nitsche_strain_operations;
-          for(unsigned int comp = 0; comp < dim; ++comp)
-            nitsche_strain_operations.emplace_back(equation_data, comp);
+    //       std::vector<CellStrain> cell_strain_operations;
+    //       for(unsigned int comp = 0; comp < dim; ++comp)
+    //         cell_strain_operations.emplace_back(equation_data, comp);
+    //       std::vector<NitscheStrain> nitsche_strain_operations;
+    //       for(unsigned int comp = 0; comp < dim; ++comp)
+    //         nitsche_strain_operations.emplace_back(equation_data, comp);
 
-          for(unsigned int id = subdomain_range.first; id < subdomain_range.second; ++id)
-            matrices[id] = FDMatrixIntegrator::assemble_strain_tensors(fd_evals,
-                                                                       cell_strain_operations,
-                                                                       nitsche_strain_operations,
-                                                                       id);
-        };
+    //       for(unsigned int id = subdomain_range.first; id < subdomain_range.second; ++id)
+    //         matrices[id] = FDMatrixIntegrator::assemble_strain_tensors(fd_evals,
+    //                                                                    cell_strain_operations,
+    //                                                                    nitsche_strain_operations,
+    //                                                                    id);
+    //     };
 
-      /// LAMBDA assemble grad-div
-      const auto & assembler_graddiv_matrices =
-        [](const SubdomainHandler<dim, double> &                                 data,
-           std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> & matrices,
-           const EquationData &                                                  equation_data,
-           const std::pair<unsigned int, unsigned int> &                         subdomain_range) {
-          std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
-          for(unsigned int comp = 0; comp < dim; ++comp)
-            fd_evals.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
+    //   /// LAMBDA assemble grad-div
+    //   const auto & assembler_graddiv_matrices =
+    //     [](const SubdomainHandler<dim, double> &                                 data,
+    //        std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> & matrices,
+    //        const EquationData &                                                  equation_data,
+    //        const std::pair<unsigned int, unsigned int> &                         subdomain_range)
+    //        {
+    //       std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
+    //       for(unsigned int comp = 0; comp < dim; ++comp)
+    //         fd_evals.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
 
-          std::vector<CellGradDiv> cell_graddiv_operations;
-          for(unsigned int comp = 0; comp < dim; ++comp)
-            cell_graddiv_operations.emplace_back(equation_data, comp);
-          std::vector<NitscheGradDiv> nitsche_graddiv_operations;
-          for(unsigned int comp = 0; comp < dim; ++comp)
-            nitsche_graddiv_operations.emplace_back(equation_data, comp);
+    //       std::vector<CellGradDiv> cell_graddiv_operations;
+    //       for(unsigned int comp = 0; comp < dim; ++comp)
+    //         cell_graddiv_operations.emplace_back(equation_data, comp);
+    //       std::vector<NitscheGradDiv> nitsche_graddiv_operations;
+    //       for(unsigned int comp = 0; comp < dim; ++comp)
+    //         nitsche_graddiv_operations.emplace_back(equation_data, comp);
 
-          for(unsigned int id = subdomain_range.first; id < subdomain_range.second; ++id)
-            FDMatrixIntegrator::assemble_graddiv_tensors(
-              matrices[id], fd_evals, cell_graddiv_operations, nitsche_graddiv_operations, id);
-        };
+    //       for(unsigned int id = subdomain_range.first; id < subdomain_range.second; ++id)
+    //         FDMatrixIntegrator::assemble_graddiv_tensors(
+    //           matrices[id], fd_evals, cell_graddiv_operations, nitsche_graddiv_operations, id);
+    //     };
 
-      const auto & partition_data = patch_storage->get_partition_data();
-      std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> elasticity_matrices;
-      elasticity_matrices.resize(partition_data.n_subdomains());
-      const auto & equation_data = combi_operator->get_equation_data();
+    //   const auto & partition_data = patch_storage->get_partition_data();
+    //   std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>> elasticity_matrices;
+    //   elasticity_matrices.resize(partition_data.n_subdomains());
+    //   const auto & equation_data = combi_operator->get_equation_data();
 
-      /// assemble first strain-strain and then grad-div because
-      /// 'assemble_strain_matrices' initializes new matrices
-      for(unsigned int color = 0; color < partition_data.n_colors(); ++color)
-      {
-        patch_storage
-          ->template loop<EquationData,
-                          std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>>>(
-            assembler_strain_matrices, elasticity_matrices, equation_data, color);
-        patch_storage
-          ->template loop<EquationData,
-                          std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>>>(
-            assembler_graddiv_matrices, elasticity_matrices, equation_data, color);
-      }
+    //   /// assemble first strain-strain and then grad-div because
+    //   /// 'assemble_strain_matrices' initializes new matrices
+    //   for(unsigned int color = 0; color < partition_data.n_colors(); ++color)
+    //   {
+    //     patch_storage
+    //       ->template loop<EquationData,
+    //                       std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>>>(
+    //         assembler_strain_matrices, elasticity_matrices, equation_data, color);
+    //     patch_storage
+    //       ->template loop<EquationData,
+    //                       std::vector<std::array<std::array<VectorizedMatrixType, dim>, dim>>>(
+    //         assembler_graddiv_matrices, elasticity_matrices, equation_data, color);
+    //   }
 
-      return elasticity_matrices;
-    }
+    //   return elasticity_matrices;
+    // }
 
-    // std::vector<std::pair<std::vector<VectorizedMatrixType>, std::vector<VectorizedMatrixType>>>
-    std::vector<std::vector<std::array<VectorizedMatrixType, dim>>>
-    assemble_block10() const
-    {
-      /// LAMBDA assembles the univariate matrices of the (1,0)-block for each subdomain
-      const auto & assembler_block10 =
-        [&](const SubdomainHandler<dim, double> &                             data,
-            std::vector<std::vector<std::array<VectorizedMatrixType, dim>>> & tensors,
-            const EquationData &                                              equation_data,
-            const std::pair<unsigned int, unsigned int> &                     subdomain_range) {
-          std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
-          for(unsigned int comp = 0; comp < dim; ++comp)
-            fd_evals.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
+    // // std::vector<std::pair<std::vector<VectorizedMatrixType>,
+    // std::vector<VectorizedMatrixType>>> std::vector<std::vector<std::array<VectorizedMatrixType,
+    // dim>>> assemble_block10() const
+    // {
+    //   /// LAMBDA assembles the univariate matrices of the (1,0)-block for each subdomain
+    //   const auto & assembler_block10 =
+    //     [&](const SubdomainHandler<dim, double> &                             data,
+    //         std::vector<std::vector<std::array<VectorizedMatrixType, dim>>> & tensors,
+    //         const EquationData &                                              equation_data,
+    //         const std::pair<unsigned int, unsigned int> &                     subdomain_range) {
+    //       std::vector<std::shared_ptr<EvaluatorType>> fd_evals;
+    //       for(unsigned int comp = 0; comp < dim; ++comp)
+    //         fd_evals.emplace_back(std::make_shared<EvaluatorType>(data, /*dofh_index*/ comp));
 
-          for(unsigned int id = subdomain_range.first; id < subdomain_range.second; ++id)
-          {
-            tensors[id] = FDMatrixIntegrator::assemble_mixed_block(
-              fd_evals, equation_data, /*component_v*/ 1U, /*component_u*/ 0U, id);
-          }
-        };
+    //       for(unsigned int id = subdomain_range.first; id < subdomain_range.second; ++id)
+    //       {
+    //         tensors[id] = FDMatrixIntegrator::assemble_mixed_block(
+    //           fd_evals, equation_data, /*component_v*/ 1U, /*component_u*/ 0U, id);
+    //       }
+    //     };
 
-      const auto & partition_data = patch_storage->get_partition_data();
-      std::vector<std::vector<std::array<VectorizedMatrixType, dim>>> blocks;
-      blocks.resize(partition_data.n_subdomains());
-      const auto & equation_data = combi_operator->get_equation_data();
-      for(unsigned int color = 0; color < partition_data.n_colors(); ++color)
-      {
-        patch_storage
-          ->template loop<EquationData,
-                          std::vector<std::vector<std::array<VectorizedMatrixType, dim>>>>(
-            assembler_block10, blocks, equation_data, color);
-      }
+    //   const auto & partition_data = patch_storage->get_partition_data();
+    //   std::vector<std::vector<std::array<VectorizedMatrixType, dim>>> blocks;
+    //   blocks.resize(partition_data.n_subdomains());
+    //   const auto & equation_data = combi_operator->get_equation_data();
+    //   for(unsigned int color = 0; color < partition_data.n_colors(); ++color)
+    //   {
+    //     patch_storage
+    //       ->template loop<EquationData,
+    //                       std::vector<std::vector<std::array<VectorizedMatrixType, dim>>>>(
+    //         assembler_block10, blocks, equation_data, color);
+    //   }
 
-      return blocks;
-    }
+    //   return blocks;
+    // }
 
     const LevelMatrix *                                  combi_operator;
     std::shared_ptr<const MatrixFree<dim, double>>       data;

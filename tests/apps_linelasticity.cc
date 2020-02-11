@@ -247,10 +247,9 @@ INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestLinElasticityExact, TestParams
 //   const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 1), 33.0},
 //                                                         {std::make_pair(2, 3), 25.0},
 //                                                         {std::make_pair(2, 7), 31.0}};
-//   const auto               bound_of_n_iter           = bounds.at({Fixture::dim, Fixture::degree});
-//   typename Fixture::Params params;
-//   params.patch_variant    = TPSS::PatchVariant::cell;
-//   params.smoother_variant = TPSS::SmootherVariant::additive;
+//   const auto               bound_of_n_iter           = bounds.at({Fixture::dim,
+//   Fixture::degree}); typename Fixture::Params params; params.patch_variant    =
+//   TPSS::PatchVariant::cell; params.smoother_variant = TPSS::SmootherVariant::additive;
 //   params.bound            = bound_of_n_iter;
 //   Fixture::check(params);
 // }
@@ -261,10 +260,9 @@ INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestLinElasticityExact, TestParams
 //   const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 1), 16.0},
 //                                                         {std::make_pair(2, 3), 18.0},
 //                                                         {std::make_pair(2, 7), 23.0}};
-//   const auto               bound_of_n_iter           = bounds.at({Fixture::dim, Fixture::degree});
-//   typename Fixture::Params params;
-//   params.patch_variant    = TPSS::PatchVariant::cell;
-//   params.smoother_variant = TPSS::SmootherVariant::multiplicative;
+//   const auto               bound_of_n_iter           = bounds.at({Fixture::dim,
+//   Fixture::degree}); typename Fixture::Params params; params.patch_variant    =
+//   TPSS::PatchVariant::cell; params.smoother_variant = TPSS::SmootherVariant::multiplicative;
 //   params.bound            = bound_of_n_iter;
 //   Fixture::check(params);
 // }
@@ -276,10 +274,9 @@ INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestLinElasticityExact, TestParams
 //   const std::map<std::pair<int, int>, double> bounds = {{std::make_pair(2, 1), 7.0},
 //                                                         {std::make_pair(2, 3), 5.0},
 //                                                         {std::make_pair(2, 7), 5.0}};
-//   const auto               bound_of_n_iter           = bounds.at({Fixture::dim, Fixture::degree});
-//   typename Fixture::Params params;
-//   params.patch_variant    = TPSS::PatchVariant::vertex;
-//   params.smoother_variant = TPSS::SmootherVariant::multiplicative;
+//   const auto               bound_of_n_iter           = bounds.at({Fixture::dim,
+//   Fixture::degree}); typename Fixture::Params params; params.patch_variant    =
+//   TPSS::PatchVariant::vertex; params.smoother_variant = TPSS::SmootherVariant::multiplicative;
 //   params.bound            = bound_of_n_iter;
 //   Fixture::check(params);
 // }
