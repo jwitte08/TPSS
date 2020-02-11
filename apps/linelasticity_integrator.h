@@ -181,6 +181,14 @@ public:
     return equation_data.ip_factor;
   }
 
+  double
+  ip_factor_graddiv() const
+  {
+    if(equation_data.ip_variant == EquationData::PenaltyVariant::tensor)
+      return equation_data.ip_factor;
+    return equation_data.ip_factor;
+  }
+
   const EquationData &
   get_equation_data() const
   {
@@ -226,8 +234,8 @@ public:
   template<typename Evaluator>
   struct CellStrain
   {
-    CellStrain(const EquationData & equation_data_in, const unsigned int component_in)
-      : component(component_in), mu(equation_data_in.mu)
+    CellStrain(const MatrixIntegrator * integrator_in, const int component_in)
+      : integrator(integrator_in), component(component_in)
     {
       AssertIndexRange(component, dim);
     }
@@ -239,10 +247,11 @@ public:
                const int                           direction,
                const int                           cell_no) const;
 
-    const unsigned int component;
-    const double       mu;
+    const MatrixIntegrator * integrator;
+    const int                component;
   };
 
+  // d/dx_i u_j * d/dx_j v_i   with i =/= j
   template<typename Evaluator>
   struct CellDerivative
   {
@@ -252,7 +261,7 @@ public:
       AssertIndexRange(partial_derivative_index_u, dim);
       AssertIndexRange(partial_derivative_index_v, dim);
       Assert(partial_derivative_index_u != partial_derivative_index_v,
-             ExcMessage("TODO Only mixed derivatives implemented!"));
+             ExcMessage("Implemented mixed derivatives only"));
     }
 
     void
@@ -262,15 +271,15 @@ public:
                const int                           direction,
                const int                           cell_no) const;
 
-    const int partial_derivative_index_u;
-    const int partial_derivative_index_v;
+    const int partial_derivative_index_u; // i
+    const int partial_derivative_index_v; // j
   };
 
   template<typename Evaluator>
   struct CellGradDiv
   {
-    CellGradDiv(const EquationData & equation_data_in, const unsigned int component_in)
-      : component(component_in), lambda(equation_data_in.lambda)
+    CellGradDiv(const MatrixIntegrator * integrator_in, const int component_in)
+      : integrator(integrator_in), component(component_in)
     {
       AssertIndexRange(component, dim);
     }
@@ -282,19 +291,15 @@ public:
                const int                           direction,
                const int                           cell_no) const;
 
-    const unsigned int component;
-    const double       lambda;
+    const MatrixIntegrator * integrator;
+    const int                component;
   };
 
   template<typename Evaluator>
   struct NitscheStrain
   {
     NitscheStrain(const MatrixIntegrator * integrator_in, const int component_in)
-      : integrator(integrator_in),
-        // mu(integrator->equation_data.mu),
-        // lambda(integrator->equation_data.lambda),
-        // ip_factor(integrator->equation_data.ip_factor),
-        component(component_in)
+      : integrator(integrator_in), component(component_in)
     {
       AssertIndexRange(component, dim);
     }
@@ -316,20 +321,14 @@ public:
                const int                           direction) const;
 
     const MatrixIntegrator * integrator;
-    // const double mu;
-    // const double lambda;
-    // const double ip_factor;
-    const int component;
+    const int                component;
   };
 
   template<typename Evaluator>
   struct NitscheStrainMixed
   {
-    NitscheStrainMixed(const EquationData & equation_data_in, const int comp_u, const int comp_v)
-      : component_u(comp_u),
-        component_v(comp_v),
-        mu(equation_data_in.mu),
-        lambda(equation_data_in.lambda)
+    NitscheStrainMixed(const MatrixIntegrator * integrator_in, const int comp_u, const int comp_v)
+      : integrator(integrator_in), component_u(comp_u), component_v(comp_v)
     {
       AssertIndexRange(component_u, dim);
       AssertIndexRange(component_v, dim);
@@ -352,19 +351,16 @@ public:
                Table<2, VectorizedArray<Number>> &,
                const int) const;
 
-    const int    component_u;
-    const int    component_v;
-    const double mu;
-    const double lambda;
+    const MatrixIntegrator * integrator;
+    const int                component_u;
+    const int                component_v;
   };
 
   template<typename Evaluator>
   struct NitscheGradDiv
   {
-    NitscheGradDiv(const EquationData & equation_data_in, const int component_in)
-      : lambda(equation_data_in.lambda),
-        ip_factor(equation_data_in.ip_factor),
-        component(component_in)
+    NitscheGradDiv(const MatrixIntegrator * integrator_in, const int component_in)
+      : integrator(integrator_in), component(component_in)
     {
       AssertIndexRange(component, dim);
     }
@@ -385,16 +381,15 @@ public:
                Table<2, VectorizedArray<Number>> & cell_matrix10,
                const int                           direction) const;
 
-    const double lambda;
-    const double ip_factor;
-    const int    component;
+    const MatrixIntegrator * integrator;
+    const int                component;
   };
 
   template<typename Evaluator>
   struct NitscheGradDivMixed
   {
-    NitscheGradDivMixed(const EquationData & equation_data_in, const int comp_u, const int comp_v)
-      : lambda(equation_data_in.lambda), component_u(comp_u), component_v(comp_v)
+    NitscheGradDivMixed(const MatrixIntegrator * integrator_in, const int comp_u, const int comp_v)
+      : integrator(integrator_in), component_u(comp_u), component_v(comp_v)
     {
       AssertIndexRange(component_u, dim);
       AssertIndexRange(component_v, dim);
@@ -417,23 +412,23 @@ public:
                Table<2, VectorizedArray<Number>> &,
                const int) const;
 
-    const double lambda;
-    const int    component_u;
-    const int    component_v;
+    const MatrixIntegrator * integrator;
+    const int                component_u;
+    const int                component_v;
   };
 
-  static std::array<std::array<VectorizedMatrixType, dim>, dim>
+  std::array<std::array<VectorizedMatrixType, dim>, dim>
   assemble_mass_tensors(std::vector<std::shared_ptr<EvaluatorType>> & eval_tests,
                         const std::vector<CellMass> &                 cell_mass_operations,
-                        const unsigned int                            patch_id)
+                        const unsigned int                            patch_id) const
   {
     AssertDimension(eval_tests.size(), dim);
     AssertDimension(cell_mass_operations.size(), dim);
     std::array<std::array<VectorizedMatrixType, dim>, dim> tensors;
     for(unsigned int comp = 0; comp < dim; ++comp)
     {
-      auto & matrices = tensors[comp];
-      auto & eval_test     = *(eval_tests[comp]);
+      auto & matrices  = tensors[comp];
+      auto & eval_test = *(eval_tests[comp]);
       eval_test.reinit(patch_id);
       eval_test.evaluate(true);
 
@@ -442,12 +437,12 @@ public:
     return tensors;
   }
 
-  static std::array<std::array<VectorizedMatrixType, dim>, dim>
+  std::array<std::array<VectorizedMatrixType, dim>, dim>
   assemble_strain_tensors(
     std::vector<std::shared_ptr<EvaluatorType>> &     eval_tests,
     const std::vector<CellStrain<EvaluatorType>> &    cell_strain_operations,
     const std::vector<NitscheStrain<EvaluatorType>> & nitsche_strain_operations,
-    const unsigned int                                patch_id)
+    const unsigned int                                patch_id) const
   {
     AssertDimension(eval_tests.size(), dim);
     AssertDimension(cell_strain_operations.size(), dim);
@@ -455,14 +450,14 @@ public:
     std::array<std::array<VectorizedMatrixType, dim>, dim> tensors;
     for(unsigned int comp = 0; comp < dim; ++comp)
     {
-      auto & matrices = tensors[comp];
-      auto & eval_test     = *(eval_tests[comp]);
+      auto & matrices  = tensors[comp];
+      auto & eval_test = *(eval_tests[comp]);
       eval_test.reinit(patch_id);
       eval_test.evaluate(true);
 
       matrices = eval_test.patch_action(cell_strain_operations[comp],
-                                   nitsche_strain_operations[comp],
-                                   nitsche_strain_operations[comp]);
+                                        nitsche_strain_operations[comp],
+                                        nitsche_strain_operations[comp]);
       // /// DEBUG
       // const Void<EvaluatorType>                          void_op;
       // matrices = eval_test.patch_action(cell_strain_operations[comp],
@@ -472,12 +467,12 @@ public:
     return tensors;
   }
 
-  static std::vector<std::array<VectorizedMatrixType, dim>>
+  std::vector<std::array<VectorizedMatrixType, dim>>
   assemble_mixed_block(std::vector<std::shared_ptr<EvaluatorType>> & eval_tests,
                        const EquationData &                          equation_data,
                        const int                                     component_v,
                        const int                                     component_u,
-                       const unsigned int                            patch_id)
+                       const unsigned int                            patch_id) const
   {
     AssertThrow(dim == 2, ExcMessage("TODO"));
     AssertIndexRange(component_v, dim);
@@ -495,17 +490,18 @@ public:
                                                         partial_derivative_index_v};
       /// compute the complementing matrices subject to the nitsche-strain
       /// contributions (point eval_testuations)
-      const NitscheStrainMixed<EvaluatorType> nitsche_op{equation_data, component_u, component_v};
+      const NitscheStrainMixed<EvaluatorType> nitsche_op(this, component_u, component_v);
 
-      auto & eval_test_v = *(eval_tests[component_v]);
-      auto & eval_test_u = *(eval_tests[component_u]);
-      eval_test_u.reinit(patch_id);
-      eval_test_u.evaluate(true);
-      eval_test_v.reinit(patch_id);
-      eval_test_v.evaluate(true);
+      auto & eval_test   = *(eval_tests[component_v]);
+      auto & eval_ansatz = *(eval_tests[component_u]);
+      eval_ansatz.reinit(patch_id);
+      eval_ansatz.evaluate(true);
+      eval_test.reinit(patch_id);
+      eval_test.evaluate(true);
 
-      const auto & tensor_derivative = eval_test_v.patch_action(eval_test_u, derivative_op);
-      const auto & tensor_nitsche    = eval_test_v.patch_action(eval_test_u, void_op, nitsche_op, nitsche_op);
+      const auto & tensor_derivative = eval_test.patch_action(eval_ansatz, derivative_op);
+      const auto & tensor_nitsche =
+        eval_test.patch_action(eval_ansatz, void_op, nitsche_op, nitsche_op);
 
       /// (mu *  G(1)^T + N(1)) x G(0)   NOTE: mu is included in Nitsche N(1)
       const auto & mu_derivativeT = Tensors::scale(equation_data.mu, tensor_derivative[1]);
@@ -528,17 +524,18 @@ public:
                                                         partial_derivative_index_v};
       /// computes the complementing matrices of the nitsche - grad-div
       /// contributions (point eval_testuations)
-      const NitscheGradDivMixed<EvaluatorType> nitsche_op{equation_data, component_u, component_v};
+      const NitscheGradDivMixed<EvaluatorType> nitsche_op(this, component_u, component_v);
 
-      auto & eval_test_v = *(eval_tests[component_v]);
-      auto & eval_test_u = *(eval_tests[component_u]);
-      eval_test_u.reinit(patch_id);
-      eval_test_u.evaluate(true);
-      eval_test_v.reinit(patch_id);
-      eval_test_v.evaluate(true);
+      auto & eval_test   = *(eval_tests[component_v]);
+      auto & eval_ansatz = *(eval_tests[component_u]);
+      eval_ansatz.reinit(patch_id);
+      eval_ansatz.evaluate(true);
+      eval_test.reinit(patch_id);
+      eval_test.evaluate(true);
 
-      const auto & tensor_derivative = eval_test_v.patch_action(eval_test_u, derivative_op);
-      const auto & tensor_nitsche    = eval_test_v.patch_action(eval_test_u, void_op, nitsche_op, nitsche_op);
+      const auto & tensor_derivative = eval_test.patch_action(eval_ansatz, derivative_op);
+      const auto & tensor_nitsche =
+        eval_test.patch_action(eval_ansatz, void_op, nitsche_op, nitsche_op);
 
       /// (lambda * G(1) + N(1)) x G(0)^T    NOTE: lambda is included in Nitsche N(1)
       const auto & lambda_derivative = Tensors::scale(equation_data.lambda, tensor_derivative[1]);
@@ -555,13 +552,13 @@ public:
     return elementary_tensors;
   }
 
-  static void
+  void
   assemble_graddiv_tensors(
     std::array<std::array<VectorizedMatrixType, dim>, dim> & tensors,
     std::vector<std::shared_ptr<EvaluatorType>> &            eval_tests,
     const std::vector<CellGradDiv<EvaluatorType>> &          cell_graddiv_operations,
     const std::vector<NitscheGradDiv<EvaluatorType>> &       nitsche_graddiv_operations,
-    const unsigned int                                       patch_id)
+    const unsigned int                                       patch_id) const
   {
     AssertDimension(eval_tests.size(), dim);
     AssertDimension(cell_graddiv_operations.size(), dim);
@@ -578,8 +575,8 @@ public:
       eval_test.evaluate(true);
 
       const auto & matrices = eval_test.patch_action(cell_graddiv_operations[comp],
-                                                nitsche_graddiv_operations[comp],
-                                                nitsche_graddiv_operations[comp]);
+                                                     nitsche_graddiv_operations[comp],
+                                                     nitsche_graddiv_operations[comp]);
       // /// DEBUG
       // const Void<EvaluatorType>                          void_op;
       // const auto & matrices = eval_test.patch_action(cell_graddiv_operations[comp],
@@ -611,17 +608,17 @@ public:
 
     std::vector<CellStrain<EvaluatorType>> cell_strain_operations;
     for(unsigned int comp = 0; comp < dim; ++comp)
-      cell_strain_operations.emplace_back(equation_data, comp);
+      cell_strain_operations.emplace_back(this, comp);
     std::vector<NitscheStrain<EvaluatorType>> nitsche_strain_operations;
     for(unsigned int comp = 0; comp < dim; ++comp)
       nitsche_strain_operations.emplace_back(/*equation_data*/ this, comp);
 
     std::vector<CellGradDiv<EvaluatorType>> cell_graddiv_operations;
     for(unsigned int comp = 0; comp < dim; ++comp)
-      cell_graddiv_operations.emplace_back(equation_data, comp);
+      cell_graddiv_operations.emplace_back(this, comp);
     std::vector<NitscheGradDiv<EvaluatorType>> nitsche_graddiv_operations;
     for(unsigned int comp = 0; comp < dim; ++comp)
-      nitsche_graddiv_operations.emplace_back(equation_data, comp);
+      nitsche_graddiv_operations.emplace_back(this, comp);
 
     for(unsigned int id = subdomain_range.first; id < subdomain_range.second; ++id)
     {
@@ -666,17 +663,17 @@ public:
 
     std::vector<CellStrain<EvaluatorType>> cell_strain_op;
     for(unsigned int comp = 0; comp < dim; ++comp)
-      cell_strain_op.emplace_back(equation_data, comp);
+      cell_strain_op.emplace_back(this, comp);
     std::vector<NitscheStrain<EvaluatorType>> nitsche_strain_op;
     for(unsigned int comp = 0; comp < dim; ++comp)
       nitsche_strain_op.emplace_back(/*equation_data*/ this, comp);
 
     std::vector<CellGradDiv<EvaluatorType>> cell_graddiv_op;
     for(unsigned int comp = 0; comp < dim; ++comp)
-      cell_graddiv_op.emplace_back(equation_data, comp);
+      cell_graddiv_op.emplace_back(this, comp);
     std::vector<NitscheGradDiv<EvaluatorType>> nitsche_graddiv_op;
     for(unsigned int comp = 0; comp < dim; ++comp)
-      nitsche_graddiv_op.emplace_back(equation_data, comp);
+      nitsche_graddiv_op.emplace_back(this, comp);
 
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
     {
@@ -704,8 +701,8 @@ public:
 
       /// block off-diagonals
       {
-        auto mixed_tensors =
-          assemble_mixed_block(eval_tests, equation_data, /*component_v*/ 1U, /*component_u*/ 0U, patch);
+        auto mixed_tensors = assemble_mixed_block(
+          eval_tests, equation_data, /*component_v*/ 1U, /*component_u*/ 0U, patch);
         block_matrix.get_block(1U, 0U).reinit(mixed_tensors);
 
         std::vector<std::array<VectorizedMatrixType, dim>> mixed_tensorsT;
@@ -761,12 +758,8 @@ operator()(const Evaluator &                   eval_ansatz,
            const int                           direction,
            const int                           cell_no) const
 {
-  AssertIndexRange(direction, dim);
-  AssertIndexRange(cell_no, eval_test.patch_variant == TPSS::PatchVariant::cell ? 1 : 2);
-  AssertDimension(cell_matrix.n_rows(), cell_matrix.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
-
-  const Number            symgrad_factor = static_cast<int>(component) == direction ? 1. : 0.5;
+  const Number            symgrad_factor = component == direction ? 1. : 0.5;
+  const auto              mu             = integrator->equation_data.mu;
   VectorizedArray<Number> integral;
   for(int dof_u = 0; dof_u < fe_order; ++dof_u) // u is ansatz function & v is test function
     for(int dof_v = 0; dof_v < fe_order; ++dof_v)
@@ -787,33 +780,28 @@ template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
 MatrixIntegrator<dim, fe_degree, Number>::CellDerivative<Evaluator>::
-operator()(const Evaluator &                   eval_test_u,
-           const Evaluator &                   eval_test_v,
+operator()(const Evaluator &                   eval_ansatz,
+           const Evaluator &                   eval_test,
            Table<2, VectorizedArray<Number>> & cell_matrix,
            const int                           direction,
            const int                           cell_no) const
 {
-  AssertIndexRange(direction, dim);
-  AssertIndexRange(cell_no, eval_test_v.patch_variant == TPSS::PatchVariant::cell ? 1 : 2);
-  AssertDimension(cell_matrix.n_rows(), cell_matrix.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
-
   VectorizedArray<Number> integral;
   const bool              flag_derive_u = (direction == partial_derivative_index_u);
   const bool              flag_derive_v = (direction == partial_derivative_index_v);
-  for(int dof_u = 0; dof_u < fe_order; ++dof_u) // u is ansatz function & v is test function
+  for(int dof_u = 0; dof_u < fe_order; ++dof_u)
     for(int dof_v = 0; dof_v < fe_order; ++dof_v)
     {
       integral = 0.;
       for(unsigned int q = 0; q < Evaluator::n_q_points; ++q)
       {
         const auto & value_or_grad_u = flag_derive_u ?
-                                         eval_test_u.shape_gradient(dof_u, q, direction, cell_no) :
-                                         eval_test_u.shape_value(dof_u, q, direction, cell_no);
+                                         eval_ansatz.shape_gradient(dof_u, q, direction, cell_no) :
+                                         eval_ansatz.shape_value(dof_u, q, direction, cell_no);
         const auto & value_or_grad_v = flag_derive_v ?
-                                         eval_test_v.shape_gradient(dof_v, q, direction, cell_no) :
-                                         eval_test_v.shape_value(dof_v, q, direction, cell_no);
-        const auto & dx = eval_test_v.get_JxW(q, direction, cell_no);
+                                         eval_test.shape_gradient(dof_v, q, direction, cell_no) :
+                                         eval_test.shape_value(dof_v, q, direction, cell_no);
+        const auto & dx = eval_test.get_JxW(q, direction, cell_no);
         integral += value_or_grad_u * value_or_grad_v * dx;
       }
       cell_matrix(dof_v, dof_u) += integral;
@@ -830,12 +818,8 @@ operator()(const Evaluator &                   eval_ansatz,
            const int                           direction,
            const int                           cell_no) const
 {
-  AssertIndexRange(direction, dim);
-  AssertIndexRange(cell_no, eval_test.patch_variant == TPSS::PatchVariant::cell ? 1 : 2);
-  AssertDimension(cell_matrix.n_rows(), cell_matrix.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
-
-  if(static_cast<int>(component) == direction)
+  const auto lambda = integrator->equation_data.lambda;
+  if(component == direction)
   {
     VectorizedArray<Number> integral;
     for(int dof_u = 0; dof_u < fe_order; ++dof_u) // u is ansatz function & v is test function
@@ -920,8 +904,8 @@ operator()(const Evaluator &                   eval_ansatz,
   const auto   penalty        = integrator->ip_factor_strain() * average_factor *
                        integrator->compute_penalty(eval_test, direction, 0, 1);
   // !!!
-  // const auto penalty = lambda * ip_factor * FaceLaplace::compute_penalty(eval_test, direction, 0, 1,
-  // 0);
+  // const auto penalty = lambda * ip_factor * FaceLaplace::compute_penalty(eval_test, direction, 0,
+  // 1, 0);
   /*** diagonal term of grad(u)^T : v ^ n ***/
   const Number symgrad_factor = (component == direction) ? 1. : 0.5;
 
@@ -973,21 +957,10 @@ operator()(const Evaluator &                   eval_ansatz,
            const int                           face_no,
            const std::bitset<macro_size>       bdry_mask) const
 {
-  AssertIndexRange(direction, dim);
-  AssertIndexRange(face_no, 2);
-  AssertDimension(cell_matrix.n_rows(), cell_matrix.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
-
-  const bool   is_normal_nonzero_u = (component_u == direction);
-  const bool   is_normal_nonzero_v = (component_v == direction);
-  const Number sign_of_normal      = (face_no == 0 ? -1. : 1.);
-  const auto   normal_u =
-    sign_of_normal * make_vectorized_array<Number>(is_normal_nonzero_u ? 1. : 0.);
-  const auto normal_v =
-    sign_of_normal * make_vectorized_array<Number>(is_normal_nonzero_v ? 1. : 0.);
-  auto average_factor = make_vectorized_array<Number>(0.);
-  for(unsigned int lane = 0; lane < macro_size; ++lane)
-    average_factor[lane] = bdry_mask[lane] ? 1. : 0.5;
+  const auto & equation_data  = integrator->equation_data;
+  const auto   mu             = equation_data.mu;
+  const auto   normal_vector  = eval_ansatz.get_normal_vector(face_no, direction);
+  const auto   average_factor = eval_test.get_average_factor(direction, cell_no, face_no);
   const Number symgrad_factor = 0.5;
 
   for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz function & v is test function
@@ -997,7 +970,8 @@ operator()(const Evaluator &                   eval_ansatz,
     {
       const auto & u = eval_ansatz.shape_value_face(dof_u, face_no, direction, cell_no);
       const auto & value_on_face =
-        -1. * symgrad_factor * average_factor * (v * u * normal_u + v * normal_v * u);
+        -symgrad_factor * average_factor *
+        (v * normal_vector[component_u] * u + v * u * normal_vector[component_v]);
       cell_matrix(dof_v, dof_u) += 2. * mu * value_on_face;
     }
   }
@@ -1013,28 +987,11 @@ operator()(const Evaluator &                   eval_ansatz,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
            const int                           direction) const
 {
-  AssertIndexRange(direction, dim);
-  AssertDimension(cell_matrix01.n_rows(), cell_matrix01.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix01.n_rows()), fe_order);
-  AssertDimension(cell_matrix01.n_rows(), cell_matrix10.n_rows());
-  AssertDimension(cell_matrix01.n_cols(), cell_matrix10.n_cols());
-
-  const bool is_normal_nonzero_v = (component_u == direction);
-  const bool is_normal_nonzero_u = (component_v == direction);
-  /*** the outward normal on face 1 seen from cell 0 ***/
-  const Number sign_of_normal0 = 1.;
-  /*** the outward normal on face 0 seen from cell 1 ***/
-  const Number sign_of_normal1 = -1.;
-
-  const auto normal0_u =
-    sign_of_normal0 * make_vectorized_array<Number>(is_normal_nonzero_u ? 1. : 0.);
-  const auto normal0_v =
-    sign_of_normal0 * make_vectorized_array<Number>(is_normal_nonzero_v ? 1. : 0.);
-  const auto normal1_u =
-    sign_of_normal1 * make_vectorized_array<Number>(is_normal_nonzero_u ? 1. : 0.);
-  const auto normal1_v =
-    sign_of_normal1 * make_vectorized_array<Number>(is_normal_nonzero_v ? 1. : 0.);
-  const Number average_factor = 0.5;
+  const auto & equation_data  = integrator->equation_data;
+  const auto   mu             = equation_data.mu;
+  const auto   normal_vector0 = eval_test.get_normal_vector(1, direction); // on cell 0
+  const auto   normal_vector1 = eval_test.get_normal_vector(0, direction); // on cell 1
+  const auto   average_factor = eval_test.get_average_factor(direction, 0, 1);
   const Number symgrad_factor = 0.5;
 
   auto value_on_interface01{make_vectorized_array<Number>(0.)};
@@ -1048,10 +1005,13 @@ operator()(const Evaluator &                   eval_ansatz,
       const auto & u0 = eval_ansatz.shape_value_face(dof_u, 1, direction, 0);
       const auto & u1 = eval_ansatz.shape_value_face(dof_u, 0, direction, 1);
 
-      value_on_interface01 = -1. * average_factor * symgrad_factor *
-                             (v0 * normal0_v * u1 + v0 * u1 * normal1_u); // consistency + symmetry
-      value_on_interface10 = -1. * average_factor * symgrad_factor *
-                             (v1 * normal1_v * u0 + v1 * u0 * normal0_u); // consistency + symmetry
+      /// consistency + symmetry
+      value_on_interface01 =
+        -average_factor * symgrad_factor *
+        (v0 * normal_vector0[component_u] * u1 + v0 * u1 * normal_vector1[component_v]);
+      value_on_interface10 =
+        -average_factor * symgrad_factor *
+        (v1 * normal_vector1[component_u] * u0 + v1 * u0 * normal_vector0[component_v]);
       cell_matrix01(dof_v, dof_u) += 2. * mu * value_on_interface01;
       cell_matrix10(dof_v, dof_u) += 2. * mu * value_on_interface10;
     }
@@ -1070,17 +1030,12 @@ operator()(const Evaluator &                   eval_ansatz,
            const int                           face_no,
            const std::bitset<macro_size>       bdry_mask) const
 {
-  AssertIndexRange(direction, dim);
-  AssertIndexRange(face_no, 2);
-  AssertDimension(cell_matrix.n_rows(), cell_matrix.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
-
-  const auto normal = make_vectorized_array<Number>(face_no == 0 ? -1. : 1.);
-  const auto penalty =
-    ip_factor * FaceLaplace::compute_penalty(eval_test, direction, cell_no, cell_no, bdry_mask);
-  auto average_factor = make_vectorized_array<Number>(0.);
-  for(unsigned int lane = 0; lane < macro_size; ++lane)
-    average_factor[lane] = bdry_mask[lane] ? 1. : 0.5;
+  const auto & equation_data  = integrator->equation_data;
+  const auto   lambda         = equation_data.lambda;
+  const auto   normal         = eval_test.get_normal(face_no);
+  const auto   average_factor = eval_test.get_average_factor(direction, cell_no, face_no);
+  const auto   penalty        = integrator->ip_factor_graddiv() * average_factor *
+                       integrator->compute_penalty(eval_test, direction, cell_no, cell_no);
 
   /*** non-zero normal if component coincides with direction (Cartesian!)***/
   if(component == direction)
@@ -1095,7 +1050,7 @@ operator()(const Evaluator &                   eval_ansatz,
         const auto & u      = eval_ansatz.shape_value_face(dof_u, face_no, direction, cell_no);
         const auto & grad_u = eval_ansatz.shape_gradient_face(dof_u, face_no, direction, cell_no);
 
-        value_on_face = -1. * average_factor * (v * normal * grad_u + grad_v * u * normal);
+        value_on_face = -average_factor * (v * normal * grad_u + grad_v * u * normal);
         value_on_face += penalty * v * u * normal * normal;
         cell_matrix(dof_v, dof_u) += lambda * value_on_face;
       }
@@ -1113,19 +1068,13 @@ operator()(const Evaluator &                   eval_ansatz,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
            const int                           direction) const
 {
-  AssertIndexRange(direction, dim);
-  AssertDimension(cell_matrix01.n_rows(), cell_matrix01.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix01.n_rows()), fe_order);
-  AssertDimension(cell_matrix01.n_rows(), cell_matrix10.n_rows());
-  AssertDimension(cell_matrix01.n_cols(), cell_matrix10.n_cols());
-
-  /*** the outward normal on face 1 seen from cell 0 ***/
-  const auto normal0 = make_vectorized_array<Number>(1.);
-  /*** the outward normal on face 0 seen from cell 1 ***/
-  const auto normal1 = make_vectorized_array<Number>(-1.);
-  /*** boundary mask is obiviously 0(=all interior), cell_no = 0 and cell_no_neighbor = 1 ***/
-  const auto   penalty        = ip_factor * FaceLaplace::compute_penalty(eval_test, direction, 0, 1, 0);
-  const Number average_factor = 0.5;
+  const auto & equation_data  = integrator->equation_data;
+  const auto   lambda         = equation_data.lambda;
+  const auto   average_factor = eval_test.get_average_factor(direction, 0, 1);
+  const auto   normal0        = eval_test.get_normal(1); // on cell 0
+  const auto   normal1        = eval_test.get_normal(0); // on cell 1
+  const auto   penalty        = integrator->ip_factor_graddiv() * average_factor *
+                       integrator->compute_penalty(eval_test, direction, 0, 1);
 
   /*** non-zero normal if component coincides with direction (Cartesian!)***/
   if(component == direction)
@@ -1145,15 +1094,14 @@ operator()(const Evaluator &                   eval_ansatz,
         const auto & u1      = eval_ansatz.shape_value_face(dof_u, 0, direction, 1);
         const auto & grad_u1 = eval_ansatz.shape_gradient_face(dof_u, 0, direction, 1);
 
+        /// consistency + symmetry
         value_on_interface01 =
-          -1. * average_factor *
-          (v0 * normal0 * grad_u1 + grad_v0 * u1 * normal1); // consistency + symmetry
+          -1. * average_factor * (v0 * normal0 * grad_u1 + grad_v0 * u1 * normal1);
         value_on_interface10 =
-          -1. * average_factor *
-          (v1 * normal1 * grad_u0 + grad_v1 * u0 * normal0); // consistency + symmetry
+          -1. * average_factor * (v1 * normal1 * grad_u0 + grad_v1 * u0 * normal0);
 
-        value_on_interface01 += penalty * v0 * u1 * normal0 * normal1; // penalty
-        value_on_interface10 += penalty * v1 * u0 * normal1 * normal0; // penalty
+        value_on_interface01 += penalty * v0 * u1 * normal0 * normal1;
+        value_on_interface10 += penalty * v1 * u0 * normal1 * normal0;
 
         cell_matrix01(dof_v, dof_u) += lambda * value_on_interface01;
         cell_matrix10(dof_v, dof_u) += lambda * value_on_interface10;
@@ -1174,10 +1122,10 @@ operator()(const Evaluator &                   eval_ansatz,
            const int                           face_no,
            const std::bitset<macro_size>       bdry_mask) const
 {
-  AssertIndexRange(direction, dim);
-  AssertIndexRange(face_no, 2);
-  AssertDimension(cell_matrix.n_rows(), cell_matrix.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix.n_rows()), fe_order);
+  const auto & equation_data  = integrator->equation_data;
+  const auto   lambda         = equation_data.lambda;
+  const auto   normal_vector  = eval_ansatz.get_normal_vector(face_no, direction);
+  const auto   average_factor = eval_test.get_average_factor(direction, cell_no, face_no);
 
   const bool   is_normal_nonzero_v = (component_v == direction);
   const bool   is_normal_nonzero_u = (component_u == direction);
@@ -1187,9 +1135,9 @@ operator()(const Evaluator &                   eval_ansatz,
     sign_of_normal * make_vectorized_array<Number>(is_normal_nonzero_v ? 1. : 0.);
   const auto normal_u =
     sign_of_normal * make_vectorized_array<Number>(is_normal_nonzero_u ? 1. : 0.);
-  auto average_factor = make_vectorized_array<Number>(0.);
-  for(unsigned int lane = 0; lane < macro_size; ++lane)
-    average_factor[lane] = bdry_mask[lane] ? 1. : 0.5;
+  // auto average_factor = make_vectorized_array<Number>(0.);
+  // for(unsigned int lane = 0; lane < macro_size; ++lane)
+  //   average_factor[lane] = bdry_mask[lane] ? 1. : 0.5;
 
   auto value_on_face{make_vectorized_array<Number>(0.)};
   for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz function & v is test function
@@ -1199,8 +1147,9 @@ operator()(const Evaluator &                   eval_ansatz,
     {
       const auto & u = eval_ansatz.shape_value_face(dof_u, face_no, direction, cell_no);
 
-      value_on_face =
-        -1. * average_factor * (v * normal_v * u + v * u * normal_u); // consistency + symmetry
+      value_on_face = -1. * average_factor *
+                      (v * normal_vector[component_v] * u +
+                       v * u * normal_vector[component_u]); // consistency + symmetry
       cell_matrix(dof_v, dof_u) += lambda * value_on_face;
     }
   }
@@ -1216,30 +1165,13 @@ operator()(const Evaluator &                   eval_ansatz,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
            const int                           direction) const
 {
-  AssertIndexRange(direction, dim);
-  AssertDimension(cell_matrix01.n_rows(), cell_matrix01.n_cols());
-  AssertDimension(static_cast<int>(cell_matrix01.n_rows()), fe_order);
-  AssertDimension(cell_matrix01.n_rows(), cell_matrix10.n_rows());
-  AssertDimension(cell_matrix01.n_cols(), cell_matrix10.n_cols());
+  const auto & equation_data  = integrator->equation_data;
+  const auto   lambda         = equation_data.lambda;
+  const auto   normal_vector0 = eval_ansatz.get_normal_vector(1, direction); // on cell 0
+  const auto   normal_vector1 = eval_ansatz.get_normal_vector(0, direction); // on cell 1
+  const auto   average_factor = eval_test.get_average_factor(direction, 0, 1);
 
-  const bool is_normal_nonzero_v = (component_v == direction); // Cartesian !
-  const bool is_normal_nonzero_u = (component_u == direction); // Cartesian !
-  /*** the outward normal on face 1 seen from cell 0 ***/
-  const Number sign_of_normal0 = 1.;
-  /*** the outward normal on face 0 seen from cell 1 ***/
-  const Number sign_of_normal1 = -1.;
-
-  const auto normal0_u =
-    sign_of_normal0 * make_vectorized_array<Number>(is_normal_nonzero_u ? 1. : 0.);
-  const auto normal0_v =
-    sign_of_normal0 * make_vectorized_array<Number>(is_normal_nonzero_v ? 1. : 0.);
-  const auto normal1_u =
-    sign_of_normal1 * make_vectorized_array<Number>(is_normal_nonzero_u ? 1. : 0.);
-  const auto normal1_v =
-    sign_of_normal1 * make_vectorized_array<Number>(is_normal_nonzero_v ? 1. : 0.);
-  const Number average_factor = 0.5;
-
-  for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz function & v is test function
+  for(int dof_v = 0; dof_v < fe_order; ++dof_v)
   {
     const auto & v0 = eval_test.shape_value_face(dof_v, /*face_no*/ 1, direction, /*cell_no*/ 0);
     const auto & v1 = eval_test.shape_value_face(dof_v, /*face_no*/ 0, direction, /*cell_no*/ 1);
@@ -1248,10 +1180,11 @@ operator()(const Evaluator &                   eval_ansatz,
       const auto & u0 = eval_ansatz.shape_value_face(dof_u, 1, direction, 0);
       const auto & u1 = eval_ansatz.shape_value_face(dof_u, 0, direction, 1);
 
-      const auto & value_on_interface01 =
-        -average_factor * (v0 * normal0_v * u1 + v0 * u1 * normal1_u);
-      const auto & value_on_interface10 =
-        -average_factor * (v1 * normal1_v * u0 + v1 * u0 * normal0_u);
+      /// consistency + symmetry
+      const auto & value_on_interface01 = -average_factor * (v0 * normal_vector0[component_v] * u1 +
+                                                             v0 * u1 * normal_vector1[component_u]);
+      const auto & value_on_interface10 = -average_factor * (v1 * normal_vector1[component_v] * u0 +
+                                                             v1 * u0 * normal_vector0[component_u]);
       cell_matrix01(dof_v, dof_u) += lambda * value_on_interface01;
       cell_matrix10(dof_v, dof_u) += lambda * value_on_interface10;
     }
@@ -1316,6 +1249,7 @@ public:
 
   types::global_dof_index
   m() const;
+
   types::global_dof_index
   n() const;
 
