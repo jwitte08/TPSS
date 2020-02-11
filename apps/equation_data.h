@@ -251,6 +251,12 @@ struct EquationData
     basic,
     tensor
   };
+  static std::string
+  str_penalty_variant(const PenaltyVariant variant)
+  {
+    std::string str[] = {"basic", "tensor-driven + lambda-scaled-strain"};
+    return str[static_cast<int>(variant)];
+  }
 
   double         mu             = 1.;
   double         lambda         = 1.;
@@ -268,6 +274,7 @@ struct EquationData
     oss << Util::parameter_to_fstring("Lame coefficient (mu):", mu);
     oss << Util::parameter_to_fstring("Lame coefficient (lambda):", lambda);
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
+    oss << Util::parameter_to_fstring("IP variant:", str_penalty_variant(ip_variant));
     oss << Util::parameter_to_fstring("Lambda Kronecker rank:", lambda_rank);
     oss << Util::parameter_to_fstring("Schur Kronecker rank:", kronecker_rank);
     oss << Util::parameter_to_fstring("Schur factor ...:", factor);

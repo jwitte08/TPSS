@@ -557,6 +557,7 @@ protected:
       new_problem->prepare_system(false, /*compute_rhs?*/ false);
       new_problem->prepare_multigrid();
     };
+    *pcout_owned << params.equation_data.to_string() << std::endl;
     const auto new_problem =
       std::make_shared<LinElasticityProblem>(*pcout_owned, rt_parameters, params.equation_data);
     initialize_problem(new_problem);
@@ -811,14 +812,16 @@ protected:
 
 TYPED_TEST_SUITE_P(TestLinElasticityIntegratorFD);
 
-TYPED_TEST_P(TestLinElasticityIntegratorFD, ManualAssemblyCellPatch)
+TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSPenaltyAssemblyCellPatch)
 {
   using Fixture = TestLinElasticityIntegratorFD<TypeParam>;
+
+  Fixture::params.equation_data.ip_variant = LinElasticity::EquationData::PenaltyVariant::tensor;
 
   Fixture::params.n_refinements        = 0U;
   Fixture::params.equation_data.lambda = 1.;
   Fixture::params.equation_data.mu     = 1.;
-  // Fixture::manual_assembly();
+  Fixture::tpss_assembly();
 
   Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::rt_parameters.mesh.n_repetitions    = 2U;
@@ -826,17 +829,19 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, ManualAssemblyCellPatch)
   Fixture::params.equation_data.lambda         = 1.234;
   Fixture::params.equation_data.mu             = 9.876;
   Fixture::params.equation_data.ip_factor      = 1.99;
-  // Fixture::manual_assembly();
+  Fixture::tpss_assembly();
 }
 
-TYPED_TEST_P(TestLinElasticityIntegratorFD, ManualInvertCellPatch)
+TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSPenaltyInvertCellPatch)
 {
   using Fixture = TestLinElasticityIntegratorFD<TypeParam>;
+
+  Fixture::params.equation_data.ip_variant = LinElasticity::EquationData::PenaltyVariant::tensor;
 
   Fixture::params.n_refinements        = 0U;
   Fixture::params.equation_data.lambda = 1.;
   Fixture::params.equation_data.mu     = 1.;
-  // Fixture::manual_assembly(Fixture::TestVariant::inverse);
+  Fixture::tpss_assembly(Fixture::TestVariant::inverse);
 
   Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::rt_parameters.mesh.n_repetitions    = 2U;
@@ -844,7 +849,7 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, ManualInvertCellPatch)
   Fixture::params.equation_data.lambda         = 1.234;
   Fixture::params.equation_data.mu             = 9.876;
   Fixture::params.equation_data.ip_factor      = 2.99;
-  // Fixture::manual_assembly(Fixture::TestVariant::inverse);
+  Fixture::tpss_assembly(Fixture::TestVariant::inverse);
 }
 
 /// ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -956,8 +961,8 @@ TYPED_TEST_P(TestLinElasticityIntegratorFD, TPSSFastInvertCellPatch)
 }
 
 REGISTER_TYPED_TEST_SUITE_P(TestLinElasticityIntegratorFD,
-                            ManualAssemblyCellPatch,
-                            ManualInvertCellPatch,
+                            TPSSPenaltyAssemblyCellPatch,
+                            TPSSPenaltyInvertCellPatch,
                             TPSSAssemblyCellPatch,
                             TPSSInvertCellPatch,
                             TPSSAssemblyVertexPatch,
