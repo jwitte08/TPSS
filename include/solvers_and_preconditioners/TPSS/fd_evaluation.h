@@ -32,11 +32,48 @@ public:
   void
   evaluate(const bool gradients);
 
-  const VectorizedArray<Number> &
-  get_JxW(const int qpoint_no, const int direction, const int cell_no) const;
+  VectorizedArray<Number>
+  get_average_factor(const int direction, const int cell_no, const int face_no) const
+  {
+    auto         factor      = make_vectorized_array<Number>(0.5);
+    const auto & at_boundary = get_boundary_mask(direction, cell_no, face_no);
+    for(auto lane = 0U; lane < macro_size; ++lane)
+      if(at_boundary[lane])
+        factor[lane] = 1.;
+    return factor;
+  }
+
+  std::bitset<macro_size>
+  get_boundary_mask(const int direction, const int cell_no, const int face_no) const
+  {
+    AssertIndexRange(direction, dim);
+    AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
+    AssertIndexRange(face_no, 2);
+    if(patch_variant == TPSS::PatchVariant::cell)
+      return at_boundary_masks[direction * 2 + face_no];
+    else if(patch_variant == TPSS::PatchVariant::vertex)
+    {
+      const bool is_interior_face =
+        (cell_no == 0 && face_no == 1) || (cell_no == 1 && face_no == 0);
+      if(!is_interior_face)
+        return at_boundary_masks[direction * 2 + face_no];
+    }
+    else
+      AssertThrow(false, ExcNotImplemented());
+    return std::bitset<macro_size>{0};
+  }
+
+  TPSS::DoFLayout
+  get_dof_layout() const
+  {
+    return patch_worker.get_dof_info().get_dof_layout();
+  }
 
   const VectorizedArray<Number> &
   get_h(const int direction, const int cell_no) const;
+
+  const VectorizedArray<Number> &
+  get_JxW(const int qpoint_no, const int direction, const int cell_no) const;
 
   VectorizedArray<Number>
   get_normal(const int face_no) const
@@ -51,37 +88,6 @@ public:
     normal_vector *= 0.;
     normal_vector[direction] = get_normal(face_no);
     return normal_vector;
-  }
-
-  std::bitset<macro_size>
-  get_boundary_mask(const int direction, const int cell_no, const int face_no) const
-  {
-    AssertIndexRange(direction, dim);
-    AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
-    AssertIndexRange(face_no, 2);
-    if(patch_variant == TPSS::PatchVariant::cell)
-      return std::bitset<macro_size>{bdry_mask_id[direction * 2 + face_no]};
-    else if(patch_variant == TPSS::PatchVariant::vertex)
-    {
-      const bool is_interior_face =
-        (cell_no == 0 && face_no == 1) || (cell_no == 1 && face_no == 0);
-      if(!is_interior_face)
-        return std::bitset<macro_size>{bdry_mask_id[direction * 2 + face_no]};
-    }
-    else
-      AssertThrow(false, ExcNotImplemented());
-    return std::bitset<macro_size>{0};
-  }
-
-  VectorizedArray<Number>
-  get_average_factor(const int direction, const int cell_no, const int face_no) const
-  {
-    auto         factor      = make_vectorized_array<Number>(0.5);
-    const auto & at_boundary = get_boundary_mask(direction, cell_no, face_no);
-    for(auto lane = 0U; lane < macro_size; ++lane)
-      if(at_boundary[lane])
-        factor[lane] = 1.;
-    return factor;
   }
 
   const SubdomainHandler<dim, Number> &
@@ -141,13 +147,13 @@ public:
 
 protected:
   FDEvaluationBase(const SubdomainHandler<dim, Number> & sd_handler,
-                   const unsigned int                    dofh_id = 0,
-                   const unsigned int                    quad_id = 0);
+                   const unsigned int                    dofh_index = 0,
+                   const unsigned int                    quad_index = 0);
 
   FDEvaluationBase(const SubdomainHandler<dim, Number> & sd_handler,
                    const TPSS::PatchVariant              patch_variant,
-                   const unsigned int                    dofh_id = 0,
-                   const unsigned int                    quad_id = 0);
+                   const unsigned int                    dofh_index = 0,
+                   const unsigned int                    quad_index = 0);
 
   ~FDEvaluationBase();
 
@@ -161,17 +167,29 @@ protected:
                                  const unsigned int                        cell_no_row,
                                  const unsigned int                        cell_no_col);
 
-  const SubdomainHandler<dim, Number> &                                     sd_handler;
-  const TPSS::MappingInfo<dim, Number> &                                    mapping_info;
-  const MatrixFree<dim, Number> &                                           mf_storage;
+  const SubdomainHandler<dim, Number> & sd_handler;
+
+  const TPSS::PatchDoFWorker<dim, Number> patch_worker;
+
+  const TPSS::MappingInfo<dim, Number> & mapping_info;
+
+  const MatrixFree<dim, Number> & mf_storage;
+
   const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> & shape_info;
 
   unsigned int patch_id = numbers::invalid_unsigned_int;
 
   /**
-   * lexicographical ordering: face_no_1d < direction
+   * Indicates which face of the macro patch is at the physical boundary. Local
+   * face numbering follows the face numbering in GeometryInfo.
    */
-  std::array<unsigned short, GeometryInfo<dim>::faces_per_cell> bdry_mask_id;
+  std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> at_boundary_masks;
+
+  /**
+   * Boundary id for each face of the macro patch.
+   */
+  std::array<std::array<types::boundary_id, macro_size>, GeometryInfo<dim>::faces_per_cell>
+    boundary_ids;
 
   /**
    * quadrature weights on the unit cell
@@ -252,12 +270,9 @@ public:
   static constexpr unsigned int fe_order        = fe_degree + 1;
   static constexpr unsigned int n_q_points      = n_q_points_1d;
   static constexpr unsigned int n_dofs_per_cell = Utilities::pow(fe_order, dim);
-
-private:
   using Base = FDEvaluationBase<dim, fe_degree, n_q_points_1d, 1, Number>;
   static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
 
-public:
   FDEvaluation(const SubdomainHandler<dim, Number> & sd_handler_in,
                const unsigned int                    dofh_index = 0,
                const unsigned int                    quad_index = 0)
@@ -461,15 +476,6 @@ private:
     return matrices;
   }
 
-  // template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
-  // std::array<Table<2, VectorizedArray<Number>>, dim>
-  // patch_action_dgvp_impl(const CellOperation &      cell_operation,
-  //                        const FaceOperation &      face_operation,
-  //                        const InterfaceOperation & interface_operation) const
-  // {
-  //   return patch_action_dgvp_impl(*this, cell_operation, face_operation, interface_operation);
-  // }
-
   template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
   patch_action_dgvp_impl(const FDEvaluation &       eval_ansatz,
@@ -529,17 +535,18 @@ private:
 template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
 inline FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::FDEvaluationBase(
   const SubdomainHandler<dim, Number> & sd_handler_in,
-  const unsigned int                    dofh_id,
-  const unsigned int                    quad_id)
+  const unsigned int                    dofh_index,
+  const unsigned int                    quad_index)
   : level(sd_handler_in.get_additional_data().level),
     n_subdomains(sd_handler_in.get_patch_info().subdomain_partition_data.n_subdomains()),
     n_colors(sd_handler_in.get_patch_info().subdomain_partition_data.n_colors()),
     patch_variant(sd_handler_in.get_additional_data().patch_variant),
     n_cells_per_direction(TPSS::UniversalInfo<dim>::n_cells_per_direction(patch_variant)),
     sd_handler(sd_handler_in),
-    mapping_info(sd_handler.get_mapping_info()),
-    mf_storage(sd_handler.get_matrix_free()),
-    shape_info(mf_storage.get_shape_info(dofh_id, quad_id)),
+    patch_worker(sd_handler_in.get_dof_info(dofh_index)),
+    mapping_info(sd_handler_in.get_mapping_info()),
+    mf_storage(sd_handler_in.get_matrix_free()),
+    shape_info(sd_handler_in.get_shape_info(dofh_index, quad_index)),
     scratch_fedata(mf_storage.acquire_scratch_data())
 {
 }
@@ -571,11 +578,18 @@ inline void
 FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::reinit(const unsigned int patch)
 {
   AssertIndexRange(patch, n_subdomains);
-  patch_id                = patch;
-  const auto & patch_info = sd_handler.get_patch_info();
-  std::copy_n(patch_info.at_boundary_mask.data() + GeometryInfo<dim>::faces_per_cell * patch,
+  patch_id = patch;
+
+  const auto & at_boundary_masks_in = patch_worker.get_at_boundary_masks(patch);
+  std::copy_n(at_boundary_masks_in.cbegin(),
               GeometryInfo<dim>::faces_per_cell,
-              bdry_mask_id.begin());
+              at_boundary_masks.begin());
+
+  if(TPSS::DoFLayout::Q == get_dof_layout())
+  {
+    const auto & boundary_ids_in = patch_worker.get_boundary_ids(patch);
+    std::copy_n(boundary_ids_in.cbegin(), GeometryInfo<dim>::faces_per_cell, boundary_ids.begin());
+  }
 
   h_lengths = mapping_info.template h_lengths_begin(patch);
 
