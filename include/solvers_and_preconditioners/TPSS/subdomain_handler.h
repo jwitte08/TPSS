@@ -99,24 +99,17 @@ public:
   const dealii::MatrixFree<dim, number> &
   get_matrix_free() const;
 
-  std::shared_ptr<const Utilities::MPI::Partitioner>
-  get_vector_partitioner(const unsigned int dofh_index = 0) const
-  {
-    const auto & dof_info = get_dof_info(dofh_index);
-    return dof_info.vector_partitioner;
-  }
-
-  std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>>
-  get_vector_partitioners() const
-  {
-    std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners;
-    for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
-      partitioners.push_back(get_vector_partitioner(dofh_index));
-    return partitioners;
-  }
+  const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>> &
+  get_shape_info(const unsigned int dofh_index = 0, const unsigned int quad_index = 0) const;
 
   std::vector<TimeInfo>
   get_time_data() const;
+
+  std::shared_ptr<const Utilities::MPI::Partitioner>
+  get_vector_partitioner(const unsigned int dofh_index = 0) const;
+
+  std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>>
+  get_vector_partitioners() const;
 
   unsigned int
   guess_grain_size(const unsigned int n_subdomain_batches) const;
@@ -170,7 +163,8 @@ private:
   std::vector<unsigned int>                              dofh_indices;
   std::vector<const dealii::DoFHandler<dim> *>           dof_handlers;
 
-  TPSS::PatchInfo<dim>                 patch_info;
+  TPSS::PatchInfo<dim> patch_info;
+  // Table<2, internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>>>
   std::vector<TPSS::DoFInfo<dim>>      dof_infos;
   TPSS::MatrixFreeConnect<dim, number> mf_connect;
   TPSS::MappingInfo<dim, number>       mapping_info;
@@ -329,11 +323,43 @@ SubdomainHandler<dim, number>::get_partition_data() const
   return patch_info.subdomain_partition_data;
 }
 
+
+template<int dim, typename number>
+inline const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>> &
+SubdomainHandler<dim, number>::get_shape_info(const unsigned int dofh_index,
+                                              const unsigned int quad_index) const
+{
+  AssertIndexRange(dofh_index, n_components());
+  const auto & mf_storage = get_matrix_free();
+  return mf_storage.get_shape_info(dofh_index, quad_index);
+}
+
+
 template<int dim, typename number>
 inline std::vector<TimeInfo>
 SubdomainHandler<dim, number>::get_time_data() const
 {
   return time_data;
+}
+
+
+template<int dim, typename number>
+inline std::shared_ptr<const Utilities::MPI::Partitioner>
+SubdomainHandler<dim, number>::get_vector_partitioner(const unsigned int dofh_index) const
+{
+  const auto & dof_info = get_dof_info(dofh_index);
+  return dof_info.vector_partitioner;
+}
+
+
+template<int dim, typename number>
+inline std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>>
+SubdomainHandler<dim, number>::get_vector_partitioners() const
+{
+  std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners;
+  for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
+    partitioners.push_back(get_vector_partitioner(dofh_index));
+  return partitioners;
 }
 
 #include "subdomain_handler.templates.h"
