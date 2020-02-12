@@ -545,6 +545,132 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
 }
 
 
+template<int dim>
+void
+PatchInfo<dim>::count_physical_subdomains()
+{
+  internal_data.n_physical_subdomains_total.n_interior =
+    std::accumulate(internal_data.n_physical_subdomains.cbegin(),
+                    internal_data.n_physical_subdomains.cend(),
+                    0,
+                    [](const auto sum, const auto & data) { return sum + data.n_interior; });
+  internal_data.n_physical_subdomains_total.n_boundary =
+    std::accumulate(internal_data.n_physical_subdomains.cbegin(),
+                    internal_data.n_physical_subdomains.cend(),
+                    0,
+                    [](const auto sum, const auto & data) { return sum + data.n_boundary; });
+  internal_data.n_physical_subdomains_total.n_interior_ghost =
+    std::accumulate(internal_data.n_physical_subdomains.cbegin(),
+                    internal_data.n_physical_subdomains.cend(),
+                    0,
+                    [](const auto sum, const auto & data) { return sum + data.n_interior_ghost; });
+  internal_data.n_physical_subdomains_total.n_boundary_ghost =
+    std::accumulate(internal_data.n_physical_subdomains.cbegin(),
+                    internal_data.n_physical_subdomains.cend(),
+                    0,
+                    [](const auto sum, const auto & data) { return sum + data.n_boundary_ghost; });
+}
+
+
+template<int dim>
+std::vector<types::global_dof_index>
+PatchInfo<dim>::get_face_conflicts(const PatchIterator & patch)
+{
+  std::vector<types::global_dof_index> conflicts;
+  const auto &                         cell_collection = *patch;
+
+  for(const auto & cell : cell_collection)
+    for(unsigned int face_no = 0; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
+    {
+      const bool neighbor_has_same_level = (cell->neighbor_level(face_no) == cell->level());
+      const bool neighbor_doesnt_exist   = (cell->neighbor_level(face_no) == -1);
+      const bool non_adaptive            = neighbor_has_same_level || neighbor_doesnt_exist;
+      (void)non_adaptive;
+      Assert(non_adaptive, ExcNotImplemented());
+      conflicts.emplace_back(cell->face(face_no)->index());
+    }
+  return conflicts;
+}
+
+
+template<int dim>
+template<int regular_size>
+void
+PatchInfo<dim>::submit_patches(const std::vector<PatchIterator> & patch_iterators)
+{
+  // First, submit all interior patches and subsequently all boundary patches
+  const auto & internal_submit = [this](const std::vector<PatchIterator> & patch_iterators) {
+    unsigned int               n_interior_subdomains_regular = 0;
+    std::vector<PatchIterator> boundary_patch_regular;
+    for(const auto & patch : patch_iterators)
+    {
+      const bool patch_at_boundary =
+        std::any_of(patch->cbegin(), patch->cend(), IteratorFilters::AtBoundary{});
+      if(patch->size() == regular_size) // regular
+      {
+        if(patch_at_boundary)
+        {
+          boundary_patch_regular.push_back(patch);
+        }
+        else
+        {
+          ++n_interior_subdomains_regular;
+          for(const auto & cell : *patch)
+            internal_data.cell_iterators.emplace_back(cell);
+        }
+      }
+      else // irregular
+        Assert(false, ExcNotImplemented());
+    }
+
+    for(const auto it : boundary_patch_regular)
+    {
+      for(const auto & cell : *it)
+        internal_data.cell_iterators.emplace_back(cell);
+    }
+
+    SubdomainData local_data;
+    local_data.n_interior = n_interior_subdomains_regular;
+    local_data.n_boundary = boundary_patch_regular.size();
+    return local_data;
+  };
+  // We separate the patch iterators into locally owned subdomains
+  // and those with ghost cells. First, we submit locally owned and
+  // subsequently subdomains with ghosts. Each group is separated
+  // into interior (first) and boundary (second) subdomains,
+  // respectively.
+  const auto   my_subdomain_id   = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+  const auto & is_ghost_on_level = [my_subdomain_id](const auto & cell) {
+    const bool is_owned      = cell->level_subdomain_id() == my_subdomain_id;
+    const bool is_artificial = cell->level_subdomain_id() == numbers::artificial_subdomain_id;
+    return !is_owned && !is_artificial;
+  };
+  std::vector<PatchIterator> owned_patch_iterators, ghost_patch_iterators;
+  for(const auto & patch : patch_iterators)
+  {
+    const bool patch_is_ghost = std::any_of(patch->cbegin(), patch->cend(), is_ghost_on_level);
+    if(patch_is_ghost)
+      ghost_patch_iterators.emplace_back(patch);
+    else
+      owned_patch_iterators.emplace_back(patch);
+  }
+  AssertDimension(owned_patch_iterators.size() + ghost_patch_iterators.size(),
+                  patch_iterators.size());
+  const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
+  if(!is_mpi_parallel)
+    AssertDimension(ghost_patch_iterators.size(), 0);
+
+  const auto    owned_subdomain_data = internal_submit(owned_patch_iterators);
+  const auto    ghost_subdomain_data = internal_submit(ghost_patch_iterators);
+  SubdomainData subdomain_data;
+  subdomain_data.n_interior = owned_subdomain_data.n_interior + ghost_subdomain_data.n_interior;
+  subdomain_data.n_boundary = owned_subdomain_data.n_boundary + ghost_subdomain_data.n_boundary;
+  subdomain_data.n_interior_ghost = ghost_subdomain_data.n_interior;
+  subdomain_data.n_boundary_ghost = ghost_subdomain_data.n_boundary;
+  internal_data.n_physical_subdomains.emplace_back(subdomain_data);
+}
+
+
 // template<int dim>
 // void
 // PatchInfo<dim>::write_visual_data(
