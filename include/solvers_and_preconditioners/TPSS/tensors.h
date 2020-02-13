@@ -218,6 +218,13 @@ struct TensorHelper
                            std::multiplies<IntType>());
   }
 
+  IntType
+  size(const unsigned int mode) const
+  {
+    AssertIndexRange(mode, order);
+    return n[mode];
+  }
+
   const std::array<IntType, order> n;
 };
 
