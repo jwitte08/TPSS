@@ -40,10 +40,10 @@ template<int dim, typename Number, int fe_degree>
 class PatchTransfer
 {
 public:
-  using CellIterator                            = typename PatchInfo<dim>::CellIterator;
-  static constexpr unsigned int fe_order        = fe_degree + 1;
-  static constexpr unsigned int n_dofs_per_cell = Utilities::pow(fe_order, dim);
-  static constexpr unsigned int macro_size      = VectorizedArray<Number>::n_array_elements;
+  using CellIterator                                   = typename PatchInfo<dim>::CellIterator;
+  static constexpr unsigned int fe_order               = fe_degree + 1;
+  static constexpr unsigned int n_dofs_per_cell_static = Utilities::pow(fe_order, dim);
+  static constexpr unsigned int macro_size             = VectorizedArray<Number>::n_array_elements;
 
   // // TODO construct indices at compile time ?
   // struct GetIndexing;
@@ -264,7 +264,7 @@ private:
 //   dg_cell_patch_index_map_impl() const
 //   {
 //     // TODO extract dof information from underlying SubdomainHandler
-//     const std::size_t         n_dofs_per_subdomain = n_dofs_per_cell;
+//     const std::size_t         n_dofs_per_subdomain = n_dofs_per_cell_static;
 //     std::vector<unsigned int> indices;
 //     indices.resize(n_dofs_per_subdomain);
 //     std::iota(indices.begin(), indices.end(), 0);
@@ -318,12 +318,12 @@ private:
 
 //     constexpr unsigned int vpatch_size = 1 << dim;
 //     // TODO extract dof information from underlying SubdomainHandler
-//     const std::size_t         n_dofs_per_subdomain = Utilities::pow(2, dim) * n_dofs_per_cell;
-//     std::vector<unsigned int> indices;
+//     const std::size_t         n_dofs_per_subdomain = Utilities::pow(2, dim) *
+//     n_dofs_per_cell_static; std::vector<unsigned int> indices;
 //     indices.resize(n_dofs_per_subdomain);
 //     auto patch_index = indices.begin();
 //     for(unsigned int cell = 0; cell < vpatch_size; ++cell)
-//       for(unsigned int dof = 0; dof < n_dofs_per_cell; ++dof, ++patch_index)
+//       for(unsigned int dof = 0; dof < n_dofs_per_cell_static; ++dof, ++patch_index)
 //         *patch_index = cell_to_patch_index(dof, cell);
 //     return indices;
 //   }
@@ -362,7 +362,7 @@ inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
     subdomain_handler(subdomain_handler_in)
 {
   AssertThrow(dof_layout != DoFLayout::invalid, ExcMessage("The finite element is not supported."));
-  AssertThrow(n_dofs_per_cell == cell_dof_tensor.n_flat(),
+  AssertThrow(n_dofs_per_cell_static == cell_dof_tensor.n_flat(),
               ExcMessage("Only isotropic elements supported."));
   // empty_constraints.close();
 }
@@ -412,9 +412,9 @@ PatchTransfer<dim, Number, fe_degree>::n_dofs_per_patch() const
 // PatchTransfer<dim, Number, fe_degree>::patch_dof_indices_on_cell(const unsigned int cell_no)
 // const
 // {
-//   const auto n_dofs_per_cell = cell_dof_tensor.n_flat();
-//   cell_dof_indices_scratchpad.resize(n_dofs_per_cell);
-//   for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell; ++cell_dof_index)
+//   const auto n_dofs_per_cell_static = cell_dof_tensor.n_flat();
+//   cell_dof_indices_scratchpad.resize(n_dofs_per_cell_static);
+//   for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell_static; ++cell_dof_index)
 //   {
 //     const unsigned int patch_dof_index = patch_dof_tensor.dof_index(cell_no, cell_dof_index);
 //     cell_dof_indices_scratchpad[cell_dof_index] = patch_dof_index;
@@ -431,14 +431,14 @@ PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned in
   AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
   std::vector<std::array<types::global_dof_index, macro_size>> global_dof_indices_plain(
     patch_dof_tensor.n_flat());
-  const auto n_cells         = cell_tensor.n_flat();
-  const auto n_dofs_per_cell = cell_dof_tensor.n_flat();
+  const auto n_cells                = cell_tensor.n_flat();
+  const auto n_dofs_per_cell_static = cell_dof_tensor.n_flat();
   for(auto cell_no = 0U; cell_no < n_cells; ++cell_no)
   {
     const auto global_dof_indices_on_cell =
       patch_dof_worker.get_dof_indices_on_cell(patch_id, cell_no);
     for(unsigned int lane = 0; lane < macro_size; ++lane)
-      for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell; ++cell_dof_index)
+      for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell_static; ++cell_dof_index)
       {
         const unsigned int patch_dof_index = patch_dof_tensor.dof_index(cell_no, cell_dof_index);
         global_dof_indices_plain[patch_dof_index][lane] =

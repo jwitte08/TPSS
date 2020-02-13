@@ -243,13 +243,13 @@ PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
 template<int dim, typename number>
 bool
 PatchWorker<dim, number>::is_interior(const unsigned int patch) const
-  {
-    const auto bdry_masks        = get_at_boundary_masks(patch);
-    const bool is_interior_patch = std::all_of(bdry_masks.cbegin(),
-                                               bdry_masks.cend(),
-                                               [](const auto & mask) { return mask.none(); });
-    return is_interior_patch;
-  }
+{
+  const auto bdry_masks        = get_at_boundary_masks(patch);
+  const bool is_interior_patch = std::all_of(bdry_masks.cbegin(),
+                                             bdry_masks.cend(),
+                                             [](const auto & mask) { return mask.none(); });
+  return is_interior_patch;
+}
 
 template<int dim, typename number>
 inline unsigned int
