@@ -30,17 +30,17 @@
  * deciphers the name of this class.  ... TODO
  */
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 class FDEvaluation
 {
 public:
   using CellAssembler =
-    typename TPSS::MatrixEvaluator<fe_degree + 1, n_q_points_1d, VectorizedArray<Number>>;
+    typename TPSS::MatrixEvaluator<fe_degree + 1, n_q_points_1d_, VectorizedArray<Number>>;
   using value_type                         = Number;
   static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
 
   static constexpr unsigned int fe_order               = fe_degree + 1;
-  static constexpr unsigned int n_q_points_1d_static   = n_q_points_1d;
+  static constexpr unsigned int n_q_points_1d_static   = n_q_points_1d_;
   static constexpr unsigned int n_dofs_per_cell_static = Utilities::pow(fe_order, dim);
 
   FDEvaluation(const SubdomainHandler<dim, Number> & sd_handler_in,
@@ -86,8 +86,17 @@ public:
   Tensor<1, dim, VectorizedArray<Number>>
   get_normal_vector(const int face_no, const int direction) const;
 
+  const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> &
+  get_shape_info(const unsigned int dimension) const;
+
   const SubdomainHandler<dim, Number> &
   get_subdomain_handler() const;
+
+  unsigned int
+  n_dofs_per_cell_1d(const unsigned int dimension) const;
+
+  unsigned int
+  n_q_points_1d(const unsigned int dimension) const;
 
   const VectorizedArray<Number> &
   shape_value(const int dof, const int q_point_no, const int direction, const int cell_no) const;
@@ -180,7 +189,7 @@ public:
   }
 
 private:
-  using This = FDEvaluation<dim, fe_degree, n_q_points_1d, Number>;
+  using This = FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>;
 
   template<TPSS::PatchVariant variant>
   void
@@ -189,15 +198,15 @@ private:
     Assert(this->scratch_fedata != nullptr, ExcInternalError());
 
     constexpr unsigned int scratch_pad_length  = fe_order * fe_order * dim * 2;
-    constexpr unsigned int unit_weights_length = n_q_points_1d * dim;
-    constexpr unsigned int values_length       = n_q_points_1d * fe_order * dim;
+    constexpr unsigned int unit_weights_length = n_q_points_1d_static * dim;
+    constexpr unsigned int values_length       = n_q_points_1d_static * fe_order * dim;
     constexpr unsigned int values_length_face  = fe_order * 2 * dim;
     constexpr unsigned int n_cells_per_direction =
       TPSS::UniversalInfo<dim>::n_cells_per_direction(variant);
     constexpr unsigned int gradients_length =
-      n_q_points_1d * fe_order * n_cells_per_direction * dim;
+      n_q_points_1d_static * fe_order * n_cells_per_direction * dim;
     constexpr unsigned int gradients_length_face = fe_order * 2 * n_cells_per_direction * dim;
-    constexpr unsigned int JxWs_length           = n_q_points_1d * n_cells_per_direction * dim;
+    constexpr unsigned int JxWs_length = n_q_points_1d_static * n_cells_per_direction * dim;
     constexpr unsigned int size_to_be_allocated =
       scratch_pad_length + unit_weights_length + values_length + values_length_face +
       gradients_length + gradients_length_face + JxWs_length; // total size
@@ -209,7 +218,7 @@ private:
     this->values_face    = this->values + values_length;
     for(unsigned int d = 0; d < dim; ++d)
       this->gradients[d] = this->values_face + values_length_face +
-                           n_q_points_1d * fe_order * n_cells_per_direction * d;
+                           n_q_points_1d_static * fe_order * n_cells_per_direction * d;
     for(unsigned int d = 0; d < dim; ++d)
       this->gradients_face[d] =
         this->gradients[0] + gradients_length + fe_order * 2 * n_cells_per_direction * d;
@@ -368,8 +377,6 @@ private:
 
   const MatrixFree<dim, Number> & mf_storage;
 
-  const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> & shape_info;
-
   unsigned int patch_id = numbers::invalid_unsigned_int;
 
   /**
@@ -410,7 +417,20 @@ private:
   VectorizedArray<Number> * values_face = nullptr;
 
   /**
-   * lexicographical ordering: q_point_index < dof_index < cell_no
+   * Stores for each component (array position) of d-dimensional shape function
+   * gradient the univariate shape function gradients (i.e. first derivatives)
+   * of coinciding spatial coordinate @p direction in a flat data field with
+   * lexicographical ordering:
+   *
+   *   q_point_index < dof_index < cell_no
+   *
+   * Evaluations at univariate quadrature points are in real space subject to
+   * Cartesian mapping. For illustration, let
+   *
+   *   PHI(x_1,x_2,x_3) = phi_1(x_1) phi_2(x_2) phi_3(x_3)
+   *
+   * define a tensor product shape function, then, @p gradients[i] stores the
+   * first derivatives of d/dx_i phi_i(x_i) in real space.
    */
   std::array<VectorizedArray<Number> *, dim> gradients;
 
@@ -454,8 +474,8 @@ private:
 
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
-inline FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::FDEvaluation(
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
   const SubdomainHandler<dim, Number> & sd_handler_in,
   const unsigned int                    dofh_index)
   : level(sd_handler_in.get_additional_data().level),
@@ -467,9 +487,19 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::FDEvaluation(
     patch_worker(sd_handler_in.get_dof_info(dofh_index)),
     mapping_info(sd_handler_in.get_mapping_info()),
     mf_storage(sd_handler_in.get_matrix_free()),
-    shape_info(patch_worker.get_shape_info(0)),
     scratch_fedata(mf_storage.acquire_scratch_data())
 {
+  for(auto d = 0U; d < dim; ++d)
+  {
+    /// static variables fe_order and n_q_points_1d_static have to define the maximum
+    /// number for any dimension
+    AssertIndexRange(patch_worker.get_dof_tensor().n_dofs_per_cell_1d(d), fe_order + 1);
+    AssertIndexRange(patch_worker.get_shape_info(d).quadrature.size(), n_q_points_1d_static + 1);
+    /// currently assume isotropy ... TODO
+    AssertDimension(n_dofs_per_cell_1d(d), fe_order);
+    AssertDimension(n_q_points_1d(d), n_q_points_1d_static);
+  }
+
   if(patch_variant == TPSS::PatchVariant::cell)
     malloc_fedata<TPSS::PatchVariant::cell>();
   else if(patch_variant == TPSS::PatchVariant::vertex)
@@ -482,7 +512,7 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::FDEvaluation(
   {
     const auto & shape_info = patch_worker.get_shape_info(d);
     const auto & quadrature = shape_info.quadrature;
-    AssertIndexRange(static_cast<int>(quadrature.size()), n_q_points_1d + 1);
+    AssertIndexRange(static_cast<int>(quadrature.size()), n_q_points_1d_static + 1);
     const auto & unit_weights = quadrature.get_weights();
     auto         W            = &(get_q_weight_impl(0, d));
     std::copy(unit_weights.cbegin(), unit_weights.cend(), W);
@@ -490,7 +520,7 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::FDEvaluation(
     /// Extract one-dimensional shape function values on cell and face quadratures
     auto values_in_begin = shape_info.shape_values.begin();
     auto values_begin    = &(shape_value_impl(0, 0, d, 0));
-    std::copy_n(values_in_begin, fe_order * n_q_points_1d, values_begin);
+    std::copy_n(values_in_begin, fe_order * n_q_points_1d_static, values_begin);
     for(const auto face_no : {0, 1})
     {
       auto values_face_in_begin = shape_info.shape_data_on_face[face_no].begin();
@@ -501,8 +531,8 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::FDEvaluation(
   this->values_filled = true;
 }
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
-inline FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::~FDEvaluation()
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::~FDEvaluation()
 {
   try
   {
@@ -523,9 +553,9 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::~FDEvaluation()
   scratch_pad_end       = nullptr;
 }
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline void
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::reinit(const unsigned int patch)
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::reinit(const unsigned int patch)
 {
   AssertIndexRange(patch, n_subdomains);
   patch_id = patch;
@@ -548,9 +578,9 @@ FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::reinit(const unsigned int p
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const ArrayView<VectorizedArray<Number>>
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::acquire_scratch_chunk(const std::size_t size)
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::acquire_scratch_chunk(const std::size_t size)
 {
   auto && chunk =
     make_array_view(this->scratch_pad_remainder, (this->scratch_pad_remainder += size));
@@ -560,25 +590,25 @@ FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::acquire_scratch_chunk(const
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline void
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::compute_unit_mass(
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::compute_unit_mass(
   const ArrayView<VectorizedArray<Number>> & matrix) const
 {
   AssertDimension(matrix.size(), fe_order * fe_order);
   CellAssembler::template assemble<false>(
-    make_array_view(this->values, this->values + fe_order * n_q_points_1d),
-    make_array_view(this->values, this->values + fe_order * n_q_points_1d),
-    make_array_view(this->q_weights_unit, this->q_weights_unit + n_q_points_1d),
+    make_array_view(this->values, this->values + fe_order * n_q_points_1d_static),
+    make_array_view(this->values, this->values + fe_order * n_q_points_1d_static),
+    make_array_view(this->q_weights_unit, this->q_weights_unit + n_q_points_1d_static),
     matrix);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline VectorizedArray<Number>
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_average_factor(const int direction,
-                                                                        const int cell_no,
-                                                                        const int face_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_average_factor(const int direction,
+                                                                         const int cell_no,
+                                                                         const int face_no) const
 {
   auto         factor      = make_vectorized_array<Number>(0.5);
   const auto & at_boundary = get_boundary_mask(direction, cell_no, face_no);
@@ -590,11 +620,11 @@ FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_average_factor(const in
 
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
-inline std::bitset<FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::macro_size>
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_boundary_mask(const int direction,
-                                                                       const int cell_no,
-                                                                       const int face_no) const
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline std::bitset<FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::macro_size>
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_boundary_mask(const int direction,
+                                                                        const int cell_no,
+                                                                        const int face_no) const
 {
   AssertIndexRange(direction, dim);
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
@@ -614,19 +644,19 @@ FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_boundary_mask(const int
 
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline TPSS::DoFLayout
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_dof_layout() const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_dof_layout() const
 {
   return patch_worker.get_dof_info().get_dof_layout();
 }
 
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_h(const int direction,
-                                                           const int cell_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_h(const int direction,
+                                                            const int cell_no) const
 {
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
   AssertIndexRange(direction, dim);
@@ -634,62 +664,62 @@ FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_h(const int direction,
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_JxW(const int q_point_no,
-                                                             const int direction,
-                                                             const int cell_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_JxW(const int q_point_no,
+                                                              const int direction,
+                                                              const int cell_no) const
 {
   return get_JxW_impl(q_point_no, direction, cell_no);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_JxW_impl(const int q_point_no,
-                                                                  const int direction,
-                                                                  const int cell_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_JxW_impl(const int q_point_no,
+                                                                   const int direction,
+                                                                   const int cell_no) const
 {
-  AssertIndexRange(q_point_no, n_q_points_1d);
+  AssertIndexRange(q_point_no, n_q_points_1d_static);
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
   AssertIndexRange(direction, dim);
-  return *(this->JxWs + q_point_no + cell_no * n_q_points_1d +
-           direction * n_q_points_1d * n_cells_per_direction);
+  return *(this->JxWs + q_point_no + cell_no * n_q_points_1d_static +
+           direction * n_q_points_1d_static * n_cells_per_direction);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_q_weight(const int q_point_no,
-                                                                  const int direction) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_q_weight(const int q_point_no,
+                                                                   const int direction) const
 {
   return get_q_weight_impl(q_point_no, direction);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_q_weight_impl(const int q_point_no,
-                                                                       const int direction) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_q_weight_impl(const int q_point_no,
+                                                                        const int direction) const
 {
-  AssertIndexRange(q_point_no, n_q_points_1d);
+  AssertIndexRange(q_point_no, n_q_points_1d_static);
   AssertIndexRange(direction, dim);
-  return *(this->q_weights_unit + q_point_no + direction * n_q_points_1d);
+  return *(this->q_weights_unit + q_point_no + direction * n_q_points_1d_static);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline VectorizedArray<Number>
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_normal(const int face_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_normal(const int face_no) const
 {
   return make_vectorized_array<Number>(face_no == 0 ? -1. : 1.);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline Tensor<1, dim, VectorizedArray<Number>>
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_normal_vector(const int face_no,
-                                                                       const int direction) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_normal_vector(const int face_no,
+                                                                        const int direction) const
 {
   Tensor<1, dim, VectorizedArray<Number>> normal_vector;
   normal_vector *= 0.;
@@ -698,67 +728,94 @@ FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_normal_vector(const int
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> &
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_shape_info(
+  const unsigned int dimension) const
+{
+  return patch_worker.get_shape_info(dimension);
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const SubdomainHandler<dim, Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::get_subdomain_handler() const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_subdomain_handler() const
 {
   return sd_handler;
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline unsigned int
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_dofs_per_cell_1d(
+  const unsigned int dimension) const
+{
+  return patch_worker.get_dof_tensor().n_dofs_per_cell_1d(dimension);
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline unsigned int
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_q_points_1d(
+  const unsigned int dimension) const
+{
+  return get_shape_info(dimension).quadrature.size();
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline void
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::release_scratch_chunks()
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::release_scratch_chunks()
 {
   this->scratch_pad_remainder = this->scratch_pad;
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::shape_value(const int dof,
-                                                                 const int q_point_no,
-                                                                 const int direction,
-                                                                 const int cell_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_value(const int dof,
+                                                                  const int q_point_no,
+                                                                  const int direction,
+                                                                  const int cell_no) const
 {
   return shape_value_impl(dof, q_point_no, direction, cell_no);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::shape_value_impl(const int dof,
-                                                                      const int q_point_no,
-                                                                      const int direction,
-                                                                      const int cell_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_value_impl(const int dof,
+                                                                       const int q_point_no,
+                                                                       const int direction,
+                                                                       const int cell_no) const
 {
   AssertIndexRange(dof, static_cast<int>(fe_order));
-  AssertIndexRange(q_point_no, n_q_points_1d);
+  AssertIndexRange(q_point_no, n_q_points_1d_static);
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
   AssertIndexRange(direction, dim);
   (void)cell_no;
-  constexpr auto n_values_1d = fe_order * n_q_points_1d;
-  return *(this->values + q_point_no + dof * n_q_points_1d + direction * n_values_1d);
+  constexpr auto n_values_1d = fe_order * n_q_points_1d_static;
+  return *(this->values + q_point_no + dof * n_q_points_1d_static + direction * n_values_1d);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::shape_value_face(const int dof,
-                                                                      const int face_no,
-                                                                      const int direction,
-                                                                      const int cell_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_value_face(const int dof,
+                                                                       const int face_no,
+                                                                       const int direction,
+                                                                       const int cell_no) const
 {
   return shape_value_face_impl(dof, face_no, direction, cell_no);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::shape_value_face_impl(const int dof,
-                                                                           const int face_no,
-                                                                           const int direction,
-                                                                           const int cell_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_value_face_impl(const int dof,
+                                                                            const int face_no,
+                                                                            const int direction,
+                                                                            const int cell_no) const
 {
   AssertIndexRange(dof, static_cast<int>(fe_order));
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
@@ -770,47 +827,48 @@ FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::shape_value_face_impl(const
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::shape_gradient(const int dof,
-                                                                    const int q_point_no,
-                                                                    const int direction,
-                                                                    const int cell_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_gradient(const int dof,
+                                                                     const int q_point_no,
+                                                                     const int direction,
+                                                                     const int cell_no) const
 {
   return shape_gradient_impl(dof, q_point_no, direction, cell_no);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::shape_gradient_impl(const int dof,
-                                                                         const int q_point_no,
-                                                                         const int direction,
-                                                                         const int cell_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_gradient_impl(const int dof,
+                                                                          const int q_point_no,
+                                                                          const int direction,
+                                                                          const int cell_no) const
 {
   AssertIndexRange(dof, static_cast<int>(fe_order));
-  AssertIndexRange(q_point_no, n_q_points_1d);
+  AssertIndexRange(q_point_no, n_q_points_1d_static);
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
   AssertIndexRange(direction, dim);
-  return *(this->gradients[direction] + q_point_no + dof * n_q_points_1d +
-           cell_no * n_q_points_1d * fe_order);
+  constexpr auto n_dofs_per_cell_1d_static = fe_order * n_q_points_1d_static;
+  return *(this->gradients[direction] + q_point_no + dof * n_q_points_1d_static +
+           cell_no * n_dofs_per_cell_1d_static);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::shape_gradient_face(const int dof,
-                                                                         const int face_no,
-                                                                         const int direction,
-                                                                         const int cell_no) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_gradient_face(const int dof,
+                                                                          const int face_no,
+                                                                          const int direction,
+                                                                          const int cell_no) const
 {
   return shape_gradient_face_impl(dof, face_no, direction, cell_no);
 }
 
 
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline VectorizedArray<Number> &
-FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::shape_gradient_face_impl(
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_gradient_face_impl(
   const int dof,
   const int face_no,
   const int direction,
