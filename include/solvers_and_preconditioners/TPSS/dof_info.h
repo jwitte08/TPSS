@@ -51,9 +51,9 @@ public:
   unsigned int
   n_dofs_per_cell_1d(const unsigned int dimension) const;
 
-  const Tensors::TensorHelper<n_dimensions> * cell_dof_tensor;
-  const Tensors::TensorHelper<n_dimensions> * cell_tensor;
-  const DoFLayout                             dof_layout;
+  const Tensors::TensorHelper<n_dimensions> cell_dof_tensor;
+  const Tensors::TensorHelper<n_dimensions> cell_tensor;
+  const DoFLayout                           dof_layout;
 
 private:
   /**
@@ -268,7 +268,7 @@ inline PatchLocalIndexHelper<n_dimensions>::PatchLocalIndexHelper(
   const Tensors::TensorHelper<n_dimensions> & cell_tensor_in,
   const Tensors::TensorHelper<n_dimensions> & cell_dof_tensor_in,
   const DoFLayout                             dof_layout_in)
-  : cell_dof_tensor(&cell_dof_tensor_in), cell_tensor(&cell_tensor_in), dof_layout(dof_layout_in)
+  : cell_dof_tensor(cell_dof_tensor_in), cell_tensor(cell_tensor_in), dof_layout(dof_layout_in)
 {
 }
 
@@ -293,10 +293,10 @@ PatchLocalIndexHelper<n_dimensions>::dof_index_1d_q_impl(const unsigned int cell
                                                          const unsigned int cell_dof_index,
                                                          const int          dimension) const
 {
-  AssertIndexRange(cell_no, cell_tensor->n[dimension]);
-  AssertIndexRange(cell_dof_index, cell_dof_tensor->n[dimension]);
+  AssertIndexRange(cell_no, cell_tensor.n[dimension]);
+  AssertIndexRange(cell_dof_index, cell_dof_tensor.n[dimension]);
   AssertIndexRange(dimension, n_dimensions);
-  const auto & n_dofs_per_cell_1d = cell_dof_tensor->n[dimension];
+  const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
   return cell_no * n_dofs_per_cell_1d + cell_dof_index - cell_no;
 }
 
@@ -307,10 +307,10 @@ PatchLocalIndexHelper<n_dimensions>::dof_index_1d_dgq_impl(const unsigned int ce
                                                            const unsigned int cell_dof_index,
                                                            const int          dimension) const
 {
-  AssertIndexRange(cell_no, cell_tensor->n[dimension]);
-  AssertIndexRange(cell_dof_index, cell_dof_tensor->n[dimension]);
+  AssertIndexRange(cell_no, cell_tensor.n[dimension]);
+  AssertIndexRange(cell_dof_index, cell_dof_tensor.n[dimension]);
   AssertIndexRange(dimension, n_dimensions);
-  const auto & n_dofs_per_cell_1d = cell_dof_tensor->n[dimension];
+  const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
   return cell_no * n_dofs_per_cell_1d + cell_dof_index;
 }
 
@@ -319,7 +319,7 @@ template<int n_dimensions>
 inline unsigned int
 PatchLocalIndexHelper<n_dimensions>::n_cells_1d(const unsigned int dimension) const
 {
-  return this->cell_tensor->size(dimension);
+  return this->cell_tensor.size(dimension);
 }
 
 
@@ -327,7 +327,7 @@ template<int n_dimensions>
 inline unsigned int
 PatchLocalIndexHelper<n_dimensions>::n_dofs_per_cell_1d(const unsigned int dimension) const
 {
-  return this->cell_dof_tensor->size(dimension);
+  return this->cell_dof_tensor.size(dimension);
 }
 
 
@@ -359,8 +359,8 @@ inline std::array<unsigned int, n_dimensions>
 PatchLocalTensorHelper<n_dimensions>::dof_multi_index(const unsigned int cell_no,
                                                       const unsigned int cell_dof_index) const
 {
-  const auto & cell_no_multi        = IndexHelperBase::cell_tensor->multi_index(cell_no);
-  const auto & cell_dof_index_multi = IndexHelperBase::cell_dof_tensor->multi_index(cell_dof_index);
+  const auto & cell_no_multi        = IndexHelperBase::cell_tensor.multi_index(cell_no);
+  const auto & cell_dof_index_multi = IndexHelperBase::cell_dof_tensor.multi_index(cell_dof_index);
   std::array<unsigned int, n_dimensions> patch_dof_index_multi;
   for(auto d = 0U; d < n_dimensions; ++d)
     patch_dof_index_multi[d] =
@@ -396,9 +396,12 @@ inline PatchDoFWorker<dim, Number>::PatchDoFWorker(const DoFInfo<dim, Number> & 
   : PatchWorker<dim, Number>(*(dof_info_in.patch_info)),
     dof_info(&dof_info_in),
     patch_dof_tensor(this->patch_size,
-                     dof_info_in.dof_handler->get_fe().tensor_degree(),
+                     /// currently assuming isotropy ...
+                     get_shape_info(0).fe_degree + 1,
                      dof_info_in.get_dof_layout())
 {
+  for(auto d = 0U; d < dim; ++d)
+    AssertDimension(get_dof_tensor().n_dofs_per_cell_1d(d), get_shape_info(d).fe_degree + 1);
   Assert(dof_info->get_additional_data().level != numbers::invalid_unsigned_int,
          ExcMessage("Implemented for level cells only."));
 }
