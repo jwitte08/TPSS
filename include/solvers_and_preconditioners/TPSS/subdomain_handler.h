@@ -75,14 +75,11 @@ public:
   const dealii::DoFHandler<dim> &
   get_dof_handler(const unsigned int dofh_index = 0) const;
 
-  const TPSS::DoFInfo<dim> &
+  const TPSS::DoFInfo<dim, number> &
   get_dof_info(const unsigned int dofh_index = 0) const;
 
   TPSS::DoFLayout
   get_dof_layout(const unsigned int dofh_index = 0) const;
-
-  const dealii::Quadrature<1> &
-  get_quadrature(int dimension = 0) const;
 
   const typename TPSS::PatchInfo<dim>::PartitionData &
   get_partition_data() const;
@@ -100,7 +97,7 @@ public:
   get_matrix_free() const;
 
   const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>> &
-  get_shape_info(const unsigned int dofh_index = 0, const unsigned int quad_index = 0) const;
+  get_shape_info(const unsigned int dofh_index = 0, const unsigned int dimension = 0) const;
 
   std::vector<TimeInfo>
   get_time_data() const;
@@ -163,22 +160,19 @@ private:
   std::vector<unsigned int>                              dofh_indices;
   std::vector<const dealii::DoFHandler<dim> *>           dof_handlers;
 
-  TPSS::PatchInfo<dim> patch_info;
-  // Table<2, internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>>>
-  std::vector<TPSS::DoFInfo<dim>>      dof_infos;
-  TPSS::MatrixFreeConnect<dim, number> mf_connect;
-  TPSS::MappingInfo<dim, number>       mapping_info;
+  TPSS::PatchInfo<dim>                    patch_info;
+  std::vector<TPSS::DoFInfo<dim, number>> dof_infos;
+  TPSS::MatrixFreeConnect<dim, number>    mf_connect;
+  TPSS::MappingInfo<dim, number>          mapping_info;
 
-  // TODO
-  std::vector<dealii::Quadrature<1>> quadrature_storage;
-  AdditionalData                     additional_data;
-  std::vector<TimeInfo>              time_data;
+  AdditionalData        additional_data;
+  std::vector<TimeInfo> time_data;
 };
 
 template<int dim, typename number>
 struct SubdomainHandler<dim, number>::AdditionalData
 {
-  unsigned int          level            = -1;
+  unsigned int          level            = numbers::invalid_unsigned_int;
   TPSS::PatchVariant    patch_variant    = TPSS::PatchVariant::invalid;
   TPSS::SmootherVariant smoother_variant = TPSS::SmootherVariant::invalid;
   std::function<std::vector<std::vector<PatchIterator>>(
@@ -188,14 +182,19 @@ struct SubdomainHandler<dim, number>::AdditionalData
   std::function<void(const DoFHandler<dim> *                             dof_handler,
                      const typename TPSS::PatchInfo<dim>::AdditionalData additional_data,
                      std::vector<std::vector<CellIterator>> &            cell_collections)>
-                        manual_gathering_func;
-  unsigned int          n_q_points_surrogate      = 5;
-  bool                  normalize_surrogate_patch = false;
-  bool                  use_arc_length            = true;
-  unsigned int          n_threads                 = 0;
-  unsigned int          grain_size                = 0;
-  TPSS::CachingStrategy caching_strategy          = TPSS::CachingStrategy::Cached;
-  bool                  print_details             = false;
+    manual_gathering_func;
+
+  Table<2, internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>>> shape_infos;
+
+  unsigned int n_q_points_surrogate      = 5;
+  bool         normalize_surrogate_patch = false;
+  bool         use_arc_length            = true;
+
+  unsigned int          n_threads        = 0;
+  unsigned int          grain_size       = 0;
+  TPSS::CachingStrategy caching_strategy = TPSS::CachingStrategy::Cached;
+
+  bool print_details = false;
 };
 
 /*********************************** inline functions ***********************************/
@@ -214,7 +213,6 @@ SubdomainHandler<dim, number>::clear()
   mf_connect = TPSS::MatrixFreeConnect<dim, number>{};
   mapping_info.clear();
 
-  quadrature_storage.clear();
   additional_data = AdditionalData{};
   time_data.clear();
 }
@@ -262,7 +260,7 @@ SubdomainHandler<dim, number>::get_dof_handler(const unsigned int dofh_index) co
 }
 
 template<int dim, typename number>
-inline const TPSS::DoFInfo<dim> &
+inline const TPSS::DoFInfo<dim, number> &
 SubdomainHandler<dim, number>::get_dof_info(const unsigned int dofh_index) const
 {
   const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
@@ -275,17 +273,6 @@ SubdomainHandler<dim, number>::get_dof_layout(const unsigned int dofh_index) con
 {
   const auto & dof_info = get_dof_info(dofh_index);
   return dof_info.get_dof_layout();
-}
-
-template<int dim, typename number>
-inline const dealii::Quadrature<1> &
-SubdomainHandler<dim, number>::get_quadrature(int direction) const
-{
-  AssertIndexRange(direction, dim);
-  Assert(quadrature_storage.size() == dim,
-         dealii::ExcNotImplemented()); // each direction is filled
-
-  return quadrature_storage[direction];
 }
 
 template<int dim, typename number>
@@ -327,11 +314,15 @@ SubdomainHandler<dim, number>::get_partition_data() const
 template<int dim, typename number>
 inline const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>> &
 SubdomainHandler<dim, number>::get_shape_info(const unsigned int dofh_index,
-                                              const unsigned int quad_index) const
+                                              const unsigned int dimension) const
 {
   AssertIndexRange(dofh_index, n_components());
-  const auto & mf_storage = get_matrix_free();
-  return mf_storage.get_shape_info(dofh_index, quad_index);
+  AssertIndexRange(dimension, dim);
+  if(!additional_data.shape_infos.empty())
+    return additional_data.shape_infos(dofh_index, dimension);
+  /// assuming isotropy of tensor product elements and quadrature
+  Assert(this->mf_storage, ExcMessage("MatrixFree object not initialized."));
+  return get_matrix_free().get_shape_info(dofh_index, 0);
 }
 
 

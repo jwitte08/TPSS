@@ -38,18 +38,17 @@ SubdomainHandler<dim, number>::internal_reinit()
   Assert(additional_data.patch_variant != TPSS::PatchVariant::invalid, ExcInvalidState());
   Assert(additional_data.smoother_variant != TPSS::SmootherVariant::invalid, ExcInvalidState());
 
-  // *** initialize internal data
-  const auto check_dof_handler = [&](const auto dof_handler) {
-    AssertThrow(mf_storage->is_supported(dof_handler->get_fe()),
-                ExcMessage("Finite element not supported."));
-    AssertDimension(Utilities::fixed_power<dim>(dof_handler->get_fe().tensor_degree() + 1),
-                    dof_handler->get_fe().n_dofs_per_cell());
-    AssertIndexRange(additional_data.level, dof_handler->get_triangulation().n_global_levels());
-    AssertDimension(dof_handler->get_fe().n_base_elements(), 1);
-  };
 
   // *** compress dof handlers
   {
+    const auto check_dof_handler = [&](const auto dof_handler) {
+      AssertThrow(mf_storage->is_supported(dof_handler->get_fe()),
+                  ExcMessage("Finite element not supported."));
+      AssertDimension(Utilities::fixed_power<dim>(dof_handler->get_fe().tensor_degree() + 1),
+                      dof_handler->get_fe().n_dofs_per_cell());
+      AssertIndexRange(additional_data.level, dof_handler->get_triangulation().n_global_levels());
+      AssertDimension(dof_handler->get_fe().n_base_elements(), 1);
+    };
     std::vector<const dealii::DoFHandler<dim> *> unique_dof_handlers;
     const auto                                   first_dofh_index = 0U;
     const auto & first_dofh = mf_storage->get_dof_handler(first_dofh_index);
@@ -74,10 +73,6 @@ SubdomainHandler<dim, number>::internal_reinit()
     this->dof_handlers = unique_dof_handlers;
   }
 
-  // TODO
-  const auto & shape_info = mf_storage->get_shape_info();
-  for(int d = 0; d < dim; ++d)
-    quadrature_storage.emplace_back(shape_info.quadrature);
 
   // *** gather patches as vectorized batches and colorize them
   typename TPSS::PatchInfo<dim>::AdditionalData patch_info_data;
@@ -94,37 +89,53 @@ SubdomainHandler<dim, number>::internal_reinit()
   // *** constructor partitions patches with respect to vectorization
   TPSS::PatchWorker<dim, number> patch_worker{patch_info};
 
+
   // *** map the patch batches to MatrixFree's cell batches
   mf_connect.initialize(mf_storage, &patch_info);
 
-  // *** (partially) store dofs
-  dof_infos.resize(dof_handlers.size());
-  typename TPSS::DoFInfo<dim>::AdditionalData dof_info_data;
-  dof_info_data.level = additional_data.level;
-  for(auto i = 0U; i < dof_infos.size(); ++i)
-    dof_infos.at(i).initialize(dof_handlers.at(i), &patch_info, dof_info_data);
-  // *** initialize MPI vector partitioner
-  if(TPSS::PatchVariant::cell == additional_data.patch_variant)
-  {
-    // Note, it is okay to pass vector partitioners more than once to the same
-    // dof_info (because partitioners are passed as shared pointers). In other
-    // words, we don't care about uniqueness here as long as we query the
-    // correct partitioner from mf_storage.
+
+  { // *** (partially) store dof indices and patch-local dof information
+    dof_infos.resize(dof_handlers.size());
+    typename TPSS::DoFInfo<dim, number>::AdditionalData dof_info_data;
+    dof_info_data.level = additional_data.level;
+    std::set<unsigned int> initialized_indices;
     for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
     {
-      const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
-      auto &     dof_info          = dof_infos[unique_dofh_index];
-      dof_info.vector_partitioner  = mf_storage->get_vector_partitioner(unique_dofh_index);
+      const auto unique_dofh_index        = get_unique_dofh_index(dofh_index);
+      auto &     dof_info                 = dof_infos[unique_dofh_index];
+      const auto [dummy, not_initialized] = initialized_indices.insert(unique_dofh_index);
+      (void)dummy;
+      if(not_initialized)
+        dof_info.initialize(dof_handlers.at(unique_dofh_index),
+                            &patch_info,
+                            &(get_shape_info(dofh_index)),
+                            dof_info_data);
     }
   }
-  else // entirely assemble vector partitioners
-  {
-    for(auto & dof_info : dof_infos)
+  { // *** initialize MPI vector partitioners
+    if(TPSS::PatchVariant::cell == additional_data.patch_variant)
     {
-      TPSS::PatchDoFWorker<dim, number> patch_dof_worker(dof_info);
-      dof_info.vector_partitioner = patch_dof_worker.initialize_vector_partitioner();
+      std::set<unsigned int> initialized_indices;
+      for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
+      {
+        const auto unique_dofh_index        = get_unique_dofh_index(dofh_index);
+        auto &     dof_info                 = dof_infos[unique_dofh_index];
+        const auto [dummy, not_initialized] = initialized_indices.insert(unique_dofh_index);
+        (void)dummy;
+        if(not_initialized)
+          dof_info.vector_partitioner = mf_storage->get_vector_partitioner(dofh_index);
+      }
+    }
+    else // entire assembly of vector partitioners
+    {
+      for(auto & dof_info : dof_infos)
+      {
+        TPSS::PatchDoFWorker<dim, number> patch_dof_worker(dof_info);
+        dof_info.vector_partitioner = patch_dof_worker.initialize_vector_partitioner();
+      }
     }
   }
+
 
   // *** compute the surrogate patches which pertain the tensor structure
   typename TPSS::MappingInfo<dim, number>::AdditionalData mapping_info_data;
@@ -133,10 +144,6 @@ SubdomainHandler<dim, number>::internal_reinit()
   mapping_info_data.use_arc_length  = additional_data.use_arc_length;
   mapping_info.initialize_storage(patch_info, mf_connect, mapping_info_data);
 
-  // *** check if the initialization was successful TODO
-  AssertThrow(quadrature_storage.size() == dim, ExcNotImplemented()); // each direction is filled
-  for(const auto & quad : quadrature_storage)
-    AssertThrow(quad == quadrature_storage[0], ExcMessage("Quadrature storage is not isotropic!"));
 
   // TODO
   // // *** if possible compress the data
