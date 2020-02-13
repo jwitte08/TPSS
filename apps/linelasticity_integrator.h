@@ -752,7 +752,7 @@ operator()(const Evaluator &                   eval_ansatz,
     for(int dof_v = 0; dof_v < fe_order; ++dof_v)
     {
       integral = 0.;
-      for(unsigned int q = 0; q < Evaluator::n_q_points; ++q)
+      for(unsigned int q = 0; q < Evaluator::n_q_points_1d_static; ++q)
       {
         const auto & grad_u = eval_ansatz.shape_gradient(dof_u, q, direction, cell_no);
         const auto & grad_v = eval_test.shape_gradient(dof_v, q, direction, cell_no);
@@ -778,7 +778,7 @@ operator()(const Evaluator &                   eval_ansatz,
     for(int dof_v = 0; dof_v < fe_order; ++dof_v)
     {
       integral = 0.;
-      for(unsigned int q = 0; q < Evaluator::n_q_points; ++q)
+      for(unsigned int q = 0; q < Evaluator::n_q_points_1d_static; ++q)
       {
         const auto & value_u = eval_ansatz.shape_value(dof_u, q, direction, cell_no);
         const auto & value_v = eval_test.shape_value(dof_v, q, direction, cell_no);
@@ -806,7 +806,7 @@ operator()(const Evaluator &                   eval_ansatz,
     for(int dof_v = 0; dof_v < fe_order; ++dof_v)
     {
       integral = 0.;
-      for(unsigned int q = 0; q < Evaluator::n_q_points; ++q)
+      for(unsigned int q = 0; q < Evaluator::n_q_points_1d_static; ++q)
       {
         const auto & value_or_grad_u = flag_derive_u ?
                                          eval_ansatz.shape_gradient(dof_u, q, direction, cell_no) :
@@ -839,7 +839,7 @@ operator()(const Evaluator &                   eval_ansatz,
       for(int dof_v = 0; dof_v < fe_order; ++dof_v)
       {
         integral = 0.;
-        for(unsigned int q = 0; q < Evaluator::n_q_points; ++q)
+        for(unsigned int q = 0; q < Evaluator::n_q_points_1d_static; ++q)
         {
           const auto & grad_u = eval_ansatz.shape_gradient(dof_u, q, direction, cell_no);
           const auto & grad_v = eval_test.shape_gradient(dof_v, q, direction, cell_no);
