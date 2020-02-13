@@ -1,5 +1,5 @@
-template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
-void FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::submit_cell_matrix(
+template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+void FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::submit_cell_matrix(
   Table<2, VectorizedArray<Number>> &       subdomain_matrix,
   const Table<2, VectorizedArray<Number>> & cell_matrix,
   const unsigned int                        cell_no_row,
@@ -19,32 +19,26 @@ void FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::submit_cel
       subdomain_matrix(row_start + row, col_start + col) += cell_matrix(row, col);
 }
 
-template<int dim, int fe_degree, int n_q_points_1d, int n_comp, typename Number>
+template<int dim, int fe_degree, int n_q_points_1d, typename Number>
 void
-FDEvaluationBase<dim, fe_degree, n_q_points_1d, n_comp, Number>::evaluate(const bool do_gradients)
+FDEvaluation<dim, fe_degree, n_q_points_1d, Number>::evaluate(const bool do_gradients)
 {
-  /*** scale the reference weights in each direction to obtain JxW in 1D ***/
-  if(!weights_filled)
-    for(unsigned int d = 0; d < dim; ++d)
-      for(unsigned int cell_no_1d = 0; cell_no_1d < n_cells_per_direction; ++cell_no_1d)
-      {
-        const auto                      h           = get_h(d, cell_no_1d);
-        const VectorizedArray<Number> * unit_weight = this->quad_weights_unit;
-        auto                            JxW =
-          this->JxWs + n_cells_per_direction * n_q_points_1d * d + n_q_points_1d * cell_no_1d;
-        for(unsigned int quad_no = 0; quad_no < n_q_points_1d; ++JxW, ++unit_weight, ++quad_no)
-          *JxW = (*unit_weight) * h;
-        // std::cout << std::distance (JxW, scratch_fedata_end) << std::endl;
-        Assert((cell_no_1d == n_cells_per_direction - 1 && d == dim - 1) ?
-                 JxW == scratch_fedata_end :
-                 true,
-               ExcInternalError());
-        weights_filled = true;
-      }
+  // !!!
+  // const auto & patch_dof_tensor = patch_worker.get_dof_tensor();
+
+  /// univariate Jacobian, that is h_d, times quadrature weight
+  const VectorizedArray<Number> * weight = this->q_weights_unit;
+  for(unsigned int d = 0; d < dim; ++d)
+    for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
+    {
+      const auto h = get_h(d, cell_no);
+      for(unsigned int q = 0; q < n_q_points_1d; ++q)
+        get_JxW_impl(q, d, cell_no) = h * weight[q]; // JxW
+    }
 
   if(do_gradients)
   {
-    /*** scale the 1d reference gradients with h_d^-1 in each direction d ***/
+    /// scale univariate reference gradients with h_d^{-1}
     for(unsigned int d = 0; d < dim; ++d)
       for(unsigned int cell_no_1d = 0; cell_no_1d < n_cells_per_direction; ++cell_no_1d)
       {
