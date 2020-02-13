@@ -45,6 +45,12 @@ public:
                const unsigned int cell_dof_index,
                const int          dimension) const;
 
+  unsigned int
+  n_cells_1d(const unsigned int dimension) const;
+
+  unsigned int
+  n_dofs_per_cell_1d(const unsigned int dimension) const;
+
   const Tensors::TensorHelper<n_dimensions> * cell_dof_tensor;
   const Tensors::TensorHelper<n_dimensions> * cell_tensor;
   const DoFLayout                             dof_layout;
@@ -98,19 +104,34 @@ public:
    */
   unsigned int
   dof_index(const unsigned int cell_no, const unsigned int cell_dof_index) const;
+
+  unsigned int
+  n_dofs_1d(const unsigned int dimension) const;
 };
 
 
 
-template<int dim>
+template<int dim, typename Number>
 struct DoFInfo
 {
   struct AdditionalData;
 
+  /// assuming isotropy of tensor product finite elements and quadrature
+  void
+  initialize(const DoFHandler<dim> *                                                   dof_handler,
+             const PatchInfo<dim> *                                                    patch_info,
+             const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> * shape_info,
+             const AdditionalData & additional_data = AdditionalData{});
+
   void
   initialize(const DoFHandler<dim> * dof_handler,
              const PatchInfo<dim> *  patch_info,
+             const std::array<internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> *,
+                              dim> & shape_infos,
              const AdditionalData &  additional_data = AdditionalData{});
+
+  void
+  initialize_impl();
 
   void
   clear()
@@ -143,6 +164,9 @@ struct DoFInfo
   std::vector<std::vector<types::global_dof_index>> dof_indices;
 
   const PatchInfo<dim> * patch_info = nullptr;
+
+  std::array<const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> *, dim>
+    shape_infos;
 
   std::shared_ptr<const Utilities::MPI::Partitioner> vector_partitioner;
 
@@ -185,24 +209,24 @@ struct DoFInfo
 
 
 
-template<int dim>
-struct DoFInfo<dim>::AdditionalData
+template<int dim, typename Number>
+struct DoFInfo<dim, Number>::AdditionalData
 {
   unsigned int level = numbers::invalid_unsigned_int;
 };
 
 
 
-template<int dim, typename number>
-class PatchDoFWorker : public PatchWorker<dim, number>
+template<int dim, typename Number>
+class PatchDoFWorker : public PatchWorker<dim, Number>
 {
 public:
-  using patch_worker_type                  = PatchWorker<dim, number>;
+  using patch_worker_type                  = PatchWorker<dim, Number>;
   static constexpr unsigned int macro_size = patch_worker_type::macro_size;
 
   PatchDoFWorker() = delete;
 
-  PatchDoFWorker(const DoFInfo<dim> & dof_info_in);
+  PatchDoFWorker(const DoFInfo<dim, Number> & dof_info_in);
 
   PatchDoFWorker(const PatchDoFWorker &) = delete;
 
@@ -217,14 +241,20 @@ public:
   std::array<ArrayView<const types::global_dof_index>, macro_size>
   get_dof_indices_on_cell(const unsigned int patch_id, const unsigned int cell_no) const;
 
-  const DoFInfo<dim> &
+  const DoFInfo<dim, Number> &
   get_dof_info() const;
+
+  const PatchLocalTensorHelper<dim> &
+  get_dof_tensor() const;
+
+  const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> &
+  get_shape_info(const unsigned int dimension) const;
 
   std::shared_ptr<const Utilities::MPI::Partitioner>
   initialize_vector_partitioner() const;
 
 private:
-  const DoFInfo<dim> * const dof_info;
+  const DoFInfo<dim, Number> * const dof_info;
 
   PatchLocalTensorHelper<dim> patch_dof_tensor;
 };
@@ -285,6 +315,22 @@ PatchLocalIndexHelper<n_dimensions>::dof_index_1d_dgq_impl(const unsigned int ce
 }
 
 
+template<int n_dimensions>
+inline unsigned int
+PatchLocalIndexHelper<n_dimensions>::n_cells_1d(const unsigned int dimension) const
+{
+  return this->cell_tensor->size(dimension);
+}
+
+
+template<int n_dimensions>
+inline unsigned int
+PatchLocalIndexHelper<n_dimensions>::n_dofs_per_cell_1d(const unsigned int dimension) const
+{
+  return this->cell_dof_tensor->size(dimension);
+}
+
+
 
 // -----------------------------   PatchLocalTensorHelper   ----------------------------
 
@@ -333,14 +379,21 @@ PatchLocalTensorHelper<n_dimensions>::dof_index(const unsigned int cell_no,
 }
 
 
+template<int n_dimensions>
+inline unsigned int
+PatchLocalTensorHelper<n_dimensions>::n_dofs_1d(const unsigned int dimension) const
+{
+  return TensorHelperBase::size(dimension);
+}
+
 
 // --------------------------------   PatchDoFWorker   --------------------------------
 
 
 
-template<int dim, typename number>
-inline PatchDoFWorker<dim, number>::PatchDoFWorker(const DoFInfo<dim> & dof_info_in)
-  : PatchWorker<dim, number>(*(dof_info_in.patch_info)),
+template<int dim, typename Number>
+inline PatchDoFWorker<dim, Number>::PatchDoFWorker(const DoFInfo<dim, Number> & dof_info_in)
+  : PatchWorker<dim, Number>(*(dof_info_in.patch_info)),
     dof_info(&dof_info_in),
     patch_dof_tensor(this->patch_size,
                      dof_info_in.dof_handler->get_fe().tensor_degree(),
@@ -351,9 +404,9 @@ inline PatchDoFWorker<dim, number>::PatchDoFWorker(const DoFInfo<dim> & dof_info
 }
 
 
-template<int dim, typename number>
+template<int dim, typename Number>
 inline ArrayView<const types::global_dof_index>
-PatchDoFWorker<dim, number>::get_dof_indices_on_cell(const unsigned int patch_id,
+PatchDoFWorker<dim, Number>::get_dof_indices_on_cell(const unsigned int patch_id,
                                                      const unsigned int cell_no,
                                                      const unsigned int lane) const
 {
@@ -373,9 +426,9 @@ PatchDoFWorker<dim, number>::get_dof_indices_on_cell(const unsigned int patch_id
 }
 
 
-template<int dim, typename number>
-inline std::array<ArrayView<const types::global_dof_index>, PatchDoFWorker<dim, number>::macro_size>
-PatchDoFWorker<dim, number>::get_dof_indices_on_cell(const unsigned int patch_id,
+template<int dim, typename Number>
+inline std::array<ArrayView<const types::global_dof_index>, PatchDoFWorker<dim, Number>::macro_size>
+PatchDoFWorker<dim, Number>::get_dof_indices_on_cell(const unsigned int patch_id,
                                                      const unsigned int cell_no) const
 {
   std::array<ArrayView<const types::global_dof_index>, macro_size> views;
@@ -388,11 +441,30 @@ PatchDoFWorker<dim, number>::get_dof_indices_on_cell(const unsigned int patch_id
 }
 
 
-template<int dim, typename number>
-inline const DoFInfo<dim> &
-PatchDoFWorker<dim, number>::get_dof_info() const
+template<int dim, typename Number>
+inline const DoFInfo<dim, Number> &
+PatchDoFWorker<dim, Number>::get_dof_info() const
 {
   return *dof_info;
+}
+
+
+template<int dim, typename Number>
+inline const PatchLocalTensorHelper<dim> &
+PatchDoFWorker<dim, Number>::get_dof_tensor() const
+{
+  return patch_dof_tensor;
+}
+
+
+template<int dim, typename Number>
+inline const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> &
+PatchDoFWorker<dim, Number>::get_shape_info(const unsigned int dimension) const
+{
+  AssertIndexRange(dimension, dim);
+  const auto * shape_info = dof_info->shape_infos[dimension];
+  Assert(shape_info, ExcMessage("Shape info not set."));
+  return *shape_info;
 }
 
 

@@ -1,10 +1,12 @@
 namespace TPSS
 {
-template<int dim>
+template<int dim, typename Number>
 void
-DoFInfo<dim>::initialize(const DoFHandler<dim> * dof_handler_in,
-                         const PatchInfo<dim> *  patch_info_in,
-                         const AdditionalData &  additional_data_in)
+DoFInfo<dim, Number>::initialize(
+  const DoFHandler<dim> *                                                   dof_handler_in,
+  const PatchInfo<dim> *                                                    patch_info_in,
+  const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> * shape_info_in,
+  const AdditionalData &                                                    additional_data_in)
 
 {
   Assert(patch_info_in->get_internal_data()->level != numbers::invalid_unsigned_int,
@@ -15,10 +17,44 @@ DoFInfo<dim>::initialize(const DoFHandler<dim> * dof_handler_in,
          ExcMessage("Implemented for level cells only"));
 
   clear();
-  dof_handler     = dof_handler_in;
-  patch_info      = patch_info_in;
+  dof_handler = dof_handler_in;
+  patch_info  = patch_info_in;
+  shape_infos.fill(shape_info_in);
   additional_data = additional_data_in;
 
+  initialize_impl();
+}
+
+
+template<int dim, typename Number>
+void
+DoFInfo<dim, Number>::initialize(
+  const DoFHandler<dim> * dof_handler_in,
+  const PatchInfo<dim> *  patch_info_in,
+  const std::array<internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> *, dim> &
+                         shape_infos_in,
+  const AdditionalData & additional_data_in)
+{
+  Assert(patch_info_in->get_internal_data()->level != numbers::invalid_unsigned_int,
+         ExcMessage("Handles level cells only."));
+  Assert(DoFLayout::invalid != TPSS::get_dof_layout(dof_handler_in->get_fe()),
+         ExcMessage("Finite element is not supported."));
+  Assert(additional_data_in.level != numbers::invalid_unsigned_int,
+         ExcMessage("Implemented for level cells only"));
+
+  clear();
+  dof_handler = dof_handler_in;
+  patch_info  = patch_info_in;
+  std::copy(shape_infos_in.cbegin(), shape_infos_in.cend(), shape_infos.begin());
+  additional_data = additional_data_in;
+
+  initialize_impl();
+}
+
+template<int dim, typename Number>
+void
+DoFInfo<dim, Number>::initialize_impl()
+{
   /// fill the lexicographic-to-hierarchic-numbering map
   if(DoFLayout::Q == get_dof_layout())
     l2h = FETools::lexicographic_to_hierarchic_numbering(dof_handler->get_fe());
