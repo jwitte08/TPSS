@@ -124,9 +124,22 @@ private:
   void
   fill_global_dof_indices(const unsigned int patch_id);
 
-  Tensors::TensorHelper<dim> cell_dof_tensor;
+  /**
+   * An interface accessing dof-related patch information stored in PatchInfo
+   * and DoFInfo objects of the underlying subdomain_handler.
+   */
+  PatchDoFWorker<dim, Number> patch_dof_worker;
 
-  Tensors::TensorHelper<dim> cell_tensor;
+  /**
+   * The underlying SubdomainHandler object.
+   */
+  const SubdomainHandler<dim, Number> & subdomain_handler;
+
+  const PatchLocalTensorHelper<dim> & patch_dof_tensor;
+
+  const Tensors::TensorHelper<dim> & cell_dof_tensor;
+
+  const Tensors::TensorHelper<dim> & cell_tensor;
 
   const unsigned int dofh_index;
   const DoFLayout    dof_layout;
@@ -148,19 +161,6 @@ private:
    * Current patch id identifying a unique patch given by @p subdomain_handler.
    */
   unsigned int patch_id;
-
-  PatchLocalTensorHelper<dim> patch_dof_tensor;
-
-  /**
-   * An interface accessing dof-related patch information stored in PatchInfo
-   * and DoFInfo objects of the underlying subdomain_handler.
-   */
-  PatchDoFWorker<dim, Number> patch_dof_worker;
-
-  /**
-   * The underlying SubdomainHandler object.
-   */
-  const SubdomainHandler<dim, Number> & subdomain_handler;
 
   // mutable std::vector<unsigned int> cell_dof_indices_scratchpad;
 };
@@ -346,20 +346,17 @@ inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
   : level(subdomain_handler_in.get_additional_data().level),
     n_subdomains(subdomain_handler_in.get_patch_info().subdomain_partition_data.n_subdomains()),
     n_colors(subdomain_handler_in.get_patch_info().subdomain_partition_data.n_colors()),
-    // assume isotropic elements like Q or DGQ
-    cell_dof_tensor(PatchTransfer<dim, Number, fe_degree>::fe_order),
-    // assume isotropic patches
-    cell_tensor(UniversalInfo<dim>::n_cells_per_direction(
-      subdomain_handler_in.get_additional_data().patch_variant)),
+    patch_dof_worker(subdomain_handler_in.get_dof_info(dofh_index_in)),
+    subdomain_handler(subdomain_handler_in),
+    patch_dof_tensor(patch_dof_worker.get_dof_tensor()),
+    cell_dof_tensor(patch_dof_worker.get_dof_tensor().cell_dof_tensor),
+    cell_tensor(patch_dof_worker.get_dof_tensor().cell_tensor),
     // cell_to_patch_indices(
     //   std::move(GetIndexing{}(subdomain_handler_in.get_additional_data().patch_variant,
     //                           dof_layout == DoFLayout::DGQ))),
     dofh_index(dofh_index_in),
     dof_layout(subdomain_handler_in.get_dof_layout(dofh_index_in)),
-    patch_id(numbers::invalid_unsigned_int),
-    patch_dof_tensor(cell_tensor, cell_dof_tensor, dof_layout),
-    patch_dof_worker(subdomain_handler_in.get_dof_info(dofh_index_in)),
-    subdomain_handler(subdomain_handler_in)
+    patch_id(numbers::invalid_unsigned_int)
 {
   AssertThrow(dof_layout != DoFLayout::invalid, ExcMessage("The finite element is not supported."));
   AssertThrow(n_dofs_per_cell_static == cell_dof_tensor.n_flat(),
