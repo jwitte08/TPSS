@@ -2,7 +2,7 @@
  * preconditioner_base.h
  *
  *  Created on: Nov 23, 2016
- *      Author: fehn
+ *      Author: fehn, witte
  */
 
 #ifndef INCLUDE_SOLVERS_AND_PRECONDITIONERS_PRECONDITIONER_BASE_H_
@@ -10,44 +10,24 @@
 
 using namespace dealii;
 
+#include <deal.II/base/subscriptor.h>
+
 #include <deal.II/lac/la_parallel_vector.h>
-
-#include "../../operators/linear_operator_base.h"
-
-template<typename value_type>
-class PreconditionerBase
-{
-public:
-  typedef LinearAlgebra::distributed::Vector<value_type> VectorType;
-
-  virtual ~PreconditionerBase()
-  {
-  }
-
-  virtual void
-  vmult(VectorType & dst, VectorType const & src) const = 0;
-
-  virtual void
-  update(LinearOperatorBase const * linear_operator) = 0;
-};
 
 /*
  * Required to treat BlockVectors.
  * This structure is similar to SmootherBase.
  */
 template<typename VectorType>
-class MyPreconditionerBase
+class PreconditionerBase : public Subscriptor
 {
 public:
-  virtual ~MyPreconditionerBase()
+  virtual ~PreconditionerBase()
   {
   }
 
   virtual void
   vmult(VectorType & dst, VectorType const & src) const = 0;
-
-  virtual void
-  update(LinearOperatorBase const * linear_operator) = 0;
 };
 
 #endif /* INCLUDE_SOLVERS_AND_PRECONDITIONERS_PRECONDITIONER_BASE_H_ */

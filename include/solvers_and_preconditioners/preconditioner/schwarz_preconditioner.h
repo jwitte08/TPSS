@@ -15,7 +15,7 @@
 #include "solvers_and_preconditioners/preconditioner/preconditioner_base.h"
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
-class SchwarzPreconditioner : public MyPreconditionerBase<VectorType>, public Subscriptor
+class SchwarzPreconditioner : public PreconditionerBase<VectorType>
 {
 public:
   using value_type = typename ExtractScalarType<typename MatrixType::value_type>::type;
@@ -105,12 +105,6 @@ public:
 
   void
   Tvmult_add(VectorType & dst, const VectorType & src) const;
-
-  /**
-   * Satisfies PreconditionerBase interface.
-   */
-  void
-  update(LinearOperatorBase const * matrix_operator) override;
 
 private:
   /**

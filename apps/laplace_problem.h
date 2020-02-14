@@ -45,7 +45,6 @@
 
 #include <deal.II/numerics/data_out.h>
 
-#include "operators/linear_operator_base.h"
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
 #include "solvers_and_preconditioners/TPSS/schwarz_smoother_data.h"
 #include "solvers_and_preconditioners/TPSS/time_info.h"

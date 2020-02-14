@@ -369,20 +369,3 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::multiplicative
     time_data[1].time += timer.wall_time();
   }
 }
-
-template<int dim, class OperatorType, typename VectorType, typename MatrixType>
-void
-SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::update(
-  LinearOperatorBase const * matrix_operator)
-{
-  OperatorType const * linear_operator = dynamic_cast<OperatorType const *>(matrix_operator);
-
-  if(linear_operator)
-  {
-    AssertThrow(false, ExcMessage("TODO call update() from linear_operator"));
-  }
-  else
-  {
-    AssertThrow(false, ExcMessage("Invalid."));
-  }
-}

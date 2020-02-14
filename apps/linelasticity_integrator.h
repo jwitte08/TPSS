@@ -8,6 +8,8 @@
 #ifndef TESTS_LINELASTICITYINTEGRATOR_H_
 #define TESTS_LINELASTICITYINTEGRATOR_H_
 
+#include <deal.II/base/subscriptor.h>
+
 #include <deal.II/integrators/elasticity.h>
 #include <deal.II/integrators/grad_div.h>
 #include <deal.II/integrators/l2.h>
@@ -1217,7 +1219,7 @@ namespace MF
 // }
 
 template<int dim, int fe_degree, typename Number>
-class Operator : public LinearOperatorBase
+class Operator : public Subscriptor
 {
 public:
   using value_type  = Number;

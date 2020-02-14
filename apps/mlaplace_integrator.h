@@ -8,6 +8,8 @@
 #ifndef TESTS_MLAPLACEINTEGRATOR_H_
 #define TESTS_MLAPLACEINTEGRATOR_H_
 
+#include <deal.II/base/subscriptor.h>
+
 #include "laplace_integrator.h"
 
 using namespace dealii;
@@ -146,7 +148,7 @@ namespace MF
 // }
 
 template<int dim, int fe_degree, typename Number>
-class Operator : public LinearOperatorBase
+class Operator : public Subscriptor
 {
 public:
   using value_type = Number;

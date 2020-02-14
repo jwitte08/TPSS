@@ -48,9 +48,9 @@ public:
   };
 
   void
-  initialize(OperatorType &                     operator_in,
-             MyPreconditionerBase<VectorType> & preconditioner_in,
-             AdditionalData const &             additional_data_in)
+  initialize(OperatorType &                   operator_in,
+             PreconditionerBase<VectorType> & preconditioner_in,
+             AdditionalData const &           additional_data_in)
   {
     underlying_operator = &operator_in;
     preconditioner      = &preconditioner_in;
@@ -63,12 +63,12 @@ public:
     return additional_data;
   }
 
-  virtual void
-  update()
-  {
-    if(preconditioner != nullptr)
-      preconditioner->update(underlying_operator);
-  }
+  // virtual void
+  // update()
+  // {
+  //   if(preconditioner != nullptr)
+  //     preconditioner->update(underlying_operator);
+  // }
 
   virtual void
   vmult(VectorType & dst, VectorType const & src) const override
@@ -159,7 +159,7 @@ private:
 
   OperatorType * underlying_operator;
 
-  MyPreconditionerBase<VectorType> * preconditioner;
+  PreconditionerBase<VectorType> * preconditioner;
 
   AdditionalData additional_data;
 };
