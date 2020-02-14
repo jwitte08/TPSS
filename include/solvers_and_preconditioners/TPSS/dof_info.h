@@ -45,6 +45,9 @@ public:
                const unsigned int cell_dof_index,
                const int          dimension) const;
 
+  std::pair<unsigned int, unsigned int>
+  dof_range_1d(const unsigned int cell_no, const unsigned int dimension) const;
+
   unsigned int
   n_cells_1d(const unsigned int dimension) const;
 
@@ -316,6 +319,18 @@ PatchLocalIndexHelper<n_dimensions>::dof_index_1d_dgq_impl(const unsigned int ce
 
 
 template<int n_dimensions>
+inline std::pair<unsigned int, unsigned int>
+PatchLocalIndexHelper<n_dimensions>::dof_range_1d(const unsigned int cell_no,
+                                                  const unsigned int dimension) const
+{
+  const auto         last_cell_dof_index = this->n_dofs_per_cell_1d(dimension) - 1;
+  const unsigned int first               = dof_index_1d(cell_no, 0, dimension);
+  const unsigned int last                = dof_index_1d(cell_no, last_cell_dof_index, dimension);
+  return {first, last + 1};
+}
+
+
+template<int n_dimensions>
 inline unsigned int
 PatchLocalIndexHelper<n_dimensions>::n_cells_1d(const unsigned int dimension) const
 {
@@ -344,9 +359,11 @@ inline PatchLocalTensorHelper<n_dimensions>::PatchLocalTensorHelper(
   : IndexHelperBase(cell_tensor_in, cell_dof_tensor_in, dof_layout_in), TensorHelperBase([&]() {
       std::array<unsigned int, n_dimensions> sizes;
       for(auto d = 0U; d < n_dimensions; ++d)
-        sizes[d] =
-          IndexHelperBase::dof_index_1d(cell_tensor_in.n[d] - 1, cell_dof_tensor_in.n[d] - 1, d) +
-          1;
+      {
+        const auto last_cell_no        = this->n_cells_1d(d) - 1;
+        const auto last_cell_dof_index = this->n_dofs_per_cell_1d(d) - 1;
+        sizes[d] = this->dof_index_1d(last_cell_no, last_cell_dof_index, d) + 1;
+      }
       return sizes;
     }())
 {
@@ -395,7 +412,8 @@ template<int dim, typename Number>
 inline PatchDoFWorker<dim, Number>::PatchDoFWorker(const DoFInfo<dim, Number> & dof_info_in)
   : PatchWorker<dim, Number>(*(dof_info_in.patch_info)),
     dof_info(&dof_info_in),
-    patch_dof_tensor(this->patch_size,
+    patch_dof_tensor(TPSS::UniversalInfo<dim>::n_cells_per_direction(
+                       this->patch_info->get_additional_data().patch_variant),
                      /// currently assuming isotropy ...
                      get_shape_info(0).fe_degree + 1,
                      dof_info_in.get_dof_layout())
