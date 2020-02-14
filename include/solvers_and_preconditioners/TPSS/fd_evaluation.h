@@ -59,9 +59,6 @@ public:
   void
   evaluate(const bool gradients);
 
-  // void
-  // evaluate(const bool gradients);
-
   VectorizedArray<Number>
   get_average_factor(const int direction, const int cell_no, const int face_no) const;
 
@@ -70,6 +67,9 @@ public:
 
   TPSS::DoFLayout
   get_dof_layout() const;
+
+  const TPSS::PatchLocalTensorHelper<dim> &
+  get_dof_tensor() const;
 
   const VectorizedArray<Number> &
   get_h(const int direction, const int cell_no) const;
@@ -91,6 +91,12 @@ public:
 
   const SubdomainHandler<dim, Number> &
   get_subdomain_handler() const;
+
+  unsigned int
+  n_cells_1d(const unsigned int dimension) const;
+
+  unsigned int
+  n_dofs_1d(const unsigned int dimension) const;
 
   unsigned int
   n_dofs_per_cell_1d(const unsigned int dimension) const;
@@ -119,124 +125,51 @@ public:
   void
   release_scratch_chunks();
 
-  const unsigned int       level;
-  const unsigned int       n_subdomains;
-  const unsigned int       n_colors;
-  const TPSS::PatchVariant patch_variant;
-  const unsigned int       n_cells_per_direction;
-
   void
   compute_unit_mass(const ArrayView<VectorizedArray<Number>> & matrix) const;
 
-  template<typename CellOperation>
+  template<int fe_degree_ansatz, int n_q_points_ansatz, typename CellOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action(const FDEvaluation & eval_ansatz, CellOperation && cell_operation) const
-  {
-    if(patch_variant == TPSS::PatchVariant::cell)
-    {
-      constexpr unsigned int n_cells_per_direction =
-        TPSS::UniversalInfo<dim>::n_cells_per_direction(TPSS::PatchVariant::cell);
-      return patch_action_impl<n_cells_per_direction>(eval_ansatz,
-                                                      std::forward<CellOperation>(cell_operation));
-    }
-    else if(patch_variant == TPSS::PatchVariant::vertex)
-    {
-      constexpr auto n_cells_per_direction =
-        TPSS::UniversalInfo<dim>::n_cells_per_direction(TPSS::PatchVariant::vertex);
-      return patch_action_impl<n_cells_per_direction>(eval_ansatz,
-                                                      std::forward<CellOperation>(cell_operation));
-    }
-    else
-      AssertThrow(false, ExcNotImplemented());
-  }
+  patch_action(const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz,
+               CellOperation && cell_operation) const;
 
   template<typename CellOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action(CellOperation && cell_operation) const
-  {
-    return patch_action(*this, std::forward<CellOperation>(cell_operation));
-  }
+  patch_action(CellOperation && cell_operation) const;
 
-  template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
+
+  template<int fe_degree_ansatz,
+           int n_q_points_ansatz,
+           typename CellOperation,
+           typename FaceOperation,
+           typename InterfaceOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action(const FDEvaluation &       eval_ansatz,
+  patch_action(const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz,
                const CellOperation &      cell_operation,
                const FaceOperation &      face_operation,
-               const InterfaceOperation & interface_operation) const
-  {
-    if(patch_variant == TPSS::PatchVariant::cell)
-    {
-      return patch_action_dgcp_impl(eval_ansatz, cell_operation, face_operation);
-    }
-    else if(patch_variant == TPSS::PatchVariant::vertex)
-    {
-      return patch_action_dgvp_impl(eval_ansatz,
-                                    cell_operation,
-                                    face_operation,
-                                    interface_operation);
-    }
-    else
-      AssertThrow(false, ExcNotImplemented());
-  }
+               const InterfaceOperation & interface_operation) const;
 
   template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
   patch_action(const CellOperation &      cell_operation,
                const FaceOperation &      face_operation,
-               const InterfaceOperation & interface_operation) const
-  {
-    return patch_action(*this, cell_operation, face_operation, interface_operation);
-  }
+               const InterfaceOperation & interface_operation) const;
 
 private:
   using This = FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>;
 
   template<TPSS::PatchVariant variant>
   void
-  malloc_fedata()
-  {
-    Assert(this->scratch_fedata != nullptr, ExcInternalError());
-
-    constexpr unsigned int scratch_pad_length  = fe_order * fe_order * dim * 2;
-    constexpr unsigned int unit_weights_length = n_q_points_1d_static * dim;
-    constexpr unsigned int values_length       = n_q_points_1d_static * fe_order * dim;
-    constexpr unsigned int values_length_face  = fe_order * 2 * dim;
-    constexpr unsigned int n_cells_per_direction =
-      TPSS::UniversalInfo<dim>::n_cells_per_direction(variant);
-    constexpr unsigned int gradients_length =
-      n_q_points_1d_static * fe_order * n_cells_per_direction * dim;
-    constexpr unsigned int gradients_length_face = fe_order * 2 * n_cells_per_direction * dim;
-    constexpr unsigned int JxWs_length = n_q_points_1d_static * n_cells_per_direction * dim;
-    constexpr unsigned int size_to_be_allocated =
-      scratch_pad_length + unit_weights_length + values_length + values_length_face +
-      gradients_length + gradients_length_face + JxWs_length; // total size
-
-    // *** allocate memory
-    this->scratch_fedata->resize(size_to_be_allocated);
-    this->q_weights_unit = this->scratch_fedata->begin();
-    this->values         = this->q_weights_unit + unit_weights_length;
-    this->values_face    = this->values + values_length;
-    for(unsigned int d = 0; d < dim; ++d)
-      this->gradients[d] = this->values_face + values_length_face +
-                           n_q_points_1d_static * fe_order * n_cells_per_direction * d;
-    for(unsigned int d = 0; d < dim; ++d)
-      this->gradients_face[d] =
-        this->gradients[0] + gradients_length + fe_order * 2 * n_cells_per_direction * d;
-    this->JxWs                  = this->gradients_face[0] + gradients_length_face;
-    this->scratch_fedata_end    = this->JxWs + JxWs_length;
-    this->scratch_pad           = this->scratch_fedata_end;
-    this->scratch_pad_remainder = this->scratch_pad;
-    this->scratch_pad_end       = this->scratch_pad + scratch_pad_length;
-
-    AssertDimension(std::distance(this->scratch_fedata->begin(), this->scratch_pad_end),
-                    size_to_be_allocated); // check allocation
-  }
+  malloc_fedata();
 
   VectorizedArray<Number> &
   get_JxW_impl(const int q_point_no, const int direction, const int cell_no) const;
 
   VectorizedArray<Number> &
   get_q_weight_impl(const int q_point_no, const int direction) const;
+
+  void
+  evaluate_gradients();
 
   VectorizedArray<Number> &
   shape_value_impl(const int dof,
@@ -262,112 +195,31 @@ private:
                            const int direction,
                            const int cell_no) const;
 
-  template<int n_cells_per_direction, typename CellOperation>
+  template<int fe_degree_ansatz, int n_q_points_ansatz, typename CellOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action_impl(const FDEvaluation & eval_ansatz, CellOperation && cell_operation) const
-  {
-    using MatrixType                            = Table<2, VectorizedArray<Number>>;
-    constexpr unsigned int n_dofs_per_direction = fe_order * n_cells_per_direction;
+  patch_action_impl(
+    const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz,
+    CellOperation &&                                                       cell_operation) const;
 
-    std::array<MatrixType, dim> matrices;
-    for(int direction = 0; direction < dim; ++direction)
-    {
-      MatrixType & matrix = matrices[direction];
-      matrix.reinit(n_dofs_per_direction, n_dofs_per_direction);
-      for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
-      {
-        MatrixType cell_matrix{fe_order, fe_order};
-        std::forward<decltype(cell_operation)>(
-          cell_operation)(eval_ansatz, *this, cell_matrix, direction, cell_no);
-        submit_cell_matrix(matrix, cell_matrix, cell_no, cell_no);
-      }
-    }
-    AssertDimension(n_dofs_per_direction, matrices.front().n_rows());
-    AssertDimension(n_dofs_per_direction, matrices.back().n_cols());
-    return matrices;
-  }
-
-  template<typename CellOperation, typename FaceOperation>
+  template<int fe_degree_ansatz,
+           int n_q_points_ansatz,
+           typename CellOperation,
+           typename FaceOperation,
+           typename InterfaceOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action_dgcp_impl(const FDEvaluation &  eval_ansatz,
-                         const CellOperation & cell_operation,
-                         const FaceOperation & face_operation) const
-  {
-    constexpr unsigned int n_dofs_per_direction = fe_order;
-    using MatrixType                            = Table<2, VectorizedArray<Number>>;
+  patch_action_impl(
+    const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz,
+    CellOperation &&                                                       cell_operation,
+    FaceOperation &&                                                       face_operation,
+    InterfaceOperation && interface_operation) const;
 
-    std::array<MatrixType, dim> matrices;
-    for(int direction = 0; direction < dim; ++direction)
-    {
-      auto & matrix = matrices[direction];
-      matrix.reinit(n_dofs_per_direction, n_dofs_per_direction);
-      MatrixType cell_matrix{fe_order, fe_order};
-
-      cell_operation(eval_ansatz, *this, cell_matrix, direction, 0 /*cell_no*/);
-
-      for(const int face_no : {0, 1})
-      {
-        face_operation(eval_ansatz, *this, cell_matrix, direction, /*cell_no*/ 0, face_no);
-      }
-      submit_cell_matrix(matrix, cell_matrix, 0 /*cell_no*/, 0 /* cell_no*/);
-    }
-
-    AssertDimension(n_dofs_per_direction, matrices.front().n_rows());
-    AssertDimension(n_dofs_per_direction, matrices.back().n_cols());
-    return matrices;
-  }
-
-  template<typename CellOperation, typename FaceOperation, typename InterfaceOperation>
-  std::array<Table<2, VectorizedArray<Number>>, dim>
-  patch_action_dgvp_impl(const FDEvaluation &       eval_ansatz,
-                         const CellOperation &      cell_operation,
-                         const FaceOperation &      face_operation,
-                         const InterfaceOperation & interface_operation) const
-  {
-    using MatrixType                            = Table<2, VectorizedArray<Number>>;
-    constexpr unsigned int n_dofs_per_direction = fe_order * 2;
-
-    std::array<MatrixType, dim> matrices;
-    for(int direction = 0; direction < dim; ++direction)
-    {
-      auto & matrix = matrices[direction];
-      matrix.reinit(n_dofs_per_direction, n_dofs_per_direction);
-      MatrixType cell_matrix0{fe_order, fe_order}, cell_matrix1{fe_order, fe_order};
-
-      // *** CELL integral on cell 0 & 1
-      cell_operation(eval_ansatz, *this, cell_matrix0, direction, 0);
-      cell_operation(eval_ansatz, *this, cell_matrix1, direction, 1);
-
-      // *** FACE integrals at patch boundary, i.e. face 0 on cell 0 & face 1 on cell 1
-      face_operation(eval_ansatz, *this, cell_matrix0, direction, /*cell_no*/ 0, /*face_no*/ 0);
-      face_operation(eval_ansatz, *this, cell_matrix1, direction, /*cell_no*/ 1, /*face_no*/ 1);
-
-      // *** FACE integrals at interior face: face 1 on cell 0 & face 0 on cell 1
-      face_operation(eval_ansatz, *this, cell_matrix0, direction, 0, 1);
-      face_operation(eval_ansatz, *this, cell_matrix1, direction, 1, 0);
-
-      submit_cell_matrix(matrix, cell_matrix0, 0, 0);
-      submit_cell_matrix(matrix, cell_matrix1, 1, 1);
-
-      // *** INTERFACE between cell 0 (seen as face 1) & cell 1 (seen as face 0) ***/
-      MatrixType cell_matrix01{fe_order, fe_order},
-        cell_matrix10{fe_order, fe_order}; // first parameter represents the cell_no associated to
-                                           // the test functions and second parameter is the
-                                           // cell_no associated to the ansatz functions
-      interface_operation(eval_ansatz, *this, cell_matrix01, cell_matrix10, direction);
-      submit_cell_matrix(matrix, cell_matrix01, 0, 1);
-      submit_cell_matrix(matrix, cell_matrix10, 1, 0);
-    }
-
-    AssertDimension(n_dofs_per_direction, matrices.front().n_rows());
-    AssertDimension(n_dofs_per_direction, matrices.back().n_cols());
-    return matrices;
-  }
-
-  static void submit_cell_matrix(Table<2, VectorizedArray<Number>> &       subdomain_matrix,
-                                 const Table<2, VectorizedArray<Number>> & cell_matrix,
-                                 const unsigned int                        cell_no_row,
-                                 const unsigned int                        cell_no_col);
+  void submit_cell_matrix(
+    Table<2, VectorizedArray<Number>> &       subdomain_matrix,
+    const Table<2, VectorizedArray<Number>> & cell_matrix,
+    const unsigned int                        cell_no_row,
+    const unsigned int                        cell_no_col,
+    const unsigned int                        dimension               = 0,
+    const TPSS::PatchLocalTensorHelper<dim> * patch_dof_tensor_ansatz = nullptr) const;
 
   const SubdomainHandler<dim, Number> & sd_handler;
 
@@ -377,7 +229,12 @@ private:
 
   const MatrixFree<dim, Number> & mf_storage;
 
-  unsigned int patch_id = numbers::invalid_unsigned_int;
+  const unsigned int       level;
+  const unsigned int       n_subdomains;
+  const unsigned int       n_colors;
+  const TPSS::PatchVariant patch_variant;
+  const unsigned int       n_cells_per_direction;
+  unsigned int             patch_id = numbers::invalid_unsigned_int;
 
   /**
    * Indicates which face of the macro patch is at the physical boundary. Local
@@ -478,15 +335,15 @@ template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
   const SubdomainHandler<dim, Number> & sd_handler_in,
   const unsigned int                    dofh_index)
-  : level(sd_handler_in.get_additional_data().level),
+  : sd_handler(sd_handler_in),
+    patch_worker(sd_handler_in.get_dof_info(dofh_index)),
+    mapping_info(sd_handler_in.get_mapping_info()),
+    mf_storage(sd_handler_in.get_matrix_free()),
+    level(sd_handler_in.get_additional_data().level),
     n_subdomains(sd_handler_in.get_patch_info().subdomain_partition_data.n_subdomains()),
     n_colors(sd_handler_in.get_patch_info().subdomain_partition_data.n_colors()),
     patch_variant(sd_handler_in.get_additional_data().patch_variant),
     n_cells_per_direction(TPSS::UniversalInfo<dim>::n_cells_per_direction(patch_variant)),
-    sd_handler(sd_handler_in),
-    patch_worker(sd_handler_in.get_dof_info(dofh_index)),
-    mapping_info(sd_handler_in.get_mapping_info()),
-    mf_storage(sd_handler_in.get_matrix_free()),
     scratch_fedata(mf_storage.acquire_scratch_data())
 {
   for(auto d = 0U; d < dim; ++d)
@@ -498,6 +355,7 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
     /// currently assume isotropy ... TODO
     AssertDimension(n_dofs_per_cell_1d(d), fe_order);
     AssertDimension(n_q_points_1d(d), n_q_points_1d_static);
+    AssertDimension(n_cells_1d(d), n_cells_per_direction);
   }
 
   if(patch_variant == TPSS::PatchVariant::cell)
@@ -577,6 +435,48 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::reinit(const unsigned int 
   evaluate(true);
 }
 
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+template<TPSS::PatchVariant variant>
+inline void
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::malloc_fedata()
+{
+  Assert(this->scratch_fedata != nullptr, ExcInternalError());
+
+  constexpr unsigned int scratch_pad_length  = fe_order * fe_order * dim * 2;
+  constexpr unsigned int unit_weights_length = n_q_points_1d_static * dim;
+  constexpr unsigned int values_length       = n_q_points_1d_static * fe_order * dim;
+  constexpr unsigned int values_length_face  = fe_order * 2 * dim;
+  constexpr unsigned int n_cells_per_direction =
+    TPSS::UniversalInfo<dim>::n_cells_per_direction(variant);
+  constexpr unsigned int gradients_length =
+    n_q_points_1d_static * fe_order * n_cells_per_direction * dim;
+  constexpr unsigned int gradients_length_face = fe_order * 2 * n_cells_per_direction * dim;
+  constexpr unsigned int JxWs_length           = n_q_points_1d_static * n_cells_per_direction * dim;
+  constexpr unsigned int size_to_be_allocated =
+    scratch_pad_length + unit_weights_length + values_length + values_length_face +
+    gradients_length + gradients_length_face + JxWs_length; // total size
+
+  // *** allocate memory
+  this->scratch_fedata->resize(size_to_be_allocated);
+  this->q_weights_unit = this->scratch_fedata->begin();
+  this->values         = this->q_weights_unit + unit_weights_length;
+  this->values_face    = this->values + values_length;
+  for(unsigned int d = 0; d < dim; ++d)
+    this->gradients[d] = this->values_face + values_length_face +
+                         n_q_points_1d_static * fe_order * n_cells_per_direction * d;
+  for(unsigned int d = 0; d < dim; ++d)
+    this->gradients_face[d] =
+      this->gradients[0] + gradients_length + fe_order * 2 * n_cells_per_direction * d;
+  this->JxWs                  = this->gradients_face[0] + gradients_length_face;
+  this->scratch_fedata_end    = this->JxWs + JxWs_length;
+  this->scratch_pad           = this->scratch_fedata_end;
+  this->scratch_pad_remainder = this->scratch_pad;
+  this->scratch_pad_end       = this->scratch_pad + scratch_pad_length;
+
+  AssertDimension(std::distance(this->scratch_fedata->begin(), this->scratch_pad_end),
+                  size_to_be_allocated); // check allocation
+}
+
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const ArrayView<VectorizedArray<Number>>
@@ -602,6 +502,69 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::compute_unit_mass(
     make_array_view(this->q_weights_unit, this->q_weights_unit + n_q_points_1d_static),
     matrix);
 }
+
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline void
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate(const bool do_gradients)
+{
+  /// univariate Jacobian, that is h_d, times quadrature weight
+  const VectorizedArray<Number> * weight = this->q_weights_unit;
+  for(unsigned int d = 0; d < dim; ++d)
+    for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
+    {
+      const auto h = get_h(d, cell_no);
+      for(unsigned int q = 0; q < n_q_points_1d_static; ++q)
+        get_JxW_impl(q, d, cell_no) = h * weight[q]; // JxW
+    }
+
+  if(do_gradients)
+    evaluate_gradients();
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline void
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate_gradients()
+{
+  gradients_filled = false;
+
+  /// scale univariate reference gradients with h_d^{-1}
+  for(unsigned int d = 0; d < dim; ++d)
+  {
+    const auto & shape_info         = get_shape_info(d);
+    const auto   n_q_points_1d      = this->n_q_points_1d(d);
+    const auto   n_dofs_per_cell_1d = this->n_dofs_per_cell_1d(d);
+    const auto * unit_grads_begin   = shape_info.shape_gradients.begin();
+    for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
+    {
+      const auto h_inv = 1. / get_h(d, cell_no);
+      for(unsigned int dof = 0; dof < n_dofs_per_cell_1d; ++dof)
+      {
+        const auto * unit_grad_begin = unit_grads_begin + dof * n_q_points_1d;
+        auto *       grad            = &(shape_gradient_impl(dof, 0, d, cell_no));
+        std::transform(unit_grad_begin,
+                       unit_grad_begin + n_q_points_1d,
+                       grad,
+                       [h_inv](const auto & unit_grad) { return unit_grad * h_inv; });
+      }
+
+      for(const int face_no : {0, 1})
+      {
+        const auto * unit_grads_on_face = shape_info.shape_data_on_face[face_no].begin() + fe_order;
+        auto *       grad_on_face       = &(shape_gradient_face_impl(0, face_no, d, cell_no));
+        std::transform(unit_grads_on_face,
+                       unit_grads_on_face + fe_order,
+                       grad_on_face,
+                       [h_inv](const auto & unit_grad) { return unit_grad * h_inv; });
+      }
+    }
+  }
+
+  gradients_filled = true;
+}
+
 
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
@@ -643,7 +606,6 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_boundary_mask(const in
 }
 
 
-
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline TPSS::DoFLayout
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_dof_layout() const
@@ -651,6 +613,13 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_dof_layout() const
   return patch_worker.get_dof_info().get_dof_layout();
 }
 
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline const TPSS::PatchLocalTensorHelper<dim> &
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_dof_tensor() const
+{
+  return patch_worker.get_dof_tensor();
+}
 
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
@@ -680,7 +649,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_JxW_impl(const int q_p
                                                                    const int direction,
                                                                    const int cell_no) const
 {
-  AssertIndexRange(q_point_no, n_q_points_1d_static);
+  AssertIndexRange(q_point_no, n_q_points_1d(direction));
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
   AssertIndexRange(direction, dim);
   return *(this->JxWs + q_point_no + cell_no * n_q_points_1d_static +
@@ -702,7 +671,7 @@ inline VectorizedArray<Number> &
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_q_weight_impl(const int q_point_no,
                                                                         const int direction) const
 {
-  AssertIndexRange(q_point_no, n_q_points_1d_static);
+  AssertIndexRange(q_point_no, n_q_points_1d(direction));
   AssertIndexRange(direction, dim);
   return *(this->q_weights_unit + q_point_no + direction * n_q_points_1d_static);
 }
@@ -742,6 +711,22 @@ inline const SubdomainHandler<dim, Number> &
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_subdomain_handler() const
 {
   return sd_handler;
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline unsigned int
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_cells_1d(const unsigned int dimension) const
+{
+  return patch_worker.get_dof_tensor().n_cells_1d(dimension);
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline unsigned int
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_dofs_1d(const unsigned int dimension) const
+{
+  return patch_worker.get_dof_tensor().n_dofs_1d(dimension);
 }
 
 
@@ -789,8 +774,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_value_impl(const int
                                                                        const int direction,
                                                                        const int cell_no) const
 {
-  AssertIndexRange(dof, static_cast<int>(fe_order));
-  AssertIndexRange(q_point_no, n_q_points_1d_static);
+  AssertIndexRange(dof, static_cast<int>(n_dofs_per_cell_1d(direction)));
+  AssertIndexRange(q_point_no, n_q_points_1d(direction));
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
   AssertIndexRange(direction, dim);
   (void)cell_no;
@@ -817,7 +802,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_value_face_impl(cons
                                                                             const int direction,
                                                                             const int cell_no) const
 {
-  AssertIndexRange(dof, static_cast<int>(fe_order));
+  AssertIndexRange(dof, static_cast<int>(n_dofs_per_cell_1d(direction)));
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
   AssertIndexRange(direction, dim);
   AssertIndexRange(face_no, 2);
@@ -845,8 +830,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_gradient_impl(const 
                                                                           const int direction,
                                                                           const int cell_no) const
 {
-  AssertIndexRange(dof, static_cast<int>(fe_order));
-  AssertIndexRange(q_point_no, n_q_points_1d_static);
+  AssertIndexRange(dof, static_cast<int>(n_dofs_per_cell_1d(direction)));
+  AssertIndexRange(q_point_no, n_q_points_1d(direction));
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
   AssertIndexRange(direction, dim);
   constexpr auto n_dofs_per_cell_1d_static = fe_order * n_q_points_1d_static;
@@ -874,7 +859,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_gradient_face_impl(
   const int direction,
   const int cell_no) const
 {
-  AssertIndexRange(dof, static_cast<int>(fe_order));
+  AssertIndexRange(dof, static_cast<int>(n_dofs_per_cell_1d(direction)));
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
   AssertIndexRange(direction, dim);
   AssertIndexRange(face_no, 2);

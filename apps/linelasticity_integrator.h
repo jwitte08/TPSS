@@ -322,6 +322,7 @@ public:
                const Evaluator &                   eval_test,
                Table<2, VectorizedArray<Number>> & cell_matrix01,
                Table<2, VectorizedArray<Number>> & cell_matrix10,
+               const int                           cell_no_left,
                const int                           direction) const;
 
     const MatrixIntegrator * integrator;
@@ -352,6 +353,7 @@ public:
                const Evaluator &                   eval_test,
                Table<2, VectorizedArray<Number>> & cell_matrix01,
                Table<2, VectorizedArray<Number>> & cell_matrix10,
+               const int                           cell_no_left,
                const int                           direction) const;
 
     const MatrixIntegrator * integrator;
@@ -381,6 +383,7 @@ public:
                const Evaluator &                   eval_test,
                Table<2, VectorizedArray<Number>> & cell_matrix01,
                Table<2, VectorizedArray<Number>> & cell_matrix10,
+               const int                           cell_no_left,
                const int                           direction) const;
 
     const MatrixIntegrator * integrator;
@@ -411,6 +414,7 @@ public:
                const Evaluator &                   eval_test,
                Table<2, VectorizedArray<Number>> & cell_matrix01,
                Table<2, VectorizedArray<Number>> & cell_matrix10,
+               const int                           cell_no_left,
                const int                           direction) const;
 
     const MatrixIntegrator * integrator;
@@ -901,8 +905,11 @@ operator()(const Evaluator &                   eval_ansatz,
            const Evaluator &                   eval_test,
            Table<2, VectorizedArray<Number>> & cell_matrix01,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
+           const int                           cell_no_left,
            const int                           direction) const
 {
+  (void)cell_no_left;
+  AssertDimension(cell_no_left, 0);
   const auto & equation_data  = integrator->equation_data;
   const auto   mu             = equation_data.mu;
   const auto   average_factor = eval_test.get_average_factor(direction, 0, 1);
@@ -988,8 +995,11 @@ operator()(const Evaluator &                   eval_ansatz,
            const Evaluator &                   eval_test,
            Table<2, VectorizedArray<Number>> & cell_matrix01,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
+           const int                           cell_no_left,
            const int                           direction) const
 {
+  (void)cell_no_left;
+  AssertDimension(cell_no_left, 0);
   const auto & equation_data  = integrator->equation_data;
   const auto   mu             = equation_data.mu;
   const auto   normal_vector0 = eval_test.get_normal_vector(1, direction); // on cell 0
@@ -1068,8 +1078,11 @@ operator()(const Evaluator &                   eval_ansatz,
            const Evaluator &                   eval_test,
            Table<2, VectorizedArray<Number>> & cell_matrix01,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
+           const int                           cell_no_left,
            const int                           direction) const
 {
+  (void)cell_no_left;
+  AssertDimension(cell_no_left, 0);
   const auto & equation_data  = integrator->equation_data;
   const auto   lambda         = equation_data.lambda;
   const auto   average_factor = eval_test.get_average_factor(direction, 0, 1);
@@ -1152,8 +1165,11 @@ operator()(const Evaluator &                   eval_ansatz,
            const Evaluator &                   eval_test,
            Table<2, VectorizedArray<Number>> & cell_matrix01,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
+           const int                           cell_no_left,
            const int                           direction) const
 {
+  (void)cell_no_left;
+  AssertDimension(cell_no_left, 0);
   const auto & equation_data  = integrator->equation_data;
   const auto   lambda         = equation_data.lambda;
   const auto   normal_vector0 = eval_ansatz.get_normal_vector(1, direction); // on cell 0

@@ -189,6 +189,7 @@ public:
                const Evaluator &                   eval,
                Table<2, VectorizedArray<Number>> & cell_matrix01,
                Table<2, VectorizedArray<Number>> & cell_matrix10,
+               const int                           cell_no_left,
                const int                           direction) const;
   };
 
@@ -209,8 +210,8 @@ public:
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
     {
       eval.reinit(patch);
-      const auto & mass_matrices = eval.patch_action(cell_mass_operation);
-      const auto & laplace_matrices =
+      const auto mass_matrices = eval.patch_action(cell_mass_operation);
+      const auto laplace_matrices =
         eval.patch_action(cell_laplace_operation, nitsche_operation, nitsche_operation);
       local_matrices[patch].reinit(mass_matrices, laplace_matrices);
     }
@@ -323,28 +324,33 @@ operator()(const Evaluator &,
            const Evaluator &                   eval_test,
            Table<2, VectorizedArray<Number>> & cell_matrix01,
            Table<2, VectorizedArray<Number>> & cell_matrix10,
+           const int                           cell_no0, // left cell
            const int                           direction) const
 {
-  const auto normal0        = eval_test.get_normal(1); // on cell 0
-  const auto normal1        = eval_test.get_normal(0); // on cell 1
-  const auto average_factor = eval_test.get_average_factor(direction, 0, 1);
-  const auto penalty =
-    IP::pre_factor * average_factor * Laplace::FD::compute_penalty(eval_test, direction, 0, 1);
+  const auto cell_no1 = cell_no0 + 1;                         // right cell
+  const auto face_no0 = 1;                                    // interface seen from left cell
+  const auto face_no1 = 0;                                    // interface seen from right cell
+  AssertDimension(cell_no0, 0);                               // vertex patch has one interface
+  const auto normal0        = eval_test.get_normal(face_no0); // on cell 0
+  const auto normal1        = eval_test.get_normal(face_no1); // on cell 1
+  const auto average_factor = eval_test.get_average_factor(direction, cell_no0, face_no0);
+  const auto penalty        = IP::pre_factor * average_factor *
+                       Laplace::FD::compute_penalty(eval_test, direction, cell_no0, face_no0);
 
   auto value_on_interface01{make_vectorized_array<Number>(0.)};
   auto value_on_interface10{make_vectorized_array<Number>(0.)};
   for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz & v is test shape function
   {
-    const auto & v0      = eval_test.shape_value_face(dof_v, 1, direction, 0);
-    const auto & grad_v0 = eval_test.shape_gradient_face(dof_v, 1, direction, 0);
-    const auto & v1      = eval_test.shape_value_face(dof_v, 0, direction, 1);
-    const auto & grad_v1 = eval_test.shape_gradient_face(dof_v, 0, direction, 1);
+    const auto & v0      = eval_test.shape_value_face(dof_v, face_no0, direction, cell_no0);
+    const auto & grad_v0 = eval_test.shape_gradient_face(dof_v, face_no0, direction, cell_no0);
+    const auto & v1      = eval_test.shape_value_face(dof_v, face_no1, direction, cell_no1);
+    const auto & grad_v1 = eval_test.shape_gradient_face(dof_v, face_no1, direction, cell_no1);
     for(int dof_u = 0; dof_u < fe_order; ++dof_u)
     {
-      const auto & u0      = eval_test.shape_value_face(dof_u, 1, direction, 0);
-      const auto & grad_u0 = eval_test.shape_gradient_face(dof_u, 1, direction, 0);
-      const auto & u1      = eval_test.shape_value_face(dof_u, 0, direction, 1);
-      const auto & grad_u1 = eval_test.shape_gradient_face(dof_u, 0, direction, 1);
+      const auto & u0      = eval_test.shape_value_face(dof_u, face_no0, direction, cell_no0);
+      const auto & grad_u0 = eval_test.shape_gradient_face(dof_u, face_no0, direction, cell_no0);
+      const auto & u1      = eval_test.shape_value_face(dof_u, face_no1, direction, cell_no1);
+      const auto & grad_u1 = eval_test.shape_gradient_face(dof_u, face_no1, direction, cell_no1);
 
       /// consistency + symmetry
       value_on_interface01 = -average_factor * (v0 * normal0 * grad_u1 + grad_v0 * u1 * normal1);
