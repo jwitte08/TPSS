@@ -8,6 +8,8 @@
 #ifndef TESTS_LAPLACEINTEGRATOR_H_
 #define TESTS_LAPLACEINTEGRATOR_H_
 
+#include <deal.II/base/subscriptor.h>
+
 #include <deal.II/dofs/dof_handler.h>
 
 #include <deal.II/fe/fe_dgq.h>
@@ -21,7 +23,6 @@
 #include <deal.II/meshworker/integration_info.h>
 #include <deal.II/meshworker/loop.h>
 
-#include "operators/linear_operator_base.h"
 #include "solvers_and_preconditioners/TPSS/patch_transfer.h"
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
 #include "solvers_and_preconditioners/smoother/schwarz_smoother.h"
@@ -140,6 +141,57 @@ compute_penalty(const Evaluator & eval,
   return 2. * penalty;
 }
 
+template<typename EvaluatorType>
+struct CellMass
+{
+  using Number                  = typename EvaluatorType::value_type;
+  static constexpr int fe_order = EvaluatorType::fe_order;
+
+  void
+  operator()(const EvaluatorType &               eval_ansatz,
+             const EvaluatorType &               eval,
+             Table<2, VectorizedArray<Number>> & cell_matrix,
+             const int                           direction,
+             const int                           cell_no) const;
+};
+
+template<typename EvaluatorType>
+struct CellLaplace
+{
+  using Number                  = typename EvaluatorType::value_type;
+  static constexpr int fe_order = EvaluatorType::fe_order;
+
+  void
+  operator()(const EvaluatorType &,
+             const EvaluatorType &               eval,
+             Table<2, VectorizedArray<Number>> & cell_matrix,
+             const int                           direction,
+             const int                           cell_no) const;
+};
+
+template<typename EvaluatorType>
+struct FaceLaplace
+{
+  using Number                  = typename EvaluatorType::value_type;
+  static constexpr int fe_order = EvaluatorType::fe_order;
+
+  void
+  operator()(const EvaluatorType &,
+             const EvaluatorType &               eval,
+             Table<2, VectorizedArray<Number>> & cell_matrix,
+             const int                           direction,
+             const int                           cell_no,
+             const int                           face_no) const;
+
+  void
+  operator()(const EvaluatorType &,
+             const EvaluatorType &               eval,
+             Table<2, VectorizedArray<Number>> & cell_matrix01,
+             Table<2, VectorizedArray<Number>> & cell_matrix10,
+             const int                           cell_no_left,
+             const int                           direction) const;
+};
+
 template<int dim, int fe_degree, typename Number>
 class MatrixIntegrator
 {
@@ -148,50 +200,8 @@ public:
   using value_type    = Number;
   using transfer_type = typename TPSS::PatchTransfer<dim, Number, fe_degree>;
 
-  static constexpr int fe_order   = fe_degree + 1;
-  static constexpr int macro_size = VectorizedArray<Number>::n_array_elements;
-
-  template<typename Evaluator>
-  struct CellMass
-  {
-    void
-    operator()(const Evaluator &                   eval_ansatz,
-               const Evaluator &                   eval,
-               Table<2, VectorizedArray<Number>> & cell_matrix,
-               const int                           direction,
-               const int                           cell_no) const;
-  };
-
-  template<typename Evaluator>
-  struct CellLaplace
-  {
-    void
-    operator()(const Evaluator &,
-               const Evaluator &                   eval,
-               Table<2, VectorizedArray<Number>> & cell_matrix,
-               const int                           direction,
-               const int                           cell_no) const;
-  };
-
-  template<typename Evaluator>
-  struct FaceLaplace
-  {
-    void
-    operator()(const Evaluator &,
-               const Evaluator &                   eval,
-               Table<2, VectorizedArray<Number>> & cell_matrix,
-               const int                           direction,
-               const int                           cell_no,
-               const int                           face_no) const;
-
-    void
-    operator()(const Evaluator &,
-               const Evaluator &                   eval,
-               Table<2, VectorizedArray<Number>> & cell_matrix01,
-               Table<2, VectorizedArray<Number>> & cell_matrix10,
-               const int                           cell_no_left,
-               const int                           direction) const;
-  };
+  // static constexpr int fe_order   = fe_degree + 1;
+  // static constexpr int macro_size = VectorizedArray<Number>::n_array_elements;
 
   template<typename TPMatrix, typename OperatorType>
   void
@@ -228,22 +238,20 @@ public:
 // ++++++++++++++++++++   inline definitions: MatrixIntegrator   ++++++++++++++++++++
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-template<int dim, int fe_degree, typename Number>
-template<typename Evaluator>
+template<typename EvaluatorType>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::CellMass<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix,
-           const int                           direction,
-           const int                           cell_no) const
+CellMass<EvaluatorType>::operator()(const EvaluatorType &               eval_ansatz,
+                                    const EvaluatorType &               eval_test,
+                                    Table<2, VectorizedArray<Number>> & cell_matrix,
+                                    const int                           direction,
+                                    const int                           cell_no) const
 {
   VectorizedArray<Number> integral;
   for(int dof_u = 0; dof_u < fe_order; ++dof_u)
     for(int dof_v = 0; dof_v < fe_order; ++dof_v)
     {
       integral = 0.;
-      for(unsigned int q = 0; q < Evaluator::n_q_points_1d_static; ++q)
+      for(unsigned int q = 0; q < EvaluatorType::n_q_points_1d_static; ++q)
       {
         const auto & value_u = eval_ansatz.shape_value(dof_u, q, direction, cell_no);
         const auto & value_v = eval_test.shape_value(dof_v, q, direction, cell_no);
@@ -254,22 +262,20 @@ operator()(const Evaluator &                   eval_ansatz,
     }
 }
 
-template<int dim, int fe_degree, typename Number>
-template<typename Evaluator>
+template<typename EvaluatorType>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::CellLaplace<Evaluator>::
-operator()(const Evaluator &,
-           const Evaluator &                   eval,
-           Table<2, VectorizedArray<Number>> & cell_matrix,
-           const int                           direction,
-           const int                           cell_no) const
+CellLaplace<EvaluatorType>::operator()(const EvaluatorType &,
+                                       const EvaluatorType &               eval,
+                                       Table<2, VectorizedArray<Number>> & cell_matrix,
+                                       const int                           direction,
+                                       const int                           cell_no) const
 {
   auto integral{make_vectorized_array<Number>(0.)};
   for(int dof_u = 0; dof_u < fe_order; ++dof_u) // u is ansatz function & v is test function
     for(int dof_v = 0; dof_v < fe_order; ++dof_v)
     {
       integral = 0.;
-      for(unsigned int q = 0; q < Evaluator::n_q_points_1d_static; ++q)
+      for(unsigned int q = 0; q < EvaluatorType::n_q_points_1d_static; ++q)
       {
         const auto & grad_u = eval.shape_gradient(dof_u, q, direction, cell_no);
         const auto & grad_v = eval.shape_gradient(dof_v, q, direction, cell_no);
@@ -280,16 +286,14 @@ operator()(const Evaluator &,
     }
 }
 
-template<int dim, int fe_degree, typename Number>
-template<typename Evaluator>
+template<typename EvaluatorType>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::FaceLaplace<Evaluator>::
-operator()(const Evaluator &,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix,
-           const int                           direction,
-           const int                           cell_no,
-           const int                           face_no) const
+FaceLaplace<EvaluatorType>::operator()(const EvaluatorType &,
+                                       const EvaluatorType &               eval_test,
+                                       Table<2, VectorizedArray<Number>> & cell_matrix,
+                                       const int                           direction,
+                                       const int                           cell_no,
+                                       const int                           face_no) const
 {
   const auto normal         = eval_test.get_normal(face_no);
   const auto average_factor = eval_test.get_average_factor(direction, cell_no, face_no);
@@ -316,16 +320,14 @@ operator()(const Evaluator &,
   }
 }
 
-template<int dim, int fe_degree, typename Number>
-template<typename Evaluator>
+template<typename EvaluatorType>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::FaceLaplace<Evaluator>::
-operator()(const Evaluator &,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix01,
-           Table<2, VectorizedArray<Number>> & cell_matrix10,
-           const int                           cell_no0, // left cell
-           const int                           direction) const
+FaceLaplace<EvaluatorType>::operator()(const EvaluatorType &,
+                                       const EvaluatorType &               eval_test,
+                                       Table<2, VectorizedArray<Number>> & cell_matrix01,
+                                       Table<2, VectorizedArray<Number>> & cell_matrix10,
+                                       const int                           cell_no0, // left cell
+                                       const int                           direction) const
 {
   const auto cell_no1 = cell_no0 + 1;                         // right cell
   const auto face_no0 = 1;                                    // interface seen from left cell
@@ -385,7 +387,7 @@ adjust_ghost_range_if_necessary(const MatrixFree<dim, number> &                 
 }
 
 template<int dim, int fe_degree, typename Number>
-class Operator : public LinearOperatorBase
+class Operator : public Subscriptor
 {
 public:
   using value_type = Number;
@@ -660,7 +662,11 @@ Operator<dim, fe_degree, Number>::apply_boundary(
   }
 }
 
+
+
 } // end namespace MF
+
+
 
 template<int dim, int fe_degree, typename Number>
 struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
@@ -684,9 +690,9 @@ struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
   {
     MFOperator::clear();
   };
-
-  using MFOperator::Tvmult;
 };
+
+
 
 /*
  * Linear operators describing the standard finite element discretization of
@@ -695,7 +701,7 @@ struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
  * (MF) MatrixFree
  * (FD) FastDiagonalization // TODO
  */
-namespace Std
+namespace CFEM
 {
 /*
  * MatrixFree operator based on MatrixFreeOperators interface
@@ -736,6 +742,8 @@ public:
     return IP::pre_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
   }
 
+  using Base::vmult;
+
   void
   vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
@@ -749,6 +757,8 @@ public:
     Base::vmult(dst, src);
     std::copy(dst.begin(), dst.end(), dst_view.begin());
   }
+
+  using Base::Tvmult;
 
 protected:
   void
@@ -766,6 +776,8 @@ private:
   mutable std::vector<TimeInfo>                  time_infos;
 };
 
+
+
 template<int dim, int fe_degree, typename Number>
 void
 Operator<dim, fe_degree, Number>::clear()
@@ -774,7 +786,6 @@ Operator<dim, fe_degree, Number>::clear()
   time_infos.clear();
   Base::clear();
 }
-
 
 
 template<int dim, int fe_degree, typename Number>
@@ -786,6 +797,7 @@ Operator<dim, fe_degree, Number>::initialize(
   mf_storage = mf_storage_in;
   time_infos = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
 }
+
 
 template<int dim, int fe_degree, typename Number>
 void
@@ -848,9 +860,91 @@ Operator<dim, fe_degree, Number>::apply_cell(
   }
 }
 
+
+
 } // end namespace MF
 
-} // end namespace Std
+
+
+namespace FD
+{
+template<int dim, int fe_degree, typename Number>
+class MatrixIntegrator
+{
+public:
+  using This          = MatrixIntegrator<dim, fe_degree, Number>;
+  using value_type    = Number;
+  using transfer_type = typename TPSS::PatchTransfer<dim, Number, fe_degree>;
+
+  // static constexpr int fe_order   = fe_degree + 1;
+  // static constexpr int macro_size = VectorizedArray<Number>::n_array_elements;
+
+  template<typename TPMatrix, typename OperatorType>
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
+                             std::vector<TPMatrix> &               local_matrices,
+                             const OperatorType &,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    using Evaluator = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
+
+    Evaluator                           eval(subdomain_handler);
+    Laplace::FD::CellMass<Evaluator>    cell_mass_operation;
+    Laplace::FD::CellLaplace<Evaluator> cell_laplace_operation;
+
+    for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
+    {
+      eval.reinit(patch);
+      const auto mass_matrices    = eval.patch_action(cell_mass_operation);
+      const auto laplace_matrices = eval.patch_action(cell_laplace_operation);
+      local_matrices[patch].reinit(mass_matrices, laplace_matrices);
+    }
+  }
+
+  std::shared_ptr<transfer_type>
+  get_patch_transfer(const SubdomainHandler<dim, Number> & patch_storage) const
+  {
+    return std::make_shared<transfer_type>(patch_storage);
+  }
+};
+
+
+
+} // end namespace FD
+
+
+
+template<int dim, int fe_degree, typename Number>
+struct CombinedOperator : public CFEM::MF::Operator<dim, fe_degree, Number>,
+                          public CFEM::FD::MatrixIntegrator<dim, fe_degree, Number>
+{
+  using MFOperator    = typename CFEM::MF::Operator<dim, fe_degree, Number>;
+  using FDOperator    = typename CFEM::FD::MatrixIntegrator<dim, fe_degree, Number>;
+  using value_type    = Number;
+  using transfer_type = typename FDOperator::transfer_type;
+
+  CombinedOperator() = default;
+
+  void
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
+             const MGConstrainedDoFs &                      mg_constrained_dofs,
+             const unsigned int                             level)
+  {
+    MFOperator::initialize(mf_storage_in, mg_constrained_dofs, level);
+  };
+
+  void
+  clear()
+  {
+    MFOperator::clear();
+  };
+};
+
+
+
+} // end namespace CFEM
+
+
 
 } // end namespace Laplace
 

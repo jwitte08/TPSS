@@ -75,7 +75,7 @@ main(int argc, char * argv[])
   constexpr int                    n_patch_dofs_per_direction =
     TPSS::UniversalInfo<dim>::n_cells_per_direction(CT::PATCH_VARIANT_) * (fe_degree + 1);
   using PoissonProblem =
-    typename Poisson::Std::ModelProblem<dim, fe_degree, double, n_patch_dofs_per_direction>;
+    typename Poisson::CFEM::ModelProblem<dim, fe_degree, double, n_patch_dofs_per_direction>;
 
   TestParameter testprms;
   if(argc > 1)

@@ -49,7 +49,7 @@ using namespace dealii;
 
 namespace Poisson
 {
-namespace Std
+namespace CFEM
 {
 template<int dim, int fe_degree, typename Number = double, int n_patch_dofs = -1>
 struct ModelProblem : public Subscriptor
@@ -59,17 +59,16 @@ struct ModelProblem : public Subscriptor
 
   using value_type    = Number;
   using VECTOR        = typename LinearAlgebra::distributed::Vector<Number>;
-  using SYSTEM_MATRIX = Laplace::Std::MF::Operator<dim, fe_degree, Number>;
+  using SYSTEM_MATRIX = Laplace::CFEM::MF::Operator<dim, fe_degree, Number>;
 
   using value_type_mg = Number;
-  using LEVEL_MATRIX  = Laplace::Std::MF::Operator<dim, fe_degree, value_type_mg>;
+  using LEVEL_MATRIX  = Laplace::CFEM::CombinedOperator<dim, fe_degree, value_type_mg>;
   using MG_TRANSFER   = MGTransferMatrixFree<dim, value_type_mg>;
-  // using PATCH_MATRIX  = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>,
-  // n_patch_dofs>; using SCHWARZ_PRECONDITIONER = SchwarzPreconditioner<dim, LEVEL_MATRIX, VECTOR,
-  // PATCH_MATRIX>; using SCHWARZ_SMOOTHER       = SchwarzSmoother<dim, LEVEL_MATRIX,
-  // SCHWARZ_PRECONDITIONER, VECTOR>; using MG_SMOOTHER_SCHWARZ    = MGSmootherSchwarz<dim,
-  // LEVEL_MATRIX, PATCH_MATRIX, VECTOR>; using GMG_PRECONDITIONER     = PreconditionMG<dim, VECTOR,
-  // MG_TRANSFER>;
+  using PATCH_MATRIX  = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>, n_patch_dofs>;
+  using SCHWARZ_PRECONDITIONER = SchwarzPreconditioner<dim, LEVEL_MATRIX, VECTOR, PATCH_MATRIX>;
+  using SCHWARZ_SMOOTHER       = SchwarzSmoother<dim, LEVEL_MATRIX, SCHWARZ_PRECONDITIONER, VECTOR>;
+  using MG_SMOOTHER_SCHWARZ    = MGSmootherSchwarz<dim, LEVEL_MATRIX, PATCH_MATRIX, VECTOR>;
+  using GMG_PRECONDITIONER     = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 
   // *** parameters and auxiliary structs
   RT::Parameter                               rt_parameters;
@@ -99,14 +98,14 @@ struct ModelProblem : public Subscriptor
   SolverSelector<VECTOR>                         iterative_solver;
 
   // *** multigrid
-  MGConstrainedDoFs             mg_constrained_dofs;
-  MGLevelObject<LEVEL_MATRIX>   mg_matrices;
-  MG_TRANSFER                   mg_transfer;
-  mutable RedBlackColoring<dim> red_black_coloring;
-  // std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_pre;
-  // std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_post;
-  // const MGSmootherBase<VECTOR> *             mg_smoother_pre;
-  // const MGSmootherBase<VECTOR> *             mg_smoother_post;
+  MGConstrainedDoFs                          mg_constrained_dofs;
+  MGLevelObject<LEVEL_MATRIX>                mg_matrices;
+  MG_TRANSFER                                mg_transfer;
+  mutable RedBlackColoring<dim>              red_black_coloring;
+  std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_pre;
+  std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_post;
+  const MGSmootherBase<VECTOR> *             mg_smoother_pre;
+  const MGSmootherBase<VECTOR> *             mg_smoother_post;
   // CoarseGridSolver<LEVEL_MATRIX, VECTOR>     coarse_grid_solver;
   // const MGCoarseGridBase<VECTOR> *           mg_coarse_grid;
   // mg::Matrix<VECTOR>                         mg_matrix_wrapper;
@@ -130,26 +129,26 @@ struct ModelProblem : public Subscriptor
       analytical_solution(std::make_shared<Laplace::ZeroDirichletUnitCube<dim>>()),
       load_function(std::make_shared<Laplace::ManufacturedLoad<dim>>(analytical_solution)),
       level(static_cast<unsigned int>(-1)),
-      red_black_coloring(rt_parameters_in.mesh) /*,
-mg_smoother_pre(nullptr),
-mg_smoother_post(nullptr),
-mg_coarse_grid(nullptr)*/
+      red_black_coloring(rt_parameters_in.mesh),
+      mg_smoother_pre(nullptr),
+      mg_smoother_post(nullptr) /*,
+       mg_coarse_grid(nullptr)*/
   {
   }
 
   ~ModelProblem() = default;
 
-  // unsigned
-  // n_colors_system()
-  // {
-  //   if(!mg_schwarz_smoother_pre)
-  //     return 0;
+  unsigned
+  n_colors_system()
+  {
+    if(!mg_schwarz_smoother_pre)
+      return 0;
 
-  //   AssertThrow(rt_parameters.multigrid.pre_smoother.variant ==
-  //                 SmootherParameter::SmootherVariant::Schwarz,
-  //               ExcMessage("Pre-smoother isn't of Schwarz-type."));
-  //   return mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
-  // }
+    AssertThrow(rt_parameters.multigrid.pre_smoother.variant ==
+                  SmootherParameter::SmootherVariant::Schwarz,
+                ExcMessage("Pre-smoother isn't of Schwarz-type."));
+    return mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
+  }
 
 
   // /*
@@ -263,24 +262,6 @@ mg_coarse_grid(nullptr)*/
   }
 
 
-  // template<typename MatrixType>
-  // std::shared_ptr<SCHWARZ_PRECONDITIONER>
-  // build_schwarz_preconditioner(std::shared_ptr<const SubdomainHandler<dim, Number>>
-  // patch_storage,
-  //                              MatrixType &                                         matrix,
-  //                              const SchwarzSmootherData & schwarz_data) const
-  // {
-  //   typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data;
-  //   precondition_data.relaxation       = schwarz_data.damping_factor;
-  //   precondition_data.local_relaxation = schwarz_data.local_damping_factor;
-  //   precondition_data.reverse          = schwarz_data.reverse_smoothing;
-  //   precondition_data.symmetrized      = schwarz_data.symmetrize_smoothing;
-  //   const auto schwarz_preconditioner  = std::make_shared<SCHWARZ_PRECONDITIONER>();
-  //   schwarz_preconditioner->initialize(patch_storage, matrix, precondition_data);
-  //   return schwarz_preconditioner;
-  // }
-
-
   bool
   create_triangulation(const unsigned n_refinements)
   {
@@ -377,72 +358,74 @@ mg_coarse_grid(nullptr)*/
   }
 
 
-  // void
-  // prepare_mg_smoothers()
-  // {
-  //   /// setup Schwarz-type pre-smoother
-  //   if(rt_parameters.multigrid.pre_smoother.variant ==
-  //   SmootherParameter::SmootherVariant::Schwarz)
-  //   {
-  //     const auto                                   mgss =
-  //     std::make_shared<MG_SMOOTHER_SCHWARZ>(); typename MG_SMOOTHER_SCHWARZ::AdditionalData
-  //     mgss_data; mgss_data.coloring_func = std::ref(red_black_coloring); mgss_data.parameters =
-  //     rt_parameters.multigrid.pre_smoother; mgss->initialize(mg_matrices, mgss_data);
-  //     mg_schwarz_smoother_pre = mgss;
-  //   }
-  //   else
-  //     AssertThrow(false, ExcMessage("TODO ..."));
+  void
+  prepare_mg_smoothers()
+  {
+    /// setup Schwarz-type pre-smoother
+    if(rt_parameters.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+    {
+      const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+      typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
+      mgss_data.coloring_func = std::ref(red_black_coloring);
+      mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
+      mgss->initialize(mg_matrices, mgss_data);
+      mg_schwarz_smoother_pre = mgss;
+    }
+    else
+      AssertThrow(false, ExcMessage("Smoothing variant not implemented. TODO"));
 
-  //   /// setup Schwarz-type post-smoother
-  //   if(rt_parameters.multigrid.post_smoother.variant ==
-  //   SmootherParameter::SmootherVariant::Schwarz)
-  //   {
-  //     AssertThrow(mg_schwarz_smoother_pre, ExcMessage("MG Schwarz pre-smoother not
-  //     initialized.")); typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data; const
-  //     auto schwarz_data_post       = rt_parameters.multigrid.post_smoother.schwarz;
-  //     precondition_data.relaxation       = schwarz_data_post.damping_factor;
-  //     precondition_data.local_relaxation = schwarz_data_post.local_damping_factor;
-  //     precondition_data.symmetrized      = schwarz_data_post.symmetrize_smoothing;
-  //     precondition_data.reverse          = schwarz_data_post.reverse_smoothing;
+    /// setup Schwarz-type post-smoother
+    if(rt_parameters.multigrid.post_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+    {
+      AssertThrow(mg_schwarz_smoother_pre, ExcMessage("MG Schwarz pre-smoother not initialized."));
+      typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data;
+      const auto schwarz_data_post       = rt_parameters.multigrid.post_smoother.schwarz;
+      precondition_data.relaxation       = schwarz_data_post.damping_factor;
+      precondition_data.local_relaxation = schwarz_data_post.local_damping_factor;
+      precondition_data.symmetrized      = schwarz_data_post.symmetrize_smoothing;
+      precondition_data.reverse          = schwarz_data_post.reverse_smoothing;
 
-  //     /// use pre-smoother as well as post-smoother
-  //     if(rt_parameters.multigrid.pre_smoother == rt_parameters.multigrid.post_smoother)
-  //     {
-  //       // *pcout << "Using pre-smoother as post-smoother ... " << std::endl;
-  //       // *pcout << Util::parameter_to_fstring("/// Post-smoother (OLD)", "");
-  //       // *pcout << rt_parameters.multigrid.post_smoother.to_string();
-  //       // rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
-  //       // *pcout << Util::parameter_to_fstring("/// Post-smoother (NEW)", "");
-  //       // *pcout << rt_parameters.multigrid.post_smoother.to_string();
-  //       mg_schwarz_smoother_post = mg_schwarz_smoother_pre;
-  //     }
+      /// use pre-smoother as well as post-smoother
+      if(rt_parameters.multigrid.pre_smoother == rt_parameters.multigrid.post_smoother)
+      {
+        // *pcout << "Using pre-smoother as post-smoother ... " << std::endl;
+        // *pcout << Util::parameter_to_fstring("/// Post-smoother (OLD)", "");
+        // *pcout << rt_parameters.multigrid.post_smoother.to_string();
+        // rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
+        // *pcout << Util::parameter_to_fstring("/// Post-smoother (NEW)", "");
+        // *pcout << rt_parameters.multigrid.post_smoother.to_string();
+        mg_schwarz_smoother_post = mg_schwarz_smoother_pre;
+      }
 
-  //     /// initialize (independent) post-smoother
-  //     else
-  //     {
-  //       auto sdhandler_data = fill_schwarz_smoother_data<dim, typename LEVEL_MATRIX::value_type>(
-  //         rt_parameters.multigrid.post_smoother.schwarz);
-  //       sdhandler_data.compressed = rt_parameters.multigrid.post_smoother.compressed;
-  //       sdhandler_data.level      = mg_matrices.max_level();
-  //       const bool is_shallow_copyable =
-  //         mg_schwarz_smoother_pre->get_preconditioner(level)->is_shallow_copyable(sdhandler_data);
+      /// initialize (independent) post-smoother
+      else
+      {
+        typename SubdomainHandler<dim, typename LEVEL_MATRIX::value_type>::AdditionalData
+          sd_handler_data;
+        rt_parameters.template fill_schwarz_smoother_data<dim, typename LEVEL_MATRIX::value_type>(
+          sd_handler_data, false);
+        sd_handler_data.level = mg_matrices.max_level();
+        if(rt_parameters.multigrid.post_smoother.schwarz.manual_coloring)
+          sd_handler_data.coloring_func = std::ref(red_black_coloring);
+        const bool is_shallow_copyable =
+          mg_schwarz_smoother_pre->get_preconditioner(level)->is_shallow_copyable(sd_handler_data);
 
-  //       if(is_shallow_copyable)
-  //       {
-  //         const auto mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
-  //         typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
-  //         mgss_data.coloring_func = std::ref(red_black_coloring);
-  //         mgss_data.parameters    = rt_parameters.multigrid.post_smoother;
-  //         mgss->initialize(*mg_schwarz_smoother_pre, mgss_data);
-  //         mg_schwarz_smoother_post = mgss;
-  //       }
-  //       else
-  //         AssertThrow(false, ExcMessage("TODO ..."));
-  //     }
-  //   }
-  //   else
-  //     AssertThrow(false, ExcMessage("TODO ..."));
-  // }
+        if(is_shallow_copyable)
+        {
+          const auto mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+          typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
+          mgss_data.coloring_func = std::ref(red_black_coloring);
+          mgss_data.parameters    = rt_parameters.multigrid.post_smoother;
+          mgss->initialize(*mg_schwarz_smoother_pre, mgss_data);
+          mg_schwarz_smoother_post = mgss;
+        }
+        else
+          AssertThrow(false, ExcMessage("Shallow copy is not possible. TODO"));
+      }
+    }
+    else
+      AssertThrow(false, ExcMessage("Smoothing variant is not implemented. TODO"));
+  }
 
 
   void
@@ -452,10 +435,10 @@ mg_coarse_grid(nullptr)*/
     // multigrid.reset();
     // mg_matrix_wrapper.reset();
     // coarse_grid_solver.clear();
-    // mg_smoother_post = nullptr;
-    // mg_smoother_pre  = nullptr;
-    // mg_schwarz_smoother_pre.reset();
-    // mg_schwarz_smoother_post.reset();
+    mg_smoother_post = nullptr;
+    mg_smoother_pre  = nullptr;
+    mg_schwarz_smoother_pre.reset();
+    mg_schwarz_smoother_post.reset();
     mg_transfer.clear();
     mg_matrices.clear_elements();
     mg_constrained_dofs.clear();
@@ -483,28 +466,27 @@ mg_coarse_grid(nullptr)*/
     mg_transfer.initialize_constraints(mg_constrained_dofs);
     mg_transfer.build(dof_handler);
 
-    // // *** initialize Schwarz smoother S_l
-    // prepare_mg_smoothers();
+    // *** initialize Schwarz smoother S_l
+    prepare_mg_smoothers();
 
-    // /// set pre-smoother
-    // pp_data.n_colors_system.push_back(n_colors_system());
-    // if(rt_parameters.multigrid.pre_smoother.variant ==
-    // SmootherParameter::SmootherVariant::Schwarz)
-    // {
-    //   AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Schwarz pre-smoother is uninitialized."));
-    //   mg_smoother_pre = mg_schwarz_smoother_pre.get();
-    // }
-    // else
-    //   AssertThrow(false, ExcMessage("TODO .. "));
-    // /// set post-smoother
-    // if(rt_parameters.multigrid.post_smoother.variant ==
-    // SmootherParameter::SmootherVariant::Schwarz)
-    // {
-    //   AssertThrow(mg_schwarz_smoother_post, ExcMessage("Schwarz post-smoother is
-    //   uninitialized.")); mg_smoother_post = mg_schwarz_smoother_post.get();
-    // }
-    // else
-    //   AssertThrow(false, ExcMessage("TODO .. "));
+    /// set pre-smoother
+    pp_data.n_colors_system.push_back(n_colors_system());
+    if(rt_parameters.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+    {
+      AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Is not initialized."));
+      mg_smoother_pre = mg_schwarz_smoother_pre.get();
+    }
+    else
+      AssertThrow(false, ExcMessage("Pre-smoothing variant is not implemented. TODO"));
+
+    /// set post-smoother
+    if(rt_parameters.multigrid.post_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+    {
+      AssertThrow(mg_schwarz_smoother_post, ExcMessage("Is not initialized."));
+      mg_smoother_post = mg_schwarz_smoother_post.get();
+    }
+    else
+      AssertThrow(false, ExcMessage("Post-smoothing variant is not implemented. TODO"));
 
     // // *** initialize coarse grid solver
     // coarse_grid_solver.initialize(mg_matrices[mg_level_min],
@@ -698,7 +680,7 @@ mg_coarse_grid(nullptr)*/
   }
 };
 
-} // end namespace Std
+} // end namespace CFEM
 } // end namespace Poisson
 
 #endif // POISSONPROBLEM_H_

@@ -25,7 +25,7 @@ class TestLaplaceIntegrator : public testing::Test
 protected:
   static constexpr int dim       = T::template value<0>();
   static constexpr int fe_degree = T::template value<1>();
-  using PoissonProblem           = typename Poisson::Std::ModelProblem<dim, fe_degree>;
+  using PoissonProblem           = typename Poisson::CFEM::ModelProblem<dim, fe_degree>;
   using SystemMatrix             = typename PoissonProblem::SYSTEM_MATRIX;
   using vector_type              = typename PoissonProblem::VECTOR;
   // using LevelMatrix              = typename PoissonProblem::LEVEL_MATRIX;
@@ -36,8 +36,7 @@ protected:
 
   struct Params
   {
-    unsigned int n_refinements = 0;
-    // EquationData       equation_data;
+    unsigned int       n_refinements = 0;
     TPSS::PatchVariant patch_variant = TPSS::PatchVariant::vertex;
   };
 
@@ -121,22 +120,42 @@ protected:
   test()
   {
     initialize();
+
+    /// compare system matrix and level matrix on finest level
     const auto & system_matrix = assemble_system_matrix();
     const auto   global_level  = poisson_problem->level;
     const auto & level_matrix  = assemble_level_matrix(global_level);
     compare_matrix(system_matrix, level_matrix);
 
-    const auto mf_storage_level = poisson_problem->template build_mf_storage<double>(global_level);
-    const auto patch_storage_level =
-      poisson_problem->template build_patch_storage<double>(global_level, mf_storage_level);
+    const auto mf_storage_level = poisson_problem->mg_matrices[global_level].get_matrix_free();
+    const auto schwarz_preconditioner =
+      poisson_problem->mg_schwarz_smoother_pre->get_preconditioner();
+    const auto patch_storage_level = schwarz_preconditioner->get_subdomain_handler();
     TPSS::PatchTransfer<dim, double, fe_degree> patch_transfer(*patch_storage_level);
-    vector_type                                 tmp_vector;
+    const auto & patch_worker   = patch_transfer.get_patch_dof_worker();
+    const auto & partition_data = patch_worker.get_partition_data();
+
+    vector_type tmp_vector;
     mf_storage_level->initialize_dof_vector(tmp_vector);
-    const auto         dof_indices = extract_dof_indices_per_patch(0, patch_transfer, tmp_vector);
-    FullMatrix<double> patch_matrix_reference(dof_indices.size());
-    std::cout << vector_to_string(dof_indices) << std::endl;
-    patch_matrix_reference.extract_submatrix_from(level_matrix, dof_indices, dof_indices);
-    compare_matrix(patch_matrix_reference, patch_matrix_reference);
+    const auto & local_solvers = *(schwarz_preconditioner->get_local_solvers());
+    for(auto patch = 0U; patch < partition_data.n_subdomains(); ++patch)
+      for(auto lane = 0U; lane < macro_size; ++lane)
+      {
+        /// extract patch matrix from level matrix
+        const auto dof_indices =
+          extract_dof_indices_per_patch(patch, patch_transfer, tmp_vector, lane);
+        FullMatrix<double> patch_matrix_reference(dof_indices.size());
+        std::cout << "dof indices @ lane " << lane << ": " << vector_to_string(dof_indices)
+                  << std::endl;
+        patch_matrix_reference.extract_submatrix_from(level_matrix, dof_indices, dof_indices);
+
+        /// transform local solver to FullMatrix type
+        const auto & local_matrix = local_solvers[patch];
+        const auto   patch_matrix_full =
+          table_to_fullmatrix(Tensors::matrix_to_table(local_matrix), lane);
+
+        compare_matrix(patch_matrix_full, patch_matrix_reference);
+      }
   }
 
   void
