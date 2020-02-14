@@ -15,7 +15,11 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action(
   const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz,
   CellOperation &&                                                       cell_operation) const
 {
-  return patch_action_impl(eval_ansatz, std::forward<CellOperation>(cell_operation));
+  auto matrices = patch_action_impl(eval_ansatz, std::forward<CellOperation>(cell_operation));
+
+  post_process_constraints(matrices, eval_ansatz);
+
+  return matrices;
 }
 
 
@@ -44,7 +48,12 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action(
   const FaceOperation &                                                  face_operation,
   const InterfaceOperation &                                             interface_operation) const
 {
-  return patch_action_impl(eval_ansatz, cell_operation, face_operation, interface_operation);
+  auto matrices =
+    patch_action_impl(eval_ansatz, cell_operation, face_operation, interface_operation);
+
+  post_process_constraints(matrices, eval_ansatz);
+
+  return matrices;
 }
 
 
@@ -55,20 +64,21 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action_impl(
   const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz,
   CellOperation &&                                                       cell_operation) const
 {
-  using MatrixType                                    = Table<2, VectorizedArray<Number>>;
-  const auto *                patch_dof_tensor_ansatz = &(eval_ansatz.get_dof_tensor());
+  using MatrixType                     = Table<2, VectorizedArray<Number>>;
+  const auto * patch_dof_tensor_ansatz = &(eval_ansatz.get_dof_tensor());
+
   std::array<MatrixType, dim> matrices;
   for(int direction = 0; direction < dim; ++direction)
   {
     const auto n_dofs_1d_test            = this->n_dofs_1d(direction);
-    const auto n_dofs_1d_ansatz          = patch_dof_tensor_ansatz->n_dofs_1d(direction);
+    const auto n_dofs_1d_ansatz          = eval_ansatz.n_dofs_1d(direction);
     const auto n_dofs_per_cell_1d_test   = this->n_dofs_per_cell_1d(direction);
     const auto n_dofs_per_cell_1d_ansatz = eval_ansatz.n_dofs_per_cell_1d(direction);
 
     /// assemble one-dimensional matrices on each cell (i.e. interval)
     MatrixType & matrix = matrices[direction];
     matrix.reinit(n_dofs_1d_test, n_dofs_1d_ansatz);
-    for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
+    for(unsigned int cell_no = 0; cell_no < n_cells_1d(direction); ++cell_no)
     {
       MatrixType cell_matrix(n_dofs_per_cell_1d_test, n_dofs_per_cell_1d_ansatz);
       std::forward<decltype(cell_operation)>(
@@ -76,7 +86,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action_impl(
       submit_cell_matrix(matrix, cell_matrix, cell_no, cell_no, direction, patch_dof_tensor_ansatz);
     }
     AssertDimension(n_dofs_1d_test, matrices.at(direction).n_rows());
-    AssertDimension(n_dofs_1d_test, matrices.at(direction).n_cols());
+    AssertDimension(n_dofs_1d_ansatz, matrices.at(direction).n_cols());
   }
   return matrices;
 }
@@ -155,11 +165,53 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action_impl(
                            patch_dof_tensor_ansatz);
       }
     }
-    AssertDimension(n_dofs_1d_test, matrices.at(direction).n_rows());
-    AssertDimension(n_dofs_1d_test, matrices.at(direction).n_cols());
+    AssertDimension(this->n_dofs_1d(direction), matrices.at(direction).n_rows());
+    AssertDimension(eval_ansatz.n_dofs_1d(direction), matrices.at(direction).n_cols());
   }
 
   return matrices;
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+template<int fe_degree_ansatz, int n_q_points_ansatz>
+void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::post_process_constraints(
+  std::array<Table<2, VectorizedArray<Number>>, dim> &                   matrices,
+  const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz) const
+{
+  if(TPSS::DoFLayout::DGQ == get_dof_layout())
+    return;
+
+  else if(TPSS::DoFLayout::Q == get_dof_layout())
+  {
+    const auto * patch_dof_tensor_ansatz = &(eval_ansatz.get_dof_tensor());
+    for(auto direction = 0U; direction < dim; ++direction)
+    {
+      const auto n_dofs_1d_test   = this->n_dofs_1d(direction);
+      const auto n_dofs_1d_ansatz = patch_dof_tensor_ansatz->n_dofs_1d(direction);
+      auto &     matrix           = matrices[direction];
+
+      std::vector<std::pair<unsigned int, unsigned int>> constrained_dof_indices;
+      if(TPSS::PatchVariant::vertex == patch_variant)
+      {
+        const auto first_dof_index_test   = 0U;
+        const auto first_dof_index_ansatz = 0U;
+        constrained_dof_indices.emplace_back(first_dof_index_test, first_dof_index_ansatz);
+        const auto last_dof_index_test   = n_dofs_1d_test - 1;
+        const auto last_dof_index_ansatz = n_dofs_1d_ansatz - 1;
+        constrained_dof_indices.emplace_back(last_dof_index_test, last_dof_index_ansatz);
+      }
+
+      submit_constraints(matrix, constrained_dof_indices);
+
+      AssertDimension(n_dofs_1d_test, matrices.at(direction).n_rows());
+      AssertDimension(n_dofs_1d_ansatz, matrices.at(direction).n_cols());
+    }
+    return;
+  }
+
+  AssertThrow(false, ExcMessage("Post processing of constraints is not implemented."));
+  return;
 }
 
 

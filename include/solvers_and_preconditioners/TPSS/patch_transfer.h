@@ -67,6 +67,9 @@ public:
   void
   reinit_local_vector(AlignedVector<VectorizedArray<Number>> & vec) const;
 
+  const PatchDoFWorker<dim, Number> &
+  get_patch_dof_worker() const;
+
   /**
    * Extract from the global dof values @p src the patch relevant dof values.
    */
@@ -393,6 +396,14 @@ PatchTransfer<dim, Number, fe_degree>::reinit_local_vector(
 {
   Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
   vec.resize(n_dofs_per_patch());
+}
+
+
+template<int dim, typename Number, int fe_degree>
+const PatchDoFWorker<dim, Number> &
+PatchTransfer<dim, Number, fe_degree>::get_patch_dof_worker() const
+{
+  return patch_dof_worker;
 }
 
 

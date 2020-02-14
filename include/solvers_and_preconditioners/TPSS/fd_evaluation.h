@@ -171,6 +171,28 @@ private:
   void
   evaluate_gradients();
 
+  template<int fe_degree_ansatz, int n_q_points_ansatz>
+  void post_process_constraints(
+    std::array<Table<2, VectorizedArray<Number>>, dim> &                   matrices,
+    const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz) const;
+
+  void submit_constraints(Table<2, VectorizedArray<Number>> & subdomain_matrix,
+                          const std::vector<std::pair<unsigned int, unsigned int>> &
+                            constrained_test_and_ansatz_dof_indices) const
+  {
+    /// clear rows and columns of constrained dof indices and set diagonal entry to one
+    for(const auto [dof_index_test, dof_index_ansatz] : constrained_test_and_ansatz_dof_indices)
+    {
+      AssertIndexRange(dof_index_test, subdomain_matrix.n_rows());
+      AssertIndexRange(dof_index_ansatz, subdomain_matrix.n_cols());
+      for(auto j = 0U; j < subdomain_matrix.n_cols(); ++j)
+        subdomain_matrix(dof_index_test, j) = 0.;
+      for(auto i = 0U; i < subdomain_matrix.n_rows(); ++i)
+        subdomain_matrix(i, dof_index_ansatz) = 0.;
+      subdomain_matrix(dof_index_test, dof_index_ansatz) = 1.;
+    }
+  }
+
   VectorizedArray<Number> &
   shape_value_impl(const int dof,
                    const int q_point_no,
