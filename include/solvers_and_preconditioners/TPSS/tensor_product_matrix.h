@@ -117,7 +117,7 @@ public:
 
   using SKDMatrix         = TensorProductMatrixSymmetricSum<order, Number, n_rows_1d>;
   using value_type        = Number;
-  using scalar_value_type = ExtractScalarType<Number>;
+  using scalar_value_type = typename ExtractScalarType<Number>::type;
 
   TensorProductMatrix() = default;
 
