@@ -180,7 +180,9 @@ protected:
 
   const PatchInfo<dim> * const patch_info;
 
-  const unsigned int patch_size = 0;
+  const TPSS::PatchVariant patch_variant;
+
+  const unsigned int patch_size;
 
   mutable std::vector<CellIterator> cell_iterators_scratchpad;
 };
@@ -192,6 +194,7 @@ protected:
 template<int dim, typename number>
 PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
   : patch_info(&patch_info_in),
+    patch_variant(patch_info_in.get_additional_data().patch_variant),
     patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant))
 {
   AssertThrow(patch_info_in.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
@@ -208,6 +211,7 @@ PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
 template<int dim, typename number>
 PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
   : patch_info(&patch_info_in),
+    patch_variant(patch_info_in.get_additional_data().patch_variant),
     patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant))
 {
   AssertThrow(patch_info_in.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,

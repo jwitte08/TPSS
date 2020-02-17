@@ -236,6 +236,14 @@ public:
   PatchDoFWorker &
   operator=(const PatchDoFWorker &) = delete;
 
+  std::set<unsigned int>
+  get_constrained_local_dof_indices_1d(const unsigned int patch_id,
+                                       const unsigned int dimension,
+                                       const unsigned int lane) const;
+
+  std::set<unsigned int>
+  get_constrained_local_dof_indices(const unsigned int patch_id, const unsigned int lane) const;
+
   ArrayView<const types::global_dof_index>
   get_dof_indices_on_cell(const unsigned int patch_id,
                           const unsigned int cell_no,
@@ -424,6 +432,58 @@ inline PatchDoFWorker<dim, Number>::PatchDoFWorker(const DoFInfo<dim, Number> & 
          ExcMessage("Implemented for level cells only."));
 }
 
+
+template<int dim, typename Number>
+inline std::set<unsigned>
+PatchDoFWorker<dim, Number>::get_constrained_local_dof_indices_1d(const unsigned int patch_id,
+                                                                  const unsigned int dimension,
+                                                                  const unsigned int lane) const
+{
+  Assert(this->patch_info, ExcMessage("Patch info is not initialized."));
+  std::set<unsigned int> constrained_dof_indices;
+  const auto             n_dofs_1d = patch_dof_tensor.n_dofs_1d(dimension);
+
+  if(TPSS::PatchVariant::vertex == this->patch_variant)
+  {
+    const auto first_dof_index = 0U;
+    const auto last_dof_index  = n_dofs_1d - 1;
+    constrained_dof_indices.insert({first_dof_index, last_dof_index});
+    return constrained_dof_indices;
+  }
+
+  else if(TPSS::PatchVariant::cell == this->patch_variant)
+  {
+    const auto & boundary_ids = this->get_boundary_ids(patch_id);
+    AssertThrow(false, ExcMessage("Access variant is not implemented."));
+  }
+
+  AssertThrow(false, ExcMessage("Access variant is not implemented."));
+  return constrained_dof_indices;
+}
+
+
+template<int dim, typename Number>
+inline std::set<unsigned>
+PatchDoFWorker<dim, Number>::get_constrained_local_dof_indices(const unsigned int patch_id,
+                                                               const unsigned int lane) const
+{
+  AssertIndexRange(lane, macro_size);
+  if(lane >= this->n_lanes_filled(patch_id))
+    return get_constrained_local_dof_indices(patch_id, 0);
+
+  std::set<unsigned int> constrained_dof_indices;
+  for(auto dimension = 0U; dimension < dim; ++dimension)
+  {
+    const auto & constrained_dof_indices_1d =
+      get_constrained_local_dof_indices_1d(patch_id, dimension, lane);
+    for(const auto index : constrained_dof_indices_1d)
+    {
+      const auto & indices = patch_dof_tensor.sliced_indices(index, dimension);
+      constrained_dof_indices.insert(indices.cbegin(), indices.cend());
+    }
+  }
+  return constrained_dof_indices;
+}
 
 template<int dim, typename Number>
 inline ArrayView<const types::global_dof_index>
