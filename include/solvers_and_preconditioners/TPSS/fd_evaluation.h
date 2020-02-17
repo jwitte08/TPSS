@@ -182,6 +182,7 @@ private:
   void submit_constraints(Table<2, VectorizedArray<Number>> & subdomain_matrix,
                           const std::set<unsigned int> &      constrained_dof_indices_row,
                           const std::set<unsigned int> &      constrained_dof_indices_col,
+                          const unsigned int                  lane,
                           const bool                          at_block_diagonal) const
   {
     /// Clear rows and columns of constrained dof indices. If this matrix is
@@ -192,22 +193,22 @@ private:
     {
       AssertIndexRange(dof_index_test, subdomain_matrix.n_rows());
       for(auto j = 0U; j < subdomain_matrix.n_cols(); ++j)
-        subdomain_matrix(dof_index_test, j) = 0.;
+        subdomain_matrix(dof_index_test, j)[lane] = 0.;
       if(at_block_diagonal)
       {
         AssertIndexRange(dof_index_test, subdomain_matrix.n_cols());
-        subdomain_matrix(dof_index_test, dof_index_test) = 1.;
+        subdomain_matrix(dof_index_test, dof_index_test)[lane] = 1.;
       }
     }
     for(const auto dof_index_ansatz : constrained_dof_indices_col)
     {
       AssertIndexRange(dof_index_ansatz, subdomain_matrix.n_cols());
       for(auto i = 0U; i < subdomain_matrix.n_rows(); ++i)
-        subdomain_matrix(i, dof_index_ansatz) = 0.;
+        subdomain_matrix(i, dof_index_ansatz)[lane] = 0.;
       if(at_block_diagonal)
       {
         AssertIndexRange(dof_index_ansatz, subdomain_matrix.n_rows());
-        subdomain_matrix(dof_index_ansatz, dof_index_ansatz) = 1.;
+        subdomain_matrix(dof_index_ansatz, dof_index_ansatz)[lane] = 1.;
       }
     }
   }

@@ -17,7 +17,9 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action(
 {
   auto matrices = patch_action_impl(eval_ansatz, std::forward<CellOperation>(cell_operation));
 
-  // post_process_constraints(matrices, eval_ansatz);
+  /// Setting already the one-dimensional boundary conditions avoids singular
+  /// matrices.
+  post_process_constraints(matrices, eval_ansatz);
 
   return matrices;
 }
@@ -51,7 +53,9 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action(
   auto matrices =
     patch_action_impl(eval_ansatz, cell_operation, face_operation, interface_operation);
 
-  // post_process_constraints(matrices, eval_ansatz);
+  /// Setting already the one-dimensional boundary conditions avoids singular
+  /// matrices.
+  post_process_constraints(matrices, eval_ansatz);
 
   return matrices;
 }
@@ -191,27 +195,24 @@ void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::post_process_constrai
       const auto n_dofs_1d_ansatz = patch_dof_tensor_ansatz->n_dofs_1d(direction);
       auto &     matrix           = matrices[direction];
 
-      std::set<unsigned int> constrained_dof_indices_row;
-      std::set<unsigned int> constrained_dof_indices_col;
-      if(TPSS::PatchVariant::vertex == patch_variant)
+      for(auto lane = 0U; lane < macro_size; ++lane)
       {
-	/// TODO vary lane
-        constrained_dof_indices_row =
-          this->patch_worker.get_constrained_local_dof_indices_1d(patch_id, direction, /*lane*/ 0);
-        constrained_dof_indices_col =
-          eval_ansatz.patch_worker.get_constrained_local_dof_indices_1d(patch_id,
-                                                                        direction,
-                                                                        /*lane*/ 0);
-      }
+        std::set<unsigned int> constrained_dof_indices_row;
+        std::set<unsigned int> constrained_dof_indices_col;
+	constrained_dof_indices_row =
+	  this->patch_worker.get_constrained_local_dof_indices_1d(patch_id, direction, lane);
+	constrained_dof_indices_col =
+	  eval_ansatz.patch_worker.get_constrained_local_dof_indices_1d(patch_id,
+									direction,
+									lane);
 
-      std::cout << "d: " << direction << std::endl;
-      table_to_fullmatrix(matrix).print_formatted(std::cout);
-      const bool at_diagonal_block = component == eval_ansatz.component;
-      submit_constraints(matrix,
-                         constrained_dof_indices_row,
-                         constrained_dof_indices_col,
-                         at_diagonal_block);
-      table_to_fullmatrix(matrix).print_formatted(std::cout);
+        const bool at_diagonal_block = component == eval_ansatz.component;
+        submit_constraints(matrix,
+                           constrained_dof_indices_row,
+                           constrained_dof_indices_col,
+                           lane,
+                           at_diagonal_block);
+      }
 
       AssertDimension(n_dofs_1d_test, matrices.at(direction).n_rows());
       AssertDimension(n_dofs_1d_ansatz, matrices.at(direction).n_cols());

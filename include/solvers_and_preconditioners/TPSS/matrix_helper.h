@@ -72,15 +72,14 @@ struct ConstrainedMatrix
     Assert(constrained_dof_indices_row == constrained_dof_indices_col,
            ExcMessage("Row and column constraints don't coincide."));
 
-    // tmp_array.resize_fast(src_view.size());
-    // const ArrayView<Number> constrained_src_view(tmp_array.begin(), src_view.size());
-    // std::copy(src_view.begin(), src_view.end(), constrained_src_view.begin());
-    // zero_out_constrained_dofs_row(constrained_src_view);
+    tmp_array.resize_fast(src_view.size());
+    const ArrayView<Number> constrained_src_view(tmp_array.begin(), src_view.size());
+    std::copy(src_view.begin(), src_view.end(), constrained_src_view.begin());
+    zero_out_constrained_dofs_row(constrained_src_view);
 
-    // matrix.apply_inverse(dst_view, constrained_src_view);
-    matrix.apply_inverse(dst_view, src_view);
+    matrix.apply_inverse(dst_view, constrained_src_view);
 
-    // zero_out_constrained_dofs_col(dst_view);
+    zero_out_constrained_dofs_col(dst_view);
   }
 
   Table<2, Number>
