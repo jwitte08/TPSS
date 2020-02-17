@@ -145,16 +145,26 @@ protected:
         const auto dof_indices =
           extract_dof_indices_per_patch(patch, patch_transfer, tmp_vector, lane);
         FullMatrix<double> patch_matrix_reference(dof_indices.size());
-        std::cout << "dof indices @ lane " << lane << ": " << vector_to_string(dof_indices)
-                  << std::endl;
+        // std::cout << "dof indices @ lane " << lane << ": " << vector_to_string(dof_indices)
+        //           << std::endl;
         patch_matrix_reference.extract_submatrix_from(level_matrix, dof_indices, dof_indices);
 
-        /// transform local solver to FullMatrix type
-        const auto & local_matrix = local_solvers[patch];
-        const auto   patch_matrix_full =
-          table_to_fullmatrix(Tensors::matrix_to_table(local_matrix), lane);
-
+        /// transform local solver to FullMatrix type and fill constrained
+        /// diagonal entries with ones (in analogy to the matrix-free level
+        /// matrix)
+        const auto & local_matrix                  = local_solvers[patch];
+        const auto & constrained_local_dof_indices = local_matrix.constrained_dof_indices_row[lane];
+        auto patch_matrix_full = table_to_fullmatrix(Tensors::matrix_to_table(local_matrix), lane);
+        for(const auto i : constrained_local_dof_indices)
+          patch_matrix_full(i, i) += 1.;
         compare_matrix(patch_matrix_full, patch_matrix_reference);
+
+        /// same as before for the inverse operation
+        auto patch_matrix_inverse =
+          table_to_fullmatrix(Tensors::inverse_matrix_to_table(local_matrix), lane);
+        for(const auto i : constrained_local_dof_indices)
+          patch_matrix_inverse(i, i) += 1.;
+        compare_inverse_matrix(patch_matrix_inverse, patch_matrix_reference);
       }
   }
 
@@ -165,12 +175,12 @@ protected:
     Util::compare_matrix(patch_matrix_full, other, *pcout_owned);
   }
 
-  // void
-  // compare_inverse_matrix(const FullMatrix<double> & inverse_patch_matrix,
-  //                        const FullMatrix<double> & other) const
-  // {
-  //   Util::compare_inverse_matrix(inverse_patch_matrix, other, *pcout_owned);
-  // }
+  void
+  compare_inverse_matrix(const FullMatrix<double> & inverse_patch_matrix,
+                         const FullMatrix<double> & other) const
+  {
+    Util::compare_inverse_matrix(inverse_patch_matrix, other, *pcout_owned);
+  }
 
   // void
   // compare_inverse_matrix(const FullMatrix<double> & other) const
