@@ -180,6 +180,7 @@ index_fibre(const std::array<IntType, order - 1> index, const int mode, const In
 }
 
 
+
 // TODO could be constexpr?
 template<int order, typename IntType = unsigned int>
 struct TensorHelper
@@ -207,6 +208,48 @@ struct TensorHelper
   uni_index(const std::array<IntType, order> & multi_index) const
   {
     return Tensors::multi_to_uniindex<order, IntType>(multi_index, n);
+  }
+
+  std::vector<IntType>
+  sliced_indices(const IntType index, const unsigned int mode) const
+  {
+    AssertThrow(order > 0, ExcMessage("Not implemented."));
+
+    std::vector<IntType> indices;
+    AssertIndexRange(mode, order);
+    AssertIndexRange(index, size(mode));
+    if(order == 1)
+    {
+      indices.emplace_back(index);
+      return indices;
+    }
+
+    const auto restrict = [&](const std::array<IntType, order> & multiindex) {
+      std::array<IntType, order - 1> slicedindex;
+      for(auto m = 0U; m < mode; ++m)
+        slicedindex[m] = multiindex[m];
+      for(auto m = mode + 1; m < order; ++m)
+        slicedindex[m - 1] = multiindex[m];
+      return slicedindex;
+    };
+    const auto prolongate = [&](const std::array<IntType, order - 1> & slicedindex) {
+      std::array<IntType, order> multiindex;
+      for(auto m = 0U; m < mode; ++m)
+        multiindex[m] = slicedindex[m];
+      multiindex[mode] = index;
+      for(auto m = mode + 1; m < order; ++m)
+        multiindex[m] = slicedindex[m - 1];
+      return multiindex;
+    };
+
+    TensorHelper<order - 1, IntType> slice(restrict(this->n));
+    for(auto i = 0U; i < slice.n_flat(); ++i)
+    {
+      const auto sliced_index = slice.multi_index(i);
+      const auto multi_index  = prolongate(sliced_index);
+      indices.emplace_back(this->uni_index(multi_index));
+    }
+    return indices;
   }
 
   IntType
