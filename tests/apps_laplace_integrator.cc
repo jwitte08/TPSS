@@ -52,9 +52,7 @@ protected:
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
     rt_parameters.mesh.n_repetitions    = 2U;
 
-    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = params.patch_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
-    rt_parameters.multigrid.post_smoother.schwarz = rt_parameters.multigrid.pre_smoother.schwarz;
   }
 
   void
@@ -75,7 +73,9 @@ protected:
     };
 
     poisson_problem.reset();
-    rt_parameters.mesh.n_refinements = params.n_refinements;
+    rt_parameters.mesh.n_refinements                           = params.n_refinements;
+    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant = params.patch_variant;
+    rt_parameters.multigrid.post_smoother.schwarz = rt_parameters.multigrid.pre_smoother.schwarz;
 
     const auto new_problem = std::make_shared<PoissonProblem>(rt_parameters);
     initialize_problem(new_problem);
@@ -148,15 +148,14 @@ protected:
         const auto dof_indices =
           extract_dof_indices_per_patch(patch, patch_transfer, tmp_vector, lane);
         FullMatrix<double> patch_matrix_reference(dof_indices.size());
-        // std::cout << "dof indices @ lane " << lane << ": " << vector_to_string(dof_indices)
-        //           << std::endl;
         patch_matrix_reference.extract_submatrix_from(level_matrix, dof_indices, dof_indices);
+
+        const auto & local_matrix                  = local_solvers[patch];
+        const auto & constrained_local_dof_indices = local_matrix.constrained_dof_indices_row[lane];
 
         /// transform local solver to FullMatrix type and fill constrained
         /// diagonal entries with ones (in analogy to the matrix-free level
         /// matrix)
-        const auto & local_matrix                  = local_solvers[patch];
-        const auto & constrained_local_dof_indices = local_matrix.constrained_dof_indices_row[lane];
         if(test_variant == TestVariant::matrix)
         {
           auto patch_matrix_full =
@@ -170,12 +169,6 @@ protected:
         /// same as before for the inverse operation
         if(test_variant == TestVariant::inverse)
         {
-          // *pcout_owned << "unconstrained local matrix and inverse:" << std::endl;
-          // auto unconstrained_patch_matrix =
-          //   table_to_fullmatrix(Tensors::matrix_to_table(local_matrix.matrix), lane);
-          // auto unconstrained_patch_inverse =
-          //   table_to_fullmatrix(Tensors::inverse_matrix_to_table(local_matrix.matrix), lane);
-          // compare_matrix(unconstrained_patch_matrix, unconstrained_patch_inverse);
           *pcout_owned << "compare inverse of local matrix:" << std::endl;
           auto patch_matrix_inverse =
             table_to_fullmatrix(Tensors::inverse_matrix_to_table(local_matrix), lane);
@@ -231,6 +224,17 @@ TYPED_TEST_P(TestLaplaceIntegrator, FDInverseVertexPatch)
   Fixture::params.n_refinements = 0U;
   Fixture::test(TestVariant::inverse);
 }
+
+// TYPED_TEST_P(TestLaplaceIntegrator, FDAssemblyCellPatch)
+// {
+//   using Fixture = TestLaplaceIntegrator<TypeParam>;
+
+//   Fixture::rt_parameters.mesh.n_repetitions = 3U;
+//   Fixture::params.n_refinements             = 0U;
+//   Fixture::params.patch_variant             = TPSS::PatchVariant::cell;
+//   Fixture::test();
+//   Fixture::test(TestVariant::inverse);
+// }
 
 REGISTER_TYPED_TEST_SUITE_P(TestLaplaceIntegrator, FDAssemblyVertexPatch, FDInverseVertexPatch);
 
