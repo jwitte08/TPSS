@@ -34,6 +34,7 @@
 #include <deal.II/numerics/vector_tools.h>
 
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
+#include "solvers_and_preconditioners/TPSS/matrix_helper.h"
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
 
 #include "coloring.h"
@@ -64,7 +65,8 @@ struct ModelProblem : public Subscriptor
   using value_type_mg = Number;
   using LEVEL_MATRIX  = Laplace::CFEM::CombinedOperator<dim, fe_degree, value_type_mg>;
   using MG_TRANSFER   = MGTransferMatrixFree<dim, value_type_mg>;
-  using PATCH_MATRIX  = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>, n_patch_dofs>;
+  using TP_MATRIX     = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>, n_patch_dofs>;
+  using PATCH_MATRIX  = ConstrainedMatrix<TP_MATRIX>;
   using SCHWARZ_PRECONDITIONER = SchwarzPreconditioner<dim, LEVEL_MATRIX, VECTOR, PATCH_MATRIX>;
   using SCHWARZ_SMOOTHER       = SchwarzSmoother<dim, LEVEL_MATRIX, SCHWARZ_PRECONDITIONER, VECTOR>;
   using MG_SMOOTHER_SCHWARZ    = MGSmootherSchwarz<dim, LEVEL_MATRIX, PATCH_MATRIX, VECTOR>;

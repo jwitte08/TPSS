@@ -877,7 +877,7 @@ public:
   using transfer_type = typename TPSS::PatchTransfer<dim, Number, fe_degree>;
 
   // static constexpr int fe_order   = fe_degree + 1;
-  // static constexpr int macro_size = VectorizedArray<Number>::n_array_elements;
+  static constexpr int macro_size = VectorizedArray<Number>::n_array_elements;
 
   template<typename TPMatrix, typename OperatorType>
   void
@@ -897,7 +897,19 @@ public:
       eval.reinit(patch);
       const auto mass_matrices    = eval.patch_action(cell_mass_operation);
       const auto laplace_matrices = eval.patch_action(cell_laplace_operation);
-      local_matrices[patch].reinit(mass_matrices, laplace_matrices);
+
+      /// initialize (fast diagonalized) matrix
+      auto & local_solver = local_matrices[patch];
+      local_solver.matrix.reinit(mass_matrices, laplace_matrices);
+
+      /// set constraints
+      for(auto lane = 0U; lane < macro_size; ++lane)
+      {
+        auto tmp_row = eval.get_constrained_dof_indices(lane);
+        std::swap(local_solver.constrained_dof_indices_row[lane], tmp_row);
+        auto tmp_col = eval.get_constrained_dof_indices(lane);
+        std::swap(local_solver.constrained_dof_indices_col[lane], tmp_col);
+      }
     }
   }
 
