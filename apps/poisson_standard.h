@@ -370,6 +370,16 @@ struct ModelProblem : public Subscriptor
       typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
       mgss_data.coloring_func = std::ref(red_black_coloring);
       mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
+      std::set<types::boundary_id> dirichlet_boundary_ids;
+      dirichlet_boundary_ids.insert(0);
+      mgss_data.dirichlet_ids.emplace_back(dirichlet_boundary_ids);
+      auto & shape_infos = mgss_data.shape_infos;
+      shape_infos.reinit(1, dim);
+      for(auto d = 0U; d < dim; ++d)
+      {
+        const auto mf_storage = mg_matrices[mg_matrices.max_level()].get_matrix_free();
+        shape_infos(0, d)     = mf_storage->get_shape_info(0);
+      }
       mgss->initialize(mg_matrices, mgss_data);
       mg_schwarz_smoother_pre = mgss;
     }

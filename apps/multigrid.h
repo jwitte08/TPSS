@@ -192,6 +192,7 @@ class MGSmootherSchwarz
       VectorType>
 {
 public:
+  using value_type          = typename MatrixType::value_type;
   using preconditioner_type = SchwarzPreconditioner<dim, MatrixType, VectorType, PatchMatrixType>;
   using smoother_type       = SchwarzSmoother<dim, MatrixType, preconditioner_type, VectorType>;
   using Base                = MGSmootherRelaxation<MatrixType, smoother_type, VectorType>;
@@ -204,8 +205,10 @@ public:
       const std::vector<std::vector<CellIterator>> &      patches,
       const typename TPSS::PatchInfo<dim>::AdditionalData additional_data)>;
 
-    UserColoring      coloring_func;
-    SmootherParameter parameters;
+    UserColoring                                                                    coloring_func;
+    std::vector<std::set<types::boundary_id>>                                       dirichlet_ids;
+    Table<2, internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<value_type>>> shape_infos;
+    SmootherParameter                                                               parameters;
   };
 
   template<typename OtherNumber>
@@ -222,6 +225,8 @@ public:
     sd_handler_data.level = level;
     if(prms.schwarz.manual_coloring)
       sd_handler_data.coloring_func = additional_data.coloring_func;
+    sd_handler_data.shape_infos   = additional_data.shape_infos;
+    sd_handler_data.dirichlet_ids = additional_data.dirichlet_ids;
 
     /// Initialize SubdomainHandler
     const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
