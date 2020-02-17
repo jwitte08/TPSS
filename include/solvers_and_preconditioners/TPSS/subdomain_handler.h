@@ -185,6 +185,7 @@ struct SubdomainHandler<dim, number>::AdditionalData
     manual_gathering_func;
 
   Table<2, internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>>> shape_infos;
+  std::vector<std::set<types::boundary_id>>                                   dirichlet_ids;
 
   unsigned int n_q_points_surrogate      = 5;
   bool         normalize_surrogate_patch = false;

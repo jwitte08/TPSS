@@ -101,8 +101,13 @@ SubdomainHandler<dim, number>::internal_reinit()
     std::set<unsigned int> initialized_indices;
     for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
     {
-      const auto unique_dofh_index        = get_unique_dofh_index(dofh_index);
-      auto &     dof_info                 = dof_infos[unique_dofh_index];
+      const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
+      if(!additional_data.dirichlet_ids.empty())
+      {
+        AssertIndexRange(unique_dofh_index, additional_data.dirichlet_ids.size());
+        dof_info_data.dirichlet_ids = additional_data.dirichlet_ids.at(unique_dofh_index);
+      }
+      auto & dof_info                     = dof_infos[unique_dofh_index];
       const auto [dummy, not_initialized] = initialized_indices.insert(unique_dofh_index);
       (void)dummy;
       if(not_initialized)

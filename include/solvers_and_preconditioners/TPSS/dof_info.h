@@ -215,7 +215,8 @@ struct DoFInfo
 template<int dim, typename Number>
 struct DoFInfo<dim, Number>::AdditionalData
 {
-  unsigned int level = numbers::invalid_unsigned_int;
+  unsigned int                 level = numbers::invalid_unsigned_int;
+  std::set<types::boundary_id> dirichlet_ids;
 };
 
 
@@ -441,20 +442,40 @@ PatchDoFWorker<dim, Number>::get_constrained_local_dof_indices_1d(const unsigned
 {
   Assert(this->patch_info, ExcMessage("Patch info is not initialized."));
   std::set<unsigned int> constrained_dof_indices;
-  const auto             n_dofs_1d = patch_dof_tensor.n_dofs_1d(dimension);
+  const auto             n_dofs_1d       = patch_dof_tensor.n_dofs_1d(dimension);
+  const auto             first_dof_index = 0U;
+  const auto             last_dof_index  = n_dofs_1d - 1;
 
   if(TPSS::PatchVariant::vertex == this->patch_variant)
   {
-    const auto first_dof_index = 0U;
-    const auto last_dof_index  = n_dofs_1d - 1;
     constrained_dof_indices.insert({first_dof_index, last_dof_index});
     return constrained_dof_indices;
   }
 
   else if(TPSS::PatchVariant::cell == this->patch_variant)
   {
-    const auto & boundary_ids = this->get_boundary_ids(patch_id);
-    AssertThrow(false, ExcMessage("Access variant is not implemented."));
+    const auto & boundary_ids    = this->get_boundary_ids(patch_id);
+    const auto & additional_data = dof_info->get_additional_data();
+    const auto   local_face_no   = [](const auto dimension, const auto face_no_1d) {
+      /// two faces per dimension, namely endpoints of intervals
+      return dimension * 2 + face_no_1d;
+    };
+
+    {
+      const types::boundary_id boundary_id = boundary_ids[local_face_no(dimension, 0)][lane];
+      const bool               at_dirichlet_boundary =
+        additional_data.dirichlet_ids.find(boundary_id) != additional_data.dirichlet_ids.cend();
+      if(at_dirichlet_boundary)
+        constrained_dof_indices.insert(first_dof_index);
+    }
+    {
+      const types::boundary_id boundary_id = boundary_ids[local_face_no(dimension, 1)][lane];
+      const bool               at_dirichlet_boundary =
+        additional_data.dirichlet_ids.find(boundary_id) != additional_data.dirichlet_ids.cend();
+      if(at_dirichlet_boundary)
+        constrained_dof_indices.insert(last_dof_index);
+    }
+    return constrained_dof_indices;
   }
 
   AssertThrow(false, ExcMessage("Access variant is not implemented."));
