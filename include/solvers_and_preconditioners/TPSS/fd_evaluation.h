@@ -390,6 +390,10 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
     n_cells_per_direction(TPSS::UniversalInfo<dim>::n_cells_per_direction(patch_variant)),
     scratch_fedata(mf_storage.acquire_scratch_data())
 {
+  if(TPSS::DoFLayout::Q == get_dof_layout())
+    AssertThrow(patch_variant == TPSS::PatchVariant::vertex,
+                ExcMessage("Other patch variants aren't implemented."));
+
   AssertIndexRange(dofh_index, sd_handler.n_components());
   for(auto d = 0U; d < dim; ++d)
   {

@@ -199,12 +199,10 @@ void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::post_process_constrai
       {
         std::set<unsigned int> constrained_dof_indices_row;
         std::set<unsigned int> constrained_dof_indices_col;
-	constrained_dof_indices_row =
-	  this->patch_worker.get_constrained_local_dof_indices_1d(patch_id, direction, lane);
-	constrained_dof_indices_col =
-	  eval_ansatz.patch_worker.get_constrained_local_dof_indices_1d(patch_id,
-									direction,
-									lane);
+        constrained_dof_indices_row =
+          this->patch_worker.get_constrained_local_dof_indices_1d(patch_id, direction, lane);
+        constrained_dof_indices_col =
+          eval_ansatz.patch_worker.get_constrained_local_dof_indices_1d(patch_id, direction, lane);
 
         const bool at_diagonal_block = component == eval_ansatz.component;
         submit_constraints(matrix,
