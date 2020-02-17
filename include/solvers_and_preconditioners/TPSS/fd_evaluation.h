@@ -65,6 +65,9 @@ public:
   std::bitset<macro_size>
   get_boundary_mask(const int direction, const int cell_no, const int face_no) const;
 
+  std::set<unsigned int>
+  get_constrained_dof_indices(const unsigned int lane) const;
+
   TPSS::DoFLayout
   get_dof_layout() const;
 
@@ -177,19 +180,35 @@ private:
     const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz) const;
 
   void submit_constraints(Table<2, VectorizedArray<Number>> & subdomain_matrix,
-                          const std::vector<std::pair<unsigned int, unsigned int>> &
-                            constrained_test_and_ansatz_dof_indices) const
+                          const std::set<unsigned int> &      constrained_dof_indices_row,
+                          const std::set<unsigned int> &      constrained_dof_indices_col,
+                          const bool                          at_block_diagonal) const
   {
-    /// clear rows and columns of constrained dof indices and set diagonal entry to one
-    for(const auto [dof_index_test, dof_index_ansatz] : constrained_test_and_ansatz_dof_indices)
+    /// Clear rows and columns of constrained dof indices. If this matrix is
+    /// part of the block diagonal of the local patch matrix (in case of
+    /// vector-valued problems) the diagonal entry is set to one such that @p
+    /// subdomain_matrix is non-singular.
+    for(const auto dof_index_test : constrained_dof_indices_row)
     {
       AssertIndexRange(dof_index_test, subdomain_matrix.n_rows());
-      AssertIndexRange(dof_index_ansatz, subdomain_matrix.n_cols());
       for(auto j = 0U; j < subdomain_matrix.n_cols(); ++j)
         subdomain_matrix(dof_index_test, j) = 0.;
+      if(at_block_diagonal)
+      {
+        AssertIndexRange(dof_index_test, subdomain_matrix.n_cols());
+        subdomain_matrix(dof_index_test, dof_index_test) = 1.;
+      }
+    }
+    for(const auto dof_index_ansatz : constrained_dof_indices_col)
+    {
+      AssertIndexRange(dof_index_ansatz, subdomain_matrix.n_cols());
       for(auto i = 0U; i < subdomain_matrix.n_rows(); ++i)
         subdomain_matrix(i, dof_index_ansatz) = 0.;
-      subdomain_matrix(dof_index_test, dof_index_ansatz) = 1.;
+      if(at_block_diagonal)
+      {
+        AssertIndexRange(dof_index_ansatz, subdomain_matrix.n_rows());
+        subdomain_matrix(dof_index_ansatz, dof_index_ansatz) = 1.;
+      }
     }
   }
 
@@ -251,6 +270,7 @@ private:
 
   const MatrixFree<dim, Number> & mf_storage;
 
+  const unsigned int       component;
   const unsigned int       level;
   const unsigned int       n_subdomains;
   const unsigned int       n_colors;
@@ -361,6 +381,7 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
     patch_worker(sd_handler_in.get_dof_info(dofh_index)),
     mapping_info(sd_handler_in.get_mapping_info()),
     mf_storage(sd_handler_in.get_matrix_free()),
+    component(dofh_index),
     level(sd_handler_in.get_additional_data().level),
     n_subdomains(sd_handler_in.get_patch_info().subdomain_partition_data.n_subdomains()),
     n_colors(sd_handler_in.get_patch_info().subdomain_partition_data.n_colors()),
@@ -368,6 +389,7 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
     n_cells_per_direction(TPSS::UniversalInfo<dim>::n_cells_per_direction(patch_variant)),
     scratch_fedata(mf_storage.acquire_scratch_data())
 {
+  AssertIndexRange(dofh_index, sd_handler.n_components());
   for(auto d = 0U; d < dim; ++d)
   {
     /// static variables fe_order and n_q_points_1d_static have to define the maximum
@@ -716,6 +738,15 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_normal_vector(const in
   normal_vector *= 0.;
   normal_vector[direction] = get_normal(face_no);
   return normal_vector;
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline std::set<unsigned int>
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_constrained_dof_indices(
+  const unsigned int lane) const
+{
+  return patch_worker.get_constrained_local_dof_indices(patch_id, lane);
 }
 
 
