@@ -16,16 +16,11 @@ enum class CachingStrategy
 {
   Cached,
   OnTheFly,
-  CellsCachedDofsFly,
-  CellsFlyDofsCached
 };
 std::string
 str_caching_strategy(CachingStrategy caching_strategy)
 {
-  std::string str[] = {"cached",
-                       "on-the-fly",
-                       "cells cached and dofs on-the-fly",
-                       "cells on-the-fly and dofs cached"};
+  std::string str[] = {"cached", "on-the-fly"};
   return str[(int)caching_strategy];
 }
 

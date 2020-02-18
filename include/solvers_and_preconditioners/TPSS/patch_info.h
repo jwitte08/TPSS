@@ -80,32 +80,45 @@ public:
   std::pair<int, int>
   get_cell_level_and_index(const unsigned int cell_position) const
   {
+    // OLD !!!
+    // AssertIndexRange(cell_position, n_cells_plain());
+    // if(level_and_index_is_cached)
+    // {
+    //   AssertDimension(n_cells_plain(), get_internal_data()->cell_level_and_index_pairs.size());
+    //   return (get_internal_data()->cell_level_and_index_pairs)[cell_position];
+    // }
+    // AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
+    // const auto & cell = (get_internal_data()->cell_iterators)[cell_position];
+    // return std::make_pair<int, int>(cell->level(), cell->index());
+
     AssertIndexRange(cell_position, n_cells_plain());
-    if(level_and_index_is_cached)
-    {
-      AssertDimension(n_cells_plain(), get_internal_data()->cell_level_and_index_pairs.size());
-      return (get_internal_data()->cell_level_and_index_pairs)[cell_position];
-    }
-    AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
-    const auto & cell = (get_internal_data()->cell_iterators)[cell_position];
-    return std::make_pair<int, int>(cell->level(), cell->index());
+    AssertDimension(n_cells_plain(), get_internal_data()->cell_level_and_index_pairs.size());
+    return (get_internal_data()->cell_level_and_index_pairs)[cell_position];
   }
 
   CellIterator
   get_cell_iterator(const unsigned int cell_position) const
   {
-    AssertIndexRange(cell_position, n_cells_plain());
-    if(iterator_is_cached)
-    {
-      AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
-      return (get_internal_data()->cell_iterators)[cell_position];
-    }
+    // OLD !!!
+    // AssertIndexRange(cell_position, n_cells_plain());
+    // if(iterator_is_cached)
+    // {
+    //   AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
+    //   return (get_internal_data()->cell_iterators)[cell_position];
+    // }
+    // const auto & tria                   = get_triangulation();
+    // const auto [cell_level, cell_index] = get_cell_level_and_index(cell_position);
+    // // TODO we should not need dof handler here -> exchange CellIterator
+    // const auto dof_handler = get_internal_data()->dof_handler;
+    // Assert(dof_handler, ExcMessage("DoFHandler is not set. TODO"));
+    // return CellIterator(&tria, cell_level, cell_index, dof_handler);
+
     const auto & tria                   = get_triangulation();
     const auto [cell_level, cell_index] = get_cell_level_and_index(cell_position);
-    // // TODO we should not need dof handler here
-    // const auto dof_handler = get_internal_data()->dof_handler;
-    // Assert(dof_handler, ExcMessage("DoFHandler not set."));
-    return CellIterator(&tria, cell_level, cell_index, nullptr);
+    // TODO we should not need dof handler here -> exchange CellIterator
+    const auto dof_handler = get_internal_data()->dof_handler;
+    Assert(dof_handler, ExcMessage("DoFHandler is not set. TODO"));
+    return CellIterator(&tria, cell_level, cell_index, dof_handler);
   }
 
   const Triangulation<dim> &
@@ -413,6 +426,7 @@ struct PatchInfo<dim>::InternalData
    * Underlying triangulation cell iterators are based on.
    */
   const Triangulation<dim> * triangulation = nullptr;
+
   // TODO we should not need dof handler !
   const DoFHandler<dim> * dof_handler = nullptr;
 };
@@ -609,7 +623,7 @@ template<int dim>
 inline bool
 PatchInfo<dim>::InternalData::empty() const
 {
-  return cell_iterators.empty() && cell_level_and_index_pairs.empty();
+  return n_cells_plain() == 0; // cell_iterators.empty() && cell_level_and_index_pairs.empty();
 }
 
 
@@ -617,10 +631,14 @@ template<int dim>
 inline bool
 PatchInfo<dim>::InternalData::empty_on_all() const
 {
-  const auto n_iterators_mpimax = Utilities::MPI::max(cell_iterators.size(), MPI_COMM_WORLD);
-  const auto n_pairs_mpimax =
-    Utilities::MPI::max(cell_level_and_index_pairs.size(), MPI_COMM_WORLD);
-  return (n_iterators_mpimax == 0) && (n_pairs_mpimax);
+  // const auto n_iterators_mpimax = Utilities::MPI::max(cell_iterators.size(), MPI_COMM_WORLD);
+  // const auto n_pairs_mpimax =
+  //   Utilities::MPI::max(cell_level_and_index_pairs.size(), MPI_COMM_WORLD);
+  // return (n_iterators_mpimax == 0) && (n_pairs_mpimax);
+  const auto n_cells_plain_mpimax = Utilities::MPI::max(n_cells_plain(), MPI_COMM_WORLD);
+  // const auto n_pairs_mpimax =
+  //   Utilities::MPI::max(cell_level_and_index_pairs.size(), MPI_COMM_WORLD);
+  return n_cells_plain_mpimax == 0;
 }
 
 

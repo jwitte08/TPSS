@@ -14,8 +14,9 @@ PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
   AssertIndexRange(additional_data_in.level, dof_handler->get_triangulation().n_global_levels());
 
   // *** submit additional data
-  additional_data     = additional_data_in;
-  internal_data.level = additional_data.level;
+  additional_data           = additional_data_in;
+  internal_data.level       = additional_data.level;
+  internal_data.dof_handler = dof_handler;
 
   // *** extract and colorize subdomains depending on the patch variant
   if(additional_data.patch_variant == TPSS::PatchVariant::cell)
@@ -31,23 +32,16 @@ PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
   internal_data.triangulation = &(dof_handler->get_triangulation());
   // TODO we should not need to store the dof handler
   internal_data.dof_handler = dof_handler;
-  if(CachingStrategy::Cached == additional_data.caching_strategy ||
-     CachingStrategy::CellsCachedDofsFly == additional_data.caching_strategy)
-  {
-    internal_data.cell_iterators.shrink_to_fit();
-  }
-  else if(CachingStrategy::OnTheFly == additional_data.caching_strategy ||
-          CachingStrategy::CellsFlyDofsCached == additional_data.caching_strategy)
-  {
-    internal_data.cell_level_and_index_pairs.clear();
-    std::transform(internal_data.cell_iterators.cbegin(),
-                   internal_data.cell_iterators.cend(),
-                   std::back_inserter(internal_data.cell_level_and_index_pairs),
-                   [](const auto & cell) {
-                     return std::make_pair<int, int>(cell->level(), cell->index());
-                   });
-    internal_data.cell_iterators.clear();
-  }
+
+  internal_data.cell_iterators.shrink_to_fit();
+  internal_data.cell_level_and_index_pairs.clear();
+  std::transform(internal_data.cell_iterators.cbegin(),
+                 internal_data.cell_iterators.cend(),
+                 std::back_inserter(internal_data.cell_level_and_index_pairs),
+                 [](const auto & cell) {
+                   return std::make_pair<int, int>(cell->level(), cell->index());
+                 });
+  internal_data.cell_iterators.clear();
   iterator_is_cached        = !internal_data.cell_iterators.empty();
   level_and_index_is_cached = !internal_data.cell_level_and_index_pairs.empty();
 
