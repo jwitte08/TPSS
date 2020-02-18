@@ -103,19 +103,19 @@ struct ModelProblem : public Subscriptor
   MGConstrainedDoFs                          mg_constrained_dofs;
   MGLevelObject<LEVEL_MATRIX>                mg_matrices;
   MG_TRANSFER                                mg_transfer;
-  mutable RedBlackColoring<dim>              red_black_coloring;
+  mutable TiledColoring<dim>                 user_coloring;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_pre;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_post;
   const MGSmootherBase<VECTOR> *             mg_smoother_pre;
   const MGSmootherBase<VECTOR> *             mg_smoother_post;
-  // CoarseGridSolver<LEVEL_MATRIX, VECTOR>     coarse_grid_solver;
-  // const MGCoarseGridBase<VECTOR> *           mg_coarse_grid;
-  // mg::Matrix<VECTOR>                         mg_matrix_wrapper;
-  // std::shared_ptr<Multigrid<VECTOR>>         multigrid;
+  CoarseGridSolver<LEVEL_MATRIX, VECTOR>     coarse_grid_solver;
+  const MGCoarseGridBase<VECTOR> *           mg_coarse_grid;
+  mg::Matrix<VECTOR>                         mg_matrix_wrapper;
+  std::shared_ptr<Multigrid<VECTOR>>         multigrid;
 
   // *** preconditioners
-  // std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
-  PreconditionIdentity preconditioner_id;
+  std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
+  PreconditionIdentity                preconditioner_id;
 
 
   ModelProblem(const RT::Parameter & rt_parameters_in)
@@ -128,13 +128,13 @@ struct ModelProblem : public Subscriptor
                     parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
       fe(std::make_shared<FE_Q<dim>>(fe_degree)),
       mapping(fe_degree),
-      analytical_solution(std::make_shared<Laplace::ZeroDirichletUnitCube<dim>>()),
+      analytical_solution(std::make_shared<Laplace::Solution<dim>>()),
       load_function(std::make_shared<Laplace::ManufacturedLoad<dim>>(analytical_solution)),
       level(static_cast<unsigned int>(-1)),
-      red_black_coloring(rt_parameters_in.mesh),
+      user_coloring(rt_parameters_in.mesh),
       mg_smoother_pre(nullptr),
-      mg_smoother_post(nullptr) /*,
-       mg_coarse_grid(nullptr)*/
+      mg_smoother_post(nullptr),
+      mg_coarse_grid(nullptr)
   {
   }
 
@@ -254,7 +254,7 @@ struct ModelProblem : public Subscriptor
     typename SubdomainHandler<dim, OtherNumber>::AdditionalData fdss_additional_data;
     fdss_additional_data.level = level;
     if(rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring)
-      fdss_additional_data.coloring_func = std::ref(red_black_coloring);
+      fdss_additional_data.coloring_func = std::ref(user_coloring);
     rt_parameters.template fill_schwarz_smoother_data<dim, OtherNumber>(fdss_additional_data,
                                                                         is_pre_smoother);
 
@@ -368,7 +368,7 @@ struct ModelProblem : public Subscriptor
     {
       const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
       typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
-      mgss_data.coloring_func = std::ref(red_black_coloring);
+      mgss_data.coloring_func = std::ref(user_coloring);
       mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
       std::set<types::boundary_id> dirichlet_boundary_ids;
       dirichlet_boundary_ids.insert(0);
@@ -418,7 +418,7 @@ struct ModelProblem : public Subscriptor
           sd_handler_data, false);
         sd_handler_data.level = mg_matrices.max_level();
         if(rt_parameters.multigrid.post_smoother.schwarz.manual_coloring)
-          sd_handler_data.coloring_func = std::ref(red_black_coloring);
+          sd_handler_data.coloring_func = std::ref(user_coloring);
         const bool is_shallow_copyable =
           mg_schwarz_smoother_pre->get_preconditioner(level)->is_shallow_copyable(sd_handler_data);
 
@@ -426,7 +426,7 @@ struct ModelProblem : public Subscriptor
         {
           const auto mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
           typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
-          mgss_data.coloring_func = std::ref(red_black_coloring);
+          mgss_data.coloring_func = std::ref(user_coloring);
           mgss_data.parameters    = rt_parameters.multigrid.post_smoother;
           mgss->initialize(*mg_schwarz_smoother_pre, mgss_data);
           mg_schwarz_smoother_post = mgss;
@@ -441,12 +441,12 @@ struct ModelProblem : public Subscriptor
 
 
   void
-  prepare_multigrid(const bool compress = false)
+  prepare_multigrid()
   {
     // *** clear multigrid infrastructure
-    // multigrid.reset();
-    // mg_matrix_wrapper.reset();
-    // coarse_grid_solver.clear();
+    multigrid.reset();
+    mg_matrix_wrapper.reset();
+    coarse_grid_solver.clear();
     mg_smoother_post = nullptr;
     mg_smoother_pre  = nullptr;
     mg_schwarz_smoother_pre.reset();
@@ -500,34 +500,30 @@ struct ModelProblem : public Subscriptor
     else
       AssertThrow(false, ExcMessage("Post-smoothing variant is not implemented. TODO"));
 
-    // // *** initialize coarse grid solver
-    // coarse_grid_solver.initialize(mg_matrices[mg_level_min],
-    // rt_parameters.multigrid.coarse_grid); mg_coarse_grid = &coarse_grid_solver;
+    // *** initialize coarse grid solver
+    coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
+    mg_coarse_grid = &coarse_grid_solver;
 
-    // mg_matrix_wrapper.initialize(mg_matrices);
-    // multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
-    //                                                 *mg_coarse_grid,
-    //                                                 mg_transfer,
-    //                                                 *mg_smoother_pre,
-    //                                                 *mg_smoother_post,
-    //                                                 mg_level_min,
-    //                                                 mg_level_max);
-
-    // *** clear obsolete data
-    if(compress)
-      mg_constrained_dofs.clear();
+    mg_matrix_wrapper.initialize(mg_matrices);
+    multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
+                                                    *mg_coarse_grid,
+                                                    mg_transfer,
+                                                    *mg_smoother_pre,
+                                                    *mg_smoother_post,
+                                                    mg_level_min,
+                                                    mg_level_max);
   }
 
 
-  // const GMG_PRECONDITIONER &
-  // prepare_preconditioner_mg()
-  // {
-  //   prepare_multigrid(/*compress*/ true);
-  //   AssertThrow(multigrid, ExcNotInitialized());
+  const GMG_PRECONDITIONER &
+  prepare_preconditioner_mg()
+  {
+    prepare_multigrid();
+    AssertThrow(multigrid, ExcNotInitialized());
 
-  //   preconditioner_mg = std::make_shared<GMG_PRECONDITIONER>(dof_handler, *multigrid,
-  //   mg_transfer); return *preconditioner_mg;
-  // }
+    preconditioner_mg = std::make_shared<GMG_PRECONDITIONER>(dof_handler, *multigrid, mg_transfer);
+    return *preconditioner_mg;
+  }
 
 
   /**
@@ -670,15 +666,15 @@ struct ModelProblem : public Subscriptor
         }
         case SolverParameter::PreconditionVariant::GMG:
         {
-          // {
-          //   TimerOutput::Scope time_section(time, "Setup MG preconditioner");
-          //   prepare_preconditioner_mg();
-          // }
-          // {
-          //   print_informations();
-          //   TimerOutput::Scope time_section(time, "Solve");
-          //   solve(*preconditioner_mg);
-          // }
+          {
+            TimerOutput::Scope time_section(time, "Setup MG preconditioner");
+            prepare_preconditioner_mg();
+          }
+          {
+            print_informations();
+            TimerOutput::Scope time_section(time, "Solve");
+            solve(*preconditioner_mg);
+          }
           break;
         }
         default:
