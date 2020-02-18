@@ -140,7 +140,8 @@ struct DoFInfo
   clear()
   {
     patch_info = nullptr;
-    dof_indices.clear();
+    start_and_number_of_dof_indices.clear();
+    dof_indices_flat.clear();
     dof_handler     = nullptr;
     additional_data = AdditionalData{};
     l2h.clear();
@@ -161,10 +162,12 @@ struct DoFInfo
 
   const DoFHandler<dim> * dof_handler = nullptr;
 
+  std::vector<std::pair<unsigned int, unsigned int>> start_and_number_of_dof_indices;
+
   /*
-   * Array storing for each cell in @p cell_iterators the first dof index.
+   * Array uniquely storing for each cell stored in patch_info global dof indices.
    */
-  std::vector<std::vector<types::global_dof_index>> dof_indices;
+  std::vector<types::global_dof_index> dof_indices_flat;
 
   const PatchInfo<dim> * patch_info = nullptr;
 
@@ -178,16 +181,28 @@ struct DoFInfo
   {
     Assert(patch_info, ExcMessage("Patch info not initialized."));
     const auto [cell_level, cell_index] = patch_info->get_cell_level_and_index(cell_position);
-    const auto & tria                   = dof_handler->get_triangulation();
-    return DoFAccessor<dim, DoFHandler<dim>, true>(&tria, cell_level, cell_index, dof_handler);
+    return get_level_dof_accessor_impl(cell_index, cell_level);
+  }
+
+  DoFAccessor<dim, DoFHandler<dim>, true>
+  get_level_dof_accessor_impl(const unsigned int cell_index, const unsigned int level) const
+  {
+    const auto & tria = dof_handler->get_triangulation();
+    return DoFAccessor<dim, DoFHandler<dim>, true>(&tria, level, cell_index, dof_handler);
   }
 
   std::vector<types::global_dof_index>
   get_level_dof_indices(const unsigned int cell_position) const
   {
+    const auto & cell = get_level_dof_accessor(cell_position);
+    return get_level_dof_indices_impl(cell);
+  }
+
+  std::vector<types::global_dof_index>
+  get_level_dof_indices_impl(const DoFAccessor<dim, DoFHandler<dim>, true> & cell) const
+  {
     const auto                           n_dofs_per_cell = dof_handler->get_fe().n_dofs_per_cell();
     std::vector<types::global_dof_index> level_dof_indices(n_dofs_per_cell);
-    const auto &                         cell = get_level_dof_accessor(cell_position);
     cell.get_mg_dof_indices(cell.level(), level_dof_indices);
 
     /// reorder level dof indices lexicographically
@@ -261,6 +276,11 @@ public:
 
   const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> &
   get_shape_info(const unsigned int dimension) const;
+
+  std::pair<unsigned int, unsigned int>
+  get_start_and_number_of_dof_indices(const unsigned int patch_id,
+                                      const unsigned int cell_no,
+                                      const unsigned int lane) const;
 
   std::shared_ptr<const Utilities::MPI::Partitioner>
   initialize_vector_partitioner() const;
@@ -512,19 +532,29 @@ PatchDoFWorker<dim, Number>::get_dof_indices_on_cell(const unsigned int patch_id
                                                      const unsigned int cell_no,
                                                      const unsigned int lane) const
 {
+  // OLD !!!
+  // const unsigned int n_lanes_filled = this->n_lanes_filled(patch_id);
+  // const unsigned int position       = [&]() {
+  //   AssertIndexRange(lane, this->macro_size);
+  //   if(lane < n_lanes_filled)
+  //     return this->get_cell_position(patch_id, cell_no, lane);
+  //   else
+  //     return this->get_cell_position(patch_id, cell_no, 0);
+  // }();
+  // const auto &                             dof_indices = dof_info->dof_indices;
+  // ArrayView<const types::global_dof_index> view;
+  // const auto &                             dof_indices_on_cell = dof_indices[position];
+  // view.reinit(dof_indices_on_cell.data(), dof_indices_on_cell.size());
+  // return view;
+
+  AssertIndexRange(lane, macro_size);
   const unsigned int n_lanes_filled = this->n_lanes_filled(patch_id);
-  const unsigned int position       = [&]() {
-    AssertIndexRange(lane, this->macro_size);
-    if(lane < n_lanes_filled)
-      return this->get_cell_position(patch_id, cell_no, lane);
-    else
-      return this->get_cell_position(patch_id, cell_no, 0);
-  }();
-  const auto &                             dof_indices = dof_info->dof_indices;
-  ArrayView<const types::global_dof_index> view;
-  const auto &                             dof_indices_on_cell = dof_indices[position];
-  view.reinit(dof_indices_on_cell.data(), dof_indices_on_cell.size());
-  return view;
+  if(lane >= n_lanes_filled)
+    return get_dof_indices_on_cell(patch_id, cell_no, 0);
+
+  const auto [dof_start, n_dofs] = get_start_and_number_of_dof_indices(patch_id, cell_no, lane);
+  const auto begin               = dof_info->dof_indices_flat.data() + dof_start;
+  return ArrayView<const types::global_dof_index>(begin, n_dofs);
 }
 
 
@@ -569,6 +599,21 @@ PatchDoFWorker<dim, Number>::get_shape_info(const unsigned int dimension) const
   return *shape_info;
 }
 
+
+template<int dim, typename Number>
+inline std::pair<unsigned int, unsigned int>
+PatchDoFWorker<dim, Number>::get_start_and_number_of_dof_indices(const unsigned int patch_id,
+                                                                 const unsigned int cell_no,
+                                                                 const unsigned int lane) const
+{
+  AssertIndexRange(patch_id, this->get_partition_data().n_subdomains());
+  AssertIndexRange(cell_no, this->n_cells_per_subdomain());
+  AssertIndexRange(lane, this->n_lanes_filled(patch_id));
+  Assert(dof_info, ExcMessage("DoF info is not set."));
+  const auto cell_position = this->get_cell_position(patch_id, cell_no, lane);
+  AssertIndexRange(cell_position, dof_info->start_and_number_of_dof_indices.size());
+  return dof_info->start_and_number_of_dof_indices[cell_position];
+}
 
 
 } // end namespace TPSS

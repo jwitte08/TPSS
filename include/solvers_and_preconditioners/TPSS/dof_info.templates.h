@@ -59,12 +59,58 @@ DoFInfo<dim, Number>::initialize_impl()
   if(DoFLayout::Q == get_dof_layout())
     l2h = FETools::lexicographic_to_hierarchic_numbering(dof_handler->get_fe());
 
-  /// store global dof indices
-  const auto n_cells = patch_info->n_cells_plain();
-  dof_indices.reserve(n_cells);
-  for(auto i = 0U; i < n_cells; ++i)
-    dof_indices.emplace_back(get_level_dof_indices(i));
-  dof_indices.shrink_to_fit();
+  // TODO: maybe initialize vector partitioner at the same time
+  /// cache global dof indices once for each cell owned by this processor
+  /// (including ghost cells)
+  {
+    PatchWorker<dim, Number> patch_worker(*patch_info);
+    const auto               n_cells_plain = patch_info->n_cells_plain();
+    const auto               n_subdomains  = patch_worker.get_partition_data().n_subdomains();
+    const auto               n_cells_per_subdomain = patch_worker.n_cells_per_subdomain();
+
+    /// First we require a mapping between the process-local @p cell_index and all
+    /// associated cells within patches stored by the underlying patch_info. Each
+    /// cell contained in the patch_info has a unique @p cell_position.
+    std::vector<std::vector<unsigned int>> cell_index_to_cell_position;
+    cell_index_to_cell_position.resize(n_cells_plain);
+    for(auto patch = 0U; patch < n_subdomains; ++patch)
+    {
+      const auto n_lanes_filled = patch_worker.n_lanes_filled(patch);
+      for(auto cell_no = 0U; cell_no < n_cells_per_subdomain; ++cell_no)
+        for(auto lane = 0U; lane < n_lanes_filled; ++lane)
+        {
+          const auto cell_position = patch_worker.get_cell_position(patch, cell_no, lane);
+          const auto [cell_level, cell_index] = patch_info->get_cell_level_and_index(cell_position);
+          (void)cell_level;
+          AssertDimension(cell_level, additional_data.level);
+          if(static_cast<unsigned>(cell_index) >= cell_index_to_cell_position.size())
+            cell_index_to_cell_position.resize(cell_index + 1);
+          cell_index_to_cell_position[cell_index].emplace_back(cell_position);
+        }
+    }
+
+    /// Cache the global dof indices (in compressed format) in @p
+    /// dof_indices_flat. Given the @p cell_position we access the associated dof
+    /// indices via @p start_and_number_of_dof_indices.
+    dof_indices_flat.clear();
+    start_and_number_of_dof_indices.resize(n_cells_plain);
+    for(auto cell_index = 0U; cell_index < cell_index_to_cell_position.size(); ++cell_index)
+      if(!cell_index_to_cell_position[cell_index].empty())
+      {
+        const auto   dof_start = dof_indices_flat.size();
+        const auto & cell      = get_level_dof_accessor_impl(cell_index, additional_data.level);
+        const auto   level_dof_indices = get_level_dof_indices_impl(cell);
+        const auto   n_dofs            = level_dof_indices.size(); // compress?
+
+        const auto & cell_positions = cell_index_to_cell_position[cell_index];
+        for(auto cell_position : cell_positions)
+          start_and_number_of_dof_indices[cell_position] = std::make_pair(dof_start, n_dofs);
+
+        std::copy(level_dof_indices.cbegin(),
+                  level_dof_indices.cend(),
+                  std::back_inserter(dof_indices_flat));
+      }
+  }
 }
 
 
