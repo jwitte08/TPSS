@@ -144,6 +144,9 @@ public:
   bool
   is_interior(const unsigned int patch) const;
 
+  unsigned int
+  n_cells_per_subdomain() const;
+
   /*
    * Return the number of physical subdomains (neglecting the vectorized batches
    * of physical subdomains).
@@ -253,6 +256,15 @@ PatchWorker<dim, number>::is_interior(const unsigned int patch) const
                                              bdry_masks.cend(),
                                              [](const auto & mask) { return mask.none(); });
   return is_interior_patch;
+}
+
+template<int dim, typename number>
+inline unsigned int
+PatchWorker<dim, number>::n_cells_per_subdomain() const
+{
+  Assert(patch_info != nullptr, ExcNotInitialized());
+  const auto n_cells = TPSS::UniversalInfo<dim>::n_cells(patch_variant);
+  return n_cells;
 }
 
 template<int dim, typename number>
