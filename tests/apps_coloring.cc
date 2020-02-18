@@ -18,12 +18,12 @@
 
 using namespace dealii;
 
-struct TestRedBlackColoring
+template<int dim = 2, typename ColoringType = RedBlackColoring<dim>>
+struct TestColoring
 {
-  static constexpr int dim       = 2;
   static constexpr int fe_degree = 1;
 
-  TestRedBlackColoring()
+  TestColoring()
   {
     mesh_prms.geometry_variant = MeshParameter::GeometryVariant::Cube;
     mesh_prms.n_refinements    = 1;
@@ -60,9 +60,9 @@ struct TestRedBlackColoring
     additional_data.smoother_variant = TPSS::SmootherVariant::multiplicative;
     const auto level                 = triangulation.n_global_levels() - 1;
     additional_data.level            = level;
-    RedBlackColoring<dim> user_coloring(mesh_prms);
+    ColoringType user_coloring(mesh_prms);
     additional_data.coloring_func      = std::ref(user_coloring);
-    additional_data.visualize_coloring = std::ref(RedBlackColoring<dim>::visualize_coloring);
+    additional_data.visualize_coloring = std::ref(ColoringType::visualize_coloring);
     patch_info.initialize(&dof_handler, additional_data);
   }
 
@@ -74,7 +74,7 @@ struct TestRedBlackColoring
 
 TEST(RedBlackColoring, TwoDimensionsCube)
 {
-  TestRedBlackColoring test;
+  TestColoring test;
 
   /// cell
   test.params.patch_variant = TPSS::PatchVariant::cell;
@@ -87,7 +87,7 @@ TEST(RedBlackColoring, TwoDimensionsCube)
 
 TEST(RedBlackColoring, TwoDimensionsCuboidSubdivided)
 {
-  TestRedBlackColoring test;
+  TestColoring test;
   test.mesh_prms.geometry_variant = MeshParameter::GeometryVariant::CuboidSubdivided;
   test.mesh_prms.n_subdivisions.resize(/*dim*/ 2);
   test.mesh_prms.n_subdivisions[0] = 4;
@@ -102,6 +102,27 @@ TEST(RedBlackColoring, TwoDimensionsCuboidSubdivided)
   test.visualize_coloring();
 }
 
+TEST(TiledColoring, TwoDimensionsCube)
+{
+  TestColoring<2, TiledColoring<2>> test;
+
+  /// vertex patch
+  test.params.patch_variant = TPSS::PatchVariant::vertex;
+  test.visualize_coloring();
+}
+
+TEST(TiledColoring, TwoDimensionsCuboidSubdivided)
+{
+  TestColoring<2, TiledColoring<2>> test;
+  test.mesh_prms.geometry_variant = MeshParameter::GeometryVariant::CuboidSubdivided;
+  test.mesh_prms.n_subdivisions.resize(/*dim*/ 2);
+  test.mesh_prms.n_subdivisions[0] = 3;
+  test.mesh_prms.n_subdivisions[1] = 2; // 3 x 2 root mesh !
+
+  /// vertex patch
+  test.params.patch_variant = TPSS::PatchVariant::vertex;
+  test.visualize_coloring();
+}
 
 int
 main(int argc, char ** argv)
