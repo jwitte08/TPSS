@@ -69,7 +69,7 @@ protected:
       new_problem->create_triangulation();
       new_problem->distribute_dofs();
       new_problem->prepare_linear_system(/*compute_rhs?*/ true);
-      new_problem->prepare_multigrid(/*compress*/ false); // do not clear MGConstrainedDoFs
+      new_problem->prepare_multigrid(); // do not clear MGConstrainedDoFs
     };
 
     poisson_problem.reset();
@@ -150,8 +150,9 @@ protected:
         FullMatrix<double> patch_matrix_reference(dof_indices.size());
         patch_matrix_reference.extract_submatrix_from(level_matrix, dof_indices, dof_indices);
 
-        const auto & local_matrix                  = local_solvers[patch];
-        const auto & constrained_local_dof_indices = local_matrix.constrained_dof_indices_row[lane];
+        const auto & local_matrix = local_solvers[patch];
+        // const auto & constrained_local_dof_indices =
+        // local_matrix.constrained_dof_indices_row[lane];
 
         /// transform local solver to FullMatrix type and fill constrained
         /// diagonal entries with ones (in analogy to the matrix-free level
@@ -160,8 +161,8 @@ protected:
         {
           auto patch_matrix_full =
             table_to_fullmatrix(Tensors::matrix_to_table(local_matrix), lane);
-          for(const auto i : constrained_local_dof_indices)
-            patch_matrix_full(i, i) += 1.;
+          // for(const auto i : constrained_local_dof_indices)
+          //   patch_matrix_full(i, i) += 1.;
           *pcout_owned << "compare local matrix:" << std::endl;
           compare_matrix(patch_matrix_full, patch_matrix_reference);
         }
@@ -172,8 +173,8 @@ protected:
           *pcout_owned << "compare inverse of local matrix:" << std::endl;
           auto patch_matrix_inverse =
             table_to_fullmatrix(Tensors::inverse_matrix_to_table(local_matrix), lane);
-          for(const auto i : constrained_local_dof_indices)
-            patch_matrix_inverse(i, i) += 1.;
+          // for(const auto i : constrained_local_dof_indices)
+          //   patch_matrix_inverse(i, i) += 1.;
           compare_inverse_matrix(patch_matrix_inverse, patch_matrix_reference);
         }
       }
@@ -211,10 +212,10 @@ TYPED_TEST_P(TestLaplaceIntegrator, FDAssemblyVertexPatch)
   Fixture::params.n_refinements = 0U;
   Fixture::test();
 
-  // Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  // Fixture::rt_parameters.mesh.n_repetitions    = 3U;
-  // Fixture::params.n_refinements                = 0U;
-  // Fixture::test();
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 3U;
+  Fixture::params.n_refinements                = 0U;
+  Fixture::test();
 }
 
 TYPED_TEST_P(TestLaplaceIntegrator, FDInverseVertexPatch)

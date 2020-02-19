@@ -900,16 +900,7 @@ public:
 
       /// initialize (fast diagonalized) matrix
       auto & local_solver = local_matrices[patch];
-      local_solver.matrix.reinit(mass_matrices, laplace_matrices);
-
-      /// set constraints
-      for(auto lane = 0U; lane < macro_size; ++lane)
-      {
-        auto tmp_row = eval.get_constrained_dof_indices(lane);
-        std::swap(local_solver.constrained_dof_indices_row[lane], tmp_row);
-        auto tmp_col = eval.get_constrained_dof_indices(lane);
-        std::swap(local_solver.constrained_dof_indices_col[lane], tmp_col);
-      }
+      local_solver.reinit(mass_matrices, laplace_matrices);
     }
   }
 
