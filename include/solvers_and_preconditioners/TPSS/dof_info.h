@@ -94,6 +94,20 @@ public:
                          const DoFLayout                             dof_layout_in);
 
   /**
+   * Returns wether the patch local dof index @p patch_dof_index is part of the
+   * outermost layer of dofs.
+   */
+  bool
+  is_boundary_face_dof(const unsigned int patch_dof_index) const;
+
+  /**
+   * Returns wether the patch local dof index @p patch_dof_index is part of the
+   * outermost layer of dofs.
+   */
+  bool
+  is_boundary_face_dof_1d(const unsigned int patch_dof_index, const unsigned int dimension) const;
+
+  /**
    * Returns the patch local dof index as multi-index subject to lexicographical
    * ordering. For more details see PatchLocalIndexHelper::dof_index_1d.
    */
@@ -285,8 +299,19 @@ public:
   std::shared_ptr<const Utilities::MPI::Partitioner>
   initialize_vector_partitioner() const;
 
+  unsigned int
+  n_dofs() const;
+
+  unsigned int
+  n_dofs_1d(const unsigned int dimension) const;
+
+  unsigned int
+  n_dofs_plain_1d(const unsigned int dimension) const;
+
 private:
   const DoFInfo<dim, Number> * const dof_info;
+
+  const TPSS::DoFLayout dof_layout;
 
   PatchLocalTensorHelper<dim> patch_dof_tensor;
 };
@@ -400,8 +425,19 @@ inline PatchLocalTensorHelper<n_dimensions>::PatchLocalTensorHelper(
 
 
 template<int n_dimensions>
-inline std::array<unsigned int, n_dimensions>
+inline bool
+PatchLocalTensorHelper<n_dimensions>::is_boundary_face_dof(const unsigned int patch_dof_index) const
+{
+  const auto & patch_dof_index_multi = TensorHelperBase::multi_index(patch_dof_index);
+  for(auto d = 0U; d < n_dimensions; ++d)
+    if(is_boundary_face_dof_1d(patch_dof_index_multi[d], d))
+      return true;
+  return false;
+}
 
+
+template<int n_dimensions>
+inline std::array<unsigned int, n_dimensions>
 PatchLocalTensorHelper<n_dimensions>::dof_multi_index(const unsigned int cell_no,
                                                       const unsigned int cell_dof_index) const
 {
@@ -426,6 +462,17 @@ PatchLocalTensorHelper<n_dimensions>::dof_index(const unsigned int cell_no,
 
 
 template<int n_dimensions>
+inline bool
+PatchLocalTensorHelper<n_dimensions>::is_boundary_face_dof_1d(const unsigned int patch_dof_index,
+                                                              const unsigned int dimension) const
+{
+  AssertIndexRange(patch_dof_index, n_dofs_1d(dimension));
+  const auto last_patch_dof_index = n_dofs_1d(dimension) - 1;
+  return patch_dof_index == 0 || patch_dof_index == last_patch_dof_index;
+}
+
+
+template<int n_dimensions>
 inline unsigned int
 PatchLocalTensorHelper<n_dimensions>::n_dofs_1d(const unsigned int dimension) const
 {
@@ -441,6 +488,7 @@ template<int dim, typename Number>
 inline PatchDoFWorker<dim, Number>::PatchDoFWorker(const DoFInfo<dim, Number> & dof_info_in)
   : PatchWorker<dim, Number>(*(dof_info_in.patch_info)),
     dof_info(&dof_info_in),
+    dof_layout(dof_info_in.get_dof_layout()),
     patch_dof_tensor(TPSS::UniversalInfo<dim>::n_cells_per_direction(
                        this->patch_info->get_additional_data().patch_variant),
                      /// currently assuming isotropy ...
@@ -614,6 +662,39 @@ PatchDoFWorker<dim, Number>::get_start_and_number_of_dof_indices(const unsigned 
   AssertIndexRange(cell_position, dof_info->start_and_number_of_dof_indices.size());
   return dof_info->start_and_number_of_dof_indices[cell_position];
 }
+
+
+template<int dim, typename Number>
+inline unsigned int
+PatchDoFWorker<dim, Number>::n_dofs() const
+{
+  unsigned int n_dofs = 1;
+  for(auto d = 0U; d < dim; ++d)
+    n_dofs *= n_dofs_1d(d);
+  return n_dofs;
+}
+
+
+template<int dim, typename Number>
+inline unsigned int
+PatchDoFWorker<dim, Number>::n_dofs_1d(const unsigned dimension) const
+{
+  AssertIndexRange(dimension, dim);
+  if(dof_layout == TPSS::DoFLayout::Q)
+    if(this->patch_variant == TPSS::PatchVariant::vertex)
+      return n_dofs_plain_1d(dimension) - 2;
+  return n_dofs_plain_1d(dimension);
+}
+
+
+template<int dim, typename Number>
+inline unsigned int
+PatchDoFWorker<dim, Number>::n_dofs_plain_1d(const unsigned dimension) const
+{
+  AssertIndexRange(dimension, dim);
+  return get_dof_tensor().n_dofs_1d(dimension);
+}
+
 
 
 } // end namespace TPSS
