@@ -99,7 +99,7 @@ public:
   n_cells_1d(const unsigned int dimension) const;
 
   unsigned int
-  n_dofs_1d(const unsigned int dimension) const;
+  n_dofs_plain_1d(const unsigned int dimension) const;
 
   unsigned int
   n_dofs_per_cell_1d(const unsigned int dimension) const;
@@ -254,6 +254,8 @@ private:
     CellOperation &&                                                       cell_operation,
     FaceOperation &&                                                       face_operation,
     InterfaceOperation && interface_operation) const;
+
+  void restrict_matrix_qvp(Table<2, VectorizedArray<Number>> & subdomain_matrix) const;
 
   void submit_cell_matrix(
     Table<2, VectorizedArray<Number>> &       subdomain_matrix,
@@ -782,9 +784,10 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_cells_1d(const unsigned 
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline unsigned int
-FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_dofs_1d(const unsigned int dimension) const
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_dofs_plain_1d(
+  const unsigned int dimension) const
 {
-  return patch_worker.get_dof_tensor().n_dofs_1d(dimension);
+  return patch_worker.n_dofs_plain_1d(dimension);
 }
 
 
