@@ -2,8 +2,10 @@
 #include <gtest/gtest.h>
 
 #include "solvers_and_preconditioners/TPSS/kroneckersvd.h"
+#include "solvers_and_preconditioners/TPSS/tensor_product_matrix.h"
 #include "solvers_and_preconditioners/TPSS/tensors.h"
 
+#include "test_utilities.h"
 
 void
 test_rank_two_kronecker_svd_full()
@@ -444,4 +446,35 @@ TEST(KroneckerSVD, ThreeDim)
 TEST(KroneckerSVD, ThreeDimVectorized)
 {
   test_three_dim_kronecker_cp_vectorized();
+}
+
+TEST(KroneckerSVD, RandomDiagonal)
+{
+  using Number         = VectorizedArray<double>;
+  const unsigned int m = 10;
+  ConditionalOStream os(std::cout, false);
+
+  AlignedVector<Number> diagonal;
+  diagonal.resize(m * m);
+  fill_with_random_values(diagonal);
+  Table<2, Number> diagonal_matrix;
+  diagonal_matrix.reinit(m * m, m * m);
+  for(auto i = 0U; i < m * m; ++i)
+    diagonal_matrix(i, i) = diagonal[i];
+
+  std::vector<std::array<Table<2, Number>, 2>> kd_tensors;
+  kd_tensors.resize(m);
+  for(auto & tensors : kd_tensors)
+    for(auto & elem : tensors)
+      elem.reinit(m, m);
+  compute_ksvd(diagonal, kd_tensors);
+
+  Tensors::TensorProductMatrix<2, Number> kd;
+  kd.reinit(kd_tensors);
+  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+  {
+    const auto & kd_full   = table_to_fullmatrix(kd.as_table(), lane);
+    const auto & reference = table_to_fullmatrix(diagonal_matrix, lane);
+    Util::compare_matrix(kd_full, reference, os);
+  }
 }

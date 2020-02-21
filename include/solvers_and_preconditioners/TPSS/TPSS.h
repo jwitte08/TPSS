@@ -16,16 +16,11 @@ enum class CachingStrategy
 {
   Cached,
   OnTheFly,
-  CellsCachedDofsFly,
-  CellsFlyDofsCached
 };
 std::string
 str_caching_strategy(CachingStrategy caching_strategy)
 {
-  std::string str[] = {"cached",
-                       "on-the-fly",
-                       "cells cached and dofs on-the-fly",
-                       "cells on-the-fly and dofs cached"};
+  std::string str[] = {"cached", "on-the-fly"};
   return str[(int)caching_strategy];
 }
 
@@ -65,11 +60,25 @@ struct UniversalInfo
     constexpr unsigned int n_cells_per_direction_[] = {0, 1, 2};
     return n_cells_per_direction_[(int)variant];
   }
+
   static constexpr unsigned int
   n_cells(const PatchVariant variant)
   {
     constexpr unsigned int n_cells_[] = {0, 1, 1 << dim};
     return n_cells_[(int)variant];
+  }
+
+  static constexpr int
+  n_dofs_1d(const PatchVariant patch_variant,
+            const DoFLayout    dof_layout,
+            const unsigned int fe_degree)
+  {
+    if(dof_layout == DoFLayout::DGQ)
+      return n_cells_per_direction(patch_variant) * (fe_degree + 1);
+    else if(dof_layout == DoFLayout::Q)
+      if(patch_variant == TPSS::PatchVariant::vertex)
+        return n_cells_per_direction(TPSS::PatchVariant::vertex) * (fe_degree + 1) - 3;
+    return -1;
   }
 };
 

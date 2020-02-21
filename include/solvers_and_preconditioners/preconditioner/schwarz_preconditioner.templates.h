@@ -96,6 +96,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   (void)additional_data;
 }
 
+
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::compute_inverses()
@@ -125,12 +126,17 @@ template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::clear()
 {
-  subdomain_handler.reset();
-  linear_operator = nullptr;
-  subdomain_to_inverse.reset();
-  additional_data = AdditionalData{};
-  level           = static_cast<unsigned int>(-1);
   time_data.clear();
+  additional_data  = AdditionalData{};
+  patch_variant    = TPSS::PatchVariant::invalid;
+  smoother_variant = TPSS::SmootherVariant::invalid;
+  level            = numbers::invalid_unsigned_int;
+  residual_ghosted.reset();
+  solution_ghosted.reset();
+  subdomain_to_inverse.reset();
+  linear_operator = nullptr;
+  transfer.reset();
+  subdomain_handler.reset();
 }
 
 
@@ -188,6 +194,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult_add(
   AssertIsFinite(dst.l2_norm());
 }
 
+
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Tvmult_add(
@@ -217,18 +224,18 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Tvmult_add(
   AssertIsFinite(dst.l2_norm());
 }
 
+
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
-// template<typename VectorType>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_solvers(
   VectorType &       solution_in,
   const VectorType & residual_in,
   const unsigned int color) const
 {
-  const auto apply_inverses_lambda = [this](const SubdomainHandler<dim, value_type> & data,
-                                            VectorType &                              solution,
-                                            const VectorType &                        residual,
-                                            const std::pair<int, int> & subdomain_range) {
+  const auto apply_inverses_add = [this](const SubdomainHandler<dim, value_type> & data,
+                                         VectorType &                              solution,
+                                         const VectorType &                        residual,
+                                         const std::pair<int, int> & subdomain_range) {
     (void)data;                                                // TODO
     AlignedVector<VectorizedArray<value_type>> local_residual; // r_j
     AlignedVector<VectorizedArray<value_type>> local_solution; // u_j
@@ -259,6 +266,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
 
   // *** initialize ghosted vectors
   Timer timer;
+
   /// we do not control the initialization of @p solution_in such that we have
   /// to compare it globally
   VectorType * solution;
@@ -270,7 +278,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   else // set ghosted vector with write access
   {
     timer.restart();
-    initialize_ghost(*solution_ghosted);
+    initialize_ghosted_vector(*solution_ghosted);
     solution_ghosted->zero_out_ghosts();
     copy_locally_owned_data(*solution_ghosted, solution_in);
     solution = solution_ghosted.get();
@@ -288,7 +296,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   else // set ghosted vector with read access
   {
     timer.restart();
-    initialize_ghost(*residual_ghosted);
+    initialize_ghosted_vector(*residual_ghosted);
     copy_locally_owned_data(*residual_ghosted, residual_in);
     residual_ghosted->update_ghost_values();
     residual = residual_ghosted.get();
@@ -296,7 +304,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   }
 
   // *** loop over all subdomains of the given color
-  subdomain_handler->template loop<const VectorType, VectorType>(std::ref(apply_inverses_lambda),
+  subdomain_handler->template loop<const VectorType, VectorType>(std::ref(apply_inverses_add),
                                                                  *solution,
                                                                  *residual,
                                                                  color);
@@ -310,6 +318,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
     time_data.at(3).add_time(timer.wall_time());
   }
 }
+
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 template<bool transpose>
@@ -329,6 +338,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::additive_schwa
     apply_local_solvers(solution, rhs, color);
   time_data[1].add_time(timer.wall_time());
 }
+
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 template<bool transpose>
@@ -367,22 +377,5 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::multiplicative
     // NOTE a call of apply_inverses includes all colors, such that we add the time to the opened
     // call in additive_schwarz_operation
     time_data[1].time += timer.wall_time();
-  }
-}
-
-template<int dim, class OperatorType, typename VectorType, typename MatrixType>
-void
-SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::update(
-  LinearOperatorBase const * matrix_operator)
-{
-  OperatorType const * linear_operator = dynamic_cast<OperatorType const *>(matrix_operator);
-
-  if(linear_operator)
-  {
-    AssertThrow(false, ExcMessage("TODO call update() from linear_operator"));
-  }
-  else
-  {
-    AssertThrow(false, ExcMessage("Invalid."));
   }
 }

@@ -43,6 +43,83 @@
 
 using namespace dealii;
 
+
+
+namespace Impl
+{
+template<int dim>
+void
+visualize_coloring(
+  const DoFHandler<dim> &                                                        dof_handler_in,
+  const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> & colored_iterators,
+  const std::string                                                              prefix)
+{
+  for(unsigned color = 0; color < colored_iterators.size(); ++color)
+  {
+    // collect output data
+    const auto &       tria         = dof_handler_in.get_triangulation();
+    const unsigned int global_level = tria.n_global_levels() - 1;
+    DoFHandler<dim>    dof_handler(tria);
+    dof_handler.distribute_dofs(FE_DGQ<dim>(0)); // require one (dof) value per cell !!!
+    dof_handler.distribute_mg_dofs();
+    DataOut<dim> data_out;
+    data_out.attach_dof_handler(dof_handler);
+
+    // print the subdomain_ids
+    Vector<double> subdomain(tria.n_active_cells());
+    for(unsigned int i = 0; i < subdomain.size(); ++i)
+      subdomain(i) = tria.locally_owned_subdomain();
+    data_out.add_data_vector(subdomain, "subdomain", DataOut<dim>::type_cell_data);
+
+    // initialize the ghosted dof vector
+    LinearAlgebra::distributed::Vector<double> marker;
+    IndexSet                                   locally_relevant_dofs;
+    DoFTools::extract_locally_relevant_level_dofs(dof_handler, global_level, locally_relevant_dofs);
+    marker.reinit(dof_handler.locally_owned_dofs(), locally_relevant_dofs, MPI_COMM_WORLD);
+    marker                        = 0;
+    const auto & patch_collection = colored_iterators[color];
+    for(const auto & patch : patch_collection)
+      for(const auto & cell : (*patch))
+      {
+        const auto            active_cell = typename DoFHandler<dim>::active_cell_iterator{&tria,
+                                                                                cell->level(),
+                                                                                cell->index(),
+                                                                                &dof_handler};
+        std::vector<unsigned> dof_indices(dof_handler.get_fe().dofs_per_cell);
+        active_cell->get_dof_indices(dof_indices);
+        const auto active_cell_index = dof_indices.front(); // active_cell->active_cell_index();
+        marker(active_cell_index)    = 1;
+      }
+    marker.compress(VectorOperation::add);
+    data_out.add_data_vector(marker, "coloring", DataOut<dim>::type_dof_data);
+
+    // write paraview files
+    std::string color_name = "_color" + Utilities::int_to_string(color, 2);
+    data_out.build_patches();
+    {
+      std::ofstream file(
+        prefix + "data-active-" + Utilities::int_to_string(dim) + "d-" +
+        Utilities::int_to_string(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD), 4) + color_name +
+        ".vtu");
+      data_out.write_vtu(file);
+    }
+    if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+    {
+      std::vector<std::string> filenames;
+      for(unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD); ++i)
+        filenames.push_back(prefix + "data-active-" + Utilities::int_to_string(dim) + "d-" +
+                            Utilities::int_to_string(i, 4) + color_name + ".vtu");
+
+      std::ofstream master_output(prefix + "data-active-" + Utilities::int_to_string(dim) + "d" +
+                                  color_name + ".pvtu");
+      data_out.write_pvtu_record(master_output, filenames);
+    }
+  }
+}
+} // namespace Impl
+
+
+
 template<int dim>
 struct IntegerCoordinate
 {
@@ -90,6 +167,8 @@ struct IntegerCoordinate
 
   const IntegerCoordinateRoot<dim> integer_coordinate_root;
 };
+
+
 
 template<int dim>
 struct RedBlackColoring
@@ -207,70 +286,94 @@ struct RedBlackColoring
                                        colored_iterators,
                      const std::string prefix)
   {
-    for(unsigned color = 0; color < colored_iterators.size(); ++color)
-    {
-      // collect output data
-      const auto &       tria         = dof_handler_in.get_triangulation();
-      const unsigned int global_level = tria.n_global_levels() - 1;
-      DoFHandler<dim>    dof_handler(tria);
-      dof_handler.distribute_dofs(FE_DGQ<dim>(0)); // require one (dof) value per cell !!!
-      dof_handler.distribute_mg_dofs();
-      DataOut<dim> data_out;
-      data_out.attach_dof_handler(dof_handler);
-
-      // print the subdomain_ids
-      Vector<double> subdomain(tria.n_active_cells());
-      for(unsigned int i = 0; i < subdomain.size(); ++i)
-        subdomain(i) = tria.locally_owned_subdomain();
-      data_out.add_data_vector(subdomain, "subdomain", DataOut<dim>::type_cell_data);
-
-      // initialize the ghosted dof vector
-      LinearAlgebra::distributed::Vector<double> marker;
-      IndexSet                                   locally_relevant_dofs;
-      DoFTools::extract_locally_relevant_level_dofs(dof_handler,
-                                                    global_level,
-                                                    locally_relevant_dofs);
-      marker.reinit(dof_handler.locally_owned_dofs(), locally_relevant_dofs, MPI_COMM_WORLD);
-      marker                        = 0;
-      const auto & patch_collection = colored_iterators[color];
-      for(const auto & patch : patch_collection)
-        for(const auto & cell : (*patch))
-        {
-          const auto            active_cell = typename DoFHandler<dim>::active_cell_iterator{&tria,
-                                                                                  cell->level(),
-                                                                                  cell->index(),
-                                                                                  &dof_handler};
-          std::vector<unsigned> dof_indices(dof_handler.get_fe().dofs_per_cell);
-          active_cell->get_dof_indices(dof_indices);
-          const auto active_cell_index = dof_indices.front(); // active_cell->active_cell_index();
-          marker(active_cell_index)    = 1;
-        }
-      marker.compress(VectorOperation::add);
-      data_out.add_data_vector(marker, "coloring", DataOut<dim>::type_dof_data);
-
-      // write paraview files
-      std::string color_name = "_color" + Utilities::int_to_string(color, 2);
-      data_out.build_patches();
-      {
-        std::ofstream file(
-          prefix + "data-active-" + Utilities::int_to_string(dim) + "d-" +
-          Utilities::int_to_string(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD), 4) +
-          color_name + ".vtu");
-        data_out.write_vtu(file);
-      }
-      if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-      {
-        std::vector<std::string> filenames;
-        for(unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD); ++i)
-          filenames.push_back(prefix + "data-active-" + Utilities::int_to_string(dim) + "d-" +
-                              Utilities::int_to_string(i, 4) + color_name + ".vtu");
-
-        std::ofstream master_output(prefix + "data-active-" + Utilities::int_to_string(dim) + "d" +
-                                    color_name + ".pvtu");
-        data_out.write_pvtu_record(master_output, filenames);
-      }
-    }
+    Impl::visualize_coloring<dim>(dof_handler_in, colored_iterators, prefix);
   }
 };
+
+
+
+template<int dim>
+struct TiledColoring
+{
+  using CellIterator   = typename TPSS::PatchInfo<dim>::CellIterator;
+  using PatchIterator  = typename TPSS::PatchInfo<dim>::PatchIterator;
+  using AdditionalData = typename TPSS::PatchInfo<dim>::AdditionalData;
+
+  IntegerCoordinate<dim> get_integer_coordinate;
+
+  TiledColoring() = delete;
+
+  TiledColoring(const MeshParameter & mesh_prms) : get_integer_coordinate(mesh_prms)
+  {
+  }
+
+
+
+  std::vector<std::vector<PatchIterator>>
+  operator()(const std::vector<std::vector<CellIterator>> & patches,
+             const AdditionalData                           additional_data)
+  {
+    std::vector<std::vector<PatchIterator>> coloring;
+    if(additional_data.patch_variant == TPSS::PatchVariant::cell)
+    {
+      AssertThrow(false, ExcMessage("Coloring is not implemented."));
+    }
+    else if(additional_data.patch_variant == TPSS::PatchVariant::vertex)
+    {
+      coloring = std::move(vertex_patch_coloring_impl(patches));
+    }
+    else
+      AssertThrow(false, ExcNotImplemented());
+    return coloring;
+  }
+
+
+
+  std::vector<std::vector<PatchIterator>>
+  vertex_patch_coloring_impl(const std::vector<std::vector<CellIterator>> & patches) const
+  {
+    std::vector<std::vector<PatchIterator>> colored_patches;
+    const unsigned int                      n_colors = (1 << dim);
+    colored_patches.resize(n_colors);
+    for(PatchIterator patch = patches.cbegin(); patch != patches.cend(); ++patch)
+    {
+      // determine shift of the lower left cell
+      const auto & shift = [this](const PatchIterator & patch, const unsigned direction) {
+        AssertIndexRange(direction, dim);
+        const unsigned stride                 = 1 << direction;
+        const auto     cell_left              = (*patch)[0];
+        const auto     cell_right             = (*patch)[stride];
+        const auto     coord_left             = get_integer_coordinate(cell_left->id());
+        const auto     coord_right            = get_integer_coordinate(cell_right->id());
+        const auto     patch_coord_from_left  = coord_left(direction) / 2;
+        const auto     patch_coord_from_right = coord_right(direction) / 2;
+        return patch_coord_from_left != patch_coord_from_right;
+      };
+
+      // (1 << dim) layers of non-overlapping vertex patches (layer is
+      // determined by the shift)
+      std::bitset<dim> shift_mask;
+      for(unsigned int d = 0; d < dim; ++d)
+        shift_mask[d] = (shift(patch, d));
+      const unsigned color = shift_mask.to_ulong();
+
+      colored_patches[color].emplace_back(patch);
+    }
+    return colored_patches;
+  }
+
+
+
+  static void
+  visualize_coloring(const DoFHandler<dim> & dof_handler_in,
+                     const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> &
+                                       colored_iterators,
+                     const std::string prefix)
+  {
+    Impl::visualize_coloring<dim>(dof_handler_in, colored_iterators, prefix);
+  }
+};
+
+
 
 #endif /* TPSS_COLORING_H */

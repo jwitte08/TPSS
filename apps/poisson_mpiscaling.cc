@@ -207,14 +207,14 @@ struct Test
     std::ostringstream             oss;
     Utilities::System::MemoryStats memory_stats;
     Utilities::System::get_memory_stats(memory_stats);
-    unsigned long VmPeak_max =
-      Utilities::MPI::max<unsigned long>(memory_stats.VmPeak, MPI_COMM_WORLD);
-    unsigned long VmSize_max =
-      Utilities::MPI::max<unsigned long>(memory_stats.VmSize, MPI_COMM_WORLD);
-    unsigned long VmHWM_max =
-      Utilities::MPI::max<unsigned long>(memory_stats.VmHWM, MPI_COMM_WORLD);
-    unsigned long VmRSS_max =
-      Utilities::MPI::max<unsigned long>(memory_stats.VmRSS, MPI_COMM_WORLD);
+    unsigned long long VmPeak_max =
+      Utilities::MPI::max<unsigned long long>(memory_stats.VmPeak, MPI_COMM_WORLD);
+    unsigned long long VmSize_max =
+      Utilities::MPI::max<unsigned long long>(memory_stats.VmSize, MPI_COMM_WORLD);
+    unsigned long long VmHWM_max =
+      Utilities::MPI::max<unsigned long long>(memory_stats.VmHWM, MPI_COMM_WORLD);
+    unsigned long long VmRSS_max =
+      Utilities::MPI::max<unsigned long long>(memory_stats.VmRSS, MPI_COMM_WORLD);
     print_row(oss, 20, VmPeak_max, VmSize_max, VmHWM_max, VmRSS_max, "tag=" + tag);
     return oss.str();
   }

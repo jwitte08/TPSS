@@ -1,0 +1,116 @@
+import argparse
+from argparse import RawTextHelpFormatter
+import os
+import subprocess
+
+BUILD_DIR_ = os.path.abspath("@CMAKE_BINARY_DIR@")  # @...@ replaced by CMake
+EXEC_DIR_ = os.path.join(BUILD_DIR_, 'apps')
+
+
+def parse_args():
+    def cspair(string):
+        first, second = string.split(',')
+        return int(first), int(second)
+    parser = argparse.ArgumentParser(
+        description="""
+        Compare various tensor product Schwarz smoothers
+        """,
+        formatter_class=RawTextHelpFormatter
+    )
+    parser.add_argument('-smoo','--smoothers',
+                        default=['exct'],
+                        nargs='+',
+                        choices=['exct','diag','fast'],
+                        help="smoothing variant"
+    )
+    parser.add_argument('-step', '--smoothing-steps',
+                        type=int,
+                        default=[1],
+                        nargs='+',
+                        metavar='int',
+                        help="smoothing steps"
+                        )
+    parser.add_argument('-mu', '--mu',
+                        type=float,
+                        default=[1.],
+                        nargs='+',
+                        metavar='float',
+                        help="Lame constant mu"
+                        )
+    parser.add_argument('-lamb', '--lambdaa',
+                        type=float,
+                        default=[1.],
+                        nargs='+',
+                        metavar='float',
+                        help="Lame constant lambda"
+                        )
+    parser.add_argument('-ip', '--ip-penalty',
+                        type=float,
+                        default=[10.],
+                        nargs='+',
+                        metavar='float',
+                        help="interior penalty pre-factor"
+                        )
+    parser.add_argument('-damp', '--local-damping',
+                        type=float,
+                        default=[1.],
+                        nargs='+',
+                        metavar='float',
+                        help="Local damping factor"
+                        )
+    parser.add_argument('-fctr', '--factor',
+                        type=float,
+                        default=[1.],
+                        nargs='+',
+                        metavar='float',
+                        help="..."
+                        )
+    parser.add_argument('-lrnk', '--lambda-rank',
+                        type=int,
+                        default=[-1],
+                        nargs='+',
+                        metavar='int',
+                        help="Kronecker rank of eigenvalue matrix Lambda"
+                        )
+    parser.add_argument('-krnk', '--kronecker-rank',
+                        type=int,
+                        default=[2],
+                        nargs='+',
+                        metavar='int',
+                        help="Kronecker rank of Schur complement"
+                        )
+    args = parser.parse_args()
+    return args
+
+
+def main():
+    options = parse_args()
+    n_smoothing_steps = options.smoothing_steps
+    mus = options.mu
+    lambdas = options.lambdaa
+    penalties = options.ip_penalty
+    local_dampings = options.local_damping
+    factors = options.factor
+    smoother_choices = {"diag":0, "exct":1, "fast":2}
+    smoother_ids = [smoother_choices[smo] for smo in options.smoothers]
+    kronecker_ranks = options.kronecker_rank
+    lambda_ranks = options.lambda_rank
+    
+    for n_steps in n_smoothing_steps:
+        for m in mus:
+            for l in lambdas:
+                for ip in penalties:
+                    for ld in local_dampings:
+                        for id in smoother_ids:
+                            for krnk in kronecker_ranks:
+                                for lrnk in lambda_ranks:
+                                    for f in factors:
+                                        exec = os.path.join(EXEC_DIR_, 'linelasticity_sipg')
+                                        program = [exec, str(id), str(n_steps), str(m), str(l), str(ip), str(ld), str(krnk), str(lrnk), str(f)]
+                                        print("program: {}".format(program))
+                                        subprocess.run(program)
+    return 0
+
+
+if __name__ == '__main__':
+    main()

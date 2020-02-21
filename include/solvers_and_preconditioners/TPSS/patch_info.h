@@ -80,32 +80,45 @@ public:
   std::pair<int, int>
   get_cell_level_and_index(const unsigned int cell_position) const
   {
+    // OLD !!!
+    // AssertIndexRange(cell_position, n_cells_plain());
+    // if(level_and_index_is_cached)
+    // {
+    //   AssertDimension(n_cells_plain(), get_internal_data()->cell_level_and_index_pairs.size());
+    //   return (get_internal_data()->cell_level_and_index_pairs)[cell_position];
+    // }
+    // AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
+    // const auto & cell = (get_internal_data()->cell_iterators)[cell_position];
+    // return std::make_pair<int, int>(cell->level(), cell->index());
+
     AssertIndexRange(cell_position, n_cells_plain());
-    if(level_and_index_is_cached)
-    {
-      AssertDimension(n_cells_plain(), get_internal_data()->cell_level_and_index_pairs.size());
-      return (get_internal_data()->cell_level_and_index_pairs)[cell_position];
-    }
-    AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
-    const auto & cell = (get_internal_data()->cell_iterators)[cell_position];
-    return std::make_pair<int, int>(cell->level(), cell->index());
+    AssertDimension(n_cells_plain(), get_internal_data()->cell_level_and_index_pairs.size());
+    return (get_internal_data()->cell_level_and_index_pairs)[cell_position];
   }
 
   CellIterator
   get_cell_iterator(const unsigned int cell_position) const
   {
-    AssertIndexRange(cell_position, n_cells_plain());
-    if(iterator_is_cached)
-    {
-      AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
-      return (get_internal_data()->cell_iterators)[cell_position];
-    }
+    // OLD !!!
+    // AssertIndexRange(cell_position, n_cells_plain());
+    // if(iterator_is_cached)
+    // {
+    //   AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
+    //   return (get_internal_data()->cell_iterators)[cell_position];
+    // }
+    // const auto & tria                   = get_triangulation();
+    // const auto [cell_level, cell_index] = get_cell_level_and_index(cell_position);
+    // // TODO we should not need dof handler here -> exchange CellIterator
+    // const auto dof_handler = get_internal_data()->dof_handler;
+    // Assert(dof_handler, ExcMessage("DoFHandler is not set. TODO"));
+    // return CellIterator(&tria, cell_level, cell_index, dof_handler);
+
     const auto & tria                   = get_triangulation();
     const auto [cell_level, cell_index] = get_cell_level_and_index(cell_position);
-    // // TODO we should not need dof handler here
-    // const auto dof_handler = get_internal_data()->dof_handler;
-    // Assert(dof_handler, ExcMessage("DoFHandler not set."));
-    return CellIterator(&tria, cell_level, cell_index, nullptr);
+    // TODO we should not need dof handler here -> exchange CellIterator
+    const auto dof_handler = get_internal_data()->dof_handler;
+    Assert(dof_handler, ExcMessage("DoFHandler is not set. TODO"));
+    return CellIterator(&tria, cell_level, cell_index, dof_handler);
   }
 
   const Triangulation<dim> &
@@ -158,52 +171,10 @@ public:
 
 private:
   void
-  count_physical_subdomains()
-  {
-    internal_data.n_physical_subdomains_total.n_interior =
-      std::accumulate(internal_data.n_physical_subdomains.cbegin(),
-                      internal_data.n_physical_subdomains.cend(),
-                      0,
-                      [](const auto sum, const auto & data) { return sum + data.n_interior; });
-    internal_data.n_physical_subdomains_total.n_boundary =
-      std::accumulate(internal_data.n_physical_subdomains.cbegin(),
-                      internal_data.n_physical_subdomains.cend(),
-                      0,
-                      [](const auto sum, const auto & data) { return sum + data.n_boundary; });
-    internal_data.n_physical_subdomains_total.n_interior_ghost =
-      std::accumulate(internal_data.n_physical_subdomains.cbegin(),
-                      internal_data.n_physical_subdomains.cend(),
-                      0,
-                      [](const auto sum, const auto & data) {
-                        return sum + data.n_interior_ghost;
-                      });
-    internal_data.n_physical_subdomains_total.n_boundary_ghost =
-      std::accumulate(internal_data.n_physical_subdomains.cbegin(),
-                      internal_data.n_physical_subdomains.cend(),
-                      0,
-                      [](const auto sum, const auto & data) {
-                        return sum + data.n_boundary_ghost;
-                      });
-  }
+  count_physical_subdomains();
 
   static std::vector<types::global_dof_index>
-  get_face_conflicts(const PatchIterator & patch)
-  {
-    std::vector<types::global_dof_index> conflicts;
-    const auto &                         cell_collection = *patch;
-
-    for(const auto & cell : cell_collection)
-      for(unsigned int face_no = 0; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
-      {
-        const bool neighbor_has_same_level = (cell->neighbor_level(face_no) == cell->level());
-        const bool neighbor_doesnt_exist   = (cell->neighbor_level(face_no) == -1);
-        const bool non_adaptive            = neighbor_has_same_level || neighbor_doesnt_exist;
-        (void)non_adaptive;
-        Assert(non_adaptive, ExcNotImplemented());
-        conflicts.emplace_back(cell->face(face_no)->index());
-      }
-    return conflicts;
-  }
+  get_face_conflicts(const PatchIterator & patch);
 
   /**
    * Gathering the locally owned and ghost cells attached to a common
@@ -236,79 +207,7 @@ private:
 
   template<int regular_size>
   void
-  submit_patches(const std::vector<PatchIterator> & patch_iterators)
-  {
-    // First, submit all interior patches and subsequently all boundary patches
-    const auto & internal_submit = [this](const std::vector<PatchIterator> & patch_iterators) {
-      unsigned int               n_interior_subdomains_regular = 0;
-      std::vector<PatchIterator> boundary_patch_regular;
-      for(const auto & patch : patch_iterators)
-      {
-        const bool patch_at_boundary =
-          std::any_of(patch->cbegin(), patch->cend(), IteratorFilters::AtBoundary{});
-        if(patch->size() == regular_size) // regular
-        {
-          if(patch_at_boundary)
-          {
-            boundary_patch_regular.push_back(patch);
-          }
-          else
-          {
-            ++n_interior_subdomains_regular;
-            for(const auto & cell : *patch)
-              internal_data.cell_iterators.emplace_back(cell);
-          }
-        }
-        else // irregular
-          Assert(false, ExcNotImplemented());
-      }
-
-      for(const auto it : boundary_patch_regular)
-      {
-        for(const auto & cell : *it)
-          internal_data.cell_iterators.emplace_back(cell);
-      }
-
-      SubdomainData local_data;
-      local_data.n_interior = n_interior_subdomains_regular;
-      local_data.n_boundary = boundary_patch_regular.size();
-      return local_data;
-    };
-    // We separate the patch iterators into locally owned subdomains
-    // and those with ghost cells. First, we submit locally owned and
-    // subsequently subdomains with ghosts. Each group is separated
-    // into interior (first) and boundary (second) subdomains,
-    // respectively.
-    const auto   my_subdomain_id   = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
-    const auto & is_ghost_on_level = [my_subdomain_id](const auto & cell) {
-      const bool is_owned      = cell->level_subdomain_id() == my_subdomain_id;
-      const bool is_artificial = cell->level_subdomain_id() == numbers::artificial_subdomain_id;
-      return !is_owned && !is_artificial;
-    };
-    std::vector<PatchIterator> owned_patch_iterators, ghost_patch_iterators;
-    for(const auto & patch : patch_iterators)
-    {
-      const bool patch_is_ghost = std::any_of(patch->cbegin(), patch->cend(), is_ghost_on_level);
-      if(patch_is_ghost)
-        ghost_patch_iterators.emplace_back(patch);
-      else
-        owned_patch_iterators.emplace_back(patch);
-    }
-    AssertDimension(owned_patch_iterators.size() + ghost_patch_iterators.size(),
-                    patch_iterators.size());
-    const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
-    if(!is_mpi_parallel)
-      AssertDimension(ghost_patch_iterators.size(), 0);
-
-    const auto    owned_subdomain_data = internal_submit(owned_patch_iterators);
-    const auto    ghost_subdomain_data = internal_submit(ghost_patch_iterators);
-    SubdomainData subdomain_data;
-    subdomain_data.n_interior = owned_subdomain_data.n_interior + ghost_subdomain_data.n_interior;
-    subdomain_data.n_boundary = owned_subdomain_data.n_boundary + ghost_subdomain_data.n_boundary;
-    subdomain_data.n_interior_ghost = ghost_subdomain_data.n_interior;
-    subdomain_data.n_boundary_ghost = ghost_subdomain_data.n_boundary;
-    internal_data.n_physical_subdomains.emplace_back(subdomain_data);
-  }
+  submit_patches(const std::vector<PatchIterator> & patch_iterators);
 
   ConditionalOStream pcout{std::cout, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0};
 
@@ -527,6 +426,7 @@ struct PatchInfo<dim>::InternalData
    * Underlying triangulation cell iterators are based on.
    */
   const Triangulation<dim> * triangulation = nullptr;
+
   // TODO we should not need dof handler !
   const DoFHandler<dim> * dof_handler = nullptr;
 };
@@ -723,7 +623,7 @@ template<int dim>
 inline bool
 PatchInfo<dim>::InternalData::empty() const
 {
-  return cell_iterators.empty() && cell_level_and_index_pairs.empty();
+  return n_cells_plain() == 0; // cell_iterators.empty() && cell_level_and_index_pairs.empty();
 }
 
 
@@ -731,10 +631,14 @@ template<int dim>
 inline bool
 PatchInfo<dim>::InternalData::empty_on_all() const
 {
-  const auto n_iterators_mpimax = Utilities::MPI::max(cell_iterators.size(), MPI_COMM_WORLD);
-  const auto n_pairs_mpimax =
-    Utilities::MPI::max(cell_level_and_index_pairs.size(), MPI_COMM_WORLD);
-  return (n_iterators_mpimax == 0) && (n_pairs_mpimax);
+  // const auto n_iterators_mpimax = Utilities::MPI::max(cell_iterators.size(), MPI_COMM_WORLD);
+  // const auto n_pairs_mpimax =
+  //   Utilities::MPI::max(cell_level_and_index_pairs.size(), MPI_COMM_WORLD);
+  // return (n_iterators_mpimax == 0) && (n_pairs_mpimax);
+  const auto n_cells_plain_mpimax = Utilities::MPI::max(n_cells_plain(), MPI_COMM_WORLD);
+  // const auto n_pairs_mpimax =
+  //   Utilities::MPI::max(cell_level_and_index_pairs.size(), MPI_COMM_WORLD);
+  return n_cells_plain_mpimax == 0;
 }
 
 

@@ -78,7 +78,7 @@ struct TestLinElasticity : public BasicSetup<dim, fe_degree, Number>
     rt_parameters.multigrid.pre_smoother.n_smoothing_steps  = 1;
     rt_parameters.multigrid.post_smoother.n_smoothing_steps = 1;
     rt_parameters.mesh.n_refinements                        = 1;
-    rt_parameters.dof_limits                                = {1, 5e6};
+    rt_parameters.dof_limits                                = {1e3, 1e6};
     rt_parameters.n_cycles                                  = 10;
   }
 
@@ -92,6 +92,7 @@ struct TestLinElasticity : public BasicSetup<dim, fe_degree, Number>
     const bool    is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
     const auto    pcout         = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
 
+    equation_data.ip_factor = 1.;
     LinElasticityOperator linelasticity_problem(*pcout, rt_parameters, equation_data);
     linelasticity_problem.run(true);
 

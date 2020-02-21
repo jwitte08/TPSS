@@ -68,6 +68,9 @@ public:
   std::array<std::bitset<PatchWorker<dim, number>::macro_size>, GeometryInfo<dim>::faces_per_cell>
   get_at_boundary_masks(const unsigned int patch) const;
 
+  std::array<std::array<types::boundary_id, macro_size>, GeometryInfo<dim>::faces_per_cell>
+  get_boundary_ids(const unsigned int patch) const;
+
   /**
    * Returns the collection of macro cells describing the macro patch
    * @p patch_id subject to a lexicographical ordering.
@@ -135,17 +138,35 @@ public:
     return {0, 0};
   }
 
+  /*
+   * Return whether this macro patch is located in the interior of the domain.
+   */
+  bool
+  is_interior(const unsigned int patch) const;
+
+  unsigned int
+  n_cells_per_subdomain() const;
+
+  /*
+   * Return the number of physical subdomains (neglecting the vectorized batches
+   * of physical subdomains).
+   */
   unsigned int
   n_physical_subdomains() const;
 
+  /*
+   * Return the number of vectorization lanes of macro patch @p patch_id which
+   * represent physical subdomins. If @p n_lanes_filled is less than the
+   * vectorization length remaining lanes are artificially filled.
+   */
   unsigned int
   n_lanes_filled(const unsigned int patch_id) const;
 
 protected:
   /**
-   * This method partitions the (unvectorized) patches, contained in
-   * PatchInfo, into interior/boundary, incomplete/complete groups,
-   * of vectorized patches, so-called macro patches.
+   * This method partitions the physical subdomains (that is not vectorized),
+   * contained in PatchInfo, into interior/boundary, incomplete/complete groups,
+   * of vectorized batches of physical subdomains, so-called macro patches.
    */
   void
   partition_patches(PatchInfo<dim> & patch_info);
@@ -162,7 +183,9 @@ protected:
 
   const PatchInfo<dim> * const patch_info;
 
-  const unsigned int patch_size = 0;
+  const TPSS::PatchVariant patch_variant;
+
+  const unsigned int patch_size;
 
   mutable std::vector<CellIterator> cell_iterators_scratchpad;
 };
@@ -174,6 +197,7 @@ protected:
 template<int dim, typename number>
 PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
   : patch_info(&patch_info_in),
+    patch_variant(patch_info_in.get_additional_data().patch_variant),
     patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant))
 {
   AssertThrow(patch_info_in.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
@@ -190,6 +214,7 @@ PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
 template<int dim, typename number>
 PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
   : patch_info(&patch_info_in),
+    patch_variant(patch_info_in.get_additional_data().patch_variant),
     patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant))
 {
   AssertThrow(patch_info_in.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
@@ -221,6 +246,26 @@ PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
     has_valid_state(partition_data, color);
 }
 
+
+template<int dim, typename number>
+bool
+PatchWorker<dim, number>::is_interior(const unsigned int patch) const
+{
+  const auto bdry_masks        = get_at_boundary_masks(patch);
+  const bool is_interior_patch = std::all_of(bdry_masks.cbegin(),
+                                             bdry_masks.cend(),
+                                             [](const auto & mask) { return mask.none(); });
+  return is_interior_patch;
+}
+
+template<int dim, typename number>
+inline unsigned int
+PatchWorker<dim, number>::n_cells_per_subdomain() const
+{
+  Assert(patch_info != nullptr, ExcNotInitialized());
+  const auto n_cells = TPSS::UniversalInfo<dim>::n_cells(patch_variant);
+  return n_cells;
+}
 
 template<int dim, typename number>
 inline unsigned int
@@ -293,6 +338,52 @@ PatchWorker<dim, number>::get_at_boundary_masks(const unsigned int patch) const
   const auto & at_bdry_mask_flat = get_at_boundary_masks_flat(patch);
   std::copy(at_bdry_mask_flat.cbegin(), at_bdry_mask_flat.cend(), at_bdry_mask.begin());
   return at_bdry_mask;
+}
+
+
+template<int dim, typename number>
+inline std::array<std::array<types::boundary_id, PatchWorker<dim, number>::macro_size>,
+                  GeometryInfo<dim>::faces_per_cell>
+PatchWorker<dim, number>::get_boundary_ids(const unsigned int patch) const
+{
+  std::array<std::array<types::boundary_id, macro_size>, GeometryInfo<dim>::faces_per_cell>
+    bdry_ids;
+
+  /// if patch is interior fill with internal boundary ids
+  if(is_interior(patch))
+  {
+    for(auto & macro_id : bdry_ids)
+      for(auto & id : macro_id)
+        id = numbers::internal_face_boundary_id;
+    return bdry_ids;
+  }
+
+  /// if patch at boundary query boundary ids from cell iterators
+  const auto local_face_no = [](const auto dimension, const auto face_no_1d) {
+    /// two faces per dimension, namely endpoints of intervals
+    return dimension * 2 + face_no_1d;
+  };
+  const auto fill_bdry_ids = [&](const auto & macro_cell, const auto face_no_1d) {
+    for(auto lane = 0U; lane < macro_size; ++lane)
+    {
+      const auto & cell = macro_cell[lane];
+      for(auto d = 0U; d < dim; ++d)
+      {
+        const auto face_no      = local_face_no(d, face_no_1d);
+        bdry_ids[face_no][lane] = cell->face(face_no)->boundary_id();
+      }
+    }
+  };
+
+  const auto & cell_collection = get_cell_collection(patch);
+  /// fill faces 0, 2, 4, ..., i.e. faces with face_no_1d = 0
+  const auto & first_macro_cell = cell_collection.front();
+  fill_bdry_ids(first_macro_cell, 0);
+  /// fill faces 1, 3, 5, ..., i.e. faces with face_no_1d = 1
+  const auto & last_macro_cell = cell_collection.back();
+  fill_bdry_ids(last_macro_cell, 1);
+
+  return bdry_ids;
 }
 
 

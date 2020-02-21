@@ -13,13 +13,84 @@
 #include <deal.II/base/utilities.h>
 #include <deal.II/base/vectorization.h>
 
+#include <bitset>
 #include <iomanip>
 #include <string>
 #include <type_traits>
 
 
-
 using namespace dealii;
+
+template<typename Number>
+std::vector<std::complex<Number>>
+compute_eigenvalues(LAPACKFullMatrix<Number> & matrix)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  matrix.compute_eigenvalues();
+  std::vector<std::complex<Number>> eigenvalues(matrix.m());
+  for(auto i = 0U; i < eigenvalues.size(); ++i)
+    eigenvalues[i] = matrix.eigenvalue(i);
+  std::sort(eigenvalues.begin(), eigenvalues.end(), [](const auto & a, const auto & b) {
+    return a.real() < b.real();
+  });
+  std::reverse(eigenvalues.begin(), eigenvalues.end());
+  return eigenvalues;
+}
+
+template<typename Number>
+std::vector<std::complex<Number>>
+compute_eigenvalues(const FullMatrix<Number> & matrix)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  LAPACKFullMatrix<Number> lapack_matrix(matrix.m());
+  lapack_matrix = matrix;
+  return compute_eigenvalues(lapack_matrix);
+}
+
+template<typename Number>
+Vector<Number>
+compute_eigenvalues_symm(LAPACKFullMatrix<Number> & matrix, FullMatrix<Number> & Q)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  Vector<Number> eigenvalues;
+  matrix.compute_eigenvalues_symmetric(
+    std::numeric_limits<Number>::lowest(), std::numeric_limits<Number>::max(), 0., eigenvalues, Q);
+  return eigenvalues;
+}
+
+template<typename Number>
+Vector<Number>
+compute_eigenvalues_symm(const FullMatrix<Number> & matrix, FullMatrix<Number> & Q)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  LAPACKFullMatrix<Number> lapack_matrix(matrix.m());
+  lapack_matrix = matrix;
+  return compute_eigenvalues_symm(lapack_matrix, Q);
+}
+
+template<typename Number>
+std::vector<Number>
+compute_singular_values(LAPACKFullMatrix<Number> & matrix)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  matrix.compute_svd();
+  std::vector<Number> singular_values(matrix.m());
+  for(auto i = 0U; i < singular_values.size(); ++i)
+    singular_values[i] = matrix.singular_value(i);
+  std::sort(singular_values.begin(), singular_values.end());
+  std::reverse(singular_values.begin(), singular_values.end());
+  return singular_values;
+}
+
+template<typename Number>
+std::vector<Number>
+compute_singular_values(const FullMatrix<Number> & matrix)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  LAPACKFullMatrix<Number> lapack_matrix(matrix.m());
+  lapack_matrix = matrix;
+  return compute_singular_values(lapack_matrix);
+}
 
 template<typename Number>
 struct ExtractScalarType
@@ -70,7 +141,55 @@ operator/(const Utilities::MPI::MinMaxAvg & mma_in, const double t)
 
 
 template<typename Number>
-Number
+std::bitset<VectorizedArray<Number>::n_array_elements>
+less_than(const VectorizedArray<Number> & lhs, const VectorizedArray<Number> & rhs)
+{
+  std::bitset<VectorizedArray<Number>::n_array_elements> flag;
+  for(auto lane = 0U; lane < VectorizedArray<Number>::n_array_elements; ++lane)
+    flag[lane] = lhs[lane] < rhs[lane];
+  return flag;
+}
+
+
+template<typename Number>
+std::bitset<1>
+less_than(const Number & lhs, const Number & rhs)
+{
+  std::bitset<1> flag;
+  flag[0] = lhs < rhs;
+  return flag;
+}
+
+
+template<typename NumberType>
+bool
+less_than_all_lanes(const NumberType & lhs, const NumberType & rhs)
+{
+  const auto & flag = less_than(lhs, rhs);
+  return flag.all();
+}
+
+template<typename Number>
+Number &
+scalar_value(Number & value, const unsigned int /*dummy*/ = 0)
+{
+  using UnvectorizedNumber = typename ExtractScalarType<Number>::type;
+  static_assert(std::is_same<Number, UnvectorizedNumber>::value == true,
+                "Implemented for unvectorized number type.");
+  return value;
+}
+
+
+template<typename Number>
+Number &
+scalar_value(VectorizedArray<Number> & value, const unsigned int lane = 0)
+{
+  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
+  return value[lane];
+}
+
+template<typename Number>
+const Number &
 scalar_value(const Number & value, const unsigned int /*dummy*/ = 0)
 {
   using UnvectorizedNumber = typename ExtractScalarType<Number>::type;
@@ -81,13 +200,12 @@ scalar_value(const Number & value, const unsigned int /*dummy*/ = 0)
 
 
 template<typename Number>
-Number
+const Number &
 scalar_value(const VectorizedArray<Number> & value, const unsigned int lane = 0)
 {
   AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
   return value[lane];
 }
-
 
 template<typename Number = double>
 Number
@@ -229,6 +347,7 @@ vector_to_string(const std::vector<T> & vector)
     return "[]";
 
   std::ostringstream oss;
+  oss << std::scientific << std::setprecision(4);
   oss << "[";
   for(unsigned i = 0; i < vector.size(); ++i)
     oss << vector[i] << ((i + 1) < vector.size() ? ", " : "]");

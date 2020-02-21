@@ -23,7 +23,7 @@ struct TestParameter
     CoarseGridParameter::SolverVariant::IterativeAcc;
   double   coarse_grid_accuracy = 1.e-8;
   double   cg_reduction         = 1.e-8;
-  unsigned n_refinements        = 2;
+  unsigned n_refinements        = 1;
   unsigned n_repetitions        = 2;
 
   std::string
@@ -72,10 +72,10 @@ main(int argc, char * argv[])
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
   constexpr int                    dim       = CT::DIMENSION_;
   constexpr int                    fe_degree = CT::FE_DEGREE_;
-  constexpr int                    n_patch_dofs_per_direction =
-    TPSS::UniversalInfo<dim>::n_cells_per_direction(CT::PATCH_VARIANT_) * (fe_degree + 1);
+  constexpr int                    n_patch_dofs_1d_static =
+    TPSS::UniversalInfo<dim>::n_dofs_1d(CT::PATCH_VARIANT_, TPSS::DoFLayout::Q, fe_degree);
   using PoissonProblem =
-    typename Poisson::Std::ModelProblem<dim, fe_degree, double, n_patch_dofs_per_direction>;
+    typename Poisson::CFEM::ModelProblem<dim, fe_degree, double, n_patch_dofs_1d_static>;
 
   TestParameter testprms;
   if(argc > 1)
@@ -85,7 +85,8 @@ main(int argc, char * argv[])
   RT::Parameter rt_parameters;
 
   //: discretization
-  rt_parameters.n_cycles              = 3;
+  rt_parameters.n_cycles              = 6;
+  rt_parameters.dof_limits            = {1e3, 2e7};
   rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   rt_parameters.mesh.n_refinements    = testprms.n_refinements;
   rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;
@@ -93,30 +94,26 @@ main(int argc, char * argv[])
   //: solver
   rt_parameters.solver.variant              = testprms.solver_variant;
   rt_parameters.solver.rel_tolerance        = testprms.cg_reduction;
-  rt_parameters.solver.precondition_variant = SolverParameter::PreconditionVariant::None;
-  rt_parameters.solver.n_iterations_max     = 500;
+  rt_parameters.solver.precondition_variant = SolverParameter::PreconditionVariant::GMG;
+  rt_parameters.solver.n_iterations_max     = 100;
 
-  // //: multigrid
-  // const double damping_factor =
-  //   TPSS::lookup_damping_factor(testprms.patch_variant, testprms.smoother_variant, dim);
-  // rt_parameters.multigrid.coarse_level                 = 0;
-  // rt_parameters.multigrid.coarse_grid.solver_variant   = testprms.coarse_grid_variant;
-  // rt_parameters.multigrid.coarse_grid.iterative_solver = testprms.solver_variant;
-  // rt_parameters.multigrid.coarse_grid.accuracy         = testprms.coarse_grid_accuracy;
-  // rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
-  // rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = testprms.patch_variant;
-  // rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = testprms.smoother_variant;
-  // rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
-  // rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
-  // rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(8, fe_degree + 1);
-  // rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
-  // rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
+  //: multigrid
+  const double damping_factor =
+    TPSS::lookup_damping_factor(testprms.patch_variant, testprms.smoother_variant, dim);
+  rt_parameters.multigrid.coarse_level                 = 0;
+  rt_parameters.multigrid.coarse_grid.solver_variant   = testprms.coarse_grid_variant;
+  rt_parameters.multigrid.coarse_grid.iterative_solver = testprms.solver_variant;
+  rt_parameters.multigrid.coarse_grid.accuracy         = testprms.coarse_grid_accuracy;
+  rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
+  rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = testprms.patch_variant;
+  rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = testprms.smoother_variant;
+  rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
+  rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
+  rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5, fe_degree + 1);
+  rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
+  rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
 
   PoissonProblem poisson_problem{rt_parameters};
-  /// set reference solution with non-zero Dirichlet boundary
-  poisson_problem.analytical_solution = std::make_shared<Laplace::Solution<dim>>();
-  poisson_problem.load_function =
-    std::make_shared<Laplace::ManufacturedLoad<dim>>(poisson_problem.analytical_solution);
 
   const bool is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
   const auto pcout         = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);

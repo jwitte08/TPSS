@@ -246,8 +246,25 @@ namespace LinElasticity
 {
 struct EquationData
 {
-  double mu     = 1.;
-  double lambda = 1.;
+  enum class PenaltyVariant
+  {
+    basic,
+    tensor
+  };
+  static std::string
+  str_penalty_variant(const PenaltyVariant variant)
+  {
+    std::string str[] = {"basic", "tensor-driven + lambda-scaled-strain"};
+    return str[static_cast<int>(variant)];
+  }
+
+  double         mu             = 1.;
+  double         lambda         = 1.;
+  PenaltyVariant ip_variant     = PenaltyVariant::basic;
+  double         ip_factor      = 10.; // required to stabilize discretization !!
+  int            lambda_rank    = -1.;
+  int            kronecker_rank = 2.;
+  double         factor         = 1.;
 
   std::string
   to_string() const
@@ -256,6 +273,11 @@ struct EquationData
     oss << Util::parameter_to_fstring("Equation Data:", "");
     oss << Util::parameter_to_fstring("Lame coefficient (mu):", mu);
     oss << Util::parameter_to_fstring("Lame coefficient (lambda):", lambda);
+    oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
+    oss << Util::parameter_to_fstring("IP variant:", str_penalty_variant(ip_variant));
+    oss << Util::parameter_to_fstring("Lambda Kronecker rank:", lambda_rank);
+    oss << Util::parameter_to_fstring("Schur Kronecker rank:", kronecker_rank);
+    oss << Util::parameter_to_fstring("Schur factor ...:", factor);
     return oss.str();
   }
 };

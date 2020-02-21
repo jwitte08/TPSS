@@ -24,10 +24,10 @@ using namespace dealii;
 
 
 
-template<int dim, typename Number, bool fast = false, int n_rows_1d = -1>
+template<int dim, typename Number, int mode = -1, int n_rows_1d = -1>
 struct TestBlockMatrix
 {
-  using BlockMatrix       = typename Tensors::BlockMatrix<dim, Number, fast, n_rows_1d>;
+  using BlockMatrix       = typename Tensors::BlockMatrix<dim, Number, mode, n_rows_1d>;
   using State             = typename BlockMatrix::matrix_type::State;
   using scalar_value_type = typename ExtractScalarType<Number>::type;
 
@@ -158,12 +158,13 @@ protected:
           std::ostringstream oss;
 
           /// compare Schur complement
-          Tensors::SchurComplement S(test.block_matrix.get_block(0, 0),
-                                     test.block_matrix.get_block(0, 1),
-                                     test.block_matrix.get_block(1, 0),
-                                     test.block_matrix.get_block(1, 1));
-          const auto               S_full = table_to_fullmatrix(S.as_table(), lane);
-          const auto               Ainv =
+          Tensors::SchurComplement<Tensors::TensorProductMatrix<dim, VectorizedArray<Number>>> S;
+          S.reinit(test.block_matrix.get_block(0, 0),
+                   test.block_matrix.get_block(0, 1),
+                   test.block_matrix.get_block(1, 0),
+                   test.block_matrix.get_block(1, 1));
+          const auto S_full = table_to_fullmatrix(S.as_table(), lane);
+          const auto Ainv =
             table_to_fullmatrix(test.block_matrix.get_block(0, 0).as_inverse_table(), lane);
           const auto B = table_to_fullmatrix(test.block_matrix.get_block(0, 1).as_table(), lane);
           const auto C = table_to_fullmatrix(test.block_matrix.get_block(1, 0).as_table(), lane);
@@ -296,12 +297,15 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastBlockDiagonal)
     std::fill(tensor.begin(), tensor.end(), id);
     return tensor;
   };
-  const auto assemble_random_tensor = [m]() {
+  const auto assemble_random_tensor = [&]() {
     std::array<Table<2, value_type>, dim> tensor;
     for(auto & matrix : tensor)
       fill_matrix_with_random_values(matrix, m, m);
     std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [](const auto & A) {
-      return Tensors::sum(A, Tensors::transpose(A));
+      auto B = Tensors::sum(A, Tensors::transpose(A));
+      for(auto i = 0U; i < m; ++i)
+        B(i, i) = 10. * B(i, i);
+      return B;
     });
     return tensor;
   };
@@ -317,18 +321,29 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastBlockDiagonal)
   Tensors::TensorProductMatrix<dim, value_type> AA(A, State::skd), BB(B), CC(C), DD(D, State::skd);
 
   /// compare the fast diagonalized Schur complement
-  Tensors::SchurComplementFast<dim, value_type, 2>                        schur_fd(AA, BB, CC, DD);
-  Tensors::SchurComplement<Tensors::TensorProductMatrix<dim, value_type>> schur(AA, BB, CC, DD);
+  Tensors::SchurComplementFast<dim, value_type> schur_fd;
+  schur_fd.reinit(AA, BB, CC, DD, 1., -1, 2);
+  Tensors::SchurComplement<Tensors::TensorProductMatrix<dim, value_type>> schur;
+  schur.reinit(AA, BB, CC, DD);
   for(auto lane = 0U; lane < get_macro_size<value_type>(); ++lane)
   {
     const auto & S_fd    = table_to_fullmatrix(schur_fd.as_table(), lane);
     const auto & Sinv_fd = table_to_fullmatrix(schur_fd.as_inverse_table(), lane);
     const auto & S       = table_to_fullmatrix(schur.as_table(), lane);
     Fixture::compare_matrix(S_fd, S);
-    Fixture::compare_inverse_matrix(Sinv_fd, S);
+    // Fixture::compare_inverse_matrix(Sinv_fd, S);
   }
 }
 
+/*
+ * Given A = A1 x I + I x A0 with random symmetric matrices A1, A0, we compute
+ * its fast diagonalization Q1 x Q0 Lambda Q1^T x Q0^T.
+ *
+ * (1) Compare the (exact!) Kronecker SVD of diagonal matrix Lambda^{-1}.
+ * (2) Check the eigenvector matrices Q = Q1 x Q0 returned.
+ * (3) Compare the (exact!) approximation B = Q Lambda^{-1} Q^T of A^{-1}
+ * (4) Compare the (exact!) Kronecker SVD of B
+ */
 TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastEigenvalueKSVD)
 {
   using Fixture            = FixBlockMatrixVmult<TypeParam>;
@@ -337,33 +352,34 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastEigenvalueKSVD)
   using value_type         = VectorizedArray<Number>;
   using State              = typename Tensors::TensorProductMatrix<dim, value_type>::State;
 
-  constexpr unsigned int m = 3;
+  constexpr unsigned int m = 5;
   Table<2, value_type>   zero(m, m), id(m, m);
   zero.fill(static_cast<value_type>(0.));
   id = zero;
   for(auto i = 0U; i < m; ++i)
     id(i, i) = static_cast<value_type>(1.);
 
-  const auto assemble_zero_tensor = [zero]() {
-    std::array<Table<2, value_type>, dim> tensor;
-    std::fill(tensor.begin(), tensor.end(), zero);
-    return tensor;
-  };
+  /// Tensor of identity matrices
   const auto assemble_id_tensor = [id]() {
     std::array<Table<2, value_type>, dim> tensor;
     std::fill(tensor.begin(), tensor.end(), id);
     return tensor;
   };
-  const auto assemble_random_tensor = [m]() {
+  /// Tensor of random symmetric matrices
+  const auto assemble_random_tensor = [&]() {
     std::array<Table<2, value_type>, dim> tensor;
     for(auto & matrix : tensor)
       fill_matrix_with_random_values(matrix, m, m);
     std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [](const auto & A) {
-      return Tensors::sum(A, Tensors::transpose(A));
+      auto B = Tensors::sum(A, Tensors::transpose(A));
+      for(auto i = 0U; i < m; ++i)
+        B(i, i) = static_cast<value_type>(m) * B(i, i);
+      return B;
     });
     return tensor;
   };
 
+  /// A = A1 x I + I x A0 with random symmetric matrices A1, A0
   std::vector<std::array<Table<2, value_type>, dim>> A;
   A.emplace_back(assemble_id_tensor());
   A.emplace_back(assemble_random_tensor());
@@ -429,16 +445,93 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastEigenvalueKSVD)
     Fixture::compare_matrix(AA_inverse, AA_invreference);
     Fixture::compare_inverse_matrix(AA_inverse, AA_reference);
 
-    // /// compare rank-2 KSVD of approximated inverse with original A (must be
-    // /// exact for m = 2!)
-    // std::vector<std::array<Table<2, value_type>, 2>> ksvd_A(2);
-    // for(auto & tensor : ksvd_A)
-    //   for(auto d = 0U; d < 2; ++d)
-    // 	tensor[d].reinit(AA.m(d), AA.m(d));
-    // auto Atilde_inv = AAtilde_inv.get_elementary_tensors();
-    // compute_ksvd<value_type>(Atilde_inv, ksvd_A);
-    // Tensors::TensorProductMatrix<2, value_type> AA_ksvd(ksvd_A);
-    // Fixture::compare_matrix(table_to_fullmatrix(AA_ksvd.as_table(), lane),AA_invreference);
+    /// compare rank-m KSVD of A^-1 with original (must be exact!)
+    std::vector<std::array<Table<2, value_type>, 2>> ksvd_Ainv(m);
+    for(auto & tensor : ksvd_Ainv)
+      for(auto d = 0U; d < 2; ++d)
+        tensor[d].reinit(AA.m(d), AA.m(d));
+    auto Atilde_inv = AAtilde_inv.get_elementary_tensors();
+    compute_ksvd<value_type>(Atilde_inv, ksvd_Ainv);
+    Tensors::TensorProductMatrix<2, value_type> ksvd_AAinv(ksvd_Ainv);
+    const auto approx_AAinv = table_to_fullmatrix(ksvd_AAinv.as_table(), lane);
+    Fixture::compare_matrix(approx_AAinv, AA_invreference);
+
+    // /// Check eigenvalues
+    // FullMatrix<Number> approx_Id(approx_AAinv.m(), AA_reference.n());
+    // approx_AAinv.mmult(approx_Id, AA_reference);
+    // const auto & eigenvalues = compute_eigenvalues(approx_Id);
+    // std::cout << vector_to_string(eigenvalues) << std::endl;
+  }
+}
+
+TYPED_TEST_P(FixBlockMatrixVmult, SchurComplementFastReinit)
+{
+  using Fixture            = FixBlockMatrixVmult<TypeParam>;
+  static constexpr int dim = TypeParam::template type<0>::template value<0>();
+  using Number             = typename TypeParam::template type<1>;
+  using value_type         = VectorizedArray<Number>;
+  using State              = typename Tensors::TensorProductMatrix<dim, value_type>::State;
+
+  constexpr unsigned int m = 4;
+  Table<2, value_type>   zero(m, m), id(m, m);
+  zero.fill(static_cast<value_type>(0.));
+  id = zero;
+  for(auto i = 0U; i < m; ++i)
+    id(i, i) = static_cast<value_type>(1.);
+
+  const auto assemble_zero_tensor = [zero]() {
+    std::array<Table<2, value_type>, dim> tensor;
+    std::fill(tensor.begin(), tensor.end(), zero);
+    return tensor;
+  };
+  const auto assemble_id_tensor = [id]() {
+    std::array<Table<2, value_type>, dim> tensor;
+    std::fill(tensor.begin(), tensor.end(), id);
+    return tensor;
+  };
+  const auto assemble_random_tensor = [&]() {
+    std::array<Table<2, value_type>, dim> tensor;
+    for(auto & matrix : tensor)
+      fill_matrix_with_random_values(matrix, m, m);
+    std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [](const auto & A) {
+      auto B = Tensors::sum(A, Tensors::transpose(A));
+      for(auto i = 0U; i < m; ++i)
+        B(i, i) = static_cast<value_type>(m) * B(i, i);
+      return B;
+    });
+    return tensor;
+  };
+
+  /// assemble blocks
+  std::vector<std::array<Table<2, value_type>, dim>> tensors_A;
+  tensors_A.emplace_back(assemble_id_tensor());     // mass
+  tensors_A.emplace_back(assemble_random_tensor()); // derivative
+  Tensors::TensorProductMatrix<dim, value_type>      AA(tensors_A, State::skd);
+  std::vector<std::array<Table<2, value_type>, dim>> tensors_B;
+  tensors_B.emplace_back(assemble_random_tensor());
+  tensors_B.emplace_back(assemble_random_tensor());
+  Tensors::TensorProductMatrix<dim, value_type>      BB(tensors_B);
+  std::vector<std::array<Table<2, value_type>, dim>> tensors_C;
+  tensors_C.emplace_back(assemble_random_tensor());
+  tensors_C.emplace_back(assemble_random_tensor());
+  Tensors::TensorProductMatrix<dim, value_type>      CC(tensors_C);
+  std::vector<std::array<Table<2, value_type>, dim>> tensors_D;
+  tensors_D.emplace_back(assemble_id_tensor());     // mass
+  tensors_D.emplace_back(assemble_random_tensor()); // derivative
+  Tensors::TensorProductMatrix<dim, value_type> DD(tensors_D, State::skd);
+
+  /// compare the fast diagonalized Schur complement
+  Tensors::SchurComplementFast<dim, value_type> schur_fd;
+  schur_fd.reinit(AA, BB, CC, DD, 1., m, -1);
+  Tensors::SchurComplement<Tensors::TensorProductMatrix<dim, value_type>> schur;
+  schur.reinit(AA, BB, CC, DD);
+  for(auto lane = 0U; lane < get_macro_size<value_type>(); ++lane)
+  {
+    const auto & S_fd    = table_to_fullmatrix(schur_fd.as_table(), lane);
+    const auto & S       = table_to_fullmatrix(schur.as_table(), lane);
+    const auto & Sinv_fd = table_to_fullmatrix(schur_fd.as_inverse_table(), lane);
+    Fixture::compare_matrix(S_fd, S);
+    Fixture::compare_inverse_matrix(Sinv_fd, S);
   }
 }
 
@@ -467,12 +560,15 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastOffDiagonals)
     std::fill(tensor.begin(), tensor.end(), id);
     return tensor;
   };
-  const auto assemble_random_tensor = [m]() {
+  const auto assemble_random_tensor = [&]() {
     std::array<Table<2, value_type>, dim> tensor;
     for(auto & matrix : tensor)
       fill_matrix_with_random_values(matrix, m, m);
     std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [](const auto & A) {
-      return Tensors::sum(A, Tensors::transpose(A));
+      auto B = Tensors::sum(A, Tensors::transpose(A));
+      for(auto i = 0U; i < m; ++i)
+        B(i, i) = static_cast<value_type>(m) * B(i, i);
+      return B;
     });
     return tensor;
   };
@@ -483,12 +579,15 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastOffDiagonals)
   C.emplace_back(assemble_id_tensor());
   A.emplace_back(assemble_id_tensor());
   A.emplace_back(assemble_random_tensor());
+  D.emplace_back(assemble_id_tensor());
   D.emplace_back(assemble_zero_tensor());
-  Tensors::TensorProductMatrix<dim, value_type> AA(A, State::skd), BB(B), CC(C), DD(D);
+  Tensors::TensorProductMatrix<dim, value_type> AA(A, State::skd), BB(B), CC(C), DD(D, State::skd);
 
   /// compare the fast diagonalized Schur complement
-  Tensors::SchurComplementFast<dim, value_type, /*rank*/ m>               schur_fd(AA, BB, CC, DD);
-  Tensors::SchurComplement<Tensors::TensorProductMatrix<dim, value_type>> schur(AA, BB, CC, DD);
+  Tensors::SchurComplementFast<dim, value_type> schur_fd;
+  schur_fd.reinit(AA, BB, CC, DD, 1., -1, -1);
+  Tensors::SchurComplement<Tensors::TensorProductMatrix<dim, value_type>> schur;
+  schur.reinit(AA, BB, CC, DD);
   for(auto lane = 0U; lane < get_macro_size<value_type>(); ++lane)
   {
     const auto & S_fd    = table_to_fullmatrix(schur_fd.as_table(), lane);
@@ -506,7 +605,21 @@ REGISTER_TYPED_TEST_SUITE_P(FixBlockMatrixVmult,
                             CompareInverse,
                             CompareSchurFastBlockDiagonal,
                             CompareSchurFastEigenvalueKSVD,
-                            CompareSchurFastOffDiagonals);
+                            CompareSchurFastOffDiagonals,
+                            SchurComplementFastReinit);
 
 using ParamsTwoDimensionsDouble = testing::Types<Util::TypeList<Util::NonTypeParams<2>, double>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(TwoDimensionsDouble, FixBlockMatrixVmult, ParamsTwoDimensionsDouble);
+
+
+
+int
+main(int argc, char ** argv)
+{
+  /// clear output file
+  std::ofstream ofs("block_matrix.log", std::ios_base::out);
+  ofs.close();
+
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

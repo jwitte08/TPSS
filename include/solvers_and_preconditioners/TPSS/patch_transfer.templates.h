@@ -26,10 +26,10 @@ PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
   //       const ArrayView<const unsigned> &    patch_dofs = patch_dof_indices_on_cell(cell_no);
   //       const CellIterator &                 cell       = cell_view[cell_no];
   //       std::vector<types::global_dof_index> global_dofs_on_cell;
-  //       global_dofs_on_cell.resize(n_dofs_per_cell);
+  //       global_dofs_on_cell.resize(n_dofs_per_cell_static);
   //       cell->get_active_or_mg_dof_indices(global_dofs_on_cell);
   //       std::vector<Number> global_values;
-  //       global_values.resize(n_dofs_per_cell);
+  //       global_values.resize(n_dofs_per_cell_static);
   //       empty_constraints.get_dof_values(src,
   //                                        global_dofs_on_cell.cbegin(),
   //                                        global_values.begin(),
@@ -47,11 +47,14 @@ PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
   // }
   // else // compressed
   {
-    AssertDimension(dst.size(), global_dof_indices.size());
-    auto global_dof = global_dof_indices.cbegin();
-    for(auto dst_value = dst.begin(); dst_value != dst.end(); ++global_dof, ++dst_value)
-      for(unsigned int lane = 0; lane < macro_size; ++lane)
-        (*dst_value)[lane] = src((*global_dof)[lane]);
+    for(unsigned int lane = 0; lane < macro_size; ++lane)
+    {
+      const auto & global_dof_indices = get_global_dof_indices(lane);
+      AssertDimension(dst.size(), global_dof_indices.size());
+      auto dof_index = global_dof_indices.cbegin();
+      for(auto dst_value = dst.begin(); dst_value != dst.end(); ++dof_index, ++dst_value)
+        (*dst_value)[lane] = src((*dof_index));
+    }
   }
 
   AssertDimension(dst.size(), n_dofs_per_patch());
@@ -105,7 +108,7 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
   //   const unsigned int n_lanes_filled = cell_collection.size();
   //   Assert(n_lanes_filled > 0, ExcMessage("No vectorization lane filled."));
   //   std::vector<Number> src_per_cell;
-  //   src_per_cell.resize(n_dofs_per_cell);
+  //   src_per_cell.resize(n_dofs_per_cell_static);
   //   for(unsigned int lane = 0; lane < n_lanes_filled; ++lane)
   //   {
   //     const auto &       cell_view = cell_collection[lane];
@@ -116,7 +119,7 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
   //       const ArrayView<const unsigned> &    patch_dofs = patch_dof_indices_on_cell(cell_no);
   //       const CellIterator &                 cell       = cell_view[cell_no];
   //       std::vector<types::global_dof_index> global_dofs_on_cell;
-  //       global_dofs_on_cell.resize(n_dofs_per_cell);
+  //       global_dofs_on_cell.resize(n_dofs_per_cell_static);
   //       cell->get_active_or_mg_dof_indices(global_dofs_on_cell);
   //       const unsigned * dof = patch_dofs.begin();
   //       for(auto out = src_per_cell.begin(); out != src_per_cell.end(); ++out, ++dof)
@@ -127,11 +130,14 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
   // }
   // else // compressed
   {
-    AssertDimension(src.size(), global_dof_indices.size());
-    auto global_dof = global_dof_indices.cbegin();
-    for(auto src_value = src.cbegin(); src_value != src.cend(); ++global_dof, ++src_value)
-      for(unsigned int lane = 0; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
-        dst((*global_dof)[lane]) += (*src_value)[lane];
+    for(unsigned int lane = 0; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
+    {
+      const auto & global_dof_indices = get_global_dof_indices(lane);
+      AssertDimension(src.size(), global_dof_indices.size());
+      auto dof_index = global_dof_indices.cbegin();
+      for(auto src_value = src.cbegin(); src_value != src.cend(); ++dof_index, ++src_value)
+        dst((*dof_index)) += (*src_value)[lane];
+    }
   }
 }
 

@@ -381,7 +381,7 @@ struct ModelProblem : public Subscriptor
       mg_schwarz_smoother_pre = mgss;
     }
     else
-      AssertThrow(false, ExcMessage("TODO ..."));
+      AssertThrow(false, ExcMessage("Smoothing variant not implemented. TODO"));
 
     /// setup Schwarz-type post-smoother
     if(rt_parameters.multigrid.post_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
@@ -429,11 +429,11 @@ struct ModelProblem : public Subscriptor
           mg_schwarz_smoother_post = mgss;
         }
         else
-          AssertThrow(false, ExcMessage("TODO ..."));
+          AssertThrow(false, ExcMessage("Shallow copy is not possible. TODO"));
       }
     }
     else
-      AssertThrow(false, ExcMessage("TODO ..."));
+      AssertThrow(false, ExcMessage("Smoothing variant is not implemented. TODO"));
   }
 
 

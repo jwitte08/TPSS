@@ -15,6 +15,7 @@
 #include <deal.II/lac/solver_control.h>
 
 #include "solvers_and_preconditioners/TPSS/schwarz_smoother_data.h"
+#include "solvers_and_preconditioners/TPSS/tensors.h"
 #include "utilities.h"
 
 using namespace dealii;
@@ -59,7 +60,8 @@ struct CoarseGridParameter
   enum class SolverVariant
   {
     None,
-    IterativeAcc
+    IterativeAcc,
+    FullSVD
   };
   enum class PreconditionVariant
   {
@@ -91,7 +93,29 @@ struct MGParameter
   to_string() const;
 };
 
+template<typename Number, typename VectorType>
+class MGCoarseGridSVDSerial : public MGCoarseGridBase<VectorType>
+{
+public:
+  void
+  initialize(const FullMatrix<Number> & A, const double threshold = 0)
+  {
+    solver_svd.initialize(A, threshold);
+  }
 
+  virtual void
+  operator()(const unsigned int level, VectorType & dst, const VectorType & src) const override
+  {
+    Vector<Number> tmp_dst(dst.size());
+    Vector<Number> tmp_src(src.size());
+    std::copy(src.begin(), src.end(), tmp_src.begin());
+    solver_svd(level, tmp_dst, tmp_src);
+    std::copy(tmp_dst.begin(), tmp_dst.end(), dst.begin());
+  }
+
+private:
+  MGCoarseGridSVD<Number, Vector<Number>> solver_svd;
+};
 
 template<typename MatrixType, typename VectorType>
 class CoarseGridSolver : public MGCoarseGridBase<VectorType>
@@ -121,8 +145,17 @@ public:
       else
         AssertThrow(false, ExcMessage("Invalid PreconditionVariant. TODO."));
     }
+    else if(prms.solver_variant == CoarseGridParameter::SolverVariant::FullSVD)
+    {
+      const auto & coarse_table       = Tensors::matrix_to_table(coarse_matrix);
+      const auto & coarse_full_matrix = table_to_fullmatrix(coarse_table);
+      const auto   solver_svd = std::make_shared<MGCoarseGridSVDSerial<value_type, VectorType>>();
+      solver_svd->initialize(coarse_full_matrix);
+      coarse_grid_solver = solver_svd;
+    }
     else
       AssertThrow(false, ExcMessage("Invalid SolverVariant. TODO."));
+    AssertThrow(coarse_grid_solver, ExcMessage("Initialize failed."));
   }
 
   void
@@ -139,6 +172,7 @@ public:
   }
 
 private:
+  using value_type = typename MatrixType::value_type;
   SolverControl                                       solver_control;
   PreconditionIdentity                                precondition_id;
   SolverSelector<VectorType>                          iterative_solver;
@@ -158,6 +192,7 @@ class MGSmootherSchwarz
       VectorType>
 {
 public:
+  using value_type          = typename MatrixType::value_type;
   using preconditioner_type = SchwarzPreconditioner<dim, MatrixType, VectorType, PatchMatrixType>;
   using smoother_type       = SchwarzSmoother<dim, MatrixType, preconditioner_type, VectorType>;
   using Base                = MGSmootherRelaxation<MatrixType, smoother_type, VectorType>;
@@ -170,8 +205,10 @@ public:
       const std::vector<std::vector<CellIterator>> &      patches,
       const typename TPSS::PatchInfo<dim>::AdditionalData additional_data)>;
 
-    UserColoring      coloring_func;
-    SmootherParameter parameters;
+    UserColoring                                                                    coloring_func;
+    std::vector<std::set<types::boundary_id>>                                       dirichlet_ids;
+    Table<2, internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<value_type>>> shape_infos;
+    SmootherParameter                                                               parameters;
   };
 
   template<typename OtherNumber>
@@ -188,6 +225,8 @@ public:
     sd_handler_data.level = level;
     if(prms.schwarz.manual_coloring)
       sd_handler_data.coloring_func = additional_data.coloring_func;
+    sd_handler_data.shape_infos   = additional_data.shape_infos;
+    sd_handler_data.dirichlet_ids = additional_data.dirichlet_ids;
 
     /// Initialize SubdomainHandler
     const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
@@ -341,7 +380,7 @@ private:
 std::string
 CoarseGridParameter::str_solver_variant(const CoarseGridParameter::SolverVariant variant)
 {
-  const std::string str_variant[] = {"None", "Accurate Iterative Solver"};
+  const std::string str_variant[] = {"None", "Accurate Iterative Solver", "Full Inverse (SVD)"};
   return str_variant[(int)variant];
 }
 

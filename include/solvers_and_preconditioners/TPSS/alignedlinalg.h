@@ -162,6 +162,20 @@ matrix_transpose_multiplication(const Table<2, Number> & in1, const Table<2, Num
   return ret;
 }
 
+// Multiply Matrix by transpose of Matrix
+template<typename Number>
+Table<2, Number>
+matrix_multiplication_transpose(const Table<2, Number> & in1, const Table<2, Number> & in2)
+{
+  AssertDimension(in1.size()[0], in2.size()[0]);
+  Table<2, Number> ret(in1.size()[1], in2.size()[1]);
+  for(std::size_t i = 0; i < in1.size()[1]; i++)
+    for(std::size_t j = 0; j < in2.size()[1]; j++)
+      for(std::size_t k = 0; k < in2.size()[0]; k++)
+        ret(i, j) += in1(i, k) * in2(j, k);
+  return ret;
+}
+
 // compute the Khatri-Rao product of two matrices
 template<typename Number>
 Table<2, Number>
