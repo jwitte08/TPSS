@@ -63,6 +63,7 @@ DoFInfo<dim, Number>::initialize_impl()
     l2h = FETools::lexicographic_to_hierarchic_numbering(dof_handler->get_fe());
 
   // TODO: maybe initialize vector partitioner at the same time
+
   /// cache global dof indices once for each cell owned by this processor
   /// (including ghost cells)
   {
@@ -141,7 +142,7 @@ DoFInfo<dim, Number>::initialize_impl()
       }
     }
     start_of_dof_indices_patchwise.emplace_back(global_dof_indices_patchwise.size());
-    
+
     /// Clear the cell-wise cached global dof indices
     /// TODO reasonable?
     start_and_number_of_dof_indices_cellwise.clear();
