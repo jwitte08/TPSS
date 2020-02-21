@@ -82,6 +82,62 @@ protected:
       EXPECT_LT(n_iter, params.bound) << "Number of iterations n_iter exceed the bound.";
   }
 
+  void
+  verify_iteration_counts()
+  {
+    /// ACP
+    {
+      const std::map<std::pair<int, int>, double> bounds          = {{std::make_pair(2, 4), 11.0},
+                                                            {std::make_pair(2, 7), 13.0},
+                                                            {std::make_pair(3, 2), 12.0},
+                                                            {std::make_pair(3, 5), 14.0}};
+      const auto                                  bound_of_n_iter = bounds.at({dim, fe_degree});
+      Params                             params          = {TPSS::PatchVariant::cell,
+                                TPSS::SmootherVariant::additive,
+                                bound_of_n_iter};
+      this->run(params);
+    }
+
+    /// MCP
+    {
+      const std::map<std::pair<int, int>, double> bounds          = {{std::make_pair(2, 4), 8.0},
+                                                            {std::make_pair(2, 7), 10.0},
+                                                            {std::make_pair(3, 2), 8.0},
+                                                            {std::make_pair(3, 5), 11.0}};
+      const auto                                  bound_of_n_iter = bounds.at({dim, fe_degree});
+      Params                             params          = {TPSS::PatchVariant::cell,
+                                TPSS::SmootherVariant::multiplicative,
+                                bound_of_n_iter};
+      this->run(params);
+    }
+
+    /// MVP
+    {
+      const std::map<std::pair<int, int>, double> bounds          = {{std::make_pair(2, 4), 3.0},
+                                                            {std::make_pair(2, 7), 3.0},
+                                                            {std::make_pair(3, 2), 3.0},
+                                                            {std::make_pair(3, 5), 3.0}};
+      const auto                                  bound_of_n_iter = bounds.at({dim, fe_degree});
+      Params                             params          = {TPSS::PatchVariant::vertex,
+                                TPSS::SmootherVariant::multiplicative,
+                                bound_of_n_iter};
+      this->run(params);
+    }
+
+    /// AVP
+    {
+      const std::map<std::pair<int, int>, double> bounds          = {{std::make_pair(2, 4), 15.0},
+                                                            {std::make_pair(2, 7), 17.0},
+                                                            {std::make_pair(3, 2), 21.0},
+                                                            {std::make_pair(3, 5), 24.0}};
+      const auto                                  bound_of_n_iter = bounds.at({dim, fe_degree});
+      Params                             params          = {TPSS::PatchVariant::vertex,
+                                TPSS::SmootherVariant::additive,
+                                bound_of_n_iter};
+      this->run(params);
+    }
+  }
+
   RT::Parameter rt_parameters;
   Params        params;
 };
@@ -93,71 +149,25 @@ class TestPoissonRun : public TestPoissonBase<T::template value<0>(), T::templat
 {
 protected:
   using Base = TestPoissonBase<T::template value<0>(), T::template value<1>()>;
-  using Base::Params;
-  using Base::run;
 };
 
 TYPED_TEST_SUITE_P(TestPoissonRun);
 TYPED_TEST_P(TestPoissonRun, VaryDimAndDegree)
 {
-  using Base            = TestPoissonRun<TypeParam>;
-  constexpr auto dim    = TypeParam::template value<0>();
-  constexpr auto degree = TypeParam::template value<1>();
-
-  /// ACP
-  {
-    const std::map<std::pair<int, int>, double> bounds          = {{std::make_pair(2, 4), 11.0},
-                                                          {std::make_pair(2, 7), 13.0},
-                                                          {std::make_pair(3, 2), 12.0},
-                                                          {std::make_pair(3, 5), 14.0}};
-    const auto                                  bound_of_n_iter = bounds.at({dim, degree});
-    typename Base::Params                       params          = {TPSS::PatchVariant::cell,
-                                    TPSS::SmootherVariant::additive,
-                                    bound_of_n_iter};
-    this->run(params);
-  }
-
-  /// MCP
-  {
-    const std::map<std::pair<int, int>, double> bounds          = {{std::make_pair(2, 4), 8.0},
-                                                          {std::make_pair(2, 7), 10.0},
-                                                          {std::make_pair(3, 2), 8.0},
-                                                          {std::make_pair(3, 5), 11.0}};
-    const auto                                  bound_of_n_iter = bounds.at({dim, degree});
-    typename Base::Params                       params          = {TPSS::PatchVariant::cell,
-                                    TPSS::SmootherVariant::multiplicative,
-                                    bound_of_n_iter};
-    this->run(params);
-  }
-
-  /// MVP
-  {
-    const std::map<std::pair<int, int>, double> bounds          = {{std::make_pair(2, 4), 3.0},
-                                                          {std::make_pair(2, 7), 3.0},
-                                                          {std::make_pair(3, 2), 3.0},
-                                                          {std::make_pair(3, 5), 3.0}};
-    const auto                                  bound_of_n_iter = bounds.at({dim, degree});
-    typename Base::Params                       params          = {TPSS::PatchVariant::vertex,
-                                    TPSS::SmootherVariant::multiplicative,
-                                    bound_of_n_iter};
-    this->run(params);
-  }
-
-  /// AVP
-  {
-    const std::map<std::pair<int, int>, double> bounds          = {{std::make_pair(2, 4), 15.0},
-                                                          {std::make_pair(2, 7), 17.0},
-                                                          {std::make_pair(3, 2), 21.0},
-                                                          {std::make_pair(3, 5), 24.0}};
-    const auto                                  bound_of_n_iter = bounds.at({dim, degree});
-    typename Base::Params                       params          = {TPSS::PatchVariant::vertex,
-                                    TPSS::SmootherVariant::additive,
-                                    bound_of_n_iter};
-    this->run(params);
-  }
+  using Base = TestPoissonRun<TypeParam>;
+  this->verify_iteration_counts();
 }
 
-REGISTER_TYPED_TEST_SUITE_P(TestPoissonRun, VaryDimAndDegree);
+TYPED_TEST_P(TestPoissonRun, DoFsOnTheFly)
+{
+  using Base = TestPoissonRun<TypeParam>;
+  Base::rt_parameters.multigrid.pre_smoother.schwarz.caching_strategy = TPSS::CachingStrategy::OnTheFly;
+  Base::rt_parameters.multigrid.post_smoother.schwarz.caching_strategy = TPSS::CachingStrategy::OnTheFly;
+  Base::rt_parameters.n_cycles = 1;
+  this->verify_iteration_counts();
+}
+
+REGISTER_TYPED_TEST_SUITE_P(TestPoissonRun, VaryDimAndDegree, DoFsOnTheFly);
 
 using TestParams2D = testing::Types<Util::NonTypeParams<2, 4>, Util::NonTypeParams<2, 7>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(TwoDimensions, TestPoissonRun, TestParams2D);
