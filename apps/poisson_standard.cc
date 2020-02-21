@@ -23,7 +23,7 @@ struct TestParameter
     CoarseGridParameter::SolverVariant::IterativeAcc;
   double   coarse_grid_accuracy = 1.e-8;
   double   cg_reduction         = 1.e-8;
-  unsigned n_refinements        = 2;
+  unsigned n_refinements        = 1;
   unsigned n_repetitions        = 2;
 
   std::string
@@ -70,12 +70,12 @@ int
 main(int argc, char * argv[])
 {
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
-  constexpr int                    dim                        = CT::DIMENSION_;
-  constexpr int                    fe_degree                  = CT::FE_DEGREE_;
-  constexpr int                    n_patch_dofs_per_direction = -1;
-  // TPSS::UniversalInfo<dim>::n_cells_per_direction(CT::PATCH_VARIANT_) * (fe_degree + 1);
+  constexpr int                    dim       = CT::DIMENSION_;
+  constexpr int                    fe_degree = CT::FE_DEGREE_;
+  constexpr int                    n_patch_dofs_1d_static =
+    TPSS::UniversalInfo<dim>::n_dofs_1d(CT::PATCH_VARIANT_, TPSS::DoFLayout::Q, fe_degree);
   using PoissonProblem =
-    typename Poisson::CFEM::ModelProblem<dim, fe_degree, double, n_patch_dofs_per_direction>;
+    typename Poisson::CFEM::ModelProblem<dim, fe_degree, double, n_patch_dofs_1d_static>;
 
   TestParameter testprms;
   if(argc > 1)
@@ -85,7 +85,7 @@ main(int argc, char * argv[])
   RT::Parameter rt_parameters;
 
   //: discretization
-  rt_parameters.n_cycles              = 3;
+  rt_parameters.n_cycles              = 1;
   rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   rt_parameters.mesh.n_refinements    = testprms.n_refinements;
   rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;

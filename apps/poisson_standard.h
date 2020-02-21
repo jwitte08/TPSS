@@ -66,7 +66,7 @@ struct ModelProblem : public Subscriptor
   using LEVEL_MATRIX  = Laplace::CFEM::CombinedOperator<dim, fe_degree, value_type_mg>;
   using MG_TRANSFER   = MGTransferMatrixFree<dim, value_type_mg>;
   using TP_MATRIX     = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>, n_patch_dofs>;
-  using PATCH_MATRIX  = TP_MATRIX;//ConstrainedMatrix<TP_MATRIX>;
+  using PATCH_MATRIX  = TP_MATRIX; // ConstrainedMatrix<TP_MATRIX>;
   using SCHWARZ_PRECONDITIONER = SchwarzPreconditioner<dim, LEVEL_MATRIX, VECTOR, PATCH_MATRIX>;
   using SCHWARZ_SMOOTHER       = SchwarzSmoother<dim, LEVEL_MATRIX, SCHWARZ_PRECONDITIONER, VECTOR>;
   using MG_SMOOTHER_SCHWARZ    = MGSmootherSchwarz<dim, LEVEL_MATRIX, PATCH_MATRIX, VECTOR>;
@@ -153,28 +153,28 @@ struct ModelProblem : public Subscriptor
   }
 
 
-  // /*
-  //  * Prints the accumulated timings of the Schwarz pre- and post-smoothers on
-  //  * the finest level.
-  //  */
-  // void
-  // print_schwarz_preconditioner_times()
-  // {
-  //   Assert(mg_schwarz_smoother_pre, ExcMessage("MG Schwarz smoother isn't initialized."));
-  //   Assert(mg_schwarz_smoother_post, ExcMessage("MG Schwarz smoother isn't initialized."));
-  //   const auto precondition_pre  = mg_schwarz_smoother_pre->get_preconditioner();
-  //   const auto time_data_pre     = precondition_pre->get_time_data();
-  //   const auto precondition_post = mg_schwarz_smoother_post->get_preconditioner();
-  //   const auto time_data_post    = precondition_post->get_time_data();
-  //   AssertDimension(time_data_pre.size(), time_data_post.size());
-  //   for(unsigned t = 0; t < time_data_pre.size(); ++t)
-  //   {
-  //     const auto description = time_data_pre[t].description;
-  //     const auto t_max       = Utilities::MPI::max(time_data_pre[t].time, MPI_COMM_WORLD) +
-  //                        Utilities::MPI::max(time_data_post[t].time, MPI_COMM_WORLD);
-  //     print_parameter(description, t_max);
-  //   }
-  // }
+  /*
+   * Prints the accumulated timings of the Schwarz pre- and post-smoothers on
+   * the finest level.
+   */
+  void
+  print_schwarz_preconditioner_times()
+  {
+    Assert(mg_schwarz_smoother_pre, ExcMessage("MG Schwarz smoother isn't initialized."));
+    Assert(mg_schwarz_smoother_post, ExcMessage("MG Schwarz smoother isn't initialized."));
+    const auto precondition_pre  = mg_schwarz_smoother_pre->get_preconditioner();
+    const auto time_data_pre     = precondition_pre->get_time_data();
+    const auto precondition_post = mg_schwarz_smoother_post->get_preconditioner();
+    const auto time_data_post    = precondition_post->get_time_data();
+    AssertDimension(time_data_pre.size(), time_data_post.size());
+    for(unsigned t = 0; t < time_data_pre.size(); ++t)
+    {
+      const auto description = time_data_pre[t].description;
+      const auto t_max       = Utilities::MPI::max(time_data_pre[t].time, MPI_COMM_WORLD) +
+                         Utilities::MPI::max(time_data_post[t].time, MPI_COMM_WORLD);
+      print_parameter(description, t_max);
+    }
+  }
 
 
   template<typename T>
@@ -681,9 +681,14 @@ struct ModelProblem : public Subscriptor
           AssertThrow(false, ExcNotImplemented());
       }
 
-      compute_discretization_errors();
-      visualize_dof_vector(dof_handler, system_u, "solution", 1, mapping);
-      // print_schwarz_preconditioner_times();
+      {
+        TimerOutput::Scope time_section(time, "Compute discretization errors");
+        compute_discretization_errors();
+      }
+
+      // visualize_dof_vector(dof_handler, system_u, "solution", 1, mapping);
+
+      print_schwarz_preconditioner_times();
     }
   }
 };
