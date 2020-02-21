@@ -35,6 +35,8 @@
 
 using namespace dealii;
 
+
+
 struct MeshParameter
 {
   enum class GeometryVariant
@@ -44,6 +46,9 @@ struct MeshParameter
     CubeDistorted,
     CuboidSubdivided
   };
+
+  unsigned int
+  n_root_cells_1d(const unsigned int dimension) const;
 
   static std::string
   str_geometry_variant(const GeometryVariant variant);
@@ -58,7 +63,24 @@ struct MeshParameter
   double                    distortion = -1.0;
 };
 
-// +++++++++++++++++++++++++++++++++++ DEFINITIONS +++++++++++++++++++++++++++++++++++
+
+
+unsigned int
+MeshParameter::n_root_cells_1d(const unsigned int dimension) const
+{
+  if(geometry_variant == MeshParameter::GeometryVariant::Cube)
+    return n_repetitions;
+  else if(geometry_variant == MeshParameter::GeometryVariant::CubeDistorted)
+    return n_repetitions;
+  else if(geometry_variant == MeshParameter::GeometryVariant::CuboidSubdivided)
+  {
+    AssertIndexRange(dimension, n_subdivisions);
+    return n_subdivisions[dimension];
+  }
+  AssertThrow(false, ExcMessage("Geometry variant is not supported."));
+  return numbers::invalid_unsigned_int;
+}
+
 
 std::string
 MeshParameter::str_geometry_variant(const GeometryVariant variant)
@@ -66,6 +88,7 @@ MeshParameter::str_geometry_variant(const GeometryVariant variant)
   const std::string str_variant[] = {"None", "Cube", "CubeDistorted", "CuboidSubdivided"};
   return str_variant[(int)variant];
 }
+
 
 std::string
 MeshParameter::to_string() const
@@ -79,6 +102,7 @@ MeshParameter::to_string() const
   oss << Util::parameter_to_fstring("Distortion factor:", distortion);
   return oss.str();
 }
+
 
 /*
  * Creates a unit (hyper-)cube with @ prm.n_repetitions root cells per
@@ -249,27 +273,46 @@ template<int dim>
 types::global_dof_index
 estimate_n_dofs(const FiniteElement<dim> & fe, const MeshParameter & prms)
 {
-  AssertThrow(fe.get_name().find("DG") != std::string::npos,
-              ExcMessage("Only valid for DG elements."));
+  const auto dof_layout = TPSS::get_dof_layout(fe);
 
-  /// construct root mesh obtaining the number of root cells
-  parallel::distributed::Triangulation<dim> tria(
-    MPI_COMM_WORLD,
-    Triangulation<dim>::limit_level_difference_at_vertices,
-    parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy);
-  MeshParameter root_prms = prms;
-  root_prms.n_refinements = 0;
-  create_mesh(tria, root_prms);
-  const auto n_root_cells = tria.n_global_active_cells();
+  if(TPSS::DoFLayout::DGQ == dof_layout)
+  {
+    /// construct root mesh obtaining the number of root cells
+    parallel::distributed::Triangulation<dim> tria(
+      MPI_COMM_WORLD,
+      Triangulation<dim>::limit_level_difference_at_vertices,
+      parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy);
+    MeshParameter root_prms = prms;
+    root_prms.n_refinements = 0;
+    create_mesh(tria, root_prms);
+    const auto n_root_cells = tria.n_global_active_cells();
 
-  /// assume uniform refinement and estimate the number of dofs
-  const unsigned n_child_cells   = (1 << dim);
-  const unsigned n_cells         = n_root_cells * Utilities::pow(n_child_cells, prms.n_refinements);
-  const unsigned n_dofs_per_cell = Utilities::pow(fe.n_dofs_per_cell(), dim);
-  const types::global_dof_index n_dofs_est = n_cells * n_dofs_per_cell;
+    /// assume uniform refinement and estimate the number of dofs
+    const unsigned n_child_cells = (1 << dim);
+    const unsigned n_cells       = n_root_cells * Utilities::pow(n_child_cells, prms.n_refinements);
+    const unsigned n_dofs_per_cell =
+      fe.n_dofs_per_cell(); // Utilities::pow(fe.n_dofs_per_cell(), dim);
+    const types::global_dof_index n_dofs_est = n_cells * n_dofs_per_cell;
+    return n_dofs_est;
+  }
 
-  return n_dofs_est;
+  else if(TPSS::DoFLayout::Q == dof_layout)
+  {
+    const unsigned                           n_dofs_per_cell_1d = fe.tensor_degree() + 1;
+    std::array<types::global_dof_index, dim> n_dofs_1d;
+    for(auto d = 0U; d < dim; ++d)
+    {
+      const auto n_cells_1d = prms.n_root_cells_1d(d) * (1 << prms.n_refinements);
+      n_dofs_1d[d]          = n_cells_1d * (n_dofs_per_cell_1d - 1) + 1;
+    }
+    Tensors::TensorHelper<dim, types::global_dof_index> dof_tensor(n_dofs_1d);
+    return dof_tensor.n_flat();
+  }
+
+  AssertThrow(false, ExcMessage("Dof layout is not supported."));
+  return numbers::invalid_dof_index;
 }
+
 
 
 template<int dim>
@@ -278,16 +321,13 @@ struct IntegerCoordinateRoot
   IntegerCoordinateRoot() = delete;
 
   IntegerCoordinateRoot(const MeshParameter & mesh_prms)
+    : root_to_coordinate(map_root_to_coordinate_impl(mesh_prms))
   {
-    root_to_coordinate = map_root_to_coordinate_impl(mesh_prms);
-    // for (auto c = root_to_coordinate.begin(); c != root_to_coordinate.end(); ++c)
-    //   std::cout << c->first << " " << c->second << std::endl;
   }
 
   Point<dim, unsigned int>
   operator()(const unsigned int index) const
   {
-    // AssertIndexRange(index, root_to_coordinate.size());
     return root_to_coordinate.at(index);
   }
 
@@ -398,6 +438,7 @@ struct IntegerCoordinateRoot
    */
   std::map<unsigned int, Point<dim, unsigned>> root_to_coordinate;
 };
+
 
 
 template<int dim>
