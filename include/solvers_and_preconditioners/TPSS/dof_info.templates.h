@@ -1,3 +1,5 @@
+#include "patch_dof_worker.h"
+
 namespace TPSS
 {
 template<int dim, typename Number>
@@ -51,6 +53,7 @@ DoFInfo<dim, Number>::initialize(
   initialize_impl();
 }
 
+
 template<int dim, typename Number>
 void
 DoFInfo<dim, Number>::initialize_impl()
@@ -91,20 +94,21 @@ DoFInfo<dim, Number>::initialize_impl()
 
     /// Cache the global dof indices (in compressed format) in @p
     /// global_dof_indices_cellwise. Given the @p cell_position we access the associated dof
-    /// indices via @p start_and_number_of_dof_indices.
+    /// indices via @p start_and_number_of_dof_indices_cellwise.
     global_dof_indices_cellwise.clear();
-    start_and_number_of_dof_indices.resize(n_cells_plain);
+    start_and_number_of_dof_indices_cellwise.resize(n_cells_plain);
     for(auto cell_index = 0U; cell_index < cell_index_to_cell_position.size(); ++cell_index)
       if(!cell_index_to_cell_position[cell_index].empty())
       {
         const auto   dof_start = global_dof_indices_cellwise.size();
         const auto & cell      = get_level_dof_accessor_impl(cell_index, additional_data.level);
-        const auto   level_dof_indices = get_level_dof_indices_impl(cell);
+        const auto   level_dof_indices = fill_level_dof_indices_impl(cell);
         const auto   n_dofs            = level_dof_indices.size(); // compress?
 
         const auto & cell_positions = cell_index_to_cell_position[cell_index];
         for(auto cell_position : cell_positions)
-          start_and_number_of_dof_indices[cell_position] = std::make_pair(dof_start, n_dofs);
+          start_and_number_of_dof_indices_cellwise[cell_position] =
+            std::make_pair(dof_start, n_dofs);
 
         std::copy(level_dof_indices.cbegin(),
                   level_dof_indices.cend(),
@@ -116,15 +120,18 @@ DoFInfo<dim, Number>::initialize_impl()
   /// cell-based cached global dof indices ?
   if(additional_data.caching_strategy == TPSS::CachingStrategy::Cached)
   {
+    /// At this point we are able to use a reduced but sufficient set of
+    /// PatchDoFWorker's functionality to cache the global dof indices
+    /// patch-wise
     PatchDoFWorker<dim, Number> patch_worker(*this);
     const auto &                partition_data = patch_worker.get_partition_data();
     const auto                  n_subdomains   = partition_data.n_subdomains();
 
-    start_of_global_dof_indices.clear();
+    start_of_dof_indices_patchwise.clear();
     global_dof_indices_patchwise.clear();
     for(auto patch_id = 0U; patch_id < n_subdomains; ++patch_id)
     {
-      start_of_global_dof_indices.emplace_back(global_dof_indices_patchwise.size());
+      start_of_dof_indices_patchwise.emplace_back(global_dof_indices_patchwise.size());
       for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch_id); ++lane)
       {
         const auto & dof_indices_on_patch = patch_worker.fill_dof_indices_on_patch(patch_id, lane);
@@ -133,95 +140,15 @@ DoFInfo<dim, Number>::initialize_impl()
                   std::back_inserter(global_dof_indices_patchwise));
       }
     }
-    start_of_global_dof_indices.emplace_back(global_dof_indices_patchwise.size());
+    start_of_dof_indices_patchwise.emplace_back(global_dof_indices_patchwise.size());
+    
+    /// Clear the cell-wise cached global dof indices
+    /// TODO reasonable?
+    start_and_number_of_dof_indices_cellwise.clear();
+    global_dof_indices_cellwise.clear();
   }
 }
 
-
-template<int dim, typename number>
-std::shared_ptr<const Utilities::MPI::Partitioner>
-PatchDoFWorker<dim, number>::initialize_vector_partitioner() const
-{
-  const auto     level         = dof_info->get_additional_data().level;
-  const IndexSet owned_indices = std::move(dof_info->dof_handler->locally_owned_mg_dofs(level));
-
-  // Note: For certain meshes (in particular in 3D and with many
-  // processors), it is really necessary to cache intermediate data. After
-  // trying several objects such as std::set, a vector that is always kept
-  // sorted, and a vector that is initially unsorted and sorted once at the
-  // end, the latter has been identified to provide the best performance.
-  // Martin Kronbichler
-  const auto   my_subdomain_id   = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
-  const auto & is_ghost_on_level = [my_subdomain_id](const auto & cell) {
-    const bool is_owned      = cell->level_subdomain_id() == my_subdomain_id;
-    const bool is_artificial = cell->level_subdomain_id() == numbers::artificial_subdomain_id;
-    return !is_owned && !is_artificial;
-  };
-  std::vector<types::global_dof_index> dof_indices;
-  std::vector<types::global_dof_index> dofs_on_ghosts;
-  const unsigned int n_colors = patch_worker_type::get_partition_data().n_colors();
-  for(unsigned int color = 0; color < n_colors; ++color)
-  {
-    const auto range = patch_worker_type::get_ghost_range(color);
-    for(unsigned int patch_id = range.first; patch_id < range.second; ++patch_id)
-    {
-      const auto & collection_views = patch_worker_type::get_cell_collection_views(patch_id);
-      for(const auto & collection : collection_views)
-        for(const auto & cell : collection)
-          if(is_ghost_on_level(cell))
-          {
-            dof_indices.resize(cell->get_fe().dofs_per_cell);
-            cell->get_mg_dof_indices(dof_indices);
-            for(const auto dof_index : dof_indices)
-              if(!owned_indices.is_element(dof_index))
-                dofs_on_ghosts.push_back(dof_index);
-          }
-    }
-  }
-
-  /// sort, compress out duplicates, fill into index set
-  std::sort(dofs_on_ghosts.begin(), dofs_on_ghosts.end());
-  IndexSet   ghost_indices(owned_indices.size());
-  const auto end_without_duplicates = std::unique(dofs_on_ghosts.begin(), dofs_on_ghosts.end());
-  ghost_indices.add_indices(dofs_on_ghosts.begin(), end_without_duplicates);
-  ghost_indices.compress();
-  IndexSet larger_ghost_indices(owned_indices.size());
-  DoFTools::extract_locally_relevant_level_dofs(*(dof_info->dof_handler),
-                                                level,
-                                                larger_ghost_indices);
-  larger_ghost_indices.subtract_set(owned_indices);
-
-  const auto partitioner =
-    std::make_shared<Utilities::MPI::Partitioner>(owned_indices, MPI_COMM_WORLD);
-  partitioner->set_ghost_indices(ghost_indices, larger_ghost_indices);
-  // TODO ?
-  // partitioner->set_ghost_indices(larger_ghost_indices);
-
-  // // DEBUG
-  // std::ostringstream oss;
-  // oss << "info on mpi proc " << Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) << " on level
-  // " << level << std::endl; oss << "ghost index set:" << std::endl; for (const auto i :
-  // ghost_indices)
-  //   oss << i << " ";
-  // oss << std::endl;
-  // oss << "larger ghost index set:" << std::endl;
-  // for (const auto i : larger_ghost_indices)
-  //   oss << i << " ";
-  // oss << std::endl;
-  // const auto import_targets = partitioner->import_targets();
-  // oss << "import targets: (proc, n_targets)" << std::endl;
-  // for (const auto p : import_targets)
-  //   oss << "(" << p.first << ", " << p.second << ") ";
-  // oss << std::endl;
-  // const auto ghost_targets = partitioner->ghost_targets();
-  // oss << "ghost targets: (proc, n_targets)" << std::endl;
-  // for (const auto p : ghost_targets)
-  //   oss << "(" << p.first << ", " << p.second << ") ";
-  // oss << std::endl;
-  // std::cout << oss.str() << std::endl;
-
-  return partitioner;
-}
 
 
 } // end namespace TPSS
