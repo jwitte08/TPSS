@@ -131,6 +131,8 @@ public:
 template<int dim, typename Number>
 struct DoFInfo
 {
+  static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
+
   struct AdditionalData;
 
   /// assuming isotropy of tensor product finite elements and quadrature
@@ -155,7 +157,7 @@ struct DoFInfo
   {
     patch_info = nullptr;
     start_and_number_of_dof_indices.clear();
-    dof_indices_flat.clear();
+    global_dof_indices_cellwise.clear();
     dof_handler     = nullptr;
     additional_data = AdditionalData{};
     l2h.clear();
@@ -181,7 +183,11 @@ struct DoFInfo
   /*
    * Array uniquely storing for each cell stored in patch_info global dof indices.
    */
-  std::vector<types::global_dof_index> dof_indices_flat;
+  std::vector<types::global_dof_index> global_dof_indices_cellwise;
+
+  std::vector<unsigned int> start_of_global_dof_indices;
+
+  std::vector<types::global_dof_index> global_dof_indices_patchwise;
 
   const PatchInfo<dim> * patch_info = nullptr;
 
@@ -246,6 +252,7 @@ struct DoFInfo<dim, Number>::AdditionalData
 {
   unsigned int                 level = numbers::invalid_unsigned_int;
   std::set<types::boundary_id> dirichlet_ids;
+  TPSS::CachingStrategy        caching_strategy = TPSS::CachingStrategy::Cached;
 };
 
 
@@ -282,6 +289,135 @@ public:
   std::array<ArrayView<const types::global_dof_index>, macro_size>
   get_dof_indices_on_cell(const unsigned int patch_id, const unsigned int cell_no) const;
 
+  std::pair<unsigned int, unsigned int>
+  get_start_and_number_of_dof_indices(const unsigned int patch_id,
+                                             const unsigned int lane) const
+  {
+    AssertIndexRange(lane, this->n_lanes_filled(patch_id));
+    Assert(dof_info, ExcMessage("DoF info is not set."));
+    Assert(!(dof_info->global_dof_indices_patchwise.empty()), ExcMessage("No indices are cached."));
+    AssertDimension(dof_info->start_of_global_dof_indices.size(),
+                    this->get_partition_data().n_subdomains() + 1);
+    AssertIndexRange(patch_id, this->get_partition_data().n_subdomains());
+    const unsigned int start          = dof_info->start_of_global_dof_indices[patch_id];
+    const unsigned int end            = dof_info->start_of_global_dof_indices[patch_id + 1];
+    const auto         n_lanes_filled = this->n_lanes_filled(patch_id);
+    /// Assuming the same number of dofs on each lane !
+    AssertDimension((end - start) % n_lanes_filled, 0);
+    const unsigned int n_dofs_per_lane = (end - start) / n_lanes_filled;
+    const unsigned int start_at_lane   = start + lane * n_dofs_per_lane;
+    AssertIndexRange(end - 1, dof_info->global_dof_indices_patchwise.size());
+    return std::make_pair(start_at_lane, n_dofs_per_lane);
+  }
+
+  // std::pair<unsigned int, unsigned int>
+  // get_start_and_number_of_dof_indices(const unsigned int patch_id) const
+  // {
+  //   Assert(dof_info, ExcMessage("DoF info is not set."));
+  //   AssertDimension(dof_info->start_of_global_dof_indices.size(),
+  //                   this->get_partition_data().n_subdomains() + 1);
+  //   AssertIndexRange(patch_id, this->get_partition_data().n_subdomains());
+  //   const unsigned int start  = dof_info->start_of_global_dof_indices[patch_id];
+  //   const unsigned int end    = dof_info->start_of_global_dof_indices[patch_id + 1];
+  //   const unsigned int n_dofs = end - start;
+  //   AssertIndexRange(end - 1, dof_info->global_dof_indices_patchwise.size());
+  //   return std::make_pair(start, n_dofs);
+  // }
+
+  ArrayView<const types::global_dof_index>
+  get_dof_indices_on_patch(const unsigned int patch_id, const unsigned int lane) const
+  {
+    AssertIndexRange(lane, macro_size);
+    /// Return indices of first lane if the current lane @lane is not filled.
+    if(lane >= this->n_lanes_filled(patch_id))
+      return get_dof_indices_on_patch(patch_id, 0);
+
+    const auto [dof_start, n_dofs] = get_start_and_number_of_dof_indices(patch_id, lane);
+    const auto begin               = dof_info->global_dof_indices_patchwise.data() + dof_start;
+    return ArrayView<const types::global_dof_index>(begin, n_dofs);
+  }
+
+  ArrayView<const std::array<types::global_dof_index, macro_size>>
+  get_dof_indices_on_patch(const unsigned int patch_id) const
+  {
+    const auto & dof_indices = get_dof_indices_on_patch(patch_id, 0);
+    dofs_tmp.clear();
+    dofs_tmp.resize(dof_indices.size());
+    for(auto lane = 0U; lane < macro_size; ++lane)
+    {
+      const auto & dof_indices = get_dof_indices_on_patch(patch_id, lane);
+      for(auto i = 0U; i < dof_indices.size(); ++i)
+        dofs_tmp[i][lane] = dof_indices[i];
+    }
+    return ArrayView<const std::array<types::global_dof_index, macro_size>>(dofs_tmp.data(),
+                                                                            dofs_tmp.size());
+  }
+
+  std::vector<types::global_dof_index>
+  fill_dof_indices_on_patch(const unsigned int patch_id, const unsigned int lane) const
+  {
+    AssertIndexRange(patch_id, this->get_partition_data().n_subdomains());
+    AssertIndexRange(lane, this->n_lanes_filled(patch_id));
+    const auto n_cells         = patch_dof_tensor.cell_tensor.n_flat();
+    const auto n_dofs_per_cell = patch_dof_tensor.cell_dof_tensor.n_flat();
+    std::vector<types::global_dof_index> global_dof_indices;
+
+    if(dof_layout == DoFLayout::DGQ)
+    {
+      std::vector<types::global_dof_index> global_dof_indices_plain(patch_dof_tensor.n_flat());
+      for(auto cell_no = 0U; cell_no < n_cells; ++cell_no)
+      {
+        const auto global_dof_indices_on_cell = get_dof_indices_on_cell(patch_id, cell_no, lane);
+        for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell; ++cell_dof_index)
+        {
+          const unsigned int patch_dof_index = patch_dof_tensor.dof_index(cell_no, cell_dof_index);
+          global_dof_indices_plain[patch_dof_index] = global_dof_indices_on_cell[cell_dof_index];
+        }
+      }
+      std::swap(global_dof_indices, global_dof_indices_plain);
+    }
+
+    else if(dof_layout == DoFLayout::Q)
+    {
+      if(this->patch_variant == TPSS::PatchVariant::vertex)
+      {
+        /// Fill global dof indices regarding a patch local lexicographical
+        /// ordering. Dof indices at the patch boundary are marked as invalid.
+        std::vector<types::global_dof_index> global_dof_indices_plain(patch_dof_tensor.n_flat());
+        for(auto cell_no = 0U; cell_no < n_cells; ++cell_no)
+        {
+          const auto global_dof_indices_on_cell = get_dof_indices_on_cell(patch_id, cell_no, lane);
+          for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell; ++cell_dof_index)
+          {
+            const unsigned int patch_dof_index =
+              patch_dof_tensor.dof_index(cell_no, cell_dof_index);
+            const bool is_boundary_dof = patch_dof_tensor.is_boundary_face_dof(patch_dof_index);
+            global_dof_indices_plain[patch_dof_index] =
+              is_boundary_dof ? numbers::invalid_dof_index :
+                                global_dof_indices_on_cell[cell_dof_index];
+          }
+        }
+
+        /// Copy global dof indices neglecting all indices at the patch boundary.
+        std::copy_if(global_dof_indices_plain.cbegin(),
+                     global_dof_indices_plain.cend(),
+                     std::back_inserter(global_dof_indices),
+                     [](const auto dof_index) { return dof_index != numbers::invalid_dof_index; });
+      }
+      else
+        AssertThrow(false, ExcMessage("Patch variant is not supported."));
+    }
+    else
+      AssertThrow(false, ExcMessage("Finite element is not supported."));
+    return global_dof_indices;
+  }
+
+  std::vector<std::array<types::global_dof_index, macro_size>>
+  fill_dof_indices_on_patch(const unsigned int patch_id) const
+  {
+    AssertThrow(false, ExcMessage("Not implemented."));
+  }
+
   const DoFInfo<dim, Number> &
   get_dof_info() const;
 
@@ -314,6 +450,8 @@ private:
   const TPSS::DoFLayout dof_layout;
 
   PatchLocalTensorHelper<dim> patch_dof_tensor;
+
+  mutable std::vector<std::array<types::global_dof_index, macro_size>> dofs_tmp;
 };
 
 
@@ -580,28 +718,13 @@ PatchDoFWorker<dim, Number>::get_dof_indices_on_cell(const unsigned int patch_id
                                                      const unsigned int cell_no,
                                                      const unsigned int lane) const
 {
-  // OLD !!!
-  // const unsigned int n_lanes_filled = this->n_lanes_filled(patch_id);
-  // const unsigned int position       = [&]() {
-  //   AssertIndexRange(lane, this->macro_size);
-  //   if(lane < n_lanes_filled)
-  //     return this->get_cell_position(patch_id, cell_no, lane);
-  //   else
-  //     return this->get_cell_position(patch_id, cell_no, 0);
-  // }();
-  // const auto &                             dof_indices = dof_info->dof_indices;
-  // ArrayView<const types::global_dof_index> view;
-  // const auto &                             dof_indices_on_cell = dof_indices[position];
-  // view.reinit(dof_indices_on_cell.data(), dof_indices_on_cell.size());
-  // return view;
-
   AssertIndexRange(lane, macro_size);
   const unsigned int n_lanes_filled = this->n_lanes_filled(patch_id);
   if(lane >= n_lanes_filled)
     return get_dof_indices_on_cell(patch_id, cell_no, 0);
 
   const auto [dof_start, n_dofs] = get_start_and_number_of_dof_indices(patch_id, cell_no, lane);
-  const auto begin               = dof_info->dof_indices_flat.data() + dof_start;
+  const auto begin               = dof_info->global_dof_indices_cellwise.data() + dof_start;
   return ArrayView<const types::global_dof_index>(begin, n_dofs);
 }
 

@@ -70,6 +70,9 @@ public:
   const PatchDoFWorker<dim, Number> &
   get_patch_dof_worker() const;
 
+  ArrayView<const types::global_dof_index>
+  get_global_dof_indices(const unsigned int lane) const;
+
   /**
    * Extract from the global dof values @p src the patch relevant dof values.
    */
@@ -159,12 +162,14 @@ private:
    * associated global dof indices. The data field has patch-based
    * lexicographical ordering.
    */
-  std::vector<std::array<types::global_dof_index, macro_size>> global_dof_indices;
+  std::array<std::vector<types::global_dof_index>, macro_size> global_dof_indices;
 
   /**
    * Current patch id identifying a unique patch given by @p subdomain_handler.
    */
   unsigned int patch_id;
+
+  TPSS::CachingStrategy caching_strategy;
 
   // mutable std::vector<unsigned int> cell_dof_indices_scratchpad;
 };
@@ -361,7 +366,8 @@ inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
     //                           dof_layout == DoFLayout::DGQ))),
     dofh_index(dofh_index_in),
     dof_layout(subdomain_handler_in.get_dof_layout(dofh_index_in)),
-    patch_id(numbers::invalid_unsigned_int)
+    patch_id(numbers::invalid_unsigned_int),
+    caching_strategy(patch_dof_worker.get_dof_info().get_additional_data().caching_strategy)
 {
   AssertThrow(dof_layout != DoFLayout::invalid, ExcMessage("The finite element is not supported."));
   AssertThrow(n_dofs_per_cell_static == cell_dof_tensor.n_flat(),
@@ -376,8 +382,12 @@ PatchTransfer<dim, Number, fe_degree>::reinit(const unsigned int patch)
 {
   AssertIndexRange(patch, n_subdomains);
   patch_id = patch;
-  fill_global_dof_indices(patch_id);
-  AssertDimension(global_dof_indices.size(), n_dofs_per_patch());
+
+  if(caching_strategy != TPSS::CachingStrategy::Cached)
+  {
+    fill_global_dof_indices(patch_id);
+    AssertDimension(global_dof_indices.size(), n_dofs_per_patch());
+  }
 }
 
 
@@ -396,6 +406,21 @@ const PatchDoFWorker<dim, Number> &
 PatchTransfer<dim, Number, fe_degree>::get_patch_dof_worker() const
 {
   return patch_dof_worker;
+}
+
+
+template<int dim, typename Number, int fe_degree>
+ArrayView<const types::global_dof_index>
+PatchTransfer<dim, Number, fe_degree>::get_global_dof_indices(const unsigned int lane) const
+{
+  if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
+    return get_global_dof_indices(0);
+
+  if(caching_strategy == TPSS::CachingStrategy::Cached)
+    return patch_dof_worker.get_dof_indices_on_patch(patch_id, lane);
+  AssertDimension(this->global_dof_indices[lane].size(), n_dofs_per_patch());
+  return ArrayView<const types::global_dof_index>(global_dof_indices[lane].data(),
+                                                  global_dof_indices[lane].size());
 }
 
 
@@ -429,67 +454,12 @@ inline void
 PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned int patch_id)
 {
   AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
-  const auto n_cells                = cell_tensor.n_flat();
-
-  if(dof_layout == DoFLayout::DGQ)
+  for(auto lane = 0U; lane < macro_size; ++lane)
   {
-    std::vector<std::array<types::global_dof_index, macro_size>> global_dof_indices_plain(
-      patch_dof_tensor.n_flat());
-    for(auto cell_no = 0U; cell_no < n_cells; ++cell_no)
-    {
-      const auto global_dof_indices_on_cell =
-        patch_dof_worker.get_dof_indices_on_cell(patch_id, cell_no);
-      for(unsigned int lane = 0; lane < macro_size; ++lane)
-        for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell_static; ++cell_dof_index)
-        {
-          const unsigned int patch_dof_index = patch_dof_tensor.dof_index(cell_no, cell_dof_index);
-          global_dof_indices_plain[patch_dof_index][lane] =
-            global_dof_indices_on_cell[lane][cell_dof_index];
-        }
-    }
-    std::swap(global_dof_indices, global_dof_indices_plain);
+    auto && global_dof_indices_at_lane = patch_dof_worker.fill_dof_indices_on_patch(patch_id, lane);
+    AssertDimension(global_dof_indices_at_lane.size(), n_dofs_per_patch());
+    std::swap(this->global_dof_indices[lane], global_dof_indices_at_lane);
   }
-
-  else if(dof_layout == DoFLayout::Q)
-  {
-    if(patch_variant == TPSS::PatchVariant::vertex)
-    {
-      /// Fill global dof indices regarding a patch local lexicographical
-      /// ordering. Dof indices at the patch boundary are marked as invalid.
-      std::vector<std::array<types::global_dof_index, macro_size>> global_dof_indices_plain(
-        patch_dof_tensor.n_flat());
-      for(auto cell_no = 0U; cell_no < n_cells; ++cell_no)
-      {
-        const auto global_dof_indices_on_cell =
-          patch_dof_worker.get_dof_indices_on_cell(patch_id, cell_no);
-        for(unsigned int lane = 0; lane < macro_size; ++lane)
-          for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell_static; ++cell_dof_index)
-          {
-            const unsigned int patch_dof_index =
-              patch_dof_tensor.dof_index(cell_no, cell_dof_index);
-            const bool is_boundary_dof = patch_dof_tensor.is_boundary_face_dof(patch_dof_index);
-            global_dof_indices_plain[patch_dof_index][lane] =
-              is_boundary_dof ? numbers::invalid_dof_index :
-                                global_dof_indices_on_cell[lane][cell_dof_index];
-          }
-      }
-
-      /// Copy global dof indices neglecting all indices at the patch boundary.
-      std::vector<std::array<types::global_dof_index, macro_size>> global_dof_indices;
-      std::copy_if(global_dof_indices_plain.cbegin(),
-                   global_dof_indices_plain.cend(),
-                   std::back_inserter(global_dof_indices),
-                   [](const auto & macro_index) {
-                     return macro_index[0] != numbers::invalid_dof_index;
-                   });
-      std::swap(this->global_dof_indices, global_dof_indices);
-    }
-    else
-      AssertThrow(false, ExcMessage("Patch variant is not supported."));
-  }
-  else
-    AssertThrow(false, ExcMessage("Finite element is not supported."));
-  AssertDimension(this->global_dof_indices.size(), n_dofs_per_patch());
 }
 
 

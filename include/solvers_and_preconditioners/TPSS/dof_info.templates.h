@@ -90,14 +90,14 @@ DoFInfo<dim, Number>::initialize_impl()
     }
 
     /// Cache the global dof indices (in compressed format) in @p
-    /// dof_indices_flat. Given the @p cell_position we access the associated dof
+    /// global_dof_indices_cellwise. Given the @p cell_position we access the associated dof
     /// indices via @p start_and_number_of_dof_indices.
-    dof_indices_flat.clear();
+    global_dof_indices_cellwise.clear();
     start_and_number_of_dof_indices.resize(n_cells_plain);
     for(auto cell_index = 0U; cell_index < cell_index_to_cell_position.size(); ++cell_index)
       if(!cell_index_to_cell_position[cell_index].empty())
       {
-        const auto   dof_start = dof_indices_flat.size();
+        const auto   dof_start = global_dof_indices_cellwise.size();
         const auto & cell      = get_level_dof_accessor_impl(cell_index, additional_data.level);
         const auto   level_dof_indices = get_level_dof_indices_impl(cell);
         const auto   n_dofs            = level_dof_indices.size(); // compress?
@@ -108,8 +108,32 @@ DoFInfo<dim, Number>::initialize_impl()
 
         std::copy(level_dof_indices.cbegin(),
                   level_dof_indices.cend(),
-                  std::back_inserter(dof_indices_flat));
+                  std::back_inserter(global_dof_indices_cellwise));
       }
+  }
+
+  /// Completely cache all global dof indices for each macro patch. TODO: delete
+  /// cell-based cached global dof indices ?
+  if(additional_data.caching_strategy == TPSS::CachingStrategy::Cached)
+  {
+    PatchDoFWorker<dim, Number> patch_worker(*this);
+    const auto &                partition_data = patch_worker.get_partition_data();
+    const auto                  n_subdomains   = partition_data.n_subdomains();
+
+    start_of_global_dof_indices.clear();
+    global_dof_indices_patchwise.clear();
+    for(auto patch_id = 0U; patch_id < n_subdomains; ++patch_id)
+    {
+      start_of_global_dof_indices.emplace_back(global_dof_indices_patchwise.size());
+      for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch_id); ++lane)
+      {
+        const auto & dof_indices_on_patch = patch_worker.fill_dof_indices_on_patch(patch_id, lane);
+        std::copy(dof_indices_on_patch.cbegin(),
+                  dof_indices_on_patch.cend(),
+                  std::back_inserter(global_dof_indices_patchwise));
+      }
+    }
+    start_of_global_dof_indices.emplace_back(global_dof_indices_patchwise.size());
   }
 }
 
