@@ -196,6 +196,7 @@ void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::post_process_constrai
       {
         restrict_matrix_qvp(matrix);
         AssertDimension(this->patch_worker.n_dofs_1d(direction), matrices.at(direction).n_rows());
+        (void)eval_ansatz;
         AssertDimension(eval_ansatz.patch_worker.n_dofs_1d(direction),
                         matrices.at(direction).n_cols());
       }

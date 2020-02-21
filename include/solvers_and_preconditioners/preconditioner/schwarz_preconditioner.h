@@ -14,6 +14,8 @@
 #include "solvers_and_preconditioners/TPSS/subdomain_handler.h"
 #include "solvers_and_preconditioners/preconditioner/preconditioner_base.h"
 
+
+
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 class SchwarzPreconditioner : public PreconditionerBase<VectorType>
 {
@@ -184,7 +186,7 @@ private:
 
   template<typename OtherVectorType>
   void
-  initialize_ghost(OtherVectorType &) const
+  initialize_ghosted_vector(OtherVectorType &) const
   {
     AssertThrow(false, ExcMessage("VectorType not supported."));
   }
@@ -195,7 +197,7 @@ private:
    * such that local compatibility checks are sufficient.
    */
   void
-  initialize_ghost(LinearAlgebra::distributed::Vector<value_type> & vec) const
+  initialize_ghosted_vector(LinearAlgebra::distributed::Vector<value_type> & vec) const
   {
     const auto partitioner = subdomain_handler->get_vector_partitioner();
     if(vec.partitioners_are_compatible(*partitioner))
@@ -210,7 +212,7 @@ private:
    * such that local compatibility checks are sufficient.
    */
   void
-  initialize_ghost(LinearAlgebra::distributed::BlockVector<value_type> & vec) const
+  initialize_ghosted_vector(LinearAlgebra::distributed::BlockVector<value_type> & vec) const
   {
     const auto & partitioners = subdomain_handler->get_vector_partitioners();
     if(vec.n_blocks() == subdomain_handler->n_components())
@@ -323,7 +325,7 @@ private:
 
   mutable std::shared_ptr<VectorType> residual_ghosted;
 
-  unsigned int level = -1;
+  unsigned int level = numbers::invalid_unsigned_int;
 
   TPSS::PatchVariant patch_variant = TPSS::PatchVariant::invalid;
 
@@ -359,6 +361,8 @@ struct SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Additio
 
 
 /*********************************** inline functions ***********************************/
+
+
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 inline const typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
