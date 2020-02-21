@@ -273,10 +273,9 @@ struct ModelProblem : public Subscriptor
     MeshParameter mesh_prms = rt_parameters.mesh;
     mesh_prms.n_refinements = n_refinements;
 
-    AssertThrow(
-      !rt_parameters.exceeds_dof_limits(numbers::invalid_dof_index),
-      ExcMessage(
-        "There is no DoF estimation implemented for standard finite elements. Therefore, the dof limit functionality is disabled."));
+    const auto n_dofs_est = estimate_n_dofs(*fe, mesh_prms);
+    if(rt_parameters.exceeds_dof_limits(n_dofs_est))
+      return false;
 
     /// create the triangulation and store few informations
     *pcout << create_mesh(triangulation, mesh_prms);

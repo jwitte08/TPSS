@@ -85,7 +85,8 @@ main(int argc, char * argv[])
   RT::Parameter rt_parameters;
 
   //: discretization
-  rt_parameters.n_cycles              = 1;
+  rt_parameters.n_cycles              = 6;
+  rt_parameters.dof_limits            = {1e3, 2e7};
   rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   rt_parameters.mesh.n_refinements    = testprms.n_refinements;
   rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;

@@ -92,9 +92,7 @@ protected:
                                                             {std::make_pair(3, 2), 12.0},
                                                             {std::make_pair(3, 5), 14.0}};
       const auto                                  bound_of_n_iter = bounds.at({dim, fe_degree});
-      Params                             params          = {TPSS::PatchVariant::cell,
-                                TPSS::SmootherVariant::additive,
-                                bound_of_n_iter};
+      Params params = {TPSS::PatchVariant::cell, TPSS::SmootherVariant::additive, bound_of_n_iter};
       this->run(params);
     }
 
@@ -105,9 +103,9 @@ protected:
                                                             {std::make_pair(3, 2), 8.0},
                                                             {std::make_pair(3, 5), 11.0}};
       const auto                                  bound_of_n_iter = bounds.at({dim, fe_degree});
-      Params                             params          = {TPSS::PatchVariant::cell,
-                                TPSS::SmootherVariant::multiplicative,
-                                bound_of_n_iter};
+      Params                                      params          = {TPSS::PatchVariant::cell,
+                       TPSS::SmootherVariant::multiplicative,
+                       bound_of_n_iter};
       this->run(params);
     }
 
@@ -118,9 +116,9 @@ protected:
                                                             {std::make_pair(3, 2), 3.0},
                                                             {std::make_pair(3, 5), 3.0}};
       const auto                                  bound_of_n_iter = bounds.at({dim, fe_degree});
-      Params                             params          = {TPSS::PatchVariant::vertex,
-                                TPSS::SmootherVariant::multiplicative,
-                                bound_of_n_iter};
+      Params                                      params          = {TPSS::PatchVariant::vertex,
+                       TPSS::SmootherVariant::multiplicative,
+                       bound_of_n_iter};
       this->run(params);
     }
 
@@ -131,9 +129,9 @@ protected:
                                                             {std::make_pair(3, 2), 21.0},
                                                             {std::make_pair(3, 5), 24.0}};
       const auto                                  bound_of_n_iter = bounds.at({dim, fe_degree});
-      Params                             params          = {TPSS::PatchVariant::vertex,
-                                TPSS::SmootherVariant::additive,
-                                bound_of_n_iter};
+      Params                                      params          = {TPSS::PatchVariant::vertex,
+                       TPSS::SmootherVariant::additive,
+                       bound_of_n_iter};
       this->run(params);
     }
   }
@@ -161,8 +159,10 @@ TYPED_TEST_P(TestPoissonRun, VaryDimAndDegree)
 TYPED_TEST_P(TestPoissonRun, DoFsOnTheFly)
 {
   using Base = TestPoissonRun<TypeParam>;
-  Base::rt_parameters.multigrid.pre_smoother.schwarz.caching_strategy = TPSS::CachingStrategy::OnTheFly;
-  Base::rt_parameters.multigrid.post_smoother.schwarz.caching_strategy = TPSS::CachingStrategy::OnTheFly;
+  Base::rt_parameters.multigrid.pre_smoother.schwarz.caching_strategy =
+    TPSS::CachingStrategy::OnTheFly;
+  Base::rt_parameters.multigrid.post_smoother.schwarz.caching_strategy =
+    TPSS::CachingStrategy::OnTheFly;
   Base::rt_parameters.n_cycles = 1;
   this->verify_iteration_counts();
 }

@@ -78,7 +78,7 @@ struct TestLinElasticity : public BasicSetup<dim, fe_degree, Number>
     rt_parameters.multigrid.pre_smoother.n_smoothing_steps  = 1;
     rt_parameters.multigrid.post_smoother.n_smoothing_steps = 1;
     rt_parameters.mesh.n_refinements                        = 1;
-    rt_parameters.dof_limits                                = {1, 5e6};
+    rt_parameters.dof_limits                                = {1e3, 1e6};
     rt_parameters.n_cycles                                  = 10;
   }
 
