@@ -301,7 +301,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastBlockDiagonal)
     std::array<Table<2, value_type>, dim> tensor;
     for(auto & matrix : tensor)
       fill_matrix_with_random_values(matrix, m, m);
-    std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [](const auto & A) {
+    std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [m](const auto & A) {
       auto B = Tensors::sum(A, Tensors::transpose(A));
       for(auto i = 0U; i < m; ++i)
         B(i, i) = 10. * B(i, i);
@@ -370,7 +370,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastEigenvalueKSVD)
     std::array<Table<2, value_type>, dim> tensor;
     for(auto & matrix : tensor)
       fill_matrix_with_random_values(matrix, m, m);
-    std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [](const auto & A) {
+    std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [m](const auto & A) {
       auto B = Tensors::sum(A, Tensors::transpose(A));
       for(auto i = 0U; i < m; ++i)
         B(i, i) = static_cast<value_type>(m) * B(i, i);
@@ -493,7 +493,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, SchurComplementFastReinit)
     std::array<Table<2, value_type>, dim> tensor;
     for(auto & matrix : tensor)
       fill_matrix_with_random_values(matrix, m, m);
-    std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [](const auto & A) {
+    std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [m](const auto & A) {
       auto B = Tensors::sum(A, Tensors::transpose(A));
       for(auto i = 0U; i < m; ++i)
         B(i, i) = static_cast<value_type>(m) * B(i, i);
@@ -564,7 +564,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastOffDiagonals)
     std::array<Table<2, value_type>, dim> tensor;
     for(auto & matrix : tensor)
       fill_matrix_with_random_values(matrix, m, m);
-    std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [](const auto & A) {
+    std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [m](const auto & A) {
       auto B = Tensors::sum(A, Tensors::transpose(A));
       for(auto i = 0U; i < m; ++i)
         B(i, i) = static_cast<value_type>(m) * B(i, i);

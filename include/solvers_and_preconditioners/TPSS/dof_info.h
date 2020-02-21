@@ -215,7 +215,7 @@ struct DoFInfo
 
   AdditionalData additional_data;
 
-  std::vector<types::global_dof_index> l2h;
+  std::vector<unsigned int> l2h;
 };
 
 

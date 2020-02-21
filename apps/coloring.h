@@ -85,9 +85,9 @@ visualize_coloring(
                                                                                 cell->level(),
                                                                                 cell->index(),
                                                                                 &dof_handler};
-        std::vector<unsigned> dof_indices(dof_handler.get_fe().dofs_per_cell);
+        std::vector<types::global_dof_index> dof_indices(dof_handler.get_fe().dofs_per_cell);
         active_cell->get_dof_indices(dof_indices);
-        const auto active_cell_index = dof_indices.front(); // active_cell->active_cell_index();
+        const auto active_cell_index = dof_indices.front();
         marker(active_cell_index)    = 1;
       }
     marker.compress(VectorOperation::add);
