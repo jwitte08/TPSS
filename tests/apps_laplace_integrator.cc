@@ -138,6 +138,24 @@ protected:
     const auto & patch_worker   = patch_transfer.get_patch_dof_worker();
     const auto & partition_data = patch_worker.get_partition_data();
 
+    // SANDBOX !!!
+    for(auto patch = 0U; patch < partition_data.n_subdomains(); ++patch)
+      for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch); ++lane)
+      {
+        const auto cell_collection = patch_worker.get_cell_collection(patch, lane);
+        for(auto cell_no = 0U; cell_no < cell_collection.size(); ++cell_no)
+        {
+          TPSS::FaceInfoLocal<dim> face_info(cell_no, cell_collection);
+          const auto               adjacents      = face_info.get_adjacent_cell_numbers();
+          const auto               boundary_faces = face_info.get_face_numbers_at_patch_boundary();
+          const auto               lower_faces    = face_info.get_face_numbers_lower_neighbor();
+          std::cout << "cell_no: " << cell_no << std::endl;
+          std::cout << "adjacent cell_no:" << vector_to_string(adjacents) << std::endl;
+          std::cout << "boundary face_no:" << vector_to_string(boundary_faces) << std::endl;
+          std::cout << "lower neighbor face_no:" << vector_to_string(lower_faces) << std::endl;
+        }
+      }
+
     vector_type tmp_vector;
     mf_storage_level->initialize_dof_vector(tmp_vector);
     const auto & local_solvers = *(schwarz_preconditioner->get_local_solvers());

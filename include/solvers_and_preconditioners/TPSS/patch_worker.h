@@ -7,6 +7,116 @@
 
 namespace TPSS
 {
+template<int dim>
+struct FaceInfoLocal
+{
+  using CellIterator = typename PatchInfo<dim>::CellIterator;
+
+  FaceInfoLocal(const unsigned int my_cell_no, const std::vector<CellIterator> & cell_collection_in)
+    : cell_number(my_cell_no), n_cells(cell_collection_in.size())
+  {
+    AssertIndexRange(my_cell_no, cell_collection_in.size());
+    const auto & my_cell = cell_collection_in[my_cell_no];
+
+    /// If this cell @p my_cell shares its face @p face_no with an adjacent cell
+    /// within the patch of cells @p cell_collection_in the local cell number of
+    /// the neighbor is returned. Otherwise invalid_unsigned_int is returned.
+    const auto find_adjacent_cell_no = [&](const auto face_no) {
+      const auto my_neighbor_cell_index = my_cell->neighbor_index(face_no);
+      if(my_neighbor_cell_index == -1) // at physical boundary
+        return numbers::invalid_unsigned_int;
+      for(auto cell_no = 0U; cell_no < cell_collection_in.size(); ++cell_no)
+        if(cell_no != my_cell_no)
+        {
+          const auto & other_cell = cell_collection_in[cell_no];
+          if(my_neighbor_cell_index == other_cell->index())
+            return cell_no;
+        }
+      return numbers::invalid_unsigned_int;
+    };
+
+    //: fill the face_no to adjacent cell_no map @p face_to_cell_number
+    for(auto face_no = 0U; face_no < n_faces(); ++face_no)
+      face_to_cell_number[face_no] = find_adjacent_cell_no(face_no);
+  }
+
+  static constexpr unsigned int
+  n_faces()
+  {
+    return GeometryInfo<dim>::faces_per_cell;
+  }
+
+  static constexpr unsigned int
+  n_faces_1d()
+  {
+    return 2;
+  }
+
+  static constexpr unsigned int
+  face_no(const unsigned int face_no_1d, const unsigned int dimension)
+  {
+    AssertIndexRange(face_no_1d, n_faces_1d());
+    AssertIndexRange(dimension, dim);
+    return dimension * n_faces_1d() + face_no_1d;
+  }
+
+  static constexpr std::pair<unsigned int, unsigned int>
+  face_no_1d_and_dimension(const unsigned int face_no)
+  {
+    return std::make_pair(face_no % n_faces_1d(), face_no / n_faces_1d());
+  }
+
+  bool
+  at_patch_boundary(const unsigned int face_no) const
+  {
+    AssertIndexRange(face_no, n_faces());
+    return face_to_cell_number[face_no] == numbers::invalid_unsigned_int;
+  }
+
+  unsigned int
+  get_adjacent_cell_no(const unsigned int face_no) const
+  {
+    AssertIndexRange(face_no, n_faces());
+    return face_to_cell_number[face_no];
+  }
+
+  std::vector<unsigned int>
+  get_adjacent_cell_numbers() const
+  {
+    std::vector<unsigned int> cell_numbers;
+    for(auto face_no = 0U; face_no < n_faces(); ++face_no)
+      if(get_adjacent_cell_no(face_no) != numbers::invalid_unsigned_int)
+        cell_numbers.emplace_back(get_adjacent_cell_no(face_no));
+    return cell_numbers;
+  }
+
+  std::vector<unsigned int>
+  get_face_numbers_at_patch_boundary() const
+  {
+    std::vector<unsigned int> face_numbers;
+    for(auto face_no = 0U; face_no < n_faces(); ++face_no)
+      if(at_patch_boundary(face_no))
+        face_numbers.emplace_back(face_no);
+    return face_numbers;
+  }
+
+  std::vector<unsigned int>
+  get_face_numbers_lower_neighbor() const
+  {
+    std::vector<unsigned int> face_numbers;
+    for(auto face_no = 0U; face_no < n_faces(); ++face_no)
+      if(!at_patch_boundary(face_no) && face_to_cell_number[face_no] < cell_number)
+        face_numbers.emplace_back(face_no);
+    return face_numbers;
+  }
+
+  const unsigned int                  cell_number;
+  const unsigned int                  n_cells;
+  std::array<unsigned int, n_faces()> face_to_cell_number;
+};
+
+
+
 // TODO revise description
 /**
  * A worker class re-interpreting the raw patch data in PatchInfo with
@@ -72,11 +182,19 @@ public:
   get_boundary_ids(const unsigned int patch) const;
 
   /**
-   * Returns the collection of macro cells describing the macro patch
+   * Returns the collection of cell iterators describing the physical patch
+   * identified by macro patch @p patch_id and vectorization lane @p lane. Cells
+   * are lexicographically ordered.
+   */
+  std::vector<CellIterator>
+  get_cell_collection(const unsigned int patch_id, const unsigned int lane) const;
+
+  /**
+   * Returns the collection of macro cells describing the (regular) macro patch
    * @p patch_id subject to a lexicographical ordering.
    */
   std::vector<std::array<CellIterator, macro_size>>
-  get_cell_collection(unsigned int patch_id) const;
+  get_cell_collection(const unsigned int patch_id) const;
 
   std::vector<ArrayView<const CellIterator>>
   get_cell_collection_views(unsigned int patch_id) const;
@@ -388,9 +506,28 @@ PatchWorker<dim, number>::get_boundary_ids(const unsigned int patch) const
 
 
 template<int dim, typename number>
+inline std::vector<typename PatchWorker<dim, number>::CellIterator>
+PatchWorker<dim, number>::get_cell_collection(const unsigned int patch_id,
+                                              const unsigned int lane) const
+{
+  Assert(patch_info, ExcMessage("Patch info is not set."));
+  AssertIndexRange(lane, n_lanes_filled(patch_id));
+  AssertIndexRange(patch_id, get_partition_data().n_subdomains());
+
+  std::vector<PatchWorker<dim, number>::CellIterator> collection;
+  for(auto cell_no = 0U; cell_no < patch_size; ++cell_no)
+  {
+    const auto cell_position = get_cell_position(patch_id, cell_no, lane);
+    collection.emplace_back(patch_info->get_cell_iterator(cell_position));
+  }
+  return collection;
+}
+
+
+template<int dim, typename number>
 inline std::vector<
   std::array<typename PatchWorker<dim, number>::CellIterator, PatchWorker<dim, number>::macro_size>>
-PatchWorker<dim, number>::get_cell_collection(unsigned int patch_id) const
+PatchWorker<dim, number>::get_cell_collection(const unsigned int patch_id) const
 {
   Assert(patch_info, ExcMessage("Patch info not set."));
   const auto n_lanes_filled = this->n_lanes_filled(patch_id);
