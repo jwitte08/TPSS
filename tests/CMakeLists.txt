@@ -38,7 +38,7 @@ set (src_files
   patch_transfer.cc
   tensors.cc
   tensor_product_matrix.cc
-  Tkroneckersvd.cc
+  kroneckersvd.cc
   )
 
 add_custom_target(setup_tests)

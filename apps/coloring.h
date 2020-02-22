@@ -81,7 +81,7 @@ visualize_coloring(
     for(const auto & patch : patch_collection)
       for(const auto & cell : (*patch))
       {
-        const auto            active_cell = typename DoFHandler<dim>::active_cell_iterator{&tria,
+        const auto active_cell = typename DoFHandler<dim>::active_cell_iterator{&tria,
                                                                                 cell->level(),
                                                                                 cell->index(),
                                                                                 &dof_handler};

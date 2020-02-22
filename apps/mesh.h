@@ -74,7 +74,7 @@ MeshParameter::n_root_cells_1d(const unsigned int dimension) const
     return n_repetitions;
   else if(geometry_variant == MeshParameter::GeometryVariant::CuboidSubdivided)
   {
-    AssertIndexRange(dimension, n_subdivisions);
+    AssertIndexRange(dimension, n_subdivisions.size());
     return n_subdivisions[dimension];
   }
   AssertThrow(false, ExcMessage("Geometry variant is not supported."));
