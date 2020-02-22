@@ -93,10 +93,11 @@ def main():
                                 return os.path.join(root, name)
 
                 #: set compile-time parameters and compile
+                subprocess.run([builder, 'clean'])
+                subprocess.run(['cmake', '.'])
+                print ("compile {} ...".format(exec_name))
                 ctprm_py = find_ctprm_py()
                 subprocess.run(['python3',ctprm_py,'-DIM',str(dim),'-DEG',str(deg),'-SMO',smo])
-                subprocess.run([builder, 'clean'])
-                print ("compile {} ...".format(exec_name))
                 subprocess.run([builder, target])
                 print ("finished compiling {}".format(exec_name))
 

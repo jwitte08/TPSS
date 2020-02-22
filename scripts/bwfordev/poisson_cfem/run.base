@@ -51,7 +51,6 @@ do
     exec="${target}_${smo}_DIM${dim}_DEG${deg}.exe"
 
     echo "srun --mpi=pmi2 `pwd`/apps/${exec} 2 2 -f ${ODIR}/${exec}_${rundate}.txt"
-
-    # srun --mpi=pmi2 `pwd`/apps/${exec} 2 2 -f ${ODIR}/${exec}_${rundate}.txt
-    # echo "Program finished with exit code $? at: `date`"
+    srun --mpi=pmi2 `pwd`/apps/${exec} 2 2 -f ${ODIR}/${exec}_${rundate}.txt
+    echo "Program finished with exit code $? at: `date`"
 done
