@@ -6,9 +6,9 @@ import shutil
 import subprocess
 
 BUILD_DIR_  = os.path.abspath("@CMAKE_BINARY_DIR@") # @...@ replaced by CMake
-BUILD_EXEC_ = os.path.join(BUILD_DIR_,'TPSS')
+BUILD_EXEC_ = os.path.join(BUILD_DIR_, 'apps')
 PWD_        = os.path.abspath(os.curdir)
-OUTPUT_DIR_ = os.path.join(PWD_, 'exec')
+OUTPUT_DIR_ = os.path.join(PWD_, 'apps')
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -28,6 +28,14 @@ def parse_args():
     parser.add_argument('-O', '--output-directory',
                         help="output directory of executables",
                         default=OUTPUT_DIR_
+    )
+    parser.add_argument('-BS','--buildsystem',
+                        type=str,
+                        default='M',
+                        choices=['M','N'],
+                        help="""The build system to be used. Options:
+'M': Make (default)
+'N': Ninja"""
     )
     parser.add_argument('-DIM','--dimension',
                         type=int,
@@ -61,6 +69,9 @@ def main():
     fe_degrees = options.fe_degree
     smoothers = options.smoother
     output_dir = os.path.abspath(options.output_directory)
+    builder = 'make'
+    if options.buildsystem == 'N':
+        builder = 'ninja'
     
     #: setup or clean directory
     def mkdir_clean(dir):
@@ -73,7 +84,7 @@ def main():
     for smo in smoothers:
         for dim in dimensions:
             for deg in fe_degrees:
-                exec_name = '{}_{}_DIM{}_DEG{}.out'.format(target,smo,dim,deg)
+                exec_name = '{}_{}_DIM{}_DEG{}.exe'.format(target,smo,dim,deg)
 
                 def find_ctprm_py():
                     for root, dirs, files in os.walk(BUILD_DIR_, topdown=False):
@@ -84,9 +95,9 @@ def main():
                 #: set compile-time parameters and compile
                 ctprm_py = find_ctprm_py()
                 subprocess.run(['python3',ctprm_py,'-DIM',str(dim),'-DEG',str(deg),'-SMO',smo])
-                subprocess.run(['make', 'clean'])
+                subprocess.run([builder, 'clean'])
                 print ("compile {} ...".format(exec_name))
-                subprocess.run(['make',target])
+                subprocess.run([builder, target])
                 print ("finished compiling {}".format(exec_name))
 
                 #: copy compilation to designated directory
