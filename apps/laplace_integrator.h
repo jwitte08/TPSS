@@ -23,6 +23,7 @@
 #include <deal.II/meshworker/integration_info.h>
 #include <deal.II/meshworker/loop.h>
 
+#include "solvers_and_preconditioners/TPSS/fe_evaluation_patch.h"
 #include "solvers_and_preconditioners/TPSS/patch_transfer.h"
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
 #include "solvers_and_preconditioners/smoother/schwarz_smoother.h"

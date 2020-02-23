@@ -139,21 +139,29 @@ protected:
     const auto & partition_data = patch_worker.get_partition_data();
 
     // SANDBOX !!!
+    // TPSS::FEEvaluationPatch<dim, fe_degree> eval_patch(*patch_storage_level);
     for(auto patch = 0U; patch < partition_data.n_subdomains(); ++patch)
       for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch); ++lane)
       {
         const auto cell_collection = patch_worker.get_cell_collection(patch, lane);
+        std::vector<TPSS::FaceInfoLocal<dim>> face_infos;
         for(auto cell_no = 0U; cell_no < cell_collection.size(); ++cell_no)
         {
-          TPSS::FaceInfoLocal<dim> face_info(cell_no, cell_collection);
-          const auto               adjacents      = face_info.get_adjacent_cell_numbers();
-          const auto               boundary_faces = face_info.get_face_numbers_at_patch_boundary();
-          const auto               lower_faces    = face_info.get_face_numbers_lower_neighbor();
+          face_infos.emplace_back(cell_no, cell_collection);
+          const auto & face_info      = face_infos.back();
+          const auto   adjacents      = face_info.get_adjacent_cell_numbers();
+          const auto   boundary_faces = face_info.get_face_numbers_at_patch_boundary();
+          const auto   lower_faces    = face_info.get_face_numbers_lower_neighbor();
           std::cout << "cell_no: " << cell_no << std::endl;
           std::cout << "adjacent cell_no:" << vector_to_string(adjacents) << std::endl;
           std::cout << "boundary face_no:" << vector_to_string(boundary_faces) << std::endl;
           std::cout << "lower neighbor face_no:" << vector_to_string(lower_faces) << std::endl;
         }
+        TPSS::PatchLocalHelperQ<dim> helper(fe_degree + 1);
+        helper.reinit(face_infos);
+        // std::vector<unsigned int> patch_dof_indices;
+        // for (auto dof = 0U; dof < helper.n_dofs(); ++dof)
+        //   patch_dof_indices.emplace_back(
       }
 
     vector_type tmp_vector;
@@ -244,24 +252,17 @@ TYPED_TEST_P(TestLaplaceIntegrator, FDInverseVertexPatch)
   Fixture::test(TestVariant::inverse);
 }
 
-// TYPED_TEST_P(TestLaplaceIntegrator, FDAssemblyCellPatch)
-// {
-//   using Fixture = TestLaplaceIntegrator<TypeParam>;
-
-//   Fixture::rt_parameters.mesh.n_repetitions = 3U;
-//   Fixture::params.n_refinements             = 0U;
-//   Fixture::params.patch_variant             = TPSS::PatchVariant::cell;
-//   Fixture::test();
-//   Fixture::test(TestVariant::inverse);
-// }
-
 REGISTER_TYPED_TEST_SUITE_P(TestLaplaceIntegrator, FDAssemblyVertexPatch, FDInverseVertexPatch);
 
 using TestParamsLinear = testing::Types<Util::NonTypeParams<2, 1>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestLaplaceIntegrator, TestParamsLinear);
-
 using TestParamsHigherOrder = testing::Types<Util::NonTypeParams<2, 2>, Util::NonTypeParams<2, 4>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestLaplaceIntegrator, TestParamsHigherOrder);
+using TestParamsLinear3D = testing::Types<Util::NonTypeParams<3, 1>>;
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestLaplaceIntegrator, TestParamsLinear3D);
+using TestParamsHigherOrder3D =
+  testing::Types<Util::NonTypeParams<3, 2>, Util::NonTypeParams<3, 4>>;
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestLaplaceIntegrator, TestParamsHigherOrder3D);
 
 
 

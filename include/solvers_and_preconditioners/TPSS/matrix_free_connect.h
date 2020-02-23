@@ -4,6 +4,8 @@
 #include "patch_info.h"
 #include "patch_worker.h"
 
+using namespace dealii;
+
 
 
 namespace TPSS
@@ -11,18 +13,27 @@ namespace TPSS
 template<int dim, typename Number>
 struct MatrixFreeConnect
 {
+  struct DoFInfoLocal
+  {
+    std::vector<unsigned int> dof_starts;
+    std::vector<unsigned int> patch_dof_indices;
+    std::vector<unsigned int> cell_dof_indices;
+  };
+
   static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
 
   void
-  initialize(const MatrixFree<dim, Number> * mf_storage_in,
-             const TPSS::PatchInfo<dim> *    patch_info_in);
+  initialize(const MatrixFree<dim, Number> *                     mf_storage_in,
+             const ArrayView<const TPSS::DoFInfo<dim, Number>> & dof_infos_in);
 
   void
   clear()
   {
+    dof_infos.reinit(NULL, 0);
     patch_info = nullptr;
     mf_storage = nullptr;
     batch_and_lane_index_pairs.clear();
+    dof_infos_local.clear();
   }
 
   unsigned int
@@ -48,12 +59,16 @@ struct MatrixFreeConnect
 
   const PatchInfo<dim> * patch_info = nullptr;
 
+  ArrayView<const DoFInfo<dim, Number>> dof_infos;
+
   /**
    * The batch index and vectorization lane pairs identifying cells
    * stored in the underlying MatrixFree object and corresponding to
    * cells stored in @p patch_info's internal data.
    */
   std::vector<std::pair<unsigned int, unsigned int>> batch_and_lane_index_pairs;
+
+  std::vector<DoFInfoLocal> dof_infos_local;
 };
 
 

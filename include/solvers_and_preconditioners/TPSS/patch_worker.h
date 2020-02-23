@@ -67,6 +67,15 @@ struct FaceInfoLocal
   }
 
   bool
+  at_lower_neighbor(const unsigned int face_no) const
+  {
+    AssertIndexRange(face_no, n_faces());
+    const bool is_patch_interior_face    = !at_patch_boundary(face_no);
+    const bool neighbor_cell_no_is_lower = face_to_cell_number[face_no] < cell_number;
+    return is_patch_interior_face && neighbor_cell_no_is_lower;
+  }
+
+  bool
   at_patch_boundary(const unsigned int face_no) const
   {
     AssertIndexRange(face_no, n_faces());
@@ -105,7 +114,7 @@ struct FaceInfoLocal
   {
     std::vector<unsigned int> face_numbers;
     for(auto face_no = 0U; face_no < n_faces(); ++face_no)
-      if(!at_patch_boundary(face_no) && face_to_cell_number[face_no] < cell_number)
+      if(at_lower_neighbor(face_no))
         face_numbers.emplace_back(face_no);
     return face_numbers;
   }
@@ -171,6 +180,9 @@ public:
   compute_partition_data(typename PatchInfo<dim>::PartitionData &      partition_data,
                          const typename PatchInfo<dim>::InternalData * internal_data,
                          std::vector<unsigned int> * patch_starts = nullptr) const;
+
+  std::vector<FaceInfoLocal<dim>>
+  fill_face_infos(const unsigned patch_id, const unsigned int lane) const;
 
   std::array<unsigned int, GeometryInfo<dim>::faces_per_cell>
   get_at_boundary_masks_flat(const unsigned int patch) const;
@@ -421,6 +433,19 @@ PatchWorker<dim, number>::n_lanes_filled_impl(const unsigned int patch_id) const
   Assert(n_physical_subdomains > 0, ExcMessage("No lanes filled."));
 
   return n_physical_subdomains;
+}
+
+
+template<int dim, typename number>
+inline std::vector<FaceInfoLocal<dim>>
+PatchWorker<dim, number>::fill_face_infos(const unsigned int patch_id,
+                                          const unsigned int lane) const
+{
+  const auto &                    cell_collection = get_cell_collection(patch_id, lane);
+  std::vector<FaceInfoLocal<dim>> face_infos;
+  for(auto cell_no = 0; cell_no < cell_collection.size(); ++cell_no)
+    face_infos.emplace_back(cell_no, cell_collection);
+  return face_infos;
 }
 
 

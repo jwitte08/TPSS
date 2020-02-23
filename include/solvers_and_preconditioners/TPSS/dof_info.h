@@ -18,6 +18,222 @@
 
 namespace TPSS
 {
+template<int n_dimensions>
+class PatchLocalHelperQ
+{
+public:
+  PatchLocalHelperQ(const Tensors::TensorHelper<n_dimensions> & cell_dof_tensor_in)
+    : cell_dof_tensor(cell_dof_tensor_in)
+  {
+  }
+
+  void
+  reinit(const std::vector<FaceInfoLocal<n_dimensions>> & face_infos_in)
+  {
+    clear();
+    std::copy(face_infos_in.cbegin(), face_infos_in.cend(), std::back_inserter(face_infos));
+
+    /// Fill for each cell @p cell_no the local cell dof indices on this patch.
+    for(auto cell_no = 0U; cell_no < n_cells(); ++cell_no)
+    {
+      const auto n_cell_dofs = n_dofs_per_cell(cell_no);
+      dof_starts_plain.emplace_back(cell_dof_indices_plain.size());
+      for(auto cell_dof_index = 0U; cell_dof_index < n_cell_dofs; ++cell_dof_index)
+        if(!at_patch_boundary(cell_no, cell_dof_index))
+          cell_dof_indices_plain.emplace_back(cell_dof_index);
+    }
+    dof_starts_plain.emplace_back(cell_dof_indices_plain.size());
+
+    /// Fill for each cell @p cell_no the local cell dof indices that are on
+    /// this patch and uniquely assigned to this cell.
+    for(auto cell_no = 0U; cell_no < n_cells(); ++cell_no)
+    {
+      const auto & cell_dof_indices_on_patch = get_cell_dof_indices(cell_no);
+      const auto   n_cell_dofs               = cell_dof_indices_on_patch.size();
+      dof_starts_unique.emplace_back(cell_dof_indices_unique.size());
+      for(auto cell_dof_no = 0U; cell_dof_no < n_cell_dofs; ++cell_dof_no)
+      {
+        const auto cell_dof_index = cell_dof_indices_on_patch[cell_dof_no];
+        if(!at_lower_neighbor(cell_no, cell_dof_index))
+          cell_dof_indices_unique.emplace_back(cell_dof_index);
+      }
+    }
+    dof_starts_unique.emplace_back(cell_dof_indices_unique.size());
+  }
+
+  void
+  clear()
+  {
+    face_infos.clear();
+    dof_starts_plain.clear();
+    cell_dof_indices_plain.clear();
+    dof_starts_unique.clear();
+    cell_dof_indices_unique.clear();
+  }
+
+  unsigned int
+  n_cells() const
+  {
+    return face_infos.size();
+  }
+
+  unsigned int
+  n_dofs() const
+  {
+    return cell_dof_indices_unique.size();
+  }
+
+  bool
+  at_patch_boundary(const unsigned int cell_no, const unsigned int cell_dof_index) const
+  {
+    const auto & face_info = face_infos[cell_no];
+    const auto   edge_no   = cell_dof_tensor.edge_no(cell_dof_index);
+    if(edge_no == -1)
+      return false;
+    return face_info.at_patch_boundary(edge_no);
+  }
+
+  bool
+  at_lower_neighbor(const unsigned int cell_no, const unsigned int cell_dof_index) const
+  {
+    const auto & face_info = face_infos[cell_no];
+    const auto   edge_no   = cell_dof_tensor.edge_no(cell_dof_index);
+    if(edge_no == -1)
+      return false;
+    return face_info.at_lower_neighbor(edge_no);
+  }
+
+  /**
+   * Returns the number of dofs at cell @p cell_no. This includes all dofs being
+   * not part of the patch. In other words, the number of cell dof indices at
+   * cell @p cell_no.
+   */
+  unsigned int
+  n_dofs_per_cell(const unsigned int cell_no) const
+  {
+    AssertIndexRange(cell_no, n_cells());
+    (void)cell_no;
+    return cell_dof_tensor.n_flat();
+  }
+
+  /**
+   * Returns the number of patch local dofs located at cell @p cell_no. In other
+   * words, the quantity of cell dof numbers.
+   */
+  unsigned int
+  n_dofs_per_cell_on_patch(const unsigned int cell_no) const
+  {
+    const auto dof_start     = get_dof_start_plain(cell_no);
+    const auto dof_start_end = get_dof_start_plain(cell_no + 1);
+    return dof_start_end - dof_start;
+  }
+
+  /**
+   * Returns the number of patch local dofs located at cell @p cell_no. In other
+   * words, the quantity of cell dof numbers.
+   */
+  unsigned int
+  n_dofs_per_cell_unique(const unsigned int cell_no) const
+  {
+    const auto dof_start     = get_dof_start_unique(cell_no);
+    const auto dof_start_end = get_dof_start_unique(cell_no + 1);
+    return dof_start_end - dof_start;
+  }
+
+  /**
+   * Returns the set of cell dof indices at cell @p cell_no being part of the
+   * patch. This includes also the indices which are uniquely assigned to other
+   * cells of the patch. We refer to the array position as cell_dof_no.
+   */
+  ArrayView<const unsigned int>
+  get_cell_dof_indices(const unsigned int cell_no) const
+  {
+    const auto start = get_dof_start_plain(cell_no);
+    const auto end   = get_dof_start_plain(cell_no + 1);
+    AssertIndexRange(end - 1, cell_dof_indices_plain.size());
+    return make_array_view<const unsigned int>(cell_dof_indices_plain.data() + start,
+                                               cell_dof_indices_plain.data() + end);
+  }
+
+  /**
+   * Returns the set of cell dof indices at cell @p cell_no being part of the
+   * patch. This includes also the indices which are uniquely assigned to other
+   * cells of the patch. We refer to the array position as cell_dof_no.
+   */
+  ArrayView<const unsigned int>
+  get_cell_dof_indices_unique(const unsigned int cell_no) const
+  {
+    const auto start = get_dof_start_unique(cell_no);
+    const auto end   = get_dof_start_unique(cell_no + 1);
+    AssertIndexRange(end - 1, cell_dof_indices_unique.size());
+    return make_array_view<const unsigned int>(cell_dof_indices_unique.data() + start,
+                                               cell_dof_indices_unique.data() + end);
+  }
+
+  // /**
+  //  * Returns the patch local dof index @p dof_index which corresponds to the
+  //  * cell local dof index @p cell_dof_index at cell @p cell_no. Throws if the
+  //  * cell local index is not part of the patch.
+  //  */
+  // unsigned int
+  // dof_index(const unsigned int cell_no, const unsigned int cell_dof_index) const;
+
+  /**
+   * Returns the patch local dof index @p dof_index which is uniquely associated
+   * to the cell_dof_no_unique'th cell dof index at cell @p cell_no (in
+   * lexicographical ordering). The number of unique cell dof indices at cell @p
+   * cell_no is queried by n_dofs_per_cell_unique().
+   */
+  unsigned int
+  dof_index(const unsigned int cell_no, const unsigned int cell_dof_no_unique) const
+  {
+    const auto dof_start       = get_dof_start_unique(cell_no);
+    const auto patch_dof_index = dof_start + cell_dof_no_unique;
+    AssertIndexRange(cell_dof_no_unique, get_dof_start_unique(cell_no+1) - dof_start);
+    return patch_dof_index;
+  }
+
+  unsigned int
+  cell_dof_index(const unsigned int patch_dof_index)
+  {
+    AssertIndexRange(patch_dof_index, n_dofs());
+    return cell_dof_indices_unique[patch_dof_index];
+  }
+
+  unsigned int
+  get_dof_start_plain(const unsigned int cell_no) const
+  {
+    AssertIndexRange(cell_no, dof_starts_plain.size());
+    AssertDimension(dof_starts_plain.size(), n_cells() + 1);
+    return dof_starts_plain[cell_no];
+  }
+
+  std::pair<unsigned int, unsigned int>
+  get_dof_start_and_number_of_dofs_unique(const unsigned int cell_no) const
+  {
+    AssertIndexRange(cell_no, n_cells());
+    AssertDimension(dof_starts_unique.size(), n_cells() + 1);
+    const auto n_dofs = dof_starts_unique[cell_no + 1] - dof_starts_unique[cell_no];
+    return std::make_pair(dof_starts_unique[cell_no], n_dofs);
+  }
+
+  unsigned int
+  get_dof_start_unique(const unsigned int cell_no) const
+  {
+    AssertIndexRange(cell_no, dof_starts_unique.size());
+    AssertDimension(dof_starts_unique.size(), n_cells() + 1);
+    return dof_starts_unique[cell_no];
+  }
+
+  const Tensors::TensorHelper<n_dimensions> cell_dof_tensor;
+
+  std::vector<FaceInfoLocal<n_dimensions>> face_infos;
+  std::vector<unsigned int>                dof_starts_plain;
+  std::vector<unsigned int>                cell_dof_indices_plain;
+  std::vector<unsigned int>                dof_starts_unique;
+  std::vector<unsigned int>                cell_dof_indices_unique;
+};
+
 /**
  * Helps with the (one-dimensional) patch local dof indexing depending on the
  * underlying finite element. For example, for Q-like finite elements we have

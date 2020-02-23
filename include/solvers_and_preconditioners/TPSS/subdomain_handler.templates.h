@@ -90,10 +90,6 @@ SubdomainHandler<dim, number>::internal_reinit()
   TPSS::PatchWorker<dim, number> patch_worker{patch_info};
 
 
-  // *** map the patch batches to MatrixFree's cell batches
-  mf_connect.initialize(mf_storage, &patch_info);
-
-
   { // *** (partially) store dof indices and patch-local dof information
     dof_infos.resize(dof_handlers.size());
     typename TPSS::DoFInfo<dim, number>::AdditionalData dof_info_data;
@@ -140,6 +136,10 @@ SubdomainHandler<dim, number>::internal_reinit()
       }
     }
   }
+
+
+  // *** map the patch batches to MatrixFree's cell batches
+  mf_connect.initialize(mf_storage, get_dof_infos());
 
 
   // *** compute the surrogate patches which pertain the tensor structure

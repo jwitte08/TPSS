@@ -198,6 +198,60 @@ struct TensorHelper
   {
   }
 
+
+  /**
+   * If we think of the @p order dimensional index set as hypercube, then,
+   * edge_no marks the @p order-1 hyperface with lexicographical ordering (see
+   * dealii::GeometryInfo). If the index is in the interior of the imaginary
+   * hypercube -1 is returned.
+   */
+  int
+  edge_no(const IntType index) const
+  {
+    AssertIndexRange(index, n_flat());
+    const auto & multi_index = this->multi_index(index);
+    for(auto mode = 0U; mode < order; ++mode)
+    {
+      if(is_first_index_1d(multi_index, mode))
+        return 2 * mode + 0;
+      if(is_last_index_1d(multi_index, mode))
+        return 2 * mode + 1;
+    }
+    return -1;
+  }
+
+  bool
+  is_edge_index(const IntType index) const
+  {
+    AssertIndexRange(index, n_flat());
+    const auto & multiindex = this->multi_index(index);
+    for(auto mode = 0U; mode < order; ++mode)
+      if(is_edge_index_1d(multiindex, mode))
+        return true;
+    return false;
+  }
+
+  bool
+  is_first_index_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
+  {
+    AssertIndexRange(mode, order);
+    return multi_index[mode] == static_cast<IntType>(0);
+  }
+
+  bool
+  is_last_index_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
+  {
+    AssertIndexRange(mode, order);
+    return multi_index[mode] == (size(mode) - 1);
+  }
+
+  bool
+  is_edge_index_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
+  {
+    AssertIndexRange(mode, order);
+    return is_first_index_1d(multi_index, mode) || is_last_index_1d(multi_index, mode);
+  }
+
   std::array<IntType, order>
   multi_index(const IntType index) const
   {

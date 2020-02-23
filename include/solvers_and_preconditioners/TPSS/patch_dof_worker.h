@@ -35,8 +35,9 @@ public:
   get_constrained_local_dof_indices(const unsigned int patch_id, const unsigned int lane) const;
 
   /**
-   * Returns cached global dof indices on local cell @p cell_no within patch
-   * @patch_id subject to lexicographical ordering.
+   * Returns cached global dof indices of local cell @p cell_no subject to cell
+   * local lexicographical ordering. All global dof indices are returned
+   * including the ones not being part of patch @p patch_id.
    */
   std::array<ArrayView<const types::global_dof_index>, macro_size>
   get_dof_indices_on_cell(const unsigned int patch_id, const unsigned int cell_no) const;
@@ -52,7 +53,7 @@ public:
 
   /**
    * Returns cached global dof indices on patch @patch_id at vectorization lane
-   * @p lane. The returned array is subject to lexicographical ordering.
+   * @p lane. The returned array is subject to patch local lexicographical ordering.
    */
   ArrayView<const types::global_dof_index>
   get_dof_indices_on_patch(const unsigned int patch_id, const unsigned int lane) const;

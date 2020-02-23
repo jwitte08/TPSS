@@ -78,6 +78,9 @@ public:
   const TPSS::DoFInfo<dim, number> &
   get_dof_info(const unsigned int dofh_index = 0) const;
 
+  ArrayView<const TPSS::DoFInfo<dim, number>>
+  get_dof_infos() const;
+
   TPSS::DoFLayout
   get_dof_layout(const unsigned int dofh_index = 0) const;
 
@@ -266,6 +269,13 @@ SubdomainHandler<dim, number>::get_dof_info(const unsigned int dofh_index) const
 {
   const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
   return dof_infos[unique_dofh_index];
+}
+
+template<int dim, typename number>
+inline ArrayView<const TPSS::DoFInfo<dim, number>>
+SubdomainHandler<dim, number>::get_dof_infos() const
+{
+  return ArrayView<const TPSS::DoFInfo<dim, number>>(dof_infos);
 }
 
 template<int dim, typename number>
