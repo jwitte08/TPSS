@@ -29,11 +29,12 @@ template<typename T>
 class TestLaplaceIntegrator : public testing::Test
 {
 protected:
-  static constexpr int dim                 = T::template value<0>();
-  static constexpr int fe_degree           = T::template value<1>();
-  using PoissonProblem                     = typename Poisson::CFEM::ModelProblem<dim, fe_degree>;
-  using SystemMatrix                       = typename PoissonProblem::SYSTEM_MATRIX;
-  using vector_type                        = typename PoissonProblem::VECTOR;
+  static constexpr int  dim        = T::template value<0>();
+  static constexpr int  fe_degree  = T::template value<1>();
+  static constexpr auto dof_layout = TPSS::DoFLayout::Q;
+  using PoissonProblem = typename Poisson::CFEM::ModelProblem<dim, fe_degree, dof_layout>;
+  using SystemMatrix   = typename PoissonProblem::SYSTEM_MATRIX;
+  using vector_type    = typename PoissonProblem::VECTOR;
   static constexpr unsigned int macro_size = VectorizedArray<double>::n_array_elements;
 
   struct Params

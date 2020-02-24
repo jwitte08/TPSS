@@ -50,23 +50,34 @@ using namespace dealii;
 
 namespace Poisson
 {
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, typename Number>
+struct TypeSelector
+{
+};
+
 namespace CFEM
 {
-template<int dim, int fe_degree, typename Number = double, int n_patch_dofs = -1>
+template<int             dim,
+         int             fe_degree,
+         TPSS::DoFLayout dof_layout,
+         typename Number  = double,
+         int n_patch_dofs = -1>
 struct ModelProblem : public Subscriptor
 {
   static constexpr unsigned int fe_order  = fe_degree + 1;
   static constexpr unsigned int n_qpoints = fe_degree + 1;
 
-  using value_type    = Number;
-  using VECTOR        = typename LinearAlgebra::distributed::Vector<Number>;
-  using SYSTEM_MATRIX = Laplace::CFEM::MF::Operator<dim, fe_degree, Number>;
+  using value_type = Number;
+  using VECTOR     = typename LinearAlgebra::distributed::Vector<Number>;
+  using SYSTEM_MATRIX =
+    typename TypeSelector<dim, fe_degree, dof_layout, Number>::system_matrix_type;
 
   using value_type_mg = Number;
-  using LEVEL_MATRIX  = Laplace::CFEM::CombinedOperator<dim, fe_degree, value_type_mg>;
-  using MG_TRANSFER   = MGTransferMatrixFree<dim, value_type_mg>;
-  using TP_MATRIX     = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>, n_patch_dofs>;
-  using PATCH_MATRIX  = TP_MATRIX; // ConstrainedMatrix<TP_MATRIX>;
+  using LEVEL_MATRIX =
+    typename TypeSelector<dim, fe_degree, dof_layout, value_type_mg>::level_matrix_type;
+  using MG_TRANSFER  = MGTransferMatrixFree<dim, value_type_mg>;
+  using TP_MATRIX    = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>, n_patch_dofs>;
+  using PATCH_MATRIX = TP_MATRIX; // ConstrainedMatrix<TP_MATRIX>;
   using SCHWARZ_PRECONDITIONER = SchwarzPreconditioner<dim, LEVEL_MATRIX, VECTOR, PATCH_MATRIX>;
   using SCHWARZ_SMOOTHER       = SchwarzSmoother<dim, LEVEL_MATRIX, SCHWARZ_PRECONDITIONER, VECTOR>;
   using MG_SMOOTHER_SCHWARZ    = MGSmootherSchwarz<dim, LEVEL_MATRIX, PATCH_MATRIX, VECTOR>;
@@ -85,9 +96,10 @@ struct ModelProblem : public Subscriptor
   AffineConstraints<Number>                 constraints;
 
   // *** PDE information
+  Laplace::EquationData          equation_data;
   std::shared_ptr<Function<dim>> analytical_solution;
   std::shared_ptr<Function<dim>> load_function;
-  types::boundary_id             dirichlet_id = 0;
+  // std::set<types::boundary_id>             dirichlet_boundary_ids;
 
   // *** linear algebra
   unsigned int                                   level;
@@ -104,6 +116,7 @@ struct ModelProblem : public Subscriptor
   MGLevelObject<LEVEL_MATRIX>                mg_matrices;
   MG_TRANSFER                                mg_transfer;
   mutable TiledColoring<dim>                 user_coloring;
+  mutable std::shared_ptr<ColoringBase<dim>> user_coloring_;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_pre;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_post;
   const MGSmootherBase<VECTOR> *             mg_smoother_pre;
@@ -118,7 +131,8 @@ struct ModelProblem : public Subscriptor
   PreconditionIdentity                preconditioner_id;
 
 
-  ModelProblem(const RT::Parameter & rt_parameters_in)
+  ModelProblem(const RT::Parameter &         rt_parameters_in,
+               const Laplace::EquationData & equation_data_in = Laplace::EquationData{})
     : rt_parameters(rt_parameters_in),
       pcout(std::make_shared<ConditionalOStream>(std::cout,
                                                  Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) ==
@@ -128,10 +142,18 @@ struct ModelProblem : public Subscriptor
                     parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
       fe(std::make_shared<FE_Q<dim>>(fe_degree)),
       mapping(fe_degree),
+      equation_data(equation_data_in),
       analytical_solution(std::make_shared<Laplace::Solution<dim>>()),
       load_function(std::make_shared<Laplace::ManufacturedLoad<dim>>(analytical_solution)),
       level(static_cast<unsigned int>(-1)),
       user_coloring(rt_parameters_in.mesh),
+      user_coloring_([&]() -> std::shared_ptr<ColoringBase<dim>> {
+        if constexpr(dof_layout == TPSS::DoFLayout::Q)
+          return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
+        else if(dof_layout == TPSS::DoFLayout::DGQ)
+          return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
+        return std::shared_ptr<ColoringBase<dim>>();
+      }()),
       mg_smoother_pre(nullptr),
       mg_smoother_post(nullptr),
       mg_coarse_grid(nullptr)
@@ -254,7 +276,7 @@ struct ModelProblem : public Subscriptor
     typename SubdomainHandler<dim, OtherNumber>::AdditionalData fdss_additional_data;
     fdss_additional_data.level = level;
     if(rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring)
-      fdss_additional_data.coloring_func = std::ref(user_coloring);
+      fdss_additional_data.coloring_func = std::ref(*user_coloring_);
     rt_parameters.template fill_schwarz_smoother_data<dim, OtherNumber>(fdss_additional_data,
                                                                         is_pre_smoother);
 
@@ -342,8 +364,14 @@ struct ModelProblem : public Subscriptor
     IndexSet locally_relevant_dofs;
     DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
     constraints.reinit(locally_relevant_dofs);
+    std::map<types::boundary_id, const Function<dim> *> boundary_id_to_boundary_function;
+    for(const auto id : equation_data.dirichlet_boundary_ids)
+      boundary_id_to_boundary_function.emplace(id, analytical_solution.get());
     VectorTools::interpolate_boundary_values(
-      mapping, dof_handler, dirichlet_id, *analytical_solution, constraints);
+      mapping,
+      dof_handler,
+      boundary_id_to_boundary_function /*dirichlet_boundary_ids, *analytical_solution*/,
+      constraints);
     constraints.close();
 
     auto mf_storage = build_mf_storage<Number>();
@@ -369,9 +397,7 @@ struct ModelProblem : public Subscriptor
       typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
       mgss_data.coloring_func = std::ref(user_coloring);
       mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
-      std::set<types::boundary_id> dirichlet_boundary_ids;
-      dirichlet_boundary_ids.insert(0);
-      mgss_data.dirichlet_ids.emplace_back(dirichlet_boundary_ids);
+      mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
       auto & shape_infos = mgss_data.shape_infos;
       shape_infos.reinit(1, dim);
       for(auto d = 0U; d < dim; ++d)
@@ -461,9 +487,8 @@ struct ModelProblem : public Subscriptor
 
     // *** initialize multigrid constraints
     mg_constrained_dofs.initialize(dof_handler);
-    std::set<types::boundary_id> mg_boundary_ids;
-    mg_boundary_ids.insert(dirichlet_id);
-    mg_constrained_dofs.make_zero_boundary_constraints(dof_handler, mg_boundary_ids);
+    mg_constrained_dofs.make_zero_boundary_constraints(dof_handler,
+                                                       equation_data.dirichlet_boundary_ids);
 
     // *** initialize level matrices A_l
     mg_matrices.resize(mg_level_min, mg_level_max);
@@ -692,7 +717,15 @@ struct ModelProblem : public Subscriptor
   }
 };
 
+
+
 } // end namespace CFEM
+template<int dim, int fe_degree, typename Number>
+struct TypeSelector<dim, fe_degree, TPSS::DoFLayout::Q, Number>
+{
+  using system_matrix_type = Laplace::CFEM::MF::Operator<dim, fe_degree, Number>;
+  using level_matrix_type  = Laplace::CFEM::CombinedOperator<dim, fe_degree, Number>;
+};
 } // end namespace Poisson
 
 #endif // POISSONPROBLEM_H_

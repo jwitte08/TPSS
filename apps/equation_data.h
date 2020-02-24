@@ -18,6 +18,12 @@ using namespace dealii;
 
 namespace Laplace
 {
+struct EquationData
+{
+  std::set<types::boundary_id> dirichlet_boundary_ids = {0};
+  double                       ip_factor              = 1.;
+};
+
 template<int dim>
 class SolutionBase
 {
