@@ -51,6 +51,7 @@ struct Test
 
   const TestParameter      prms;
   RT::Parameter            rt_parameters;
+  Laplace::EquationData    equation_data;
   const double             outer_damping_factor;
   const double             local_damping_factor;
   const std::map<int, int> dim_to_repetitions;
@@ -63,7 +64,6 @@ struct Test
       dim_to_repetitions({{2, 32}, {3, 8}})
   {
     //: discretization
-    IP::pre_factor                      = prms.penalty;
     rt_parameters.n_cycles              = prms.n_cycles;
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::CubeDistorted;
     rt_parameters.mesh.n_refinements    = prms.n_refinements;
@@ -156,7 +156,7 @@ struct Test
   void
   operator()()
   {
-    PoissonProblem poisson_problem{rt_parameters};
+    PoissonProblem poisson_problem{rt_parameters, equation_data};
     const bool     is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
     std::fstream   fstream;
     poisson_problem.pcout      = std::make_shared<ConditionalOStream>(fstream, is_first_proc);

@@ -81,8 +81,9 @@ struct Test
   using SYSTEM_MATRIX    = typename PoissonProblem::SYSTEM_MATRIX;
   using LEVEL_MATRIX     = typename PoissonProblem::LEVEL_MATRIX;
 
-  const TestParameter prms;
-  RT::Parameter       rt_parameters;
+  const TestParameter   prms;
+  RT::Parameter         rt_parameters;
+  Laplace::EquationData equation_data;
 
   Test(const TestParameter & prms_in = TestParameter{}) : prms(prms_in)
   {
@@ -230,7 +231,7 @@ struct Test
     if(prms.test_variants == 0) // nothing to test
       return;
 
-    PoissonProblem poisson_problem{rt_parameters};
+    PoissonProblem poisson_problem{rt_parameters, equation_data};
     poisson_problem.print_informations();
     poisson_problem.create_triangulation(rt_parameters.mesh.n_refinements);
     poisson_problem.distribute_dofs();
@@ -319,7 +320,7 @@ struct Test
       time.restart();
       const auto    mf_storage = poisson_problem.template build_mf_storage<double>();
       SYSTEM_MATRIX system_matrix;
-      system_matrix.initialize(mf_storage);
+      system_matrix.initialize(mf_storage, poisson_problem.equation_data);
       n_dofs_global = system_matrix.m();
       time.stop();
       timings_vmult.setup.push_back(time.get_last_lap_wall_time_data());
@@ -357,7 +358,7 @@ struct Test
   void
   vmult()
   {
-    PoissonProblem poisson_problem{rt_parameters};
+    PoissonProblem poisson_problem{rt_parameters, equation_data};
     poisson_problem.print_informations();
     poisson_problem.create_triangulation(rt_parameters.mesh.n_refinements);
     poisson_problem.distribute_dofs();
@@ -415,7 +416,7 @@ struct Test
       const unsigned fine_level = poisson_problem.triangulation.n_global_levels() - 1;
       const auto     mf_storage = poisson_problem.template build_mf_storage<double>(fine_level);
       LEVEL_MATRIX   level_matrix;
-      level_matrix.initialize(mf_storage);
+      level_matrix.initialize(mf_storage, poisson_problem.equation_data);
       n_dofs_global                  = level_matrix.m();
       const auto   subdomain_handler = poisson_problem.build_patch_storage(fine_level, mf_storage);
       const auto & schwarz_data      = poisson_problem.rt_parameters.multigrid.pre_smoother.schwarz;
@@ -467,7 +468,7 @@ struct Test
   void
   smooth()
   {
-    PoissonProblem poisson_problem{rt_parameters};
+    PoissonProblem poisson_problem{rt_parameters, equation_data};
     poisson_problem.print_informations();
     poisson_problem.create_triangulation(rt_parameters.mesh.n_refinements);
     poisson_problem.distribute_dofs();
@@ -546,7 +547,7 @@ struct Test
   void
   mg()
   {
-    PoissonProblem poisson_problem{rt_parameters};
+    PoissonProblem poisson_problem{rt_parameters, equation_data};
     poisson_problem.print_informations();
     poisson_problem.create_triangulation(rt_parameters.mesh.n_refinements);
     poisson_problem.distribute_dofs();
@@ -573,7 +574,7 @@ struct Test
   void
   poisson_run(const bool once = true)
   {
-    PoissonProblem     poisson_problem{rt_parameters};
+    PoissonProblem     poisson_problem{rt_parameters, equation_data};
     std::ostringstream oss;
     const bool         is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
     poisson_problem.pcout            = std::make_shared<ConditionalOStream>(oss, is_first_proc);
@@ -649,7 +650,7 @@ struct Test
   void
   solve()
   {
-    PoissonProblem poisson_problem{rt_parameters};
+    PoissonProblem poisson_problem{rt_parameters, equation_data};
     poisson_problem.print_informations();
     poisson_problem.create_triangulation(rt_parameters.mesh.n_refinements);
     poisson_problem.distribute_dofs();

@@ -29,13 +29,7 @@
 
 using namespace dealii;
 
-/*
- * Uniform pre-factor on the interior penalty.
- */
-namespace IP
-{
-double pre_factor = 1.0;
-} // end namespace IP
+
 
 namespace Laplace
 {
@@ -59,6 +53,10 @@ template<int dim>
 class MatrixIntegrator : public dealii::MeshWorker::LocalIntegrator<dim>
 {
 public:
+  MatrixIntegrator(const Laplace::EquationData & equation_data_in) : equation_data(equation_data_in)
+  {
+  }
+
   void
   cell(dealii::MeshWorker::DoFInfo<dim> &                  dinfo,
        typename dealii::MeshWorker::IntegrationInfo<dim> & info) const;
@@ -70,6 +68,8 @@ public:
        dealii::MeshWorker::DoFInfo<dim> &                  dinfo2,
        typename dealii::MeshWorker::IntegrationInfo<dim> & info1,
        typename dealii::MeshWorker::IntegrationInfo<dim> & info2) const;
+
+  const Laplace::EquationData equation_data;
 };
 
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -92,7 +92,7 @@ MatrixIntegrator<dim>::boundary(dealii::MeshWorker::DoFInfo<dim> &              
 {
   const unsigned int deg = info.fe_values(0).get_fe().tensor_degree();
   const auto         penalty =
-    IP::pre_factor * LocalIntegrators::Laplace::compute_penalty(dinfo, dinfo, deg, deg);
+    equation_data.ip_factor * LocalIntegrators::Laplace::compute_penalty(dinfo, dinfo, deg, deg);
   LocalIntegrators::Laplace::nitsche_matrix(dinfo.matrix(0, false).matrix,
                                             info.fe_values(0),
                                             penalty);
@@ -107,7 +107,7 @@ MatrixIntegrator<dim>::face(dealii::MeshWorker::DoFInfo<dim> &                  
 {
   const unsigned int deg = info1.fe_values(0).get_fe().tensor_degree();
   const auto         penalty =
-    IP::pre_factor * LocalIntegrators::Laplace::compute_penalty(dinfo1, dinfo2, deg, deg);
+    equation_data.ip_factor * LocalIntegrators::Laplace::compute_penalty(dinfo1, dinfo2, deg, deg);
   LocalIntegrators::Laplace::ip_matrix(dinfo1.matrix(0, false).matrix,
                                        dinfo1.matrix(0, true).matrix,
                                        dinfo2.matrix(0, true).matrix,
@@ -164,12 +164,18 @@ struct CellLaplace
   using Number                  = typename EvaluatorType::value_type;
   static constexpr int fe_order = EvaluatorType::fe_order;
 
+  CellLaplace(const Laplace::EquationData & equation_data_in) : equation_data(equation_data_in)
+  {
+  }
+
   void
   operator()(const EvaluatorType &,
              const EvaluatorType &               eval,
              Table<2, VectorizedArray<Number>> & cell_matrix,
              const int                           direction,
              const int                           cell_no) const;
+
+  const Laplace::EquationData equation_data;
 };
 
 template<typename EvaluatorType>
@@ -177,6 +183,10 @@ struct FaceLaplace
 {
   using Number                  = typename EvaluatorType::value_type;
   static constexpr int fe_order = EvaluatorType::fe_order;
+
+  FaceLaplace(const Laplace::EquationData & equation_data_in) : equation_data(equation_data_in)
+  {
+  }
 
   void
   operator()(const EvaluatorType &,
@@ -193,6 +203,8 @@ struct FaceLaplace
              Table<2, VectorizedArray<Number>> & cell_matrix10,
              const int                           cell_no_left,
              const int                           direction) const;
+
+  const Laplace::EquationData equation_data;
 };
 
 template<int dim, int fe_degree, typename Number>
@@ -206,6 +218,12 @@ public:
   // static constexpr int fe_order   = fe_degree + 1;
   // static constexpr int macro_size = VectorizedArray<Number>::n_array_elements;
 
+  void
+  initialize(const EquationData & equation_data_in)
+  {
+    equation_data = equation_data_in;
+  }
+
   template<typename TPMatrix, typename OperatorType>
   void
   assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
@@ -217,8 +235,8 @@ public:
 
     Evaluator              eval(subdomain_handler);
     CellMass<Evaluator>    cell_mass_operation;
-    CellLaplace<Evaluator> cell_laplace_operation;
-    FaceLaplace<Evaluator> nitsche_operation;
+    CellLaplace<Evaluator> cell_laplace_operation(equation_data);
+    FaceLaplace<Evaluator> nitsche_operation(equation_data);
 
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
     {
@@ -235,6 +253,8 @@ public:
   {
     return std::make_shared<transfer_type>(patch_storage);
   }
+
+  Laplace::EquationData equation_data;
 };
 
 // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -300,8 +320,8 @@ FaceLaplace<EvaluatorType>::operator()(const EvaluatorType &,
 {
   const auto normal         = eval_test.get_normal(face_no);
   const auto average_factor = eval_test.get_average_factor(direction, cell_no, face_no);
-  const auto penalty =
-    IP::pre_factor * average_factor * compute_penalty(eval_test, direction, cell_no, cell_no);
+  const auto penalty        = equation_data.ip_factor * average_factor *
+                       compute_penalty(eval_test, direction, cell_no, cell_no);
 
   auto value_on_face{make_vectorized_array<Number>(0.)};
   for(int dof_v = 0; dof_v < fe_order; ++dof_v) // u is ansatz function & v is test function
@@ -339,7 +359,7 @@ FaceLaplace<EvaluatorType>::operator()(const EvaluatorType &,
   const auto normal0        = eval_test.get_normal(face_no0); // on cell 0
   const auto normal1        = eval_test.get_normal(face_no1); // on cell 1
   const auto average_factor = eval_test.get_average_factor(direction, cell_no0, face_no0);
-  const auto penalty        = IP::pre_factor * average_factor *
+  const auto penalty        = equation_data.ip_factor * average_factor *
                        Laplace::DG::FD::compute_penalty(eval_test, direction, cell_no0, face_no0);
 
   auto value_on_interface01{make_vectorized_array<Number>(0.)};
@@ -399,17 +419,18 @@ public:
 
   /// system matrix initialize
   void
-  initialize(std::shared_ptr<const MatrixFree<dim, Number>> data);
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> data,
+             const Laplace::EquationData                    equation_data_in);
 
-  /// level matrix initialize for multigrid usage (dummy)
+  /// level matrix initialize for multigrid usage
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage,
              const MGConstrainedDoFs &                      mg_constrained_dofs,
-             const unsigned int                             level)
+             const Laplace::EquationData                    equation_data_in)
   {
-    (void)mg_constrained_dofs;
-    (void)level;
-    initialize(mf_storage);
+    (void)mg_constrained_dofs; // dummy
+    equation_data = equation_data_in;
+    initialize(mf_storage, equation_data_in);
   }
 
   void
@@ -447,7 +468,8 @@ public:
   Number
   get_penalty_factor() const
   {
-    return 1.0 * IP::pre_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
+    return 1.0 * equation_data.ip_factor * std::max((Number)1., (Number)fe_degree) *
+           (fe_degree + 1);
   }
 
 private:
@@ -470,6 +492,7 @@ private:
                  const std::pair<unsigned int, unsigned int> &      face_range) const;
 
   std::shared_ptr<const MatrixFree<dim, Number>> data;
+  Laplace::EquationData                          equation_data;
   mutable std::vector<TimeInfo>                  time_infos;
 };
 
@@ -485,10 +508,12 @@ Operator<dim, fe_degree, Number>::clear()
 
 template<int dim, int fe_degree, typename Number>
 void
-Operator<dim, fe_degree, Number>::initialize(std::shared_ptr<const MatrixFree<dim, Number>> data)
+Operator<dim, fe_degree, Number>::initialize(std::shared_ptr<const MatrixFree<dim, Number>> data,
+                                             const Laplace::EquationData equation_data_in)
 {
-  this->data = data;
-  time_infos = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
+  this->data    = data;
+  equation_data = equation_data_in;
+  time_infos    = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
 }
 
 
@@ -696,24 +721,28 @@ struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
 
   // TODO here for backward compatibility
   void
-  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in)
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
+             const Laplace::EquationData &                  equation_data_in)
+
   {
-    MFOperator::initialize(mf_storage_in);
-  };
+    MFOperator::initialize(mf_storage_in, equation_data_in);
+    FDOperator::initialize(equation_data_in);
+  }
 
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
              const MGConstrainedDoFs &                      mg_constrained_dofs,
-             const unsigned int                             level)
+             const Laplace::EquationData &                  equation_data_in)
   {
-    MFOperator::initialize(mf_storage_in, mg_constrained_dofs, level);
-  };
+    MFOperator::initialize(mf_storage_in, mg_constrained_dofs, equation_data_in);
+    FDOperator::initialize(equation_data_in);
+  }
 
   void
   clear()
   {
     MFOperator::clear();
-  };
+  }
 };
 
 
@@ -746,13 +775,14 @@ public:
 
   /// system matrix initialize
   void
-  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage);
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage,
+             const Laplace::EquationData                    equation_data_in);
 
   /// level matrix initialize for multigrid usage
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage,
              const MGConstrainedDoFs &                      mg_constrained_dofs,
-             const unsigned int                             level);
+             const Laplace::EquationData                    equation_data_in);
 
   void
   clear();
@@ -769,7 +799,7 @@ public:
   Number
   get_penalty_factor() const
   {
-    return IP::pre_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
+    return equation_data.ip_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
   }
 
   using Base::vmult;
@@ -803,6 +833,7 @@ private:
              const std::pair<unsigned int, unsigned int> &      cell_range) const;
 
   std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
+  Laplace::EquationData                          equation_data;
   mutable std::vector<TimeInfo>                  time_infos;
 };
 
@@ -821,11 +852,13 @@ Operator<dim, fe_degree, Number>::clear()
 template<int dim, int fe_degree, typename Number>
 void
 Operator<dim, fe_degree, Number>::initialize(
-  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in)
+  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
+  const Laplace::EquationData                    equation_data_in)
 {
   Base::initialize(mf_storage_in);
-  mf_storage = mf_storage_in;
-  time_infos = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
+  mf_storage    = mf_storage_in;
+  equation_data = equation_data_in;
+  time_infos    = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
 }
 
 
@@ -834,11 +867,12 @@ void
 Operator<dim, fe_degree, Number>::initialize(
   std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
   const MGConstrainedDoFs &                      mg_constrained_dofs,
-  const unsigned int                             level)
+  const Laplace::EquationData                    equation_data_in)
 {
-  Base::initialize(mf_storage_in, mg_constrained_dofs, level);
-  mf_storage = mf_storage_in;
-  time_infos = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
+  Base::initialize(mf_storage_in, mg_constrained_dofs, mf_storage_in->get_mg_level());
+  mf_storage    = mf_storage_in;
+  equation_data = equation_data_in;
+  time_infos    = {TimeInfo{0., "[MF::Operator] vmult:", "[s]", 0}};
 }
 
 
@@ -909,6 +943,12 @@ public:
   // static constexpr int fe_order   = fe_degree + 1;
   static constexpr int macro_size = VectorizedArray<Number>::n_array_elements;
 
+  void
+  initialize(const EquationData & equation_data_in)
+  {
+    equation_data = equation_data_in;
+  }
+
   template<typename TPMatrix, typename OperatorType>
   void
   assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
@@ -920,7 +960,7 @@ public:
 
     Evaluator                               eval(subdomain_handler);
     Laplace::DG::FD::CellMass<Evaluator>    cell_mass_operation;
-    Laplace::DG::FD::CellLaplace<Evaluator> cell_laplace_operation;
+    Laplace::DG::FD::CellLaplace<Evaluator> cell_laplace_operation(equation_data);
 
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
     {
@@ -939,6 +979,8 @@ public:
   {
     return std::make_shared<transfer_type>(patch_storage);
   }
+
+  Laplace::EquationData equation_data;
 };
 
 
@@ -961,9 +1003,9 @@ struct CombinedOperator : public CFEM::MF::Operator<dim, fe_degree, Number>,
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
              const MGConstrainedDoFs &                      mg_constrained_dofs,
-             const unsigned int                             level)
+             const Laplace::EquationData                    equation_data_in)
   {
-    MFOperator::initialize(mf_storage_in, mg_constrained_dofs, level);
+    MFOperator::initialize(mf_storage_in, mg_constrained_dofs, equation_data_in);
   };
 
   void

@@ -170,6 +170,8 @@ struct ModelProblem : public Subscriptor
     AssertThrow(TPSS::get_dof_layout(*fe) == TPSS::DoFLayout::Q ||
                   TPSS::get_dof_layout(*fe) == TPSS::DoFLayout::DGQ,
                 ExcMessage("The finite element is not supported."));
+    if(rt_parameters.mesh.geometry_variant == MeshParameter::GeometryVariant::CubeDistorted)
+      equation_data.ip_factor *= 4.;
   }
 
   ~ModelProblem() = default;
@@ -511,7 +513,7 @@ struct ModelProblem : public Subscriptor
     constraints.close();
 
     auto mf_storage = build_mf_storage<Number>();
-    system_matrix.initialize(mf_storage);
+    system_matrix.initialize(mf_storage, equation_data);
     pp_data.n_dofs_global.push_back(system_matrix.m());
     mf_storage->initialize_dof_vector(system_u);
     mf_storage->initialize_dof_vector(system_delta_u);
@@ -626,7 +628,7 @@ struct ModelProblem : public Subscriptor
     for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
     {
       const auto mf_storage_level = build_mf_storage<value_type_mg>(level);
-      mg_matrices[level].initialize(mf_storage_level, mg_constrained_dofs, level);
+      mg_matrices[level].initialize(mf_storage_level, mg_constrained_dofs, equation_data);
     }
 
     // *** initialize multigrid transfer R_l
