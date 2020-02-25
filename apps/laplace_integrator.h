@@ -394,8 +394,20 @@ public:
 
   Operator() = default;
 
+  /// system matrix initialize
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> data);
+
+  /// level matrix initialize for multigrid usage (dummy)
+  void
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage,
+             const MGConstrainedDoFs &                      mg_constrained_dofs,
+             const unsigned int                             level)
+  {
+    (void)mg_constrained_dofs;
+    (void)level;
+    initialize(mf_storage);
+  }
 
   void
   clear();
@@ -679,10 +691,19 @@ struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
 
   CombinedOperator() = default;
 
+  // TODO here for backward compatibility
   void
-  initialize(std::shared_ptr<const MatrixFree<dim, Number>> data)
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in)
   {
-    MFOperator::initialize(data);
+    MFOperator::initialize(mf_storage_in);
+  };
+
+  void
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
+             const MGConstrainedDoFs &                      mg_constrained_dofs,
+             const unsigned int                             level)
+  {
+    MFOperator::initialize(mf_storage_in, mg_constrained_dofs, level);
   };
 
   void
@@ -716,9 +737,11 @@ public:
   using Base::size_type;
   using Base::value_type;
 
+  /// system matrix initialize
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage);
 
+  /// level matrix initialize for multigrid usage
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage,
              const MGConstrainedDoFs &                      mg_constrained_dofs,

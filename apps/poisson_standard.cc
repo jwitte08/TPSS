@@ -67,11 +67,11 @@ write_ppdata_to_string(const PostProcessData & pp_data)
   return oss.str();
 }
 
-template<int dim, int fe_degree, int n_patch_dofs_1d_static = -1>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, int n_patch_dofs_1d_static = -1>
 struct Tester
 {
-  using PoissonProblem =
-    typename Poisson::CFEM::ModelProblem<dim, fe_degree, double, n_patch_dofs_1d_static>;
+  using PoissonProblem = typename Poisson::CFEM::
+    ModelProblem<dim, fe_degree, dof_layout, double, n_patch_dofs_1d_static>;
 
   Tester(const TestParameter & testprms_in) : testprms(testprms_in)
   {
@@ -167,10 +167,11 @@ int
 main(int argc, char * argv[])
 {
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
-  constexpr int                    dim       = CT::DIMENSION_;
-  constexpr int                    fe_degree = CT::FE_DEGREE_;
+  constexpr int                    dim        = CT::DIMENSION_;
+  constexpr int                    fe_degree  = CT::FE_DEGREE_;
+  constexpr auto                   dof_layout = TPSS::DoFLayout::DGQ;
   constexpr int                    n_patch_dofs_1d_static =
-    TPSS::UniversalInfo<dim>::n_dofs_1d(CT::PATCH_VARIANT_, TPSS::DoFLayout::Q, fe_degree);
+    TPSS::UniversalInfo<dim>::n_dofs_1d(CT::PATCH_VARIANT_, dof_layout, fe_degree);
 
   TestParameter testprms;
   if(argc > 1)
@@ -178,7 +179,7 @@ main(int argc, char * argv[])
   if(argc > 2)
     testprms.n_repetitions = std::atoi(argv[2]);
 
-  Tester<dim, fe_degree, n_patch_dofs_1d_static> tester(testprms);
+  Tester<dim, fe_degree, dof_layout, n_patch_dofs_1d_static> tester(testprms);
   tester.run();
 
   return 0;
