@@ -9,7 +9,7 @@
 #include <deal.II/base/convergence_table.h>
 
 #include "ct_parameter.h"
-#include "poisson.h"
+#include "poisson_problem.h"
 
 using namespace dealii;
 
@@ -41,8 +41,9 @@ struct Test
 {
   static constexpr int n_patch_dofs_per_direction =
     TPSS::UniversalInfo<dim>::n_cells_per_direction(CT::PATCH_VARIANT_) * (fe_degree + 1);
+  static constexpr auto dof_layout = TPSS::DoFLayout::DGQ;
   using PoissonProblem =
-    typename Poisson::ModelProblem<dim, fe_degree, double, n_patch_dofs_per_direction>;
+    typename Poisson::ModelProblem<dim, fe_degree, dof_layout, double, n_patch_dofs_per_direction>;
   using VECTOR           = typename PoissonProblem::VECTOR;
   using SCHWARZ_SMOOTHER = typename PoissonProblem::SCHWARZ_SMOOTHER;
   using SYSTEM_MATRIX    = typename PoissonProblem::SYSTEM_MATRIX;
@@ -50,6 +51,7 @@ struct Test
 
   const TestParameter      prms;
   RT::Parameter            rt_parameters;
+  Laplace::EquationData    equation_data;
   const double             outer_damping_factor;
   const double             local_damping_factor;
   const std::map<int, int> dim_to_repetitions;
@@ -62,7 +64,6 @@ struct Test
       dim_to_repetitions({{2, 32}, {3, 8}})
   {
     //: discretization
-    IP::pre_factor                      = prms.penalty;
     rt_parameters.n_cycles              = prms.n_cycles;
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::CubeDistorted;
     rt_parameters.mesh.n_refinements    = prms.n_refinements;
@@ -155,7 +156,7 @@ struct Test
   void
   operator()()
   {
-    PoissonProblem poisson_problem{rt_parameters};
+    PoissonProblem poisson_problem{rt_parameters, equation_data};
     const bool     is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
     std::fstream   fstream;
     poisson_problem.pcout      = std::make_shared<ConditionalOStream>(fstream, is_first_proc);

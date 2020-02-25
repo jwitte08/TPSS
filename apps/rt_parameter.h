@@ -60,6 +60,7 @@ struct Parameter
   MGParameter     multigrid;
   unsigned int    n_cycles = 0;
   SolverParameter solver;
+  bool            do_visualize = false;
 
   bool
   exceeds_dof_limits(const types::global_dof_index n_dofs) const;

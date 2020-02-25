@@ -49,6 +49,13 @@ def parse_args():
                         default=[3],
                         help="finite element degree"
     )
+    parser.add_argument('-DLY','--dof-layout',
+                        type=str,
+                        nargs='+',
+                        default=['DGQ'],
+                        choices=['DGQ','Q'],
+                        help="dof layout of finite element method"
+    )
     parser.add_argument('-SMO','--smoother',
                         type=str,
                         nargs='+',
@@ -68,6 +75,7 @@ def main():
     dimensions = options.dimension
     fe_degrees = options.fe_degree
     smoothers = options.smoother
+    dof_layouts = options.dof_layout
     output_dir = os.path.abspath(options.output_directory)
     builder = 'make'
     if options.buildsystem == 'N':
@@ -80,30 +88,32 @@ def main():
         os.mkdir(dir)
 
     mkdir_clean(output_dir)
+    subprocess.run([builder, 'clean'])
+    subprocess.run(['cmake', '.'])
 
+    def find_ctprm_py():
+        """Finds absolute path of ct_parameter.py in build directory"""
+        for root, dirs, files in os.walk(BUILD_DIR_, topdown=False):
+            for name in files:
+                if (name == 'ct_parameter.py'):
+                    return os.path.join(root, name)
+                
     for smo in smoothers:
         for dim in dimensions:
             for deg in fe_degrees:
-                exec_name = '{}_{}_DIM{}_DEG{}.exe'.format(target,smo,dim,deg)
+                for dly in dof_layouts:
+                    exec_name = '{}_{}_{}_DIM{}_DEG{}.exe'.format(target,dly,smo,dim,deg)
 
-                def find_ctprm_py():
-                    for root, dirs, files in os.walk(BUILD_DIR_, topdown=False):
-                        for name in files:
-                            if (name == 'ct_parameter.py'):
-                                return os.path.join(root, name)
+                    #: set compile-time parameters and compile
+                    print ("compile {} ...".format(exec_name))
+                    ctprm_py = find_ctprm_py()
+                    subprocess.run(['python3',ctprm_py,'-DIM',str(dim),'-DEG',str(deg),'-SMO',str(smo),'-DLY',str(dly)])
+                    subprocess.run([builder, target])
+                    print ("finished compiling {}".format(exec_name))
 
-                #: set compile-time parameters and compile
-                subprocess.run([builder, 'clean'])
-                subprocess.run(['cmake', '.'])
-                print ("compile {} ...".format(exec_name))
-                ctprm_py = find_ctprm_py()
-                subprocess.run(['python3',ctprm_py,'-DIM',str(dim),'-DEG',str(deg),'-SMO',smo])
-                subprocess.run([builder, target])
-                print ("finished compiling {}".format(exec_name))
-
-                #: copy compilation to designated directory
-                path_new = os.path.join(output_dir, exec_name)
-                shutil.copy(path_old, path_new)
+                    #: copy compilation to designated directory
+                    path_new = os.path.join(output_dir, exec_name)
+                    shutil.copy(path_old, path_new)
 
 if __name__ == '__main__':
     main()

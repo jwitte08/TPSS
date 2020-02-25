@@ -9,7 +9,7 @@
 #include <deal.II/base/convergence_table.h>
 
 #include "ct_parameter.h"
-#include "poisson_standard.h"
+#include "poisson_problem.h"
 
 using namespace dealii;
 using namespace Laplace;
@@ -25,6 +25,7 @@ struct TestParameter
   double   cg_reduction         = 1.e-8;
   unsigned n_refinements        = 1;
   unsigned n_repetitions        = 2;
+  double   extra_damping        = 1.;
 
   std::string
   to_string() const
@@ -67,17 +68,20 @@ write_ppdata_to_string(const PostProcessData & pp_data)
   return oss.str();
 }
 
-template<int dim, int fe_degree, int n_patch_dofs_1d_static = -1>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, int n_patch_dofs_1d_static = -1>
 struct Tester
 {
   using PoissonProblem =
-    typename Poisson::CFEM::ModelProblem<dim, fe_degree, double, n_patch_dofs_1d_static>;
+    typename Poisson::ModelProblem<dim, fe_degree, dof_layout, double, n_patch_dofs_1d_static>;
 
-  Tester(const TestParameter & testprms_in) : testprms(testprms_in)
+  Tester(const TestParameter & testprms_in)
+    : testprms(testprms_in),
+      is_first_proc(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0),
+      pcout(std::make_shared<ConditionalOStream>(std::cout, false))
   {
     //: discretization
     rt_parameters.n_cycles              = 10;
-    rt_parameters.dof_limits            = {1e3, 2e7};
+    rt_parameters.dof_limits            = {1e5, 2e7};
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
     rt_parameters.mesh.n_refinements    = testprms.n_refinements;
     rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;
@@ -90,6 +94,7 @@ struct Tester
 
     //: multigrid
     const double damping_factor =
+      testprms.extra_damping *
       TPSS::lookup_damping_factor(testprms.patch_variant, testprms.smoother_variant, dim);
     rt_parameters.multigrid.coarse_level                 = 0;
     rt_parameters.multigrid.coarse_grid.solver_variant   = testprms.coarse_grid_variant;
@@ -103,6 +108,20 @@ struct Tester
     rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5, fe_degree + 1);
     rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
     rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
+
+    //: initialize output file
+    if(is_first_proc)
+    {
+      const auto filename = get_filename();
+      fout.open(filename + ".log", std::ios_base::out);
+      pcout = std::make_shared<ConditionalOStream>(fout, is_first_proc);
+    }
+  }
+
+  ~Tester()
+  {
+    if(is_first_proc)
+      fout.close();
   }
 
   std::string
@@ -113,12 +132,15 @@ struct Tester
     const std::string  str_schwarz_variant =
       TPSS::getstr_schwarz_variant(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_);
 
-    oss << "poisson_cfem";
+    oss << "poisson";
     oss << std::scientific << std::setprecision(2);
     oss << "_" << n_mpi_procs << "prcs";
+    oss << "_" << TPSS::str_dof_layout(dof_layout);
     oss << "_" << str_schwarz_variant;
     oss << "_" << dim << "D";
     oss << "_" << fe_degree << "deg";
+    if(testprms.extra_damping != 1.)
+      oss << "_" << testprms.extra_damping << "xdmp";
     return oss.str();
   }
 
@@ -127,19 +149,12 @@ struct Tester
   {
     poisson_problem = std::make_shared<PoissonProblem>(rt_parameters);
 
-    //: initialize file stream
-    const bool   is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
-    const auto   filename      = get_filename();
-    std::fstream fout;
-    fout.open(filename + ".log", std::ios_base::out);
-    const auto pcout       = std::make_shared<ConditionalOStream>(fout, is_first_proc);
-    poisson_problem->pcout = pcout;
-
     //: write headers to logfile
     *pcout << Util::generic_info_to_fstring() << std::endl;
     *pcout << testprms.to_string() << std::endl;
 
     //: run
+    poisson_problem->pcout = this->pcout;
     poisson_problem->run();
 
     //: write post process data to logfile
@@ -147,38 +162,41 @@ struct Tester
     const auto pp_data = poisson_problem->pp_data;
     *pcout << write_ppdata_to_string(pp_data);
     *pcout << "TABLE!PP\n";
-    fout.close();
 
     //: write post process data to table
     if(is_first_proc)
     {
-      fout.open(filename + ".tab", std::ios_base::out);
-      fout << write_ppdata_to_string(pp_data);
-      fout.close();
+      std::fstream fout_table;
+      const auto   filename = get_filename();
+      fout_table.open(filename + ".tab", std::ios_base::out);
+      fout_table << write_ppdata_to_string(pp_data);
+      fout_table.close();
     }
   }
 
-  std::shared_ptr<PoissonProblem> poisson_problem;
-  RT::Parameter                   rt_parameters;
-  const TestParameter &           testprms;
+  std::shared_ptr<PoissonProblem>     poisson_problem;
+  RT::Parameter                       rt_parameters;
+  const TestParameter &               testprms;
+  const bool                          is_first_proc;
+  std::fstream                        fout;
+  std::shared_ptr<ConditionalOStream> pcout;
 };
 
 int
 main(int argc, char * argv[])
 {
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
-  constexpr int                    dim       = CT::DIMENSION_;
-  constexpr int                    fe_degree = CT::FE_DEGREE_;
+  constexpr int                    dim        = CT::DIMENSION_;
+  constexpr int                    fe_degree  = CT::FE_DEGREE_;
+  constexpr auto                   dof_layout = CT::DOF_LAYOUT_;
   constexpr int                    n_patch_dofs_1d_static =
-    TPSS::UniversalInfo<dim>::n_dofs_1d(CT::PATCH_VARIANT_, TPSS::DoFLayout::Q, fe_degree);
+    TPSS::UniversalInfo<dim>::n_dofs_1d(CT::PATCH_VARIANT_, dof_layout, fe_degree);
 
   TestParameter testprms;
   if(argc > 1)
-    testprms.n_refinements = std::atoi(argv[1]);
-  if(argc > 2)
-    testprms.n_repetitions = std::atoi(argv[2]);
+    testprms.extra_damping = std::atof(argv[1]);
 
-  Tester<dim, fe_degree, n_patch_dofs_1d_static> tester(testprms);
+  Tester<dim, fe_degree, dof_layout, n_patch_dofs_1d_static> tester(testprms);
   tester.run();
 
   return 0;

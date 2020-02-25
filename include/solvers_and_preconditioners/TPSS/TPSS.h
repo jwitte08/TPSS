@@ -30,6 +30,13 @@ enum class DoFLayout
   DGQ,
   Q
 };
+std::string
+str_dof_layout(DoFLayout dof_layout)
+{
+  std::string str[] = {"invalid", "DGQ", "Q"};
+  return str[(int)dof_layout];
+}
+
 
 template<int dim>
 DoFLayout

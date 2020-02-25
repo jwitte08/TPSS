@@ -1,9 +1,12 @@
 /**
- * poisson.h
+ * poisson_problem.h
  *
- * standard FEM poisson problem
+ * poisson problem supports:
  *
- *  Created on: Feb 03, 2020
+ * - interior penalty method (DGQ)
+ * - conforming finite element (Q)
+ *
+ *  Created on: Sep 12, 2019
  *      Author: witte
  */
 
@@ -13,6 +16,7 @@
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_tools.h>
 
+#include <deal.II/fe/fe_dgq.h>
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/mapping.h>
 
@@ -48,25 +52,38 @@
 
 using namespace dealii;
 
+
+
 namespace Poisson
 {
-namespace CFEM
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, typename Number>
+struct TypeSelector
 {
-template<int dim, int fe_degree, typename Number = double, int n_patch_dofs = -1>
+};
+
+
+
+template<int             dim,
+         int             fe_degree,
+         TPSS::DoFLayout dof_layout,
+         typename Number  = double,
+         int n_patch_dofs = -1>
 struct ModelProblem : public Subscriptor
 {
-  static constexpr unsigned int fe_order  = fe_degree + 1;
-  static constexpr unsigned int n_qpoints = fe_degree + 1;
+  static constexpr unsigned int fe_order          = fe_degree + 1;
+  static constexpr unsigned int n_q_points_static = fe_degree + 1;
 
-  using value_type    = Number;
-  using VECTOR        = typename LinearAlgebra::distributed::Vector<Number>;
-  using SYSTEM_MATRIX = Laplace::CFEM::MF::Operator<dim, fe_degree, Number>;
+  using value_type = Number;
+  using VECTOR     = typename LinearAlgebra::distributed::Vector<Number>;
+  using SYSTEM_MATRIX =
+    typename TypeSelector<dim, fe_degree, dof_layout, Number>::system_matrix_type;
 
   using value_type_mg = Number;
-  using LEVEL_MATRIX  = Laplace::CFEM::CombinedOperator<dim, fe_degree, value_type_mg>;
-  using MG_TRANSFER   = MGTransferMatrixFree<dim, value_type_mg>;
-  using TP_MATRIX     = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>, n_patch_dofs>;
-  using PATCH_MATRIX  = TP_MATRIX; // ConstrainedMatrix<TP_MATRIX>;
+  using LEVEL_MATRIX =
+    typename TypeSelector<dim, fe_degree, dof_layout, value_type_mg>::level_matrix_type;
+  using MG_TRANSFER  = MGTransferMatrixFree<dim, value_type_mg>;
+  using TP_MATRIX    = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>, n_patch_dofs>;
+  using PATCH_MATRIX = TP_MATRIX; // ConstrainedMatrix<TP_MATRIX>;
   using SCHWARZ_PRECONDITIONER = SchwarzPreconditioner<dim, LEVEL_MATRIX, VECTOR, PATCH_MATRIX>;
   using SCHWARZ_SMOOTHER       = SchwarzSmoother<dim, LEVEL_MATRIX, SCHWARZ_PRECONDITIONER, VECTOR>;
   using MG_SMOOTHER_SCHWARZ    = MGSmootherSchwarz<dim, LEVEL_MATRIX, PATCH_MATRIX, VECTOR>;
@@ -85,9 +102,9 @@ struct ModelProblem : public Subscriptor
   AffineConstraints<Number>                 constraints;
 
   // *** PDE information
+  Laplace::EquationData          equation_data;
   std::shared_ptr<Function<dim>> analytical_solution;
   std::shared_ptr<Function<dim>> load_function;
-  types::boundary_id             dirichlet_id = 0;
 
   // *** linear algebra
   unsigned int                                   level;
@@ -103,7 +120,7 @@ struct ModelProblem : public Subscriptor
   MGConstrainedDoFs                          mg_constrained_dofs;
   MGLevelObject<LEVEL_MATRIX>                mg_matrices;
   MG_TRANSFER                                mg_transfer;
-  mutable TiledColoring<dim>                 user_coloring;
+  mutable std::shared_ptr<ColoringBase<dim>> user_coloring;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_pre;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_post;
   const MGSmootherBase<VECTOR> *             mg_smoother_pre;
@@ -118,7 +135,8 @@ struct ModelProblem : public Subscriptor
   PreconditionIdentity                preconditioner_id;
 
 
-  ModelProblem(const RT::Parameter & rt_parameters_in)
+  ModelProblem(const RT::Parameter &         rt_parameters_in,
+               const Laplace::EquationData & equation_data_in = Laplace::EquationData{})
     : rt_parameters(rt_parameters_in),
       pcout(std::make_shared<ConditionalOStream>(std::cout,
                                                  Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) ==
@@ -126,36 +144,50 @@ struct ModelProblem : public Subscriptor
       triangulation(MPI_COMM_WORLD,
                     Triangulation<dim>::limit_level_difference_at_vertices,
                     parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
-      fe(std::make_shared<FE_Q<dim>>(fe_degree)),
+      fe([&]() -> std::shared_ptr<FiniteElement<dim>> {
+        if constexpr(dof_layout == TPSS::DoFLayout::Q)
+          return std::make_shared<FE_Q<dim>>(fe_degree);
+        else if(dof_layout == TPSS::DoFLayout::DGQ)
+          return std::make_shared<FE_DGQ<dim>>(fe_degree);
+        return std::shared_ptr<FiniteElement<dim>>();
+      }()),
       mapping(fe_degree),
+      equation_data(equation_data_in),
       analytical_solution(std::make_shared<Laplace::Solution<dim>>()),
       load_function(std::make_shared<Laplace::ManufacturedLoad<dim>>(analytical_solution)),
-      level(static_cast<unsigned int>(-1)),
-      user_coloring(rt_parameters_in.mesh),
+      level(numbers::invalid_unsigned_int),
+      user_coloring([&]() -> std::shared_ptr<ColoringBase<dim>> {
+        if constexpr(dof_layout == TPSS::DoFLayout::Q)
+          return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
+        else if(dof_layout == TPSS::DoFLayout::DGQ)
+          return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
+        return std::shared_ptr<ColoringBase<dim>>();
+      }()),
       mg_smoother_pre(nullptr),
       mg_smoother_post(nullptr),
       mg_coarse_grid(nullptr)
   {
+    AssertThrow(TPSS::get_dof_layout(*fe) == TPSS::DoFLayout::Q ||
+                  TPSS::get_dof_layout(*fe) == TPSS::DoFLayout::DGQ,
+                ExcMessage("The finite element is not supported."));
+    if(rt_parameters.mesh.geometry_variant == MeshParameter::GeometryVariant::CubeDistorted)
+      equation_data.ip_factor *= 4.;
   }
 
   ~ModelProblem() = default;
 
-  unsigned
+  unsigned int
   n_colors_system()
   {
     if(!mg_schwarz_smoother_pre)
       return 0;
-
-    AssertThrow(rt_parameters.multigrid.pre_smoother.variant ==
-                  SmootherParameter::SmootherVariant::Schwarz,
-                ExcMessage("Pre-smoother isn't of Schwarz-type."));
     return mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
   }
 
 
   /*
-   * Prints the accumulated timings of the Schwarz pre- and post-smoothers on
-   * the finest level.
+   * Prints accumulated timings of Schwarz pre- and post-smoothers on the finest
+   * level.
    */
   void
   print_schwarz_preconditioner_times()
@@ -203,8 +235,17 @@ struct ModelProblem : public Subscriptor
     additional_data.tasks_parallel_scheme = MatrixFree<dim, OtherNumber>::AdditionalData::none;
     additional_data.mapping_update_flags =
       (update_gradients | update_JxW_values | update_quadrature_points);
+    if constexpr(dof_layout == TPSS::DoFLayout::DGQ)
+    {
+      additional_data.mapping_update_flags =
+        (update_gradients | update_JxW_values | update_quadrature_points);
+      additional_data.mapping_update_flags_inner_faces =
+        (update_gradients | update_JxW_values | update_normal_vectors);
+      additional_data.mapping_update_flags_boundary_faces =
+        (update_gradients | update_JxW_values | update_normal_vectors | update_quadrature_points);
+    }
 
-    QGauss<1> quadrature(n_qpoints);
+    QGauss<1> quadrature(n_q_points_static);
 
     const auto mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
     mf_storage->reinit(mapping, dof_handler, constraints, quadrature, additional_data);
@@ -224,17 +265,29 @@ struct ModelProblem : public Subscriptor
     additional_data.tasks_parallel_scheme = MatrixFree<dim, OtherNumber>::AdditionalData::none;
     additional_data.mapping_update_flags =
       (update_gradients | update_JxW_values | update_quadrature_points);
+    if constexpr(dof_layout == TPSS::DoFLayout::DGQ)
+    {
+      additional_data.mapping_update_flags =
+        (update_gradients | update_JxW_values | update_quadrature_points);
+      additional_data.mapping_update_flags_inner_faces =
+        (update_gradients | update_JxW_values | update_normal_vectors);
+      additional_data.mapping_update_flags_boundary_faces =
+        (update_gradients | update_JxW_values | update_normal_vectors | update_quadrature_points);
+    }
 
     /// TODO check if this is more efficient than using
     /// MGConstrainedDoFs::get_level_constraints() in case of using MPI
-    IndexSet relevant_dofs;
-    DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, relevant_dofs);
     AffineConstraints<double> level_constraints;
-    level_constraints.reinit(relevant_dofs);
-    level_constraints.add_lines(mg_constrained_dofs.get_boundary_indices(level));
+    if constexpr(dof_layout == TPSS::DoFLayout::Q)
+    {
+      IndexSet relevant_dofs;
+      DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, relevant_dofs);
+      level_constraints.reinit(relevant_dofs);
+      level_constraints.add_lines(mg_constrained_dofs.get_boundary_indices(level));
+    }
     level_constraints.close();
 
-    QGauss<1> quadrature(n_qpoints);
+    QGauss<1> quadrature(n_q_points_static);
 
     const auto mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
     mf_storage->reinit(mapping, dof_handler, level_constraints, quadrature, additional_data);
@@ -254,7 +307,7 @@ struct ModelProblem : public Subscriptor
     typename SubdomainHandler<dim, OtherNumber>::AdditionalData fdss_additional_data;
     fdss_additional_data.level = level;
     if(rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring)
-      fdss_additional_data.coloring_func = std::ref(user_coloring);
+      fdss_additional_data.coloring_func = std::ref(*user_coloring);
     rt_parameters.template fill_schwarz_smoother_data<dim, OtherNumber>(fdss_additional_data,
                                                                         is_pre_smoother);
 
@@ -264,11 +317,28 @@ struct ModelProblem : public Subscriptor
   }
 
 
+  template<typename MatrixType>
+  std::shared_ptr<SCHWARZ_PRECONDITIONER>
+  build_schwarz_preconditioner(std::shared_ptr<const SubdomainHandler<dim, Number>> patch_storage,
+                               MatrixType &                                         matrix,
+                               const SchwarzSmootherData & schwarz_data) const
+  {
+    typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data;
+    precondition_data.relaxation       = schwarz_data.damping_factor;
+    precondition_data.local_relaxation = schwarz_data.local_damping_factor;
+    precondition_data.reverse          = schwarz_data.reverse_smoothing;
+    precondition_data.symmetrized      = schwarz_data.symmetrize_smoothing;
+    const auto schwarz_preconditioner  = std::make_shared<SCHWARZ_PRECONDITIONER>();
+    schwarz_preconditioner->initialize(patch_storage, matrix, precondition_data);
+    return schwarz_preconditioner;
+  }
+
+
   bool
   create_triangulation(const unsigned n_refinements)
   {
     triangulation.clear();
-    this->level = static_cast<unsigned int>(-1);
+    this->level = numbers::invalid_unsigned_int;
 
     MeshParameter mesh_prms = rt_parameters.mesh;
     mesh_prms.n_refinements = n_refinements;
@@ -307,18 +377,42 @@ struct ModelProblem : public Subscriptor
 
 
   void
-  compute_rhs(const MatrixFree<dim, Number> * mf_storage, const Function<dim> & load_function)
+  compute_rhs()
   {
-    system_rhs = 0.;
-    system_u   = 0.;
-    constraints.distribute(system_u);
-    system_u.update_ghost_values();
+    const auto * mf_storage = system_matrix.get_matrix_free().get();
+
+    if constexpr(dof_layout == TPSS::DoFLayout::Q)
+    {
+      compute_rhs_strong_boundary_conditions(system_rhs, system_u, mf_storage, *load_function);
+      return;
+    }
+
+    else if(dof_layout == TPSS::DoFLayout::DGQ)
+    {
+      compute_rhs_nitsche(system_rhs, mf_storage, *load_function, *analytical_solution);
+      return;
+    }
+
+    AssertThrow(false, ExcMessage("Computation of discrete RHS is not implemented."));
+  }
+
+
+  void
+  compute_rhs_strong_boundary_conditions(VECTOR &                        discrete_rhs,
+                                         VECTOR &                        discrete_solution,
+                                         const MatrixFree<dim, Number> * mf_storage,
+                                         const Function<dim> &           load_function)
+  {
+    discrete_rhs      = 0.;
+    discrete_solution = 0.;
+    constraints.distribute(discrete_solution);
+    discrete_solution.update_ghost_values();
 
     FEEvaluation<dim, fe_degree> phi(*mf_storage);
     for(unsigned int cell = 0; cell < mf_storage->n_cell_batches(); ++cell)
     {
       phi.reinit(cell);
-      phi.read_dof_values_plain(system_u);
+      phi.read_dof_values_plain(discrete_solution);
       phi.evaluate(false, true);
       for(unsigned int q = 0; q < phi.n_q_points; ++q)
       {
@@ -328,9 +422,73 @@ struct ModelProblem : public Subscriptor
         phi.submit_gradient(-phi.get_gradient(q), q);
       }
       phi.integrate(true, true);
-      phi.distribute_local_to_global(system_rhs);
+      phi.distribute_local_to_global(discrete_rhs);
     }
-    system_rhs.compress(VectorOperation::add);
+    discrete_rhs.compress(VectorOperation::add);
+  }
+
+
+  void
+  compute_rhs_nitsche(VECTOR &                        discrete_rhs,
+                      const MatrixFree<dim, Number> * mf_storage,
+                      const Function<dim> &           rhs_function,
+                      const Function<dim> &           exact_solution)
+  {
+    discrete_rhs = 0.;
+
+    FEEvaluation<dim, fe_degree> phi(*mf_storage);
+    for(unsigned int cell = 0; cell < mf_storage->n_cell_batches(); ++cell)
+    {
+      phi.reinit(cell);
+      for(unsigned int q = 0; q < phi.n_q_points; ++q)
+      {
+        VectorizedArray<double>             rhs_val     = VectorizedArray<double>();
+        Point<dim, VectorizedArray<double>> point_batch = phi.quadrature_point(q);
+        for(unsigned int v = 0; v < VectorizedArray<double>::n_array_elements; ++v)
+        {
+          Point<dim> single_point;
+          for(unsigned int d = 0; d < dim; ++d)
+            single_point[d] = point_batch[d][v];
+          rhs_val[v] = rhs_function.value(single_point);
+        }
+        phi.submit_value(rhs_val, q);
+      }
+      phi.integrate_scatter(true, false, discrete_rhs);
+    }
+
+    FEFaceEvaluation<dim, fe_degree> phi_face(*mf_storage, true);
+    for(unsigned int face = mf_storage->n_inner_face_batches();
+        face < mf_storage->n_inner_face_batches() + mf_storage->n_boundary_face_batches();
+        ++face)
+    {
+      phi_face.reinit(face);
+
+      const VectorizedArray<double> inverse_length_normal_to_face =
+        std::abs((phi_face.get_normal_vector(0) * phi_face.inverse_jacobian(0))[dim - 1]);
+      const VectorizedArray<double> sigma =
+        inverse_length_normal_to_face * system_matrix.get_penalty_factor();
+
+      for(unsigned int q = 0; q < phi_face.n_q_points; ++q)
+      {
+        VectorizedArray<double> test_value              = VectorizedArray<double>(),
+                                test_normal_gradient    = VectorizedArray<double>();
+        Point<dim, VectorizedArray<double>> point_batch = phi_face.quadrature_point(q);
+
+        for(unsigned int v = 0; v < VectorizedArray<double>::n_array_elements; ++v)
+        {
+          Point<dim> single_point;
+          for(unsigned int d = 0; d < dim; ++d)
+            single_point[d] = point_batch[d][v];
+
+          test_value[v] = 2.0 * exact_solution.value(single_point);
+        }
+        phi_face.submit_value(test_value * sigma - test_normal_gradient, q);
+        phi_face.submit_normal_derivative(-0.5 * test_value, q);
+      }
+      phi_face.integrate_scatter(true, true, discrete_rhs);
+    }
+
+    discrete_rhs.compress(VectorOperation::add);
   }
 
 
@@ -339,22 +497,30 @@ struct ModelProblem : public Subscriptor
   {
     /// initialize constraints (strong B.C.)
     constraints.clear();
-    IndexSet locally_relevant_dofs;
-    DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
-    constraints.reinit(locally_relevant_dofs);
-    VectorTools::interpolate_boundary_values(
-      mapping, dof_handler, dirichlet_id, *analytical_solution, constraints);
+    if constexpr(dof_layout == TPSS::DoFLayout::Q)
+    {
+      IndexSet locally_relevant_dofs;
+      DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
+      constraints.reinit(locally_relevant_dofs);
+      std::map<types::boundary_id, const Function<dim> *> boundary_id_to_boundary_function;
+      for(const auto id : equation_data.dirichlet_boundary_ids)
+        boundary_id_to_boundary_function.emplace(id, analytical_solution.get());
+      VectorTools::interpolate_boundary_values(mapping,
+                                               dof_handler,
+                                               boundary_id_to_boundary_function,
+                                               constraints);
+    }
     constraints.close();
 
     auto mf_storage = build_mf_storage<Number>();
-    system_matrix.initialize(mf_storage);
+    system_matrix.initialize(mf_storage, equation_data);
     pp_data.n_dofs_global.push_back(system_matrix.m());
     mf_storage->initialize_dof_vector(system_u);
     mf_storage->initialize_dof_vector(system_delta_u);
     if(do_compute_rhs)
     {
       mf_storage->initialize_dof_vector(system_rhs);
-      compute_rhs(mf_storage.get(), *load_function);
+      compute_rhs();
     }
   }
 
@@ -367,11 +533,9 @@ struct ModelProblem : public Subscriptor
     {
       const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
       typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
-      mgss_data.coloring_func = std::ref(user_coloring);
+      mgss_data.coloring_func = std::ref(*user_coloring);
       mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
-      std::set<types::boundary_id> dirichlet_boundary_ids;
-      dirichlet_boundary_ids.insert(0);
-      mgss_data.dirichlet_ids.emplace_back(dirichlet_boundary_ids);
+      mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
       auto & shape_infos = mgss_data.shape_infos;
       shape_infos.reinit(1, dim);
       for(auto d = 0U; d < dim; ++d)
@@ -398,15 +562,7 @@ struct ModelProblem : public Subscriptor
 
       /// use pre-smoother as well as post-smoother
       if(rt_parameters.multigrid.pre_smoother == rt_parameters.multigrid.post_smoother)
-      {
-        // *pcout << "Using pre-smoother as post-smoother ... " << std::endl;
-        // *pcout << Util::parameter_to_fstring("/// Post-smoother (OLD)", "");
-        // *pcout << rt_parameters.multigrid.post_smoother.to_string();
-        // rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
-        // *pcout << Util::parameter_to_fstring("/// Post-smoother (NEW)", "");
-        // *pcout << rt_parameters.multigrid.post_smoother.to_string();
         mg_schwarz_smoother_post = mg_schwarz_smoother_pre;
-      }
 
       /// initialize (independent) post-smoother
       else
@@ -417,7 +573,7 @@ struct ModelProblem : public Subscriptor
           sd_handler_data, false);
         sd_handler_data.level = mg_matrices.max_level();
         if(rt_parameters.multigrid.post_smoother.schwarz.manual_coloring)
-          sd_handler_data.coloring_func = std::ref(user_coloring);
+          sd_handler_data.coloring_func = std::ref(*user_coloring);
         const bool is_shallow_copyable =
           mg_schwarz_smoother_pre->get_preconditioner(level)->is_shallow_copyable(sd_handler_data);
 
@@ -425,7 +581,7 @@ struct ModelProblem : public Subscriptor
         {
           const auto mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
           typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
-          mgss_data.coloring_func = std::ref(user_coloring);
+          mgss_data.coloring_func = std::ref(*user_coloring);
           mgss_data.parameters    = rt_parameters.multigrid.post_smoother;
           mgss->initialize(*mg_schwarz_smoother_pre, mgss_data);
           mg_schwarz_smoother_post = mgss;
@@ -461,16 +617,18 @@ struct ModelProblem : public Subscriptor
 
     // *** initialize multigrid constraints
     mg_constrained_dofs.initialize(dof_handler);
-    std::set<types::boundary_id> mg_boundary_ids;
-    mg_boundary_ids.insert(dirichlet_id);
-    mg_constrained_dofs.make_zero_boundary_constraints(dof_handler, mg_boundary_ids);
+    if constexpr(dof_layout == TPSS::DoFLayout::Q)
+    {
+      mg_constrained_dofs.make_zero_boundary_constraints(dof_handler,
+                                                         equation_data.dirichlet_boundary_ids);
+    }
 
     // *** initialize level matrices A_l
     mg_matrices.resize(mg_level_min, mg_level_max);
     for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
     {
       const auto mf_storage_level = build_mf_storage<value_type_mg>(level);
-      mg_matrices[level].initialize(mf_storage_level, mg_constrained_dofs, level);
+      mg_matrices[level].initialize(mf_storage_level, mg_constrained_dofs, equation_data);
     }
 
     // *** initialize multigrid transfer R_l
@@ -525,34 +683,6 @@ struct ModelProblem : public Subscriptor
   }
 
 
-  /**
-   * compute the average reduction rho over n iterations and the
-   * fractional number of iterations to achieve the requested
-   * reduction (relative stopping criterion)
-   */
-  std::pair<double, double>
-  compute_fractional_steps(const ReductionControl & solver_control)
-  {
-    const double residual_0 = solver_control.initial_value();
-    const double residual_n = solver_control.last_value();
-    const int    n          = solver_control.last_step(); // number of iterations
-    const double reduction  = solver_control.reduction(); // relative tolerance
-
-    // *** average reduction: r_n = rho^n * r_0
-    const double rho = std::pow(residual_n / residual_0, static_cast<double>(1. / n));
-
-    /**
-     * since r_n <= reduction * r_0 we can compute the fractional
-     * number of iterations n_frac that is sufficient to achieve the
-     * desired reduction:
-     *    rho^n_frac = reduction   <=>   n_frac = log(reduction)/log(rho)
-     */
-    const double n_frac = std::log(reduction) / std::log(rho);
-
-    return std::make_pair(n_frac, rho);
-  }
-
-
   template<typename PreconditionerType>
   void
   solve(const PreconditionerType & preconditioner)
@@ -564,18 +694,21 @@ struct ModelProblem : public Subscriptor
     solver_control.log_result(true);
     solver_control.enable_history_data();
 
+    Timer timer;
+    timer.restart();
     iterative_solver.set_control(solver_control);
     iterative_solver.select(rt_parameters.solver.variant);
-    constraints.set_zero(system_delta_u);
+    if constexpr(dof_layout == TPSS::DoFLayout::Q)
+      constraints.set_zero(system_delta_u);
     iterative_solver.solve(system_matrix, system_delta_u, system_rhs, preconditioner);
     system_u += system_delta_u;
+    timer.stop();
 
-    double n_frac                    = 0.;
-    double reduction_rate            = 0.;
-    std::tie(n_frac, reduction_rate) = compute_fractional_steps(solver_control);
+    const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
     pp_data.average_reduction_system.push_back(reduction_rate);
     pp_data.n_iterations_system.push_back(n_frac);
-    pp_data.solve_time.push_back(-2712.1989);
+    const auto t_max = Utilities::MPI::max(timer.wall_time(), MPI_COMM_WORLD);
+    pp_data.solve_time.push_back(t_max);
 
     print_parameter("Average reduction (solver):", reduction_rate);
     print_parameter("Number of iterations (solver):", n_frac);
@@ -584,12 +717,13 @@ struct ModelProblem : public Subscriptor
 
   double
   compute_l2_error(const MatrixFree<dim, Number> * mf_storage,
+                   const VECTOR &                  discrete_solution,
                    const Function<dim> *           analytic_solution) const
   {
-    double                                             global_error = 0;
-    FEEvaluation<dim, fe_degree, n_qpoints, 1, Number> phi(*mf_storage);
-    system_u.update_ghost_values();
-    const auto & uh = system_u;
+    double                                                     global_error = 0;
+    FEEvaluation<dim, fe_degree, n_q_points_static, 1, Number> phi(*mf_storage);
+    discrete_solution.update_ghost_values();
+    const auto & uh = discrete_solution;
     for(unsigned int cell = 0; cell < mf_storage->n_macro_cells(); ++cell)
     {
       phi.reinit(cell);
@@ -616,7 +750,7 @@ struct ModelProblem : public Subscriptor
   compute_discretization_errors() const
   {
     const auto   mf_storage = system_matrix.get_matrix_free();
-    const double l2_error   = compute_l2_error(mf_storage.get(), analytical_solution.get());
+    const double l2_error = compute_l2_error(mf_storage.get(), system_u, analytical_solution.get());
     pp_data.L2_error.push_back(l2_error);
     print_parameter("||u - uh||_L2 =", l2_error);
   }
@@ -685,14 +819,34 @@ struct ModelProblem : public Subscriptor
         compute_discretization_errors();
       }
 
-      // visualize_dof_vector(dof_handler, system_u, "solution", 1, mapping);
+      if(rt_parameters.do_visualize)
+        visualize_dof_vector(dof_handler, system_u, "solution", 1, mapping);
 
       print_schwarz_preconditioner_times();
     }
   }
 };
 
-} // end namespace CFEM
+
+
+// --------------------------------   TypeSelector   --------------------------------
+
+
+
+template<int dim, int fe_degree, typename Number>
+struct TypeSelector<dim, fe_degree, TPSS::DoFLayout::Q, Number>
+{
+  using system_matrix_type = Laplace::CFEM::MF::Operator<dim, fe_degree, Number>;
+  using level_matrix_type  = Laplace::CFEM::CombinedOperator<dim, fe_degree, Number>;
+};
+
+template<int dim, int fe_degree, typename Number>
+struct TypeSelector<dim, fe_degree, TPSS::DoFLayout::DGQ, Number>
+{
+  using system_matrix_type = Laplace::DG::MF::Operator<dim, fe_degree, Number>;
+  using level_matrix_type  = Laplace::DG::CombinedOperator<dim, fe_degree, Number>;
+};
+
 } // end namespace Poisson
 
 #endif // POISSONPROBLEM_H_

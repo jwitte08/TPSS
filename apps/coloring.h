@@ -169,9 +169,8 @@ struct IntegerCoordinate
 };
 
 
-
 template<int dim>
-struct RedBlackColoring
+struct ColoringBase
 {
   using CellIterator   = typename TPSS::PatchInfo<dim>::CellIterator;
   using PatchIterator  = typename TPSS::PatchInfo<dim>::PatchIterator;
@@ -179,13 +178,11 @@ struct RedBlackColoring
 
   IntegerCoordinate<dim> get_integer_coordinate;
 
-  RedBlackColoring() = delete;
-
-  RedBlackColoring(const MeshParameter & mesh_prms) : get_integer_coordinate(mesh_prms)
+  ColoringBase(const MeshParameter & mesh_prms) : get_integer_coordinate(mesh_prms)
   {
   }
 
-
+  virtual ~ColoringBase() = default;
 
   std::vector<std::vector<PatchIterator>>
   operator()(const std::vector<std::vector<CellIterator>> & patches,
@@ -207,8 +204,43 @@ struct RedBlackColoring
 
 
 
+  virtual std::vector<std::vector<PatchIterator>>
+  cell_coloring_impl(const std::vector<std::vector<CellIterator>> & patches) const = 0;
+
+
+
+  virtual std::vector<std::vector<PatchIterator>>
+  vertex_patch_coloring_impl(const std::vector<std::vector<CellIterator>> & patches) const = 0;
+
+
+
+  static void
+  visualize_coloring(const DoFHandler<dim> & dof_handler_in,
+                     const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> &
+                                       colored_iterators,
+                     const std::string prefix)
+  {
+    Impl::visualize_coloring<dim>(dof_handler_in, colored_iterators, prefix);
+  }
+};
+
+
+template<int dim>
+struct RedBlackColoring : public ColoringBase<dim>
+{
+  using Base = ColoringBase<dim>;
+  using typename Base::AdditionalData;
+  using typename Base::CellIterator;
+  using typename Base::PatchIterator;
+
+  RedBlackColoring(const MeshParameter & mesh_prms) : ColoringBase<dim>(mesh_prms)
+  {
+  }
+
+
+
   std::vector<std::vector<PatchIterator>>
-  cell_coloring_impl(const std::vector<std::vector<CellIterator>> & patches) const
+  cell_coloring_impl(const std::vector<std::vector<CellIterator>> & patches) const override
   {
     std::vector<std::vector<PatchIterator>> colored_patches;
     colored_patches.resize(2);
@@ -219,7 +251,7 @@ struct RedBlackColoring
       const auto & cell = patch->front();
 
       // Get integer coordinates
-      Point<dim, unsigned int> cell_int_coords = get_integer_coordinate(cell->id());
+      Point<dim, unsigned int> cell_int_coords = this->get_integer_coordinate(cell->id());
 
       // If integer coordinates sum to an even
       // number give color 0, else give color 1
@@ -239,7 +271,7 @@ struct RedBlackColoring
 
 
   std::vector<std::vector<PatchIterator>>
-  vertex_patch_coloring_impl(const std::vector<std::vector<CellIterator>> & patches) const
+  vertex_patch_coloring_impl(const std::vector<std::vector<CellIterator>> & patches) const override
   {
     std::vector<std::vector<PatchIterator>> colored_patches;
     const unsigned int                      n_colors = 2 * (1 << dim);
@@ -252,8 +284,8 @@ struct RedBlackColoring
         const unsigned stride                 = 1 << direction;
         const auto     cell_left              = (*patch)[0];
         const auto     cell_right             = (*patch)[stride];
-        const auto     coord_left             = get_integer_coordinate(cell_left->id());
-        const auto     coord_right            = get_integer_coordinate(cell_right->id());
+        const auto     coord_left             = this->get_integer_coordinate(cell_left->id());
+        const auto     coord_right            = this->get_integer_coordinate(cell_right->id());
         const auto     patch_coord_from_left  = coord_left(direction) / 2;
         const auto     patch_coord_from_right = coord_right(direction) / 2;
         return patch_coord_from_left != patch_coord_from_right;
@@ -265,7 +297,7 @@ struct RedBlackColoring
 
       // (1 << dim) layers of red-black colorings (layer is determined by the shift)
       const auto                     cell        = patch->front();
-      const Point<dim, unsigned int> coordinates = get_integer_coordinate(cell->id());
+      const Point<dim, unsigned int> coordinates = this->get_integer_coordinate(cell->id());
       unsigned int                   sum         = 0;
       for(unsigned int d = 0; d < dim; ++d)
         sum += (coordinates(d) + static_cast<unsigned>(shift_mask[d])) / 2;
@@ -280,57 +312,25 @@ struct RedBlackColoring
 
 
 
-  static void
-  visualize_coloring(const DoFHandler<dim> & dof_handler_in,
-                     const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> &
-                                       colored_iterators,
-                     const std::string prefix)
-  {
-    Impl::visualize_coloring<dim>(dof_handler_in, colored_iterators, prefix);
-  }
+  using Base::visualize_coloring;
 };
 
 
 
 template<int dim>
-struct TiledColoring
+struct TiledColoring : public ColoringBase<dim>
 {
-  using CellIterator   = typename TPSS::PatchInfo<dim>::CellIterator;
-  using PatchIterator  = typename TPSS::PatchInfo<dim>::PatchIterator;
-  using AdditionalData = typename TPSS::PatchInfo<dim>::AdditionalData;
+  using Base = ColoringBase<dim>;
+  using typename Base::AdditionalData;
+  using typename Base::CellIterator;
+  using typename Base::PatchIterator;
 
-  IntegerCoordinate<dim> get_integer_coordinate;
-
-  TiledColoring() = delete;
-
-  TiledColoring(const MeshParameter & mesh_prms) : get_integer_coordinate(mesh_prms)
+  TiledColoring(const MeshParameter & mesh_prms) : ColoringBase<dim>(mesh_prms)
   {
   }
 
-
-
   std::vector<std::vector<PatchIterator>>
-  operator()(const std::vector<std::vector<CellIterator>> & patches,
-             const AdditionalData                           additional_data)
-  {
-    std::vector<std::vector<PatchIterator>> coloring;
-    if(additional_data.patch_variant == TPSS::PatchVariant::cell)
-    {
-      AssertThrow(false, ExcMessage("Coloring is not implemented."));
-    }
-    else if(additional_data.patch_variant == TPSS::PatchVariant::vertex)
-    {
-      coloring = std::move(vertex_patch_coloring_impl(patches));
-    }
-    else
-      AssertThrow(false, ExcNotImplemented());
-    return coloring;
-  }
-
-
-
-  std::vector<std::vector<PatchIterator>>
-  vertex_patch_coloring_impl(const std::vector<std::vector<CellIterator>> & patches) const
+  vertex_patch_coloring_impl(const std::vector<std::vector<CellIterator>> & patches) const override
   {
     std::vector<std::vector<PatchIterator>> colored_patches;
     const unsigned int                      n_colors = (1 << dim);
@@ -343,8 +343,8 @@ struct TiledColoring
         const unsigned stride                 = 1 << direction;
         const auto     cell_left              = (*patch)[0];
         const auto     cell_right             = (*patch)[stride];
-        const auto     coord_left             = get_integer_coordinate(cell_left->id());
-        const auto     coord_right            = get_integer_coordinate(cell_right->id());
+        const auto     coord_left             = this->get_integer_coordinate(cell_left->id());
+        const auto     coord_right            = this->get_integer_coordinate(cell_right->id());
         const auto     patch_coord_from_left  = coord_left(direction) / 2;
         const auto     patch_coord_from_right = coord_right(direction) / 2;
         return patch_coord_from_left != patch_coord_from_right;
@@ -364,14 +364,13 @@ struct TiledColoring
 
 
 
-  static void
-  visualize_coloring(const DoFHandler<dim> & dof_handler_in,
-                     const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> &
-                                       colored_iterators,
-                     const std::string prefix)
+  std::vector<std::vector<PatchIterator>>
+  cell_coloring_impl(const std::vector<std::vector<CellIterator>> & /*patches*/) const override
   {
-    Impl::visualize_coloring<dim>(dof_handler_in, colored_iterators, prefix);
+    AssertThrow(false, ExcMessage("Is not implemented."));
   }
+
+  using Base::visualize_coloring;
 };
 
 

@@ -26,7 +26,7 @@ DEFAULT_OUTFILE_=os.path.join(BUILD_INC_,'ct_parameter.h')
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="""Create compile-time parameters (PRM).""",
+        description="""Create compile-time parameters.""",
         formatter_class=RawTextHelpFormatter
     )
     parser.add_argument('-O', '--output',
@@ -38,22 +38,28 @@ def parse_args():
                         default=3,
                         type=int,
                         choices=[2,3],
-                        help="PRM: spatial dimension of the domain"
+                        help="spatial dimension of the domain"
     )
     parser.add_argument('-DEG','--fe-degree',
                         default=3,
                         type=int,
                         choices=range(1,31),
-                        help="PRM: spatial dimension of the domain"
+                        help="spatial dimension of the domain"
+    )
+    parser.add_argument('-DLY','--dof-layout',
+                        default='DGQ',
+                        type=str,
+                        choices=['DGQ','Q'],
+                        help="dof layout of finite element method"
     )
     parser.add_argument('-LOG','--log-directory',
                         default=BUILD_DIR_,
-                        help="PRM: directory of the log file"
+                        help="directory of the log file"
     )
     parser.add_argument('-SMO','--smoother',
                         default='ACP',
                         choices=['ACP','AVP','MCP','MVP'],
-                        help="PRM: variant of the Schwarz smoother"
+                        help="variant of the Schwarz smoother"
     )
     args = parser.parse_args()
     assert os.path.isdir(args.log_directory),"Invalid directory path: {}".format(args.log_directory)
@@ -74,6 +80,7 @@ class Parameter:
         deg = options.fe_degree
         self.dimension = ('constexpr unsigned int', dim)
         self.fe_degree = ('constexpr unsigned int', deg)
+        self.dof_layout = ('constexpr auto', 'TPSS::DoFLayout::' + str(options.dof_layout))
         self.log_dir = ('const std::string', rawstr(options.log_directory))
         self.smoother_prm(options.smoother)
 
