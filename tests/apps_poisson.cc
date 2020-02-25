@@ -1,6 +1,6 @@
 /*
  * Tests all variants of Schwarz-type smoothers by checking iteration counts of
- * the Poisson problem (poisson.h)
+ * the Poisson problem (poisson_problem.h)
  *
  *  Created on: Nov 22, 2019
  *      Author: witte
@@ -10,7 +10,7 @@
 
 #include <gtest/gtest.h>
 
-#include "poisson.h"
+#include "poisson_problem.h"
 
 #include "test_utilities.h"
 
@@ -18,9 +18,8 @@ template<int dim, int fe_degree>
 class TestPoissonBase : public testing::Test
 {
 protected:
-  using PoissonProblem = typename Poisson::ModelProblem<dim, fe_degree, double>;
-  // template <int dim_>
-  // static const std::integral_constant<int, dim_> n_cycles_;
+  static constexpr auto dof_layout = TPSS::DoFLayout::DGQ;
+  using PoissonProblem             = typename Poisson::ModelProblem<dim, fe_degree, dof_layout>;
 
   struct Params
   {

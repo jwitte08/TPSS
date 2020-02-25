@@ -9,7 +9,7 @@
 #include <deal.II/base/convergence_table.h>
 
 #include "ct_parameter.h"
-#include "poisson_standard.h"
+#include "poisson_problem.h"
 
 using namespace dealii;
 using namespace Laplace;
@@ -70,8 +70,8 @@ write_ppdata_to_string(const PostProcessData & pp_data)
 template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, int n_patch_dofs_1d_static = -1>
 struct Tester
 {
-  using PoissonProblem = typename Poisson::CFEM::
-    ModelProblem<dim, fe_degree, dof_layout, double, n_patch_dofs_1d_static>;
+  using PoissonProblem =
+    typename Poisson::ModelProblem<dim, fe_degree, dof_layout, double, n_patch_dofs_1d_static>;
 
   Tester(const TestParameter & testprms_in) : testprms(testprms_in)
   {

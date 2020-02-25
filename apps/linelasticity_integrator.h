@@ -167,7 +167,7 @@ public:
                   const int             cell_no,
                   const int             cell_no_neighbor) const
   {
-    return Laplace::FD::compute_penalty(eval_test, direction, cell_no, cell_no_neighbor);
+    return Laplace::DG::FD::compute_penalty(eval_test, direction, cell_no, cell_no_neighbor);
   }
 
   double

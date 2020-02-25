@@ -1,9 +1,12 @@
 /**
- * poisson.h
+ * poisson_problem.h
  *
- * standard FEM poisson problem
+ * poisson problem supports:
  *
- *  Created on: Feb 03, 2020
+ * - interior penalty method (DGQ)
+ * - conforming finite element (Q)
+ *
+ *  Created on: Sep 12, 2019
  *      Author: witte
  */
 
@@ -60,8 +63,6 @@ struct TypeSelector
 
 
 
-namespace CFEM
-{
 template<int             dim,
          int             fe_degree,
          TPSS::DoFLayout dof_layout,
@@ -69,8 +70,8 @@ template<int             dim,
          int n_patch_dofs = -1>
 struct ModelProblem : public Subscriptor
 {
-  static constexpr unsigned int fe_order  = fe_degree + 1;
-  static constexpr unsigned int n_qpoints = fe_degree + 1;
+  static constexpr unsigned int fe_order          = fe_degree + 1;
+  static constexpr unsigned int n_q_points_static = fe_degree + 1;
 
   using value_type = Number;
   using VECTOR     = typename LinearAlgebra::distributed::Vector<Number>;
@@ -183,8 +184,8 @@ struct ModelProblem : public Subscriptor
 
 
   /*
-   * Prints the accumulated timings of the Schwarz pre- and post-smoothers on
-   * the finest level.
+   * Prints accumulated timings of Schwarz pre- and post-smoothers on the finest
+   * level.
    */
   void
   print_schwarz_preconditioner_times()
@@ -242,7 +243,7 @@ struct ModelProblem : public Subscriptor
         (update_gradients | update_JxW_values | update_normal_vectors | update_quadrature_points);
     }
 
-    QGauss<1> quadrature(n_qpoints);
+    QGauss<1> quadrature(n_q_points_static);
 
     const auto mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
     mf_storage->reinit(mapping, dof_handler, constraints, quadrature, additional_data);
@@ -284,7 +285,7 @@ struct ModelProblem : public Subscriptor
     }
     level_constraints.close();
 
-    QGauss<1> quadrature(n_qpoints);
+    QGauss<1> quadrature(n_q_points_static);
 
     const auto mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
     mf_storage->reinit(mapping, dof_handler, level_constraints, quadrature, additional_data);
@@ -311,6 +312,23 @@ struct ModelProblem : public Subscriptor
     const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
     patch_storage->reinit(mf_storage, fdss_additional_data);
     return patch_storage;
+  }
+
+
+  template<typename MatrixType>
+  std::shared_ptr<SCHWARZ_PRECONDITIONER>
+  build_schwarz_preconditioner(std::shared_ptr<const SubdomainHandler<dim, Number>> patch_storage,
+                               MatrixType &                                         matrix,
+                               const SchwarzSmootherData & schwarz_data) const
+  {
+    typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data;
+    precondition_data.relaxation       = schwarz_data.damping_factor;
+    precondition_data.local_relaxation = schwarz_data.local_damping_factor;
+    precondition_data.reverse          = schwarz_data.reverse_smoothing;
+    precondition_data.symmetrized      = schwarz_data.symmetrize_smoothing;
+    const auto schwarz_preconditioner  = std::make_shared<SCHWARZ_PRECONDITIONER>();
+    schwarz_preconditioner->initialize(patch_storage, matrix, precondition_data);
+    return schwarz_preconditioner;
   }
 
 
@@ -375,6 +393,7 @@ struct ModelProblem : public Subscriptor
 
     AssertThrow(false, ExcMessage("Computation of discrete RHS is not implemented."));
   }
+
 
   void
   compute_rhs_strong_boundary_conditions(VECTOR &                        discrete_rhs,
@@ -699,8 +718,8 @@ struct ModelProblem : public Subscriptor
                    const VECTOR &                  discrete_solution,
                    const Function<dim> *           analytic_solution) const
   {
-    double                                             global_error = 0;
-    FEEvaluation<dim, fe_degree, n_qpoints, 1, Number> phi(*mf_storage);
+    double                                                     global_error = 0;
+    FEEvaluation<dim, fe_degree, n_q_points_static, 1, Number> phi(*mf_storage);
     discrete_solution.update_ghost_values();
     const auto & uh = discrete_solution;
     for(unsigned int cell = 0; cell < mf_storage->n_macro_cells(); ++cell)
@@ -798,7 +817,8 @@ struct ModelProblem : public Subscriptor
         compute_discretization_errors();
       }
 
-      // visualize_dof_vector(dof_handler, system_u, "solution", 1, mapping);
+      if(rt_parameters.do_visualize)
+        visualize_dof_vector(dof_handler, system_u, "solution", 1, mapping);
 
       print_schwarz_preconditioner_times();
     }
@@ -807,7 +827,10 @@ struct ModelProblem : public Subscriptor
 
 
 
-} // end namespace CFEM
+// --------------------------------   TypeSelector   --------------------------------
+
+
+
 template<int dim, int fe_degree, typename Number>
 struct TypeSelector<dim, fe_degree, TPSS::DoFLayout::Q, Number>
 {
@@ -818,8 +841,8 @@ struct TypeSelector<dim, fe_degree, TPSS::DoFLayout::Q, Number>
 template<int dim, int fe_degree, typename Number>
 struct TypeSelector<dim, fe_degree, TPSS::DoFLayout::DGQ, Number>
 {
-  using system_matrix_type = Laplace::MF::Operator<dim, fe_degree, Number>;
-  using level_matrix_type  = Laplace::CombinedOperator<dim, fe_degree, Number>;
+  using system_matrix_type = Laplace::DG::MF::Operator<dim, fe_degree, Number>;
+  using level_matrix_type  = Laplace::DG::CombinedOperator<dim, fe_degree, Number>;
 };
 
 } // end namespace Poisson

@@ -9,7 +9,7 @@
 #include <deal.II/base/convergence_table.h>
 
 #include "ct_parameter.h"
-#include "poisson.h"
+#include "poisson_problem.h"
 
 using namespace dealii;
 using namespace Laplace;
@@ -21,10 +21,11 @@ struct TestParameter
   std::string                        solver_variant   = "cg"; // see SolverSelector
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::IterativeAcc;
-  double   coarse_grid_accuracy = 1.e-8;
+  double   coarse_grid_accuracy = 1.e-12;
   double   cg_reduction         = 1.e-8;
   unsigned n_refinements        = 2;
   unsigned n_repetitions        = 2;
+  double   local_damping_factor = 1.;
 
   std::string
   to_string() const
@@ -51,14 +52,23 @@ write_ppdata_to_string(const PostProcessData & pp_data)
     info_table.add_value("n_colors", pp_data.n_colors_system.at(run));
     info_table.add_value("n_iter", pp_data.n_iterations_system.at(run));
     info_table.add_value("reduction", pp_data.average_reduction_system.at(run));
+    info_table.add_value("L2_error", pp_data.L2_error.at(run));
   }
-
   info_table.set_scientific("reduction", true);
   info_table.set_precision("reduction", 3);
-  info_table.write_text(oss);
+  info_table.set_scientific("L2_error", true);
+  info_table.set_precision("L2_error", 3);
+  info_table.evaluate_convergence_rates("L2_error", ConvergenceTable::reduction_rate);
+  info_table.evaluate_convergence_rates("L2_error",
+                                        "n_dofs",
+                                        ConvergenceTable::reduction_rate_log2,
+                                        pp_data.n_dimensions);
 
+  info_table.write_text(oss);
   return oss.str();
 }
+
+
 
 int
 main(int argc, char * argv[])
@@ -74,13 +84,14 @@ main(int argc, char * argv[])
 
   TestParameter testprms;
   if(argc > 1)
-    testprms.n_refinements = std::atoi(argv[1]);
+    testprms.local_damping_factor = std::atof(argv[1]);
   if(argc > 2)
     testprms.n_repetitions = std::atoi(argv[2]);
   RT::Parameter rt_parameters;
 
   //: discretization
-  rt_parameters.n_cycles              = 1;
+  rt_parameters.n_cycles              = 10;
+  rt_parameters.dof_limits            = {1e3, 2e7};
   rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   rt_parameters.mesh.n_refinements    = testprms.n_refinements;
   rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;
@@ -98,11 +109,14 @@ main(int argc, char * argv[])
   rt_parameters.multigrid.coarse_grid.iterative_solver = testprms.solver_variant;
   rt_parameters.multigrid.coarse_grid.accuracy         = testprms.coarse_grid_accuracy;
   rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
-  rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = testprms.patch_variant;
-  rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = testprms.smoother_variant;
-  rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
-  rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
-  rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(8, fe_degree + 1);
+  rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = testprms.patch_variant;
+  rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = testprms.smoother_variant;
+  rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring  = true;
+  rt_parameters.multigrid.pre_smoother.schwarz.damping_factor =
+    testprms.local_damping_factor * damping_factor;
+  // rt_parameters.multigrid.pre_smoother.schwarz.local_damping_factor       =
+  // testprms.local_damping_facto    r;
+  rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5, fe_degree + 1);
   rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
   rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
 

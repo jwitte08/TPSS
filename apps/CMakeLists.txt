@@ -15,7 +15,6 @@ set(sourcefiles
   # linelasticity.cc # TODO
   linelasticity_diagonly.cc
   linelasticity_sipg.cc
-  poisson.cc
   poisson_distorted.cc
   poisson_mpiscaling.cc
   poisson_standard.cc

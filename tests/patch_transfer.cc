@@ -16,7 +16,7 @@
 #include <gtest/gtest.h>
 
 #include "linelasticity_problem.h"
-#include "poisson.h"
+#include "poisson_problem.h"
 
 #include "test_utilities.h"
 
@@ -26,10 +26,11 @@ template<typename T>
 class TestPatchTransferDG : public testing::Test
 {
 protected:
-  static constexpr int dim       = T::template value<0>();
-  static constexpr int fe_degree = T::template value<1>();
-  using PoissonProblem           = typename Poisson::ModelProblem<dim, fe_degree>;
-  using PatchTransfer            = typename PoissonProblem::LEVEL_MATRIX::transfer_type;
+  static constexpr int  dim        = T::template value<0>();
+  static constexpr int  fe_degree  = T::template value<1>();
+  static constexpr auto dof_layout = TPSS::DoFLayout::DGQ;
+  using PoissonProblem             = typename Poisson::ModelProblem<dim, fe_degree, dof_layout>;
+  using PatchTransfer              = typename PoissonProblem::LEVEL_MATRIX::transfer_type;
 
 
   struct Params

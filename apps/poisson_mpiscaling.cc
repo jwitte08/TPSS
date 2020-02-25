@@ -9,7 +9,7 @@
 #include <deal.II/base/convergence_table.h>
 
 #include <ct_parameter.h>
-#include "poisson.h"
+#include "poisson_problem.h"
 
 using namespace dealii;
 using namespace Laplace;
@@ -73,8 +73,9 @@ struct Test
 {
   static constexpr int n_patch_dofs_per_direction =
     TPSS::UniversalInfo<dim>::n_cells_per_direction(CT::PATCH_VARIANT_) * (fe_degree + 1);
+  static constexpr auto dof_layout = TPSS::DoFLayout::DGQ;
   using PoissonProblem =
-    typename Poisson::ModelProblem<dim, fe_degree, double, n_patch_dofs_per_direction>;
+    typename Poisson::ModelProblem<dim, fe_degree, dof_layout, double, n_patch_dofs_per_direction>;
   using VECTOR           = typename PoissonProblem::VECTOR;
   using SCHWARZ_SMOOTHER = typename PoissonProblem::SCHWARZ_SMOOTHER;
   using SYSTEM_MATRIX    = typename PoissonProblem::SYSTEM_MATRIX;

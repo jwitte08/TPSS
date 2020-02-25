@@ -39,7 +39,6 @@ double pre_factor = 1.0;
 
 namespace Laplace
 {
-// TODO namespace DG
 /*
  * Linear operators describing the SIPG disretization with respect to the
  * negative Laplacian:
@@ -48,8 +47,8 @@ namespace Laplace
  * (MF) MatrixFree
  * (FD) FastDiagonalization
  */
-
-
+namespace DG
+{
 /*
  * A MeshWorker-based MatrixIntegrator to assemble the DG Laplace
  * system matrix. Originates from step-39.
@@ -118,7 +117,11 @@ MatrixIntegrator<dim>::face(dealii::MeshWorker::DoFInfo<dim> &                  
                                        penalty);
 }
 
+
+
 } // end namespace MW
+
+
 
 namespace FD
 {
@@ -337,7 +340,7 @@ FaceLaplace<EvaluatorType>::operator()(const EvaluatorType &,
   const auto normal1        = eval_test.get_normal(face_no1); // on cell 1
   const auto average_factor = eval_test.get_average_factor(direction, cell_no0, face_no0);
   const auto penalty        = IP::pre_factor * average_factor *
-                       Laplace::FD::compute_penalty(eval_test, direction, cell_no0, face_no0);
+                       Laplace::DG::FD::compute_penalty(eval_test, direction, cell_no0, face_no0);
 
   auto value_on_interface01{make_vectorized_array<Number>(0.)};
   auto value_on_interface10{make_vectorized_array<Number>(0.)};
@@ -715,6 +718,10 @@ struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
 
 
 
+} // end namespace DG
+
+
+
 /*
  * Linear operators describing the standard finite element discretization of
  * the negative Laplacian:
@@ -911,9 +918,9 @@ public:
   {
     using Evaluator = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
 
-    Evaluator                           eval(subdomain_handler);
-    Laplace::FD::CellMass<Evaluator>    cell_mass_operation;
-    Laplace::FD::CellLaplace<Evaluator> cell_laplace_operation;
+    Evaluator                               eval(subdomain_handler);
+    Laplace::DG::FD::CellMass<Evaluator>    cell_mass_operation;
+    Laplace::DG::FD::CellLaplace<Evaluator> cell_laplace_operation;
 
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
     {
