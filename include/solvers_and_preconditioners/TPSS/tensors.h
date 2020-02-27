@@ -200,23 +200,42 @@ struct TensorHelper
 
 
   /**
-   * If we think of the @p order dimensional index set as hypercube, then,
-   * edge_no marks the @p order-1 hyperface with lexicographical ordering (see
-   * dealii::GeometryInfo). If the index is in the interior of the imaginary
-   * hypercube -1 is returned.
+   * If we think of the @p order dimensional index set as hypercube, then, we
+   * have 2*order hyperfaces of order @p order-1 following a lexicographical
+   * ordering, see for example dealii::GeometryInfo. In analogy to the
+   * one-dimensional case we refer to hyperfaces as edge numbers @p edge_no. If
+   * index @p index is in the interior of the imaginary hypercube, the set of
+   * edge numbers is empty. If the index is located at a vertex dim edge numbers
+   * are returned.
    */
-  int
-  edge_no(const IntType index) const
+  std::vector<unsigned int>
+  get_edge_numbers(const IntType index) const
   {
     AssertIndexRange(index, n_flat());
-    const auto & multi_index = this->multi_index(index);
+    std::vector<unsigned int> edge_numbers;
+    const auto &              multi_index = this->multi_index(index);
     for(auto mode = 0U; mode < order; ++mode)
     {
-      if(is_first_index_1d(multi_index, mode))
-        return 2 * mode + 0;
-      if(is_last_index_1d(multi_index, mode))
-        return 2 * mode + 1;
+      const auto edge_no_1d = get_edge_no_1d(multi_index, mode);
+      if(edge_no_1d != -1U)
+        edge_numbers.emplace_back(2 * mode + edge_no_1d);
     }
+    return edge_numbers;
+  }
+
+  /**
+   * Returns the one-dimensional edge number of the @p mode'th mode of
+   * multi-index @p multi_index. That is, 0 for the first, 1 for the last and -1
+   * for all interior indices with respect to mode @p mode is reutrned.
+   */
+  unsigned int
+  get_edge_no_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
+  {
+    AssertIndexRange(mode, order);
+    if(is_first_index_1d(multi_index, mode))
+      return 0;
+    else if(is_last_index_1d(multi_index, mode))
+      return 1;
     return -1;
   }
 
