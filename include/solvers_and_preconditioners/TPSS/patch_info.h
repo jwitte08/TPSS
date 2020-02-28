@@ -37,13 +37,7 @@ public:
 
   struct InternalData;
 
-  struct SubdomainData
-  {
-    unsigned int n_interior       = 0;
-    unsigned int n_boundary       = 0;
-    unsigned int n_interior_ghost = 0;
-    unsigned int n_boundary_ghost = 0;
-  };
+  struct SubdomainData;
 
   struct PartitionData;
 
@@ -78,69 +72,23 @@ public:
   get_additional_data() const;
 
   std::pair<int, int>
-  get_cell_level_and_index(const unsigned int cell_position) const
-  {
-    // OLD !!!
-    // AssertIndexRange(cell_position, n_cells_plain());
-    // if(level_and_index_is_cached)
-    // {
-    //   AssertDimension(n_cells_plain(), get_internal_data()->cell_level_and_index_pairs.size());
-    //   return (get_internal_data()->cell_level_and_index_pairs)[cell_position];
-    // }
-    // AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
-    // const auto & cell = (get_internal_data()->cell_iterators)[cell_position];
-    // return std::make_pair<int, int>(cell->level(), cell->index());
-
-    AssertIndexRange(cell_position, n_cells_plain());
-    AssertDimension(n_cells_plain(), get_internal_data()->cell_level_and_index_pairs.size());
-    return (get_internal_data()->cell_level_and_index_pairs)[cell_position];
-  }
+  get_cell_level_and_index(const unsigned int cell_position) const;
 
   CellIterator
-  get_cell_iterator(const unsigned int cell_position) const
-  {
-    // OLD !!!
-    // AssertIndexRange(cell_position, n_cells_plain());
-    // if(iterator_is_cached)
-    // {
-    //   AssertDimension(n_cells_plain(), get_internal_data()->cell_iterators.size());
-    //   return (get_internal_data()->cell_iterators)[cell_position];
-    // }
-    // const auto & tria                   = get_triangulation();
-    // const auto [cell_level, cell_index] = get_cell_level_and_index(cell_position);
-    // // TODO we should not need dof handler here -> exchange CellIterator
-    // const auto dof_handler = get_internal_data()->dof_handler;
-    // Assert(dof_handler, ExcMessage("DoFHandler is not set. TODO"));
-    // return CellIterator(&tria, cell_level, cell_index, dof_handler);
-
-    const auto & tria                   = get_triangulation();
-    const auto [cell_level, cell_index] = get_cell_level_and_index(cell_position);
-    // TODO we should not need dof handler here -> exchange CellIterator
-    const auto dof_handler = get_internal_data()->dof_handler;
-    Assert(dof_handler, ExcMessage("DoFHandler is not set. TODO"));
-    return CellIterator(&tria, cell_level, cell_index, dof_handler);
-  }
+  get_cell_iterator(const unsigned int cell_position) const;
 
   const Triangulation<dim> &
-  get_triangulation() const
-  {
-    const auto tria = get_internal_data()->triangulation;
-    Assert(tria, ExcMessage("Triangulation not set."));
-    return *tria;
-  }
+  get_triangulation() const;
 
   unsigned int
-  n_cells_plain() const
-  {
-    return get_internal_data()->n_cells_plain();
-  }
+  n_cells_plain() const;
 
   /**
    * An array of strides to access the CellIterator collections
    * (=patch) within the flat array @p cell_iterators. In other words
    * two consecutive elements in @p patch_starts represent a half-open
    * range of CellIterators, containing all cells to construct a
-   * (macro) patch.
+   * macro patch.
    */
   std::vector<unsigned int> patch_starts;
 
@@ -151,7 +99,7 @@ public:
 
   /**
    * A flat array that stores the information if each face within a
-   * (macro) face is at the physical boundary. Faces are ordered in
+   * macro face is at the physical boundary. Faces are ordered in
    * the standard deal.II way, see GeometryInfo. The integer must be
    * reinterpreted as std::bitset of length @p macro_size.
    * Lexicographical:   face number   <   patch id
@@ -299,16 +247,16 @@ struct PatchInfo<dim>::PartitionData
   void
   clear();
 
-  std::size_t
+  unsigned int
   n_colors() const;
 
-  std::size_t
+  unsigned int
   n_partitions(const unsigned int color = 0) const;
 
-  std::size_t
+  unsigned int
   n_subdomains() const;
 
-  std::size_t
+  unsigned int
   n_subdomains(const unsigned int color) const;
 
   /**
@@ -332,16 +280,16 @@ struct PatchInfo<dim>::PartitionData
   get_patch_range(const unsigned int partition, const unsigned int color) const;
 
   /**
-   * Checks the compatibility of @p other against the current
-   * partition data. This identifies if data might be reused.
+   * Checks the compatibility of this partition data against @p other. Helpful
+   * to decide if data might be re-used.
    */
   bool
   is_compatible(const PartitionData & other) const;
 
   /**
-   * Actual storage of a set of partitions for each color. Two
-   * consecutive integers of the inner vector represent a half-open
-   * interval, the so-called patch range identified by a partition id.
+   * The set of partitions for each color. The outer vector represents
+   * colors. Two consecutive integers of the inner vector represent a half-open
+   * interval, so-called patch range.
    */
   std::vector<std::vector<unsigned int>> partitions;
 };
@@ -385,10 +333,10 @@ struct PatchInfo<dim>::InternalData
   empty_on_all() const;
 
   unsigned int
-  n_cells_plain() const
-  {
-    return std::max(cell_iterators.size(), cell_level_and_index_pairs.size());
-  }
+  n_cells_plain() const;
+
+  unsigned int
+  n_colors() const;
 
   unsigned int level = numbers::invalid_unsigned_int;
 
@@ -398,7 +346,7 @@ struct PatchInfo<dim>::InternalData
    * such that all interior subdomains are stored first, then the ones
    * at the physical boundary
    *
-   * Lexicographical:  cell number  <  lane  <  patch id  <   color
+   * Lexicographical:  cell_no  <  lane  <  patch id  <  color
    */
   mutable std::vector<CellIterator> cell_iterators;
 
@@ -408,19 +356,19 @@ struct PatchInfo<dim>::InternalData
    * such that all interior subdomains are stored first, then the ones
    * at the physical boundary
    *
-   * Lexicographical:  cell number  <  lane  <  patch id  <   color
+   * Lexicographical:  cell_no  <  lane  <  patch id  <  color
    */
   mutable std::vector<std::pair<int, int>> cell_level_and_index_pairs;
 
   /**
    * Numbers of physical subdomains for each color.
    */
-  std::vector<SubdomainData> n_physical_subdomains;
+  std::vector<SubdomainData> subdomain_quantities;
 
   /**
    * Numbers of physical subdomains (accumulated over colors)
    */
-  SubdomainData n_physical_subdomains_total;
+  SubdomainData subdomain_quantities_accumulated;
 
   /**
    * Underlying triangulation cell iterators are based on.
@@ -431,6 +379,196 @@ struct PatchInfo<dim>::InternalData
   const DoFHandler<dim> * dof_handler = nullptr;
 };
 
+
+
+template<int dim>
+struct PatchInfo<dim>::SubdomainData
+{
+  unsigned int n_interior       = 0;
+  unsigned int n_boundary       = 0;
+  unsigned int n_interior_ghost = 0;
+  unsigned int n_boundary_ghost = 0;
+};
+
+
+
+template<int dim>
+struct FaceInfoLocal
+{
+  using CellIterator = typename PatchInfo<dim>::CellIterator;
+
+  FaceInfoLocal(const unsigned int                my_cell_no,
+                const std::vector<CellIterator> & cell_collection_in);
+
+  static constexpr unsigned int
+  n_faces();
+
+  static constexpr unsigned int
+  n_faces_1d();
+
+  static constexpr unsigned int
+  face_no(const unsigned int face_no_1d, const unsigned int dimension);
+
+  static constexpr std::pair<unsigned int, unsigned int>
+  face_no_1d_and_dimension(const unsigned int face_no);
+
+  bool
+  at_lower_neighbor(const unsigned int face_no) const;
+
+  bool
+  at_patch_boundary(const unsigned int face_no) const;
+
+  unsigned int
+  get_adjacent_cell_no(const unsigned int face_no) const;
+
+  std::vector<unsigned int>
+  get_adjacent_cell_numbers() const;
+
+  std::vector<unsigned int>
+  get_face_numbers_at_patch_boundary() const;
+
+  std::vector<unsigned int>
+  get_face_numbers_lower_neighbor() const;
+
+  const unsigned int                  cell_number;
+  const unsigned int                  n_cells;
+  std::array<unsigned int, n_faces()> face_to_cell_number;
+};
+
+
+
+// --------------------------------   FaceInfoLocal   --------------------------------
+
+
+
+template<int dim>
+FaceInfoLocal<dim>::FaceInfoLocal(const unsigned int                my_cell_no,
+                                  const std::vector<CellIterator> & cell_collection_in)
+  : cell_number(my_cell_no), n_cells(cell_collection_in.size())
+{
+  AssertIndexRange(my_cell_no, cell_collection_in.size());
+  const auto & my_cell = cell_collection_in[my_cell_no];
+
+  /// If this cell @p my_cell shares its face @p face_no with an adjacent cell
+  /// within the patch of cells @p cell_collection_in the local cell number of
+  /// the neighbor is returned. Otherwise invalid_unsigned_int is returned.
+  const auto find_adjacent_cell_no = [&](const auto face_no) {
+    const auto my_neighbor_cell_index = my_cell->neighbor_index(face_no);
+    if(my_neighbor_cell_index == -1) // at physical boundary
+      return numbers::invalid_unsigned_int;
+    for(auto cell_no = 0U; cell_no < cell_collection_in.size(); ++cell_no)
+      if(cell_no != my_cell_no)
+      {
+        const auto & other_cell = cell_collection_in[cell_no];
+        if(my_neighbor_cell_index == other_cell->index())
+          return cell_no;
+      }
+    return numbers::invalid_unsigned_int;
+  };
+
+  //: fill the face_no to adjacent cell_no map @p face_to_cell_number
+  for(auto face_no = 0U; face_no < n_faces(); ++face_no)
+    face_to_cell_number[face_no] = find_adjacent_cell_no(face_no);
+}
+
+
+template<int dim>
+inline constexpr unsigned int
+FaceInfoLocal<dim>::n_faces()
+{
+  return GeometryInfo<dim>::faces_per_cell;
+}
+
+
+template<int dim>
+inline constexpr unsigned int
+FaceInfoLocal<dim>::n_faces_1d()
+{
+  return 2;
+}
+
+
+template<int dim>
+inline constexpr unsigned int
+FaceInfoLocal<dim>::face_no(const unsigned int face_no_1d, const unsigned int dimension)
+{
+  AssertIndexRange(face_no_1d, n_faces_1d());
+  AssertIndexRange(dimension, dim);
+  return dimension * n_faces_1d() + face_no_1d;
+}
+
+
+template<int dim>
+inline constexpr std::pair<unsigned int, unsigned int>
+FaceInfoLocal<dim>::face_no_1d_and_dimension(const unsigned int face_no)
+{
+  return std::make_pair(face_no % n_faces_1d(), face_no / n_faces_1d());
+}
+
+
+template<int dim>
+inline bool
+FaceInfoLocal<dim>::at_lower_neighbor(const unsigned int face_no) const
+{
+  AssertIndexRange(face_no, n_faces());
+  const bool is_patch_interior_face    = !at_patch_boundary(face_no);
+  const bool neighbor_cell_no_is_lower = face_to_cell_number[face_no] < cell_number;
+  return is_patch_interior_face && neighbor_cell_no_is_lower;
+}
+
+
+template<int dim>
+inline bool
+FaceInfoLocal<dim>::at_patch_boundary(const unsigned int face_no) const
+{
+  AssertIndexRange(face_no, n_faces());
+  return face_to_cell_number[face_no] == numbers::invalid_unsigned_int;
+}
+
+
+template<int dim>
+inline unsigned int
+FaceInfoLocal<dim>::get_adjacent_cell_no(const unsigned int face_no) const
+{
+  AssertIndexRange(face_no, n_faces());
+  return face_to_cell_number[face_no];
+}
+
+
+template<int dim>
+inline std::vector<unsigned int>
+FaceInfoLocal<dim>::get_adjacent_cell_numbers() const
+{
+  std::vector<unsigned int> cell_numbers;
+  for(auto face_no = 0U; face_no < n_faces(); ++face_no)
+    if(get_adjacent_cell_no(face_no) != numbers::invalid_unsigned_int)
+      cell_numbers.emplace_back(get_adjacent_cell_no(face_no));
+  return cell_numbers;
+}
+
+
+template<int dim>
+inline std::vector<unsigned int>
+FaceInfoLocal<dim>::get_face_numbers_at_patch_boundary() const
+{
+  std::vector<unsigned int> face_numbers;
+  for(auto face_no = 0U; face_no < n_faces(); ++face_no)
+    if(at_patch_boundary(face_no))
+      face_numbers.emplace_back(face_no);
+  return face_numbers;
+}
+
+
+template<int dim>
+inline std::vector<unsigned int>
+FaceInfoLocal<dim>::get_face_numbers_lower_neighbor() const
+{
+  std::vector<unsigned int> face_numbers;
+  for(auto face_no = 0U; face_no < n_faces(); ++face_no)
+    if(at_lower_neighbor(face_no))
+      face_numbers.emplace_back(face_no);
+  return face_numbers;
+}
 
 
 // --------------------------------   PatchInfo   --------------------------------
@@ -450,11 +588,43 @@ PatchInfo<dim>::clear()
   time_data.clear();
 }
 
+
 template<int dim>
 bool
 PatchInfo<dim>::empty() const
 {
   return internal_data.empty();
+}
+
+
+template<int dim>
+inline const typename PatchInfo<dim>::AdditionalData &
+PatchInfo<dim>::get_additional_data() const
+{
+  return additional_data;
+}
+
+
+template<int dim>
+inline std::pair<int, int>
+PatchInfo<dim>::get_cell_level_and_index(const unsigned int cell_position) const
+{
+  AssertIndexRange(cell_position, n_cells_plain());
+  AssertDimension(n_cells_plain(), get_internal_data()->cell_level_and_index_pairs.size());
+  return (get_internal_data()->cell_level_and_index_pairs)[cell_position];
+}
+
+
+template<int dim>
+inline typename PatchInfo<dim>::CellIterator
+PatchInfo<dim>::get_cell_iterator(const unsigned int cell_position) const
+{
+  const auto & tria                   = get_triangulation();
+  const auto [cell_level, cell_index] = get_cell_level_and_index(cell_position);
+  // TODO we should not need dof handler here -> exchange CellIterator
+  const auto dof_handler = get_internal_data()->dof_handler;
+  Assert(dof_handler, ExcMessage("DoFHandler is not set. TODO"));
+  return CellIterator(&tria, cell_level, cell_index, dof_handler);
 }
 
 
@@ -465,20 +635,36 @@ PatchInfo<dim>::get_internal_data() const
   return &internal_data;
 }
 
+
 template<int dim>
-inline const typename PatchInfo<dim>::AdditionalData &
-PatchInfo<dim>::get_additional_data() const
+inline const Triangulation<dim> &
+PatchInfo<dim>::get_triangulation() const
 {
-  return additional_data;
+  const auto tria = get_internal_data()->triangulation;
+  Assert(tria, ExcMessage("Triangulation not set."));
+  return *tria;
 }
 
+
+template<int dim>
+inline unsigned int
+PatchInfo<dim>::n_cells_plain() const
+{
+  return get_internal_data()->n_cells_plain();
+}
+
+
+
 // --------------------------------   PatchInfo::GhostPatch   --------------------------------
+
+
 
 template<int dim>
 PatchInfo<dim>::GhostPatch::GhostPatch(const unsigned int proc, const CellId & cell_id)
 {
   submit_id(proc, cell_id);
 }
+
 
 template<int dim>
 inline void
@@ -498,6 +684,7 @@ PatchInfo<dim>::GhostPatch::submit_id(const unsigned int proc, const CellId & ce
   }
 }
 
+
 template<int dim>
 inline std::string
 PatchInfo<dim>::GhostPatch::str() const
@@ -513,7 +700,11 @@ PatchInfo<dim>::GhostPatch::str() const
   return oss.str();
 }
 
+
+
 // --------------------------------   PatchInfo::PartitionData   --------------------------------
+
+
 
 template<int dim>
 inline void
@@ -523,6 +714,7 @@ PatchInfo<dim>::PartitionData::initialize(const unsigned int n_colors)
   partitions.resize(n_colors);
 }
 
+
 template<int dim>
 inline void
 PatchInfo<dim>::PartitionData::clear()
@@ -530,36 +722,40 @@ PatchInfo<dim>::PartitionData::clear()
   partitions.clear();
 }
 
+
 template<int dim>
-inline std::size_t
+inline unsigned int
 PatchInfo<dim>::PartitionData::n_colors() const
 {
   return partitions.size();
 }
 
+
 template<int dim>
-inline std::size_t
+inline unsigned int
 PatchInfo<dim>::PartitionData::n_partitions(const unsigned int color) const
 {
   AssertIndexRange(color, partitions.size());
   return (partitions[color].size() > 0) ? partitions[color].size() - 1 : 0;
 }
 
-template<int dim>
-inline std::size_t
-PatchInfo<dim>::PartitionData::n_subdomains() const
-{
-  // Assert(!partitions.empty(), ExcMessage("TODO should not be empty."));
-  return partitions.empty() ? 0 : (partitions.back().empty()) ? 0 : partitions.back().back();
-}
 
 template<int dim>
-inline std::size_t
+inline unsigned int
+PatchInfo<dim>::PartitionData::n_subdomains() const
+{
+  return partitions.empty() ? 0 : (partitions.back().empty() ? 0 : partitions.back().back());
+}
+
+
+template<int dim>
+inline unsigned int
 PatchInfo<dim>::PartitionData::n_subdomains(const unsigned int color) const
 {
   AssertIndexRange(color, partitions.size());
   return partitions[color].empty() ? 0 : partitions[color].back();
 }
+
 
 template<int dim>
 inline std::pair<unsigned int, unsigned int>
@@ -571,6 +767,7 @@ PatchInfo<dim>::PartitionData::get_patch_range() const
   return std::make_pair(partitions.front().front(), partitions.back().back());
 }
 
+
 template<int dim>
 inline std::pair<unsigned int, unsigned int>
 PatchInfo<dim>::PartitionData::get_patch_range(const unsigned int color) const
@@ -579,6 +776,7 @@ PatchInfo<dim>::PartitionData::get_patch_range(const unsigned int color) const
   Assert(!partitions[color].empty(), dealii::ExcInvalidState());
   return std::make_pair(partitions[color].front(), partitions[color].back());
 }
+
 
 template<int dim>
 inline std::pair<unsigned int, unsigned int>
@@ -590,6 +788,7 @@ PatchInfo<dim>::PartitionData::get_patch_range(const unsigned int partition,
   return std::make_pair(partitions[color][partition], partitions[color][partition + 1]);
 }
 
+
 template<int dim>
 inline bool
 PatchInfo<dim>::PartitionData::is_compatible(const PartitionData & other) const
@@ -597,20 +796,25 @@ PatchInfo<dim>::PartitionData::is_compatible(const PartitionData & other) const
   return (partitions == other.partitions);
 }
 
+
+
 // --------------------------------   PatchInfo::InternalData   --------------------------------
+
+
 
 template<int dim>
 inline void
 PatchInfo<dim>::InternalData::clear()
 {
   level = numbers::invalid_unsigned_int;
-  n_physical_subdomains.clear();
-  n_physical_subdomains_total = SubdomainData{};
+  subdomain_quantities.clear();
+  subdomain_quantities_accumulated = SubdomainData{};
   cell_iterators.clear();
   cell_level_and_index_pairs.clear();
   triangulation = nullptr;
   dof_handler   = nullptr;
 }
+
 
 template<int dim>
 inline void
@@ -619,11 +823,12 @@ PatchInfo<dim>::InternalData::compress() const
   cell_iterators.clear();
 }
 
+
 template<int dim>
 inline bool
 PatchInfo<dim>::InternalData::empty() const
 {
-  return n_cells_plain() == 0; // cell_iterators.empty() && cell_level_and_index_pairs.empty();
+  return n_cells_plain() == 0;
 }
 
 
@@ -631,14 +836,24 @@ template<int dim>
 inline bool
 PatchInfo<dim>::InternalData::empty_on_all() const
 {
-  // const auto n_iterators_mpimax = Utilities::MPI::max(cell_iterators.size(), MPI_COMM_WORLD);
-  // const auto n_pairs_mpimax =
-  //   Utilities::MPI::max(cell_level_and_index_pairs.size(), MPI_COMM_WORLD);
-  // return (n_iterators_mpimax == 0) && (n_pairs_mpimax);
   const auto n_cells_plain_mpimax = Utilities::MPI::max(n_cells_plain(), MPI_COMM_WORLD);
-  // const auto n_pairs_mpimax =
-  //   Utilities::MPI::max(cell_level_and_index_pairs.size(), MPI_COMM_WORLD);
   return n_cells_plain_mpimax == 0;
+}
+
+
+template<int dim>
+inline unsigned int
+PatchInfo<dim>::InternalData::n_cells_plain() const
+{
+  return std::max(cell_iterators.size(), cell_level_and_index_pairs.size());
+}
+
+
+template<int dim>
+inline unsigned int
+PatchInfo<dim>::InternalData::n_colors() const
+{
+  return subdomain_quantities.size();
 }
 
 

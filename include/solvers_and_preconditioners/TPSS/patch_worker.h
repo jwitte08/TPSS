@@ -7,125 +7,6 @@
 
 namespace TPSS
 {
-template<int dim>
-struct FaceInfoLocal
-{
-  using CellIterator = typename PatchInfo<dim>::CellIterator;
-
-  FaceInfoLocal(const unsigned int my_cell_no, const std::vector<CellIterator> & cell_collection_in)
-    : cell_number(my_cell_no), n_cells(cell_collection_in.size())
-  {
-    AssertIndexRange(my_cell_no, cell_collection_in.size());
-    const auto & my_cell = cell_collection_in[my_cell_no];
-
-    /// If this cell @p my_cell shares its face @p face_no with an adjacent cell
-    /// within the patch of cells @p cell_collection_in the local cell number of
-    /// the neighbor is returned. Otherwise invalid_unsigned_int is returned.
-    const auto find_adjacent_cell_no = [&](const auto face_no) {
-      const auto my_neighbor_cell_index = my_cell->neighbor_index(face_no);
-      if(my_neighbor_cell_index == -1) // at physical boundary
-        return numbers::invalid_unsigned_int;
-      for(auto cell_no = 0U; cell_no < cell_collection_in.size(); ++cell_no)
-        if(cell_no != my_cell_no)
-        {
-          const auto & other_cell = cell_collection_in[cell_no];
-          if(my_neighbor_cell_index == other_cell->index())
-            return cell_no;
-        }
-      return numbers::invalid_unsigned_int;
-    };
-
-    //: fill the face_no to adjacent cell_no map @p face_to_cell_number
-    for(auto face_no = 0U; face_no < n_faces(); ++face_no)
-      face_to_cell_number[face_no] = find_adjacent_cell_no(face_no);
-  }
-
-  static constexpr unsigned int
-  n_faces()
-  {
-    return GeometryInfo<dim>::faces_per_cell;
-  }
-
-  static constexpr unsigned int
-  n_faces_1d()
-  {
-    return 2;
-  }
-
-  static constexpr unsigned int
-  face_no(const unsigned int face_no_1d, const unsigned int dimension)
-  {
-    AssertIndexRange(face_no_1d, n_faces_1d());
-    AssertIndexRange(dimension, dim);
-    return dimension * n_faces_1d() + face_no_1d;
-  }
-
-  static constexpr std::pair<unsigned int, unsigned int>
-  face_no_1d_and_dimension(const unsigned int face_no)
-  {
-    return std::make_pair(face_no % n_faces_1d(), face_no / n_faces_1d());
-  }
-
-  bool
-  at_lower_neighbor(const unsigned int face_no) const
-  {
-    AssertIndexRange(face_no, n_faces());
-    const bool is_patch_interior_face    = !at_patch_boundary(face_no);
-    const bool neighbor_cell_no_is_lower = face_to_cell_number[face_no] < cell_number;
-    return is_patch_interior_face && neighbor_cell_no_is_lower;
-  }
-
-  bool
-  at_patch_boundary(const unsigned int face_no) const
-  {
-    AssertIndexRange(face_no, n_faces());
-    return face_to_cell_number[face_no] == numbers::invalid_unsigned_int;
-  }
-
-  unsigned int
-  get_adjacent_cell_no(const unsigned int face_no) const
-  {
-    AssertIndexRange(face_no, n_faces());
-    return face_to_cell_number[face_no];
-  }
-
-  std::vector<unsigned int>
-  get_adjacent_cell_numbers() const
-  {
-    std::vector<unsigned int> cell_numbers;
-    for(auto face_no = 0U; face_no < n_faces(); ++face_no)
-      if(get_adjacent_cell_no(face_no) != numbers::invalid_unsigned_int)
-        cell_numbers.emplace_back(get_adjacent_cell_no(face_no));
-    return cell_numbers;
-  }
-
-  std::vector<unsigned int>
-  get_face_numbers_at_patch_boundary() const
-  {
-    std::vector<unsigned int> face_numbers;
-    for(auto face_no = 0U; face_no < n_faces(); ++face_no)
-      if(at_patch_boundary(face_no))
-        face_numbers.emplace_back(face_no);
-    return face_numbers;
-  }
-
-  std::vector<unsigned int>
-  get_face_numbers_lower_neighbor() const
-  {
-    std::vector<unsigned int> face_numbers;
-    for(auto face_no = 0U; face_no < n_faces(); ++face_no)
-      if(at_lower_neighbor(face_no))
-        face_numbers.emplace_back(face_no);
-    return face_numbers;
-  }
-
-  const unsigned int                  cell_number;
-  const unsigned int                  n_cells;
-  std::array<unsigned int, n_faces()> face_to_cell_number;
-};
-
-
-
 // TODO revise description
 /**
  * A worker class re-interpreting the raw patch data in PatchInfo with
@@ -211,62 +92,21 @@ public:
   std::vector<ArrayView<const CellIterator>>
   get_cell_collection_views(unsigned int patch_id) const;
 
-  std::size_t
+  unsigned int
   get_cell_position(const unsigned int patch_id,
                     const unsigned int cell_no,
-                    const unsigned int lane) const
-  {
-    Assert(patch_info, ExcMessage("PatchInfo not initialized."));
-    AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
-    AssertIndexRange(cell_no, patch_size);
-    AssertIndexRange(lane, n_lanes_filled(patch_id));
-    return patch_info->patch_starts[patch_id] + lane * patch_size + cell_no;
-  }
+                    const unsigned int lane) const;
 
   const typename PatchInfo<dim>::PartitionData &
   get_partition_data() const;
 
   std::pair<unsigned int, unsigned int>
   get_owned_range(const unsigned int color,
-                  const RangeVariant range_variant = RangeVariant::all) const
-  {
-    const auto & partition_data   = get_partition_data();
-    const auto   complete_range   = partition_data.get_patch_range(0, color);
-    const auto   incomplete_range = partition_data.get_patch_range(1, color);
-    if(RangeVariant::all == range_variant)
-    {
-      AssertDimension(complete_range.second, incomplete_range.first);
-      return {complete_range.first, incomplete_range.second};
-    }
-    else if(RangeVariant::complete == range_variant)
-      return complete_range;
-    else if(RangeVariant::incomplete == range_variant)
-      return incomplete_range;
-    else
-      AssertThrow(false, ExcMessage("Invalid range variant."));
-    return {0, 0};
-  }
+                  const RangeVariant range_variant = RangeVariant::all) const;
 
   std::pair<unsigned int, unsigned int>
   get_ghost_range(const unsigned int color,
-                  const RangeVariant range_variant = RangeVariant::all) const
-  {
-    const auto & partition_data   = get_partition_data();
-    const auto   complete_range   = partition_data.get_patch_range(2, color);
-    const auto   incomplete_range = partition_data.get_patch_range(3, color);
-    if(RangeVariant::all == range_variant)
-    {
-      AssertDimension(complete_range.second, incomplete_range.first);
-      return {complete_range.first, incomplete_range.second};
-    }
-    else if(RangeVariant::complete == range_variant)
-      return complete_range;
-    else if(RangeVariant::incomplete == range_variant)
-      return incomplete_range;
-    else
-      AssertThrow(false, ExcMessage("Invalid range variant."));
-    return {0, 0};
-  }
+                  const RangeVariant range_variant = RangeVariant::all) const;
 
   /*
    * Return whether this macro patch is located in the interior of the domain.
@@ -315,8 +155,6 @@ protected:
 
   const TPSS::PatchVariant patch_variant;
 
-  const unsigned int patch_size;
-
   mutable std::vector<CellIterator> cell_iterators_scratchpad;
 };
 
@@ -326,9 +164,7 @@ protected:
 
 template<int dim, typename number>
 PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
-  : patch_info(&patch_info_in),
-    patch_variant(patch_info_in.get_additional_data().patch_variant),
-    patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant))
+  : patch_info(&patch_info_in), patch_variant(patch_info_in.get_additional_data().patch_variant)
 {
   AssertThrow(patch_info_in.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
               ExcInvalidState());
@@ -343,9 +179,7 @@ PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
 
 template<int dim, typename number>
 PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
-  : patch_info(&patch_info_in),
-    patch_variant(patch_info_in.get_additional_data().patch_variant),
-    patch_size(UniversalInfo<dim>::n_cells(patch_info_in.get_additional_data().patch_variant))
+  : patch_info(&patch_info_in), patch_variant(patch_info_in.get_additional_data().patch_variant)
 {
   AssertThrow(patch_info_in.get_additional_data().patch_variant != TPSS::PatchVariant::invalid,
               ExcInvalidState());
@@ -402,8 +236,8 @@ inline unsigned int
 PatchWorker<dim, number>::n_physical_subdomains() const
 {
   Assert(patch_info != nullptr, ExcNotInitialized());
-  const auto &       subdomain_data = patch_info->get_internal_data()->n_physical_subdomains_total;
-  const unsigned int n_subdomains   = subdomain_data.n_interior + subdomain_data.n_boundary;
+  const auto & subdomain_data = patch_info->get_internal_data()->subdomain_quantities_accumulated;
+  const unsigned int n_subdomains = subdomain_data.n_interior + subdomain_data.n_boundary;
 
   return n_subdomains;
 }
@@ -422,12 +256,13 @@ inline unsigned int
 PatchWorker<dim, number>::n_lanes_filled_impl(const unsigned int patch_id) const
 {
   Assert(patch_info != nullptr, ExcNotInitialized());
-  AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
+  AssertIndexRange(patch_id, get_partition_data().n_subdomains());
   const auto & patch_starts = patch_info->patch_starts;
   const auto   start        = patch_starts[patch_id];
   const auto   end          = patch_starts[patch_id + 1];
   Assert(start < end, ExcMessage("Empty set."));
   const unsigned int n_physical_cells = end - start;
+  const auto         patch_size       = n_cells_per_subdomain();
   AssertDimension(n_physical_cells % patch_size, 0);
   const unsigned int n_physical_subdomains = n_physical_cells / patch_size;
   Assert(n_physical_subdomains > 0, ExcMessage("No lanes filled."));
@@ -443,10 +278,72 @@ PatchWorker<dim, number>::fill_face_infos(const unsigned int patch_id,
 {
   const auto &                    cell_collection = get_cell_collection(patch_id, lane);
   std::vector<FaceInfoLocal<dim>> face_infos;
-  for(auto cell_no = 0; cell_no < cell_collection.size(); ++cell_no)
+  for(auto cell_no = 0U; cell_no < cell_collection.size(); ++cell_no)
     face_infos.emplace_back(cell_no, cell_collection);
   return face_infos;
 }
+
+
+template<int dim, typename number>
+inline unsigned int
+PatchWorker<dim, number>::get_cell_position(const unsigned int patch_id,
+                                            const unsigned int cell_no,
+                                            const unsigned int lane) const
+{
+  Assert(patch_info, ExcMessage("PatchInfo not initialized."));
+  AssertIndexRange(patch_id, get_partition_data().n_subdomains());
+  const auto patch_size = n_cells_per_subdomain();
+  AssertIndexRange(cell_no, patch_size);
+  AssertIndexRange(lane, n_lanes_filled(patch_id));
+  return patch_info->patch_starts[patch_id] + lane * patch_size + cell_no;
+}
+
+
+template<int dim, typename number>
+inline std::pair<unsigned int, unsigned int>
+PatchWorker<dim, number>::get_owned_range(const unsigned int color,
+                                          const RangeVariant range_variant) const
+{
+  const auto & partition_data   = get_partition_data();
+  const auto   complete_range   = partition_data.get_patch_range(0, color);
+  const auto   incomplete_range = partition_data.get_patch_range(1, color);
+  if(RangeVariant::all == range_variant)
+  {
+    AssertDimension(complete_range.second, incomplete_range.first);
+    return {complete_range.first, incomplete_range.second};
+  }
+  else if(RangeVariant::complete == range_variant)
+    return complete_range;
+  else if(RangeVariant::incomplete == range_variant)
+    return incomplete_range;
+  else
+    AssertThrow(false, ExcMessage("Invalid range variant."));
+  return {0, 0};
+}
+
+
+template<int dim, typename number>
+inline std::pair<unsigned int, unsigned int>
+PatchWorker<dim, number>::get_ghost_range(const unsigned int color,
+                                          const RangeVariant range_variant) const
+{
+  const auto & partition_data   = get_partition_data();
+  const auto   complete_range   = partition_data.get_patch_range(2, color);
+  const auto   incomplete_range = partition_data.get_patch_range(3, color);
+  if(RangeVariant::all == range_variant)
+  {
+    AssertDimension(complete_range.second, incomplete_range.first);
+    return {complete_range.first, incomplete_range.second};
+  }
+  else if(RangeVariant::complete == range_variant)
+    return complete_range;
+  else if(RangeVariant::incomplete == range_variant)
+    return incomplete_range;
+  else
+    AssertThrow(false, ExcMessage("Invalid range variant."));
+  return {0, 0};
+}
+
 
 
 template<int dim, typename number>
@@ -463,7 +360,7 @@ inline std::array<unsigned int, GeometryInfo<dim>::faces_per_cell>
 PatchWorker<dim, number>::get_at_boundary_masks_flat(const unsigned int patch) const
 {
   Assert(patch_info != nullptr, ExcNotInitialized());
-  AssertIndexRange(patch, patch_info->subdomain_partition_data.n_subdomains());
+  AssertIndexRange(patch, get_partition_data().n_subdomains());
   std::array<unsigned int, GeometryInfo<dim>::faces_per_cell> at_bdry_mask;
   std::copy_n(patch_info->at_boundary_mask.data() + GeometryInfo<dim>::faces_per_cell * patch,
               GeometryInfo<dim>::faces_per_cell,
@@ -540,6 +437,7 @@ PatchWorker<dim, number>::get_cell_collection(const unsigned int patch_id,
   AssertIndexRange(patch_id, get_partition_data().n_subdomains());
 
   std::vector<PatchWorker<dim, number>::CellIterator> collection;
+  const auto                                          patch_size = n_cells_per_subdomain();
   for(auto cell_no = 0U; cell_no < patch_size; ++cell_no)
   {
     const auto cell_position = get_cell_position(patch_id, cell_no, lane);
@@ -565,6 +463,7 @@ PatchWorker<dim, number>::get_cell_collection(const unsigned int patch_id) const
       return this->get_cell_position(patch_id, cell_no, 0);
   };
 
+  const auto                                        patch_size = n_cells_per_subdomain();
   std::vector<std::array<CellIterator, macro_size>> cell_collect(patch_size);
   for(auto cell_no = 0U; cell_no < cell_collect.size(); ++cell_no)
     for(auto lane = 0U; lane < macro_size; ++lane)
@@ -581,7 +480,8 @@ inline std::vector<ArrayView<const typename PatchWorker<dim, number>::CellIterat
 PatchWorker<dim, number>::get_cell_collection_views(unsigned int patch_id) const
 {
   Assert(patch_info != nullptr, ExcNotInitialized());
-  AssertIndexRange(patch_id, patch_info->subdomain_partition_data.n_subdomains());
+  AssertIndexRange(patch_id, get_partition_data().n_subdomains());
+  const auto patch_size = n_cells_per_subdomain();
 
   const auto get_views = [&](const auto & begin) {
     std::vector<ArrayView<const CellIterator>> views;
@@ -619,7 +519,7 @@ PatchWorker<dim, number>::compute_partition_data(
   const typename PatchInfo<dim>::InternalData * internal_data,
   std::vector<unsigned int> *                   patch_starts) const
 {
-  const unsigned int n_colors = internal_data->n_physical_subdomains.size();
+  const unsigned int n_colors = internal_data->n_colors();
   partition_data.initialize(n_colors);
   unsigned int n_subdomains_before = 0;
   unsigned int start               = 0;
@@ -630,7 +530,7 @@ PatchWorker<dim, number>::compute_partition_data(
   {
     auto & partitions = partition_data.partitions[color];
     partitions.resize(4 + 1);
-    const auto subdomain_data = internal_data->n_physical_subdomains.at(color);
+    const auto subdomain_data = internal_data->subdomain_quantities.at(color);
     partitions[0]             = n_subdomains_before;
 
     // Partition locally owned subdomains.
