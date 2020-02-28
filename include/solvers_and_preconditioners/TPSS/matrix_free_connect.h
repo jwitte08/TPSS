@@ -13,43 +13,30 @@ namespace TPSS
 template<int dim, typename Number>
 struct MatrixFreeConnect
 {
-  struct DoFInfoLocal
-  {
-    std::vector<unsigned int> dof_starts;
-    std::vector<unsigned int> patch_dof_indices;
-    std::vector<unsigned int> cell_dof_indices;
-  };
+  /**
+   * This struct stores the dof indices to transfer patch local vectors to cell
+   * local vectors (gather or restrict) and vice versa (scatter or prolongate).
+   */
+  struct DoFInfoLocal;
 
   static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
 
   void
   initialize(const MatrixFree<dim, Number> *                     mf_storage_in,
-             const ArrayView<const TPSS::DoFInfo<dim, Number>> & dof_infos_in);
+             const ArrayView<const TPSS::DoFInfo<dim, Number>> & dof_infos_in,
+             const std::map<unsigned int, unsigned int> &        dofh_index_map_in);
 
   void
-  clear()
-  {
-    dof_infos.reinit(NULL, 0);
-    patch_info = nullptr;
-    mf_storage = nullptr;
-    batch_and_lane_index_pairs.clear();
-    dof_infos_local.clear();
-  }
+  clear();
 
   unsigned int
-  n_cells_plain() const
-  {
-    return batch_and_lane_index_pairs.size();
-  }
+  n_cells_plain() const;
 
-  std::pair<unsigned int, unsigned int>
-  get_batch_and_lane_index(const unsigned int cell_position) const
-  {
-    Assert(patch_info, ExcMessage("patch_info is not set."));
-    AssertDimension(patch_info->n_cells_plain(), n_cells_plain());
-    AssertIndexRange(cell_position, n_cells_plain());
-    return batch_and_lane_index_pairs[cell_position];
-  }
+  const TPSS::DoFInfo<dim, Number> &
+  get_dof_info(const unsigned int dofh_index) const;
+
+  const DoFInfoLocal &
+  get_dof_info_local(const unsigned int dofh_index) const;
 
   /**
    * The underlying MatrixFree object used to map matrix-free infrastructure
@@ -68,81 +55,72 @@ struct MatrixFreeConnect
    */
   std::vector<std::pair<unsigned int, unsigned int>> batch_and_lane_index_pairs;
 
+  std::map<unsigned int, unsigned int> dofh_index_map;
+
   std::vector<DoFInfoLocal> dof_infos_local;
 };
 
 
 
 template<int dim, typename Number>
-class PatchMFWorker : public PatchWorker<dim, Number>
+struct MatrixFreeConnect<dim, Number>::DoFInfoLocal
 {
-public:
-  using patch_worker                       = PatchWorker<dim, Number>;
-  static constexpr unsigned int macro_size = patch_worker::macro_size;
-
-  PatchMFWorker() = delete;
-
-  PatchMFWorker(const MatrixFreeConnect<dim, Number> & mf_connect_in);
-
-  PatchMFWorker(const PatchMFWorker &) = delete;
-
-  PatchMFWorker &
-  operator=(const PatchMFWorker &) = delete;
+  std::vector<unsigned int>                          dof_starts;
+  std::vector<std::pair<unsigned int, unsigned int>> cell_and_patch_dof_indices;
 
   void
-  connect_to_matrixfree(MatrixFreeConnect<dim, Number> & mf_connect);
-
-  /**
-   * Returns the collection of batch-index-and-lane pairs describing
-   * the macro cell collection @p patch_id in MatrixFree speak.
-   */
-  std::vector<std::array<std::pair<unsigned int, unsigned int>, macro_size>>
-  get_batch_collection(unsigned int patch_id) const;
-
-private:
-  const MatrixFreeConnect<dim, Number> * const mf_connect;
+  clear()
+  {
+    dof_starts.clear();
+    cell_and_patch_dof_indices.clear();
+  }
 };
 
 
 
+// --------------------------------   MatrixFreeConnect   --------------------------------
+
+
+
 template<int dim, typename Number>
-inline PatchMFWorker<dim, Number>::PatchMFWorker(
-  const MatrixFreeConnect<dim, Number> & mf_connect_in)
-  : PatchWorker<dim, Number>(*(mf_connect_in.patch_info)), mf_connect(&mf_connect_in)
+inline void
+MatrixFreeConnect<dim, Number>::clear()
 {
-  AssertThrow(mf_connect, ExcMessage("mf_connect is not set"));
-  AssertThrow(mf_connect->patch_info, ExcMessage("mf_connect is not iniatialized."));
+  dof_infos.reinit(NULL, 0);
+  patch_info = nullptr;
+  mf_storage = nullptr;
+  batch_and_lane_index_pairs.clear();
+  dof_infos_local.clear();
 }
 
 
 template<int dim, typename Number>
-inline std::vector<
-  std::array<std::pair<unsigned int, unsigned int>, PatchMFWorker<dim, Number>::macro_size>>
-PatchMFWorker<dim, Number>::get_batch_collection(unsigned int patch_id) const
+inline unsigned int
+MatrixFreeConnect<dim, Number>::n_cells_plain() const
 {
-  Assert(this->patch_info, ExcMessage("patch_info not initialized."));
-  Assert(mf_connect, ExcMessage("mf_connect not initalized."));
-  AssertIndexRange(patch_id, this->patch_info->subdomain_partition_data.n_subdomains());
+  return batch_and_lane_index_pairs.size();
+}
 
-  const auto n_lanes_filled = this->n_lanes_filled(patch_id);
-  /// fill the empty vectorization lanes by copying the first lane
-  const auto get_cell_position_filled = [&](const auto cell_no, const auto lane) {
-    AssertIndexRange(lane, this->macro_size);
-    if(lane < n_lanes_filled)
-      return this->get_cell_position(patch_id, cell_no, lane);
-    else
-      return this->get_cell_position(patch_id, cell_no, 0);
-  };
 
-  std::vector<std::array<std::pair<unsigned int, unsigned int>, macro_size>> collection(
-    this->patch_size);
-  for(auto cell_no = 0U; cell_no < collection.size(); ++cell_no)
-    for(auto lane = 0U; lane < macro_size; ++lane)
-    {
-      const auto cell_position  = get_cell_position_filled(cell_no, lane);
-      collection[cell_no][lane] = mf_connect->get_batch_and_lane_index(cell_position);
-    }
-  return collection;
+template<int dim, typename Number>
+inline const TPSS::DoFInfo<dim, Number> &
+MatrixFreeConnect<dim, Number>::get_dof_info(const unsigned int dofh_index) const
+{
+  AssertIndexRange(dofh_index, dofh_index_map.size());
+  const auto unique_dofh_index = dofh_index_map.at(dofh_index);
+  AssertIndexRange(unique_dofh_index, dof_infos_local.size());
+  return dof_infos[unique_dofh_index];
+}
+
+
+template<int dim, typename Number>
+inline const typename MatrixFreeConnect<dim, Number>::DoFInfoLocal &
+MatrixFreeConnect<dim, Number>::get_dof_info_local(const unsigned int dofh_index) const
+{
+  AssertIndexRange(dofh_index, dofh_index_map.size());
+  const auto unique_dofh_index = dofh_index_map.at(dofh_index);
+  AssertIndexRange(unique_dofh_index, dof_infos_local.size());
+  return dof_infos_local[unique_dofh_index];
 }
 
 

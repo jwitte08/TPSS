@@ -139,8 +139,13 @@ SubdomainHandler<dim, number>::internal_reinit()
 
 
   // *** map the patch batches to MatrixFree's cell batches
-  mf_connect.initialize(mf_storage, get_dof_infos());
-
+  {
+    std::map<unsigned int, unsigned int> dofh_index_map;
+    for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
+      dofh_index_map.emplace(dofh_index, get_unique_dofh_index(dofh_index));
+    AssertDimension(dofh_index_map.size(), n_components());
+    mf_connect.initialize(mf_storage, get_dof_infos(), dofh_index_map);
+  }
 
   // *** compute the surrogate patches which pertain the tensor structure
   typename TPSS::MappingInfo<dim, number>::AdditionalData mapping_info_data;

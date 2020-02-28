@@ -19,6 +19,7 @@
 #include "TPSS.h"
 #include "matrix_free_connect.h"
 #include "patch_info.h"
+#include "patch_mf_worker.h"
 #include "tensors.h"
 
 using namespace dealii;
