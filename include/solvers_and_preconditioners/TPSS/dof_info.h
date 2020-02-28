@@ -18,6 +18,59 @@
 
 namespace TPSS
 {
+template<int n_dimensions>
+class PatchLocalHelperQ
+{
+public:
+  PatchLocalHelperQ(const Tensors::TensorHelper<n_dimensions> & cell_dof_tensor_in);
+
+  void
+  reinit(const std::vector<FaceInfoLocal<n_dimensions>> & face_infos_in);
+
+  void
+  clear();
+
+  unsigned int
+  n_cells() const;
+
+  /**
+   * Checks if the degree of freedom with local index @p cell_dof_index relative
+   * to cell @p cell_no belongs to the patch boundary.
+   */
+  bool
+  at_patch_boundary(const unsigned int cell_no, const unsigned int cell_dof_index) const;
+
+  /**
+   * Returns the set of cell dof indices at cell @p cell_no being part of the
+   * patch. This includes also the indices which are uniquely assigned to other
+   * cells of the patch.
+   */
+  ArrayView<const unsigned int>
+  get_cell_dof_indices(const unsigned int cell_no) const;
+
+  unsigned int
+  get_dof_start_plain(const unsigned int cell_no) const;
+
+  /**
+   * Returns the number of dofs at cell @p cell_no. This includes all dofs being
+   * not part of the patch.
+   */
+  unsigned int
+  n_dofs_per_cell(const unsigned int cell_no) const;
+
+  /**
+   * Returns the number of patch local dofs located at cell @p cell_no.
+   */
+  unsigned int
+  n_dofs_per_cell_on_patch(const unsigned int cell_no) const;
+
+  const Tensors::TensorHelper<n_dimensions> cell_dof_tensor;
+
+  std::vector<FaceInfoLocal<n_dimensions>> face_infos;
+  std::vector<unsigned int>                dof_starts_plain;
+  std::vector<unsigned int>                cell_dof_indices_plain;
+};
+
 /**
  * Helps with the (one-dimensional) patch local dof indexing depending on the
  * underlying finite element. For example, for Q-like finite elements we have
@@ -391,6 +444,119 @@ inline unsigned int
 PatchLocalTensorHelper<n_dimensions>::n_dofs_1d(const unsigned int dimension) const
 {
   return TensorHelperBase::size(dimension);
+}
+
+
+
+// -----------------------------   PatchLocalHelperQ   ----------------------------
+
+
+
+template<int n_dimensions>
+PatchLocalHelperQ<n_dimensions>::PatchLocalHelperQ(
+  const Tensors::TensorHelper<n_dimensions> & cell_dof_tensor_in)
+  : cell_dof_tensor(cell_dof_tensor_in)
+{
+}
+
+
+template<int n_dimensions>
+void
+PatchLocalHelperQ<n_dimensions>::reinit(
+  const std::vector<FaceInfoLocal<n_dimensions>> & face_infos_in)
+{
+  clear();
+  std::copy(face_infos_in.cbegin(), face_infos_in.cend(), std::back_inserter(face_infos));
+
+  /// Fill for each cell @p cell_no the local cell dof indices on this patch.
+  for(auto cell_no = 0U; cell_no < n_cells(); ++cell_no)
+  {
+    const auto n_cell_dofs = n_dofs_per_cell(cell_no);
+    dof_starts_plain.emplace_back(cell_dof_indices_plain.size());
+    for(auto cell_dof_index = 0U; cell_dof_index < n_cell_dofs; ++cell_dof_index)
+      if(!at_patch_boundary(cell_no, cell_dof_index))
+        cell_dof_indices_plain.emplace_back(cell_dof_index);
+  }
+  dof_starts_plain.emplace_back(cell_dof_indices_plain.size());
+}
+
+
+template<int n_dimensions>
+void
+PatchLocalHelperQ<n_dimensions>::clear()
+{
+  face_infos.clear();
+  dof_starts_plain.clear();
+  cell_dof_indices_plain.clear();
+}
+
+
+template<int n_dimensions>
+unsigned int
+PatchLocalHelperQ<n_dimensions>::n_cells() const
+{
+  return face_infos.size();
+}
+
+
+template<int n_dimensions>
+bool
+PatchLocalHelperQ<n_dimensions>::at_patch_boundary(const unsigned int cell_no,
+                                                   const unsigned int cell_dof_index) const
+{
+  const auto & face_info = face_infos[cell_no];
+  if(!cell_dof_tensor.is_edge_index(cell_dof_index))
+    return false;
+  const auto & edge_numbers     = cell_dof_tensor.get_edge_numbers(cell_dof_index);
+  const auto & boundary_numbers = face_info.get_face_numbers_at_patch_boundary();
+  for(const auto edge_no : edge_numbers)
+    if(std::any_of(boundary_numbers.cbegin(),
+                   boundary_numbers.cend(),
+                   [edge_no](const auto boundary_no) { return boundary_no == edge_no; }))
+      return true;
+  return false;
+}
+
+
+template<int n_dimensions>
+unsigned int
+PatchLocalHelperQ<n_dimensions>::n_dofs_per_cell(const unsigned int cell_no) const
+{
+  AssertIndexRange(cell_no, n_cells());
+  (void)cell_no;
+  return cell_dof_tensor.n_flat();
+}
+
+
+template<int n_dimensions>
+unsigned int
+PatchLocalHelperQ<n_dimensions>::n_dofs_per_cell_on_patch(const unsigned int cell_no) const
+{
+  const auto dof_start     = get_dof_start_plain(cell_no);
+  const auto dof_start_end = get_dof_start_plain(cell_no + 1);
+  return dof_start_end - dof_start;
+}
+
+
+template<int n_dimensions>
+ArrayView<const unsigned int>
+PatchLocalHelperQ<n_dimensions>::get_cell_dof_indices(const unsigned int cell_no) const
+{
+  const auto start = get_dof_start_plain(cell_no);
+  const auto end   = get_dof_start_plain(cell_no + 1);
+  AssertIndexRange(end - 1, cell_dof_indices_plain.size());
+  return make_array_view<const unsigned int>(cell_dof_indices_plain.data() + start,
+                                             cell_dof_indices_plain.data() + end);
+}
+
+
+template<int n_dimensions>
+unsigned int
+PatchLocalHelperQ<n_dimensions>::get_dof_start_plain(const unsigned int cell_no) const
+{
+  AssertIndexRange(cell_no, dof_starts_plain.size());
+  AssertDimension(dof_starts_plain.size(), n_cells() + 1);
+  return dof_starts_plain[cell_no];
 }
 
 

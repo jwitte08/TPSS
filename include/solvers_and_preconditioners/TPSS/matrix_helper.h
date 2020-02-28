@@ -10,9 +10,160 @@
 
 #include <deal.II/lac/lapack_full_matrix.h>
 
+#include "generic_functionalities.h"
 #include "tensors.h"
 
 using namespace dealii;
+
+
+
+template<typename Number>
+struct InverseTable
+{
+  using value_type                         = Number;
+  using scalar_value_type                  = typename ExtractScalarType<Number>::type;
+  static constexpr unsigned int macro_size = get_macro_size<Number>();
+
+  InverseTable() = default;
+
+  InverseTable(const Table<2, Number> & matrix_in)
+  {
+    reinit(matrix_in);
+  }
+
+  void
+  reinit(const Table<2, Number> & matrix_in)
+  {
+    Assert(matrix_in.size(0) == matrix_in.size(1), ExcMessage("Matrix is not square."));
+    clear();
+
+    auto inverses = std::make_shared<std::array<LAPACKFullMatrix<scalar_value_type>, macro_size>>();
+    const unsigned int n_rows = matrix_in.size(0);
+    for(auto lane = 0U; lane < macro_size; ++lane)
+    {
+      auto & inverse = (*inverses)[lane];
+      inverse.reinit(n_rows);
+      inverse = table_to_fullmatrix(matrix_in, lane);
+      inverse.invert();
+    }
+    /// ALTERNATIVE: FullMatrix
+    // auto inverses = std::make_shared<std::array<FullMatrix<scalar_value_type>, macro_size>>();
+    // const unsigned int n_rows = matrix_in.size(0);
+    // for(auto lane = 0U; lane < macro_size; ++lane)
+    // {
+    //   auto & inverse = (*inverses)[lane];
+    //   inverse.reinit(n_rows, n_rows);
+    //   inverse.invert(table_to_fullmatrix(matrix_in, lane));
+    // }
+    this->inverses = inverses;
+  }
+
+  void
+  clear()
+  {
+    inverses.reset();
+  }
+
+  void
+  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    vmult_impl(dst_view, src_view);
+  }
+
+  void
+  vmult_impl(const ArrayView<scalar_value_type> &       dst_view,
+             const ArrayView<const scalar_value_type> & src_view,
+             const unsigned int                         lane = 0) const
+  {
+    Vector<scalar_value_type> dst(dst_view.size()), src(src_view.cbegin(), src_view.cend());
+    const auto &              inverse = (*inverses)[lane];
+    inverse.vmult(dst, src);
+    std::copy(dst.begin(), dst.end(), dst_view.begin());
+  }
+
+  void
+  vmult_impl(const ArrayView<VectorizedArray<scalar_value_type>> &       dst_view,
+             const ArrayView<const VectorizedArray<scalar_value_type>> & src_view) const
+  {
+    Vector<scalar_value_type> dst_lane(dst_view.size()), src_lane(src_view.size());
+    for(auto lane = 0U; lane < macro_size; ++lane)
+    {
+      std::transform(src_view.cbegin(),
+                     src_view.cend(),
+                     src_lane.begin(),
+                     [lane](const auto & value) { return value[lane]; });
+      const auto src_view_lane = make_array_view(src_lane);
+      const auto dst_view_lane = make_array_view(dst_lane);
+      vmult_impl(dst_view_lane, src_view_lane, lane);
+      for(auto i = 0U; i < dst_lane.size(); ++i)
+        dst_view[i][lane] = dst_lane[i];
+    }
+  }
+
+  std::shared_ptr<const std::array<LAPACKFullMatrix<scalar_value_type>, macro_size>> inverses;
+  /// ALTERNATIVE: FullMatrix
+  // std::shared_ptr<const std::array<FullMatrix<scalar_value_type>, macro_size>> inverses;
+};
+
+
+
+template<typename PatchOperator>
+struct PatchMatrix
+{
+  using scalar_value_type                  = typename PatchOperator::value_type;
+  using value_type                         = VectorizedArray<scalar_value_type>;
+  static constexpr unsigned int macro_size = VectorizedArray<scalar_value_type>::n_array_elements;
+
+  void
+  reinit(const PatchOperator * patch_operator_in, const unsigned int patch_id)
+  {
+    patch_operator   = patch_operator_in;
+    current_patch_id = patch_id;
+  }
+
+  unsigned int
+  m() const
+  {
+    return patch_operator->m(current_patch_id);
+  }
+
+  unsigned int
+  n() const
+  {
+    return patch_operator->n(current_patch_id);
+  }
+
+  void
+  vmult(const ArrayView<VectorizedArray<scalar_value_type>> &       dst_view,
+        const ArrayView<const VectorizedArray<scalar_value_type>> & src_view) const
+  {
+    patch_operator->vmult(dst_view, src_view, current_patch_id);
+  }
+
+  void
+  apply_inverse(const ArrayView<VectorizedArray<scalar_value_type>> &       dst_view,
+                const ArrayView<const VectorizedArray<scalar_value_type>> & src_view) const
+  {
+    AssertThrow(false, ExcMessage("todo"));
+    // TODO
+    // patch_operator.apply_inverse(dst_view, src_view, current_patch_id);
+  }
+
+  Table<2, VectorizedArray<scalar_value_type>>
+  as_table() const
+  {
+    return Tensors::matrix_to_table(*this);
+  }
+
+  FullMatrix<scalar_value_type>
+  as_fullmatrix(const unsigned int lane)
+  {
+    return table_to_fullmatrix(as_table(), lane);
+  }
+
+  const PatchOperator * patch_operator   = nullptr;
+  unsigned int          current_patch_id = numbers::invalid_unsigned_int;
+};
 
 
 

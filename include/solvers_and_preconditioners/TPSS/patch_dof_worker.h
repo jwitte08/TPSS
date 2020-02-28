@@ -35,8 +35,9 @@ public:
   get_constrained_local_dof_indices(const unsigned int patch_id, const unsigned int lane) const;
 
   /**
-   * Returns cached global dof indices on local cell @p cell_no within patch
-   * @patch_id subject to lexicographical ordering.
+   * Returns cached global dof indices of local cell @p cell_no subject to cell
+   * local lexicographical ordering. All global dof indices are returned
+   * including the ones not being part of patch @p patch_id.
    */
   std::array<ArrayView<const types::global_dof_index>, macro_size>
   get_dof_indices_on_cell(const unsigned int patch_id, const unsigned int cell_no) const;
@@ -52,7 +53,7 @@ public:
 
   /**
    * Returns cached global dof indices on patch @patch_id at vectorization lane
-   * @p lane. The returned array is subject to lexicographical ordering.
+   * @p lane. The returned array is subject to patch local lexicographical ordering.
    */
   ArrayView<const types::global_dof_index>
   get_dof_indices_on_patch(const unsigned int patch_id, const unsigned int lane) const;
@@ -80,7 +81,7 @@ public:
    * returns the number of dof indices on the given patch.
    */
   std::pair<unsigned int, unsigned int>
-  get_start_and_number_of_dof_indices(const unsigned int patch_id, const unsigned int lane) const;
+  get_dof_start_and_quantity_on_patch(const unsigned int patch_id, const unsigned int lane) const;
 
   /**
    * Returns the start position of global dof indices on local cell @p cell_no
@@ -89,9 +90,9 @@ public:
    * info. In addition, returns the number of dof indices on the given cell.
    */
   std::pair<unsigned int, unsigned int>
-  get_start_and_number_of_dof_indices(const unsigned int patch_id,
-                                      const unsigned int cell_no,
-                                      const unsigned int lane) const;
+  get_dof_start_and_quantity_on_cell(const unsigned int patch_id,
+                                     const unsigned int cell_no,
+                                     const unsigned int lane) const;
 
   /**
    * TODO
@@ -99,6 +100,10 @@ public:
   std::shared_ptr<const Utilities::MPI::Partitioner>
   initialize_vector_partitioner() const;
 
+  /**
+   * Number of degrees of freedom on patch (assuming same number on all patches and isotropy).
+   * TODO...
+   */
   unsigned int
   n_dofs() const;
 
@@ -284,7 +289,7 @@ PatchDoFWorker<dim, Number>::get_dof_indices_on_cell(const unsigned int patch_id
   if(lane >= n_lanes_filled)
     return get_dof_indices_on_cell(patch_id, cell_no, 0);
 
-  const auto [dof_start, n_dofs] = get_start_and_number_of_dof_indices(patch_id, cell_no, lane);
+  const auto [dof_start, n_dofs] = get_dof_start_and_quantity_on_cell(patch_id, cell_no, lane);
   const auto begin               = dof_info->global_dof_indices_cellwise.data() + dof_start;
   return ArrayView<const types::global_dof_index>(begin, n_dofs);
 }
@@ -318,7 +323,7 @@ PatchDoFWorker<dim, Number>::get_dof_indices_on_patch(const unsigned int patch_i
   if(lane >= this->n_lanes_filled(patch_id))
     return get_dof_indices_on_patch(patch_id, 0);
 
-  const auto [dof_start, n_dofs] = get_start_and_number_of_dof_indices(patch_id, lane);
+  const auto [dof_start, n_dofs] = get_dof_start_and_quantity_on_patch(patch_id, lane);
   const auto begin               = dof_info->global_dof_indices_patchwise.data() + dof_start;
   return ArrayView<const types::global_dof_index>(begin, n_dofs);
 }
@@ -353,7 +358,7 @@ PatchDoFWorker<dim, Number>::get_shape_info(const unsigned int dimension) const
 
 template<int dim, typename Number>
 inline std::pair<unsigned int, unsigned int>
-PatchDoFWorker<dim, Number>::get_start_and_number_of_dof_indices(const unsigned int patch_id,
+PatchDoFWorker<dim, Number>::get_dof_start_and_quantity_on_patch(const unsigned int patch_id,
                                                                  const unsigned int lane) const
 {
   AssertIndexRange(lane, this->n_lanes_filled(patch_id));
@@ -376,9 +381,9 @@ PatchDoFWorker<dim, Number>::get_start_and_number_of_dof_indices(const unsigned 
 
 template<int dim, typename Number>
 inline std::pair<unsigned int, unsigned int>
-PatchDoFWorker<dim, Number>::get_start_and_number_of_dof_indices(const unsigned int patch_id,
-                                                                 const unsigned int cell_no,
-                                                                 const unsigned int lane) const
+PatchDoFWorker<dim, Number>::get_dof_start_and_quantity_on_cell(const unsigned int patch_id,
+                                                                const unsigned int cell_no,
+                                                                const unsigned int lane) const
 {
   AssertIndexRange(patch_id, this->get_partition_data().n_subdomains());
   AssertIndexRange(cell_no, this->n_cells_per_subdomain());

@@ -339,6 +339,14 @@ array_view_to_vector(const ArrayView<const VectorizedArray<Number>> & view,
   return vec;
 }
 
+template<typename Number>
+Vector<Number>
+array_view_to_vector(const ArrayView<VectorizedArray<Number>> & view, const unsigned int lane = 0)
+{
+  ArrayView<const VectorizedArray<Number>> cview(view.begin(), view.size());
+  return array_view_to_vector(cview, lane);
+}
+
 template<typename T>
 std::string
 vector_to_string(const std::vector<T> & vector)

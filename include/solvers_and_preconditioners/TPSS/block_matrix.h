@@ -547,7 +547,7 @@ public:
   {
     Assert(A && B && C && D, ExcMessage("Not initialized."));
     if(!Sinv)
-      Sinv = std::make_shared<VectorizedInverse<Number>>(as_table());
+      Sinv = std::make_shared<InverseTable<Number>>(as_table());
     Sinv->vmult(dst_view, src_view);
   }
 
@@ -564,11 +564,11 @@ public:
   }
 
 private:
-  const matrix_type *                                      A = nullptr;
-  const matrix_type *                                      B = nullptr;
-  const matrix_type *                                      C = nullptr;
-  const matrix_type *                                      D = nullptr;
-  mutable std::shared_ptr<const VectorizedInverse<Number>> Sinv;
+  const matrix_type *                                 A = nullptr;
+  const matrix_type *                                 B = nullptr;
+  const matrix_type *                                 C = nullptr;
+  const matrix_type *                                 D = nullptr;
+  mutable std::shared_ptr<const InverseTable<Number>> Sinv;
 
   /**
    * A mutex that guards access to the array @p tmp_array.
@@ -638,7 +638,7 @@ public:
   void
   vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    VectorizedInverse<Number> inverse;
+    InverseTable<Number> inverse;
     AssertDimension(D.m(), D.n()); // -> S^{-1} possible
     AssertDimension(A.m(), A.n()); // -> A^{-1} possible
     AssertDimension(A.m(), B.m());
@@ -873,7 +873,7 @@ public:
 
       // /// ALTERNATIVE: standard inverse based on LAPACK
       // if(!basic_inverse)
-      //   basic_inverse = std::make_shared<const VectorizedInverse<Number>>(as_table());
+      //   basic_inverse = std::make_shared<const InverseTable<Number>>(as_table());
       // basic_inverse->vmult(dst, src);
     }
   }
@@ -1005,7 +1005,7 @@ private:
    */
   mutable std::shared_ptr<const BlockGaussianInverse<matrix_type>> inverse_2x2;
   /// ALTERNATIVE: standard inverse based on LAPACK
-  mutable std::shared_ptr<const VectorizedInverse<Number>> basic_inverse;
+  mutable std::shared_ptr<const InverseTable<Number>> basic_inverse;
 
   /**
    * The inverse of a 2 x 2 block matrix based on approximate block Gaussian

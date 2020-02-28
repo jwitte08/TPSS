@@ -143,10 +143,10 @@ DoFInfo<dim, Number>::initialize_impl()
     }
     start_of_dof_indices_patchwise.emplace_back(global_dof_indices_patchwise.size());
 
-    /// Clear the cell-wise cached global dof indices
-    /// TODO reasonable?
-    start_and_number_of_dof_indices_cellwise.clear();
-    global_dof_indices_cellwise.clear();
+    // /// Clear the cell-wise cached global dof indices
+    // /// TODO reasonable? compress function is better to postpone clear
+    // start_and_number_of_dof_indices_cellwise.clear();
+    // global_dof_indices_cellwise.clear();
   }
 }
 

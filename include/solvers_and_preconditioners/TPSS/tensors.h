@@ -198,6 +198,79 @@ struct TensorHelper
   {
   }
 
+
+  /**
+   * If we think of the @p order dimensional index set as hypercube, then, we
+   * have 2*order hyperfaces of order @p order-1 following a lexicographical
+   * ordering, see for example dealii::GeometryInfo. In analogy to the
+   * one-dimensional case we refer to hyperfaces as edge numbers @p edge_no. If
+   * index @p index is in the interior of the imaginary hypercube, the set of
+   * edge numbers is empty. If the index is located at a vertex dim edge numbers
+   * are returned.
+   */
+  std::vector<unsigned int>
+  get_edge_numbers(const IntType index) const
+  {
+    AssertIndexRange(index, n_flat());
+    std::vector<unsigned int> edge_numbers;
+    const auto &              multi_index = this->multi_index(index);
+    for(auto mode = 0U; mode < order; ++mode)
+    {
+      const auto edge_no_1d = get_edge_no_1d(multi_index, mode);
+      if(edge_no_1d != -1U)
+        edge_numbers.emplace_back(2 * mode + edge_no_1d);
+    }
+    return edge_numbers;
+  }
+
+  /**
+   * Returns the one-dimensional edge number of the @p mode'th mode of
+   * multi-index @p multi_index. That is, 0 for the first, 1 for the last and -1
+   * for all interior indices with respect to mode @p mode is reutrned.
+   */
+  unsigned int
+  get_edge_no_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
+  {
+    AssertIndexRange(mode, order);
+    if(is_first_index_1d(multi_index, mode))
+      return 0;
+    else if(is_last_index_1d(multi_index, mode))
+      return 1;
+    return -1;
+  }
+
+  bool
+  is_edge_index(const IntType index) const
+  {
+    AssertIndexRange(index, n_flat());
+    const auto & multiindex = this->multi_index(index);
+    for(auto mode = 0U; mode < order; ++mode)
+      if(is_edge_index_1d(multiindex, mode))
+        return true;
+    return false;
+  }
+
+  bool
+  is_first_index_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
+  {
+    AssertIndexRange(mode, order);
+    return multi_index[mode] == static_cast<IntType>(0);
+  }
+
+  bool
+  is_last_index_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
+  {
+    AssertIndexRange(mode, order);
+    return multi_index[mode] == (size(mode) - 1);
+  }
+
+  bool
+  is_edge_index_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
+  {
+    AssertIndexRange(mode, order);
+    return is_first_index_1d(multi_index, mode) || is_last_index_1d(multi_index, mode);
+  }
+
   std::array<IntType, order>
   multi_index(const IntType index) const
   {

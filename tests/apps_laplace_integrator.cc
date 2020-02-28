@@ -34,6 +34,7 @@ protected:
   static constexpr auto dof_layout = TPSS::DoFLayout::Q;
   using PoissonProblem             = typename Poisson::ModelProblem<dim, fe_degree, dof_layout>;
   using SystemMatrix               = typename PoissonProblem::SYSTEM_MATRIX;
+  using LevelMatrix                = typename PoissonProblem::LEVEL_MATRIX;
   using vector_type                = typename PoissonProblem::VECTOR;
   static constexpr unsigned int macro_size = VectorizedArray<double>::n_array_elements;
 
@@ -152,8 +153,6 @@ protected:
         patch_matrix_reference.extract_submatrix_from(level_matrix, dof_indices, dof_indices);
 
         const auto & local_matrix = local_solvers[patch];
-        // const auto & constrained_local_dof_indices =
-        // local_matrix.constrained_dof_indices_row[lane];
 
         /// transform local solver to FullMatrix type and fill constrained
         /// diagonal entries with ones (in analogy to the matrix-free level
@@ -162,8 +161,6 @@ protected:
         {
           auto patch_matrix_full =
             table_to_fullmatrix(Tensors::matrix_to_table(local_matrix), lane);
-          // for(const auto i : constrained_local_dof_indices)
-          //   patch_matrix_full(i, i) += 1.;
           *pcout_owned << "compare local matrix:" << std::endl;
           compare_matrix(patch_matrix_full, patch_matrix_reference);
         }
@@ -174,11 +171,49 @@ protected:
           *pcout_owned << "compare inverse of local matrix:" << std::endl;
           auto patch_matrix_inverse =
             table_to_fullmatrix(Tensors::inverse_matrix_to_table(local_matrix), lane);
-          // for(const auto i : constrained_local_dof_indices)
-          //   patch_matrix_inverse(i, i) += 1.;
           compare_inverse_matrix(patch_matrix_inverse, patch_matrix_reference);
         }
       }
+  }
+
+  void
+  test_matrix_free_patch(TestVariant test_variant = TestVariant::matrix)
+  {
+    initialize();
+
+    const auto global_level = poisson_problem->level;
+    const auto schwarz_preconditioner =
+      poisson_problem->mg_schwarz_smoother_pre->get_preconditioner();
+    const auto patch_storage_level = schwarz_preconditioner->get_subdomain_handler();
+    auto &     mf_level_matrix     = poisson_problem->mg_matrices[global_level];
+    mf_level_matrix.reinit_patch_evaluator(*patch_storage_level);
+    vector_type tmp_vector;
+    mf_level_matrix.get_matrix_free()->initialize_dof_vector(tmp_vector);
+    const auto & level_matrix = assemble_level_matrix(global_level);
+
+    TPSS::PatchTransfer<dim, double, fe_degree> patch_transfer(*patch_storage_level);
+    const auto & patch_worker   = patch_transfer.get_patch_dof_worker();
+    const auto & partition_data = patch_worker.get_partition_data();
+    for(auto patch = 0U; patch < partition_data.n_subdomains(); ++patch)
+    {
+      PatchMatrix<LevelMatrix> patch_matrix;
+      patch_matrix.reinit(&mf_level_matrix, patch);
+      for(auto lane = 0U; lane < macro_size; ++lane)
+      {
+        /// extract patch matrix from level matrix
+        const auto dof_indices =
+          extract_dof_indices_per_patch(patch, patch_transfer, tmp_vector, lane);
+        FullMatrix<double> patch_matrix_reference(dof_indices.size());
+        patch_matrix_reference.extract_submatrix_from(level_matrix, dof_indices, dof_indices);
+
+        if(test_variant == TestVariant::matrix)
+        {
+          auto patch_matrix_full = patch_matrix.as_fullmatrix(lane);
+          *pcout_owned << "compare local matrix (matrix-free patch operator):" << std::endl;
+          compare_matrix(patch_matrix_full, patch_matrix_reference);
+        }
+      }
+    }
   }
 
   void
@@ -227,24 +262,33 @@ TYPED_TEST_P(TestLaplaceIntegrator, FDInverseVertexPatch)
   Fixture::test(TestVariant::inverse);
 }
 
-// TYPED_TEST_P(TestLaplaceIntegrator, FDAssemblyCellPatch)
-// {
-//   using Fixture = TestLaplaceIntegrator<TypeParam>;
+TYPED_TEST_P(TestLaplaceIntegrator, MFPatchAssemblyVertexPatch)
+{
+  using Fixture = TestLaplaceIntegrator<TypeParam>;
 
-//   Fixture::rt_parameters.mesh.n_repetitions = 3U;
-//   Fixture::params.n_refinements             = 0U;
-//   Fixture::params.patch_variant             = TPSS::PatchVariant::cell;
-//   Fixture::test();
-//   Fixture::test(TestVariant::inverse);
-// }
+  Fixture::params.n_refinements = 0U;
+  Fixture::test_matrix_free_patch();
 
-REGISTER_TYPED_TEST_SUITE_P(TestLaplaceIntegrator, FDAssemblyVertexPatch, FDInverseVertexPatch);
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 3U;
+  Fixture::params.n_refinements                = 0U;
+  Fixture::test_matrix_free_patch();
+}
+
+REGISTER_TYPED_TEST_SUITE_P(TestLaplaceIntegrator,
+                            FDAssemblyVertexPatch,
+                            FDInverseVertexPatch,
+                            MFPatchAssemblyVertexPatch);
 
 using TestParamsLinear = testing::Types<Util::NonTypeParams<2, 1>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestLaplaceIntegrator, TestParamsLinear);
-
 using TestParamsHigherOrder = testing::Types<Util::NonTypeParams<2, 2>, Util::NonTypeParams<2, 4>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestLaplaceIntegrator, TestParamsHigherOrder);
+using TestParamsLinear3D = testing::Types<Util::NonTypeParams<3, 1>>;
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestLaplaceIntegrator, TestParamsLinear3D);
+using TestParamsHigherOrder3D =
+  testing::Types<Util::NonTypeParams<3, 2>, Util::NonTypeParams<3, 4>>;
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestLaplaceIntegrator, TestParamsHigherOrder3D);
 
 
 
