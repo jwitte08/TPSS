@@ -117,6 +117,7 @@ MatrixFreeConnect<dim, Number>::initialize(
           const auto [it, is_inserted] =
             global_to_patch_dof_index.emplace(global_dof_index, patch_dof_index);
           (void)it;
+          (void)is_inserted;
           Assert(
             is_inserted,
             ExcMessage(
