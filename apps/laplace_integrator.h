@@ -24,6 +24,7 @@
 #include <deal.II/meshworker/loop.h>
 
 #include "solvers_and_preconditioners/TPSS/fe_evaluation_patch.h"
+#include "solvers_and_preconditioners/TPSS/matrix_helper.h"
 #include "solvers_and_preconditioners/TPSS/patch_transfer.h"
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
 #include "solvers_and_preconditioners/smoother/schwarz_smoother.h"
@@ -773,6 +774,8 @@ public:
   using Base = MatrixFreeOperators::Base<dim, LinearAlgebra::distributed::Vector<Number>>;
   using Base::size_type;
   using Base::value_type;
+  using This                 = Operator;
+  using patch_evaluator_type = TPSS::FEEvaluationPatch<dim, fe_degree, fe_degree + 1, Number>;
 
   /// system matrix initialize
   void
@@ -788,6 +791,80 @@ public:
   void
   clear();
 
+  // template<typename OperatorType>
+  // void
+  // assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       subdomain_handler,
+  //                            std::vector<PatchMatrix<OperatorType>> &            local_solvers,
+  //                            const OperatorType &                        app,
+  //                            const std::pair<unsigned int, unsigned int> subdomain_range) const
+  // {
+  //   eval_patch = std::make_shared<TPSS::FEEvaluationPatch<dim, fe_degree, fe_degree + 1,
+  //   Number>>(
+  //     subdomain_handler);
+  //   for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
+  //     local_solvers[patch].reinit(&app, patch);
+  // }
+
+  using Base::m;
+  using Base::n;
+
+  unsigned int
+  m(const unsigned int patch_id) const
+  {
+    return eval_patch->n_dofs_on_patch(patch_id, 0);
+  }
+
+  unsigned int
+  n(const unsigned int patch_id) const
+  {
+    return m(patch_id);
+  }
+
+  void
+  vmult(const ArrayView<VectorizedArray<Number>> &       dst_view,
+        const ArrayView<const VectorizedArray<Number>> & src_view,
+        const unsigned int                               patch_id) const
+  {
+    std::fill(dst_view.begin(), dst_view.end(), 0.);
+    vmult_add(dst_view, src_view, patch_id);
+  }
+
+  void
+  vmult_add(const ArrayView<VectorizedArray<Number>> &       dst_view,
+            const ArrayView<const VectorizedArray<Number>> & src_view,
+            const unsigned int                               patch_id) const
+  {
+    /// Fill vectorization lanes associated to physical subdomains.
+    const auto n_lanes_filled = eval_patch->n_lanes_filled(patch_id);
+    for(auto lane = 0U; lane < n_lanes_filled; ++lane)
+      vmult_add_impl(dst_view, src_view, patch_id, lane);
+
+    /// Copy first lane to artificial lanes.
+    for(auto lane = n_lanes_filled; lane < eval_patch->macro_size; ++lane)
+      for(auto & macro_value : dst_view)
+        macro_value[lane] = macro_value[0];
+  }
+
+  void
+  vmult_add_impl(const ArrayView<VectorizedArray<Number>> &       dst_view,
+                 const ArrayView<const VectorizedArray<Number>> & src_view,
+                 const unsigned int                               patch_id,
+                 const unsigned int                               lane) const
+  {
+    eval_patch->reinit(patch_id, lane);
+    const auto phi     = eval_patch->cell_eval;
+    const auto n_cells = eval_patch->n_cells_per_subdomain();
+    for(auto cell_no = 0U; cell_no < n_cells; ++cell_no)
+    {
+      eval_patch->gather(cell_no, src_view);
+      phi->evaluate(false, true);
+      for(unsigned int q = 0; q < phi->n_q_points; ++q)
+        phi->submit_gradient(phi->get_gradient(q), q);
+      phi->integrate(false, true);
+      eval_patch->scatter_add(dst_view);
+    }
+  }
+
   virtual void
   compute_diagonal() override
   {
@@ -797,10 +874,22 @@ public:
   std::vector<TimeInfo>
   get_time_data() const;
 
+  std::shared_ptr<const patch_evaluator_type>
+  get_patch_evaluator() const
+  {
+    return eval_patch;
+  }
+
   Number
   get_penalty_factor() const
   {
     return equation_data.ip_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
+  }
+
+  void
+  reinit_patch_evaluator(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    eval_patch = std::make_shared<patch_evaluator_type>(subdomain_handler);
   }
 
   using Base::vmult;
@@ -836,6 +925,7 @@ private:
   std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
   Laplace::EquationData                          equation_data;
   mutable std::vector<TimeInfo>                  time_infos;
+  mutable std::shared_ptr<patch_evaluator_type>  eval_patch;
 };
 
 
@@ -924,6 +1014,55 @@ Operator<dim, fe_degree, Number>::apply_cell(
     phi.distribute_local_to_global(dst);
   }
 }
+
+
+
+// template<int dim, int fe_degree, typename Number>
+// class PatchOperator
+// {
+// public:
+//   using This        = PatchOperator<dim, fe_degree, Number>;
+//   using matrix_type = PatchMatrix<This>;
+//   using value_type  = Number;
+
+//   void
+//   initialize(const Laplace::EquationData equation_data_in);
+
+//   void
+//   clear();
+
+
+//   Number
+//   get_penalty_factor() const
+//   {
+//     return equation_data.ip_factor * std::max((Number)1., (Number)fe_degree) * (fe_degree + 1);
+//   }
+
+//   void
+//   vmult(const ArrayView<VectorizedArray<Number>> &       dst_view,
+//         const ArrayView<const VectorizedArray<Number>> & src_view,
+//         const unsigned int                               patch_id) const
+//   {
+//     // TODO
+//   }
+
+//   void
+//   apply_inverse(const ArrayView<VectorizedArray<Number>> &       dst_view,
+//                 const ArrayView<const VectorizedArray<Number>> & src_view,
+//                 const unsigned int                               patch_id) const
+//   {
+//     // TODO
+//   }
+
+// private:
+//   // void
+//   // apply_cell(const MatrixFree<dim, Number> &                    mf_storage,
+//   //            LinearAlgebra::distributed::Vector<Number> &       dst,
+//   //            const LinearAlgebra::distributed::Vector<Number> & src,
+//   //            const std::pair<unsigned int, unsigned int> &      cell_range) const;
+
+//   Laplace::EquationData equation_data;
+// };
 
 
 
