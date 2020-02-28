@@ -270,7 +270,7 @@ create_mesh(Triangulation<dim> & triangulation, const MeshParameter & prms)
 
 
 template<int dim>
-types::global_dof_index
+long long unsigned int
 estimate_n_dofs(const FiniteElement<dim> & fe, const MeshParameter & prms)
 {
   const auto dof_layout = TPSS::get_dof_layout(fe);
@@ -285,32 +285,32 @@ estimate_n_dofs(const FiniteElement<dim> & fe, const MeshParameter & prms)
     MeshParameter root_prms = prms;
     root_prms.n_refinements = 0;
     create_mesh(tria, root_prms);
-    const auto n_root_cells = tria.n_global_active_cells();
+    const unsigned int n_root_cells = tria.n_global_active_cells();
 
     /// assume uniform refinement and estimate the number of dofs
-    const unsigned n_child_cells = (1 << dim);
-    const unsigned n_cells       = n_root_cells * Utilities::pow(n_child_cells, prms.n_refinements);
-    const unsigned n_dofs_per_cell =
-      fe.n_dofs_per_cell(); // Utilities::pow(fe.n_dofs_per_cell(), dim);
-    const types::global_dof_index n_dofs_est = n_cells * n_dofs_per_cell;
+    const unsigned int n_child_cells = (1 << dim);
+    const long long unsigned int n_cells       = n_root_cells * Utilities::pow(n_child_cells, prms.n_refinements);
+    const unsigned int n_dofs_per_cell =
+      fe.n_dofs_per_cell();
+    const long long unsigned int n_dofs_est = n_cells * n_dofs_per_cell;
     return n_dofs_est;
   }
 
   else if(TPSS::DoFLayout::Q == dof_layout)
   {
-    const unsigned                           n_dofs_per_cell_1d = fe.tensor_degree() + 1;
-    std::array<types::global_dof_index, dim> n_dofs_1d;
+    const unsigned     int                      n_dofs_per_cell_1d = fe.tensor_degree() + 1;
+    std::array<long long unsigned int, dim> n_dofs_1d;
     for(auto d = 0U; d < dim; ++d)
     {
-      const auto n_cells_1d = prms.n_root_cells_1d(d) * (1 << prms.n_refinements);
+      const long long unsigned int n_cells_1d = prms.n_root_cells_1d(d) * (1 << prms.n_refinements);
       n_dofs_1d[d]          = n_cells_1d * (n_dofs_per_cell_1d - 1) + 1;
     }
-    Tensors::TensorHelper<dim, types::global_dof_index> dof_tensor(n_dofs_1d);
+    Tensors::TensorHelper<dim, long long unsigned int> dof_tensor(n_dofs_1d);
     return dof_tensor.n_flat();
   }
 
   AssertThrow(false, ExcMessage("Dof layout is not supported."));
-  return numbers::invalid_dof_index;
+  return static_cast<long long unsigned int>(-1);//numbers::invalid_dof_index;
 }
 
 

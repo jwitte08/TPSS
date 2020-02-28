@@ -63,7 +63,7 @@ struct Parameter
   bool            do_visualize = false;
 
   bool
-  exceeds_dof_limits(const types::global_dof_index n_dofs) const;
+  exceeds_dof_limits(const long long unsigned int n_dofs) const;
 
   void
   reset_solver_variant()
@@ -164,12 +164,13 @@ SolverParameter::to_string() const
 namespace RT
 {
 bool
-Parameter::exceeds_dof_limits(const types::global_dof_index n_dofs) const
+Parameter::exceeds_dof_limits(const long long unsigned int n_dofs) const
 {
   if(dof_limits == std::make_pair(numbers::invalid_dof_index, numbers::invalid_dof_index))
     return false;
   Assert(dof_limits.first < dof_limits.second, ExcMessage("Invalid closed range."));
-  bool exceeds = n_dofs < dof_limits.first || dof_limits.second < n_dofs;
+  const auto [lower_bound, upper_bound] = dof_limits;
+  bool exceeds = n_dofs < static_cast<long long unsigned int>(lower_bound) || static_cast<long long unsigned int>(upper_bound) < n_dofs;
   return exceeds;
 }
 
