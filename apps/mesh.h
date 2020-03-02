@@ -288,29 +288,29 @@ estimate_n_dofs(const FiniteElement<dim> & fe, const MeshParameter & prms)
     const unsigned int n_root_cells = tria.n_global_active_cells();
 
     /// assume uniform refinement and estimate the number of dofs
-    const unsigned int n_child_cells = (1 << dim);
-    const long long unsigned int n_cells       = n_root_cells * Utilities::pow(n_child_cells, prms.n_refinements);
-    const unsigned int n_dofs_per_cell =
-      fe.n_dofs_per_cell();
-    const long long unsigned int n_dofs_est = n_cells * n_dofs_per_cell;
+    const unsigned int           n_child_cells = (1 << dim);
+    const long long unsigned int n_cells =
+      n_root_cells * Utilities::pow(n_child_cells, prms.n_refinements);
+    const unsigned int           n_dofs_per_cell = fe.n_dofs_per_cell();
+    const long long unsigned int n_dofs_est      = n_cells * n_dofs_per_cell;
     return n_dofs_est;
   }
 
   else if(TPSS::DoFLayout::Q == dof_layout)
   {
-    const unsigned     int                      n_dofs_per_cell_1d = fe.tensor_degree() + 1;
+    const unsigned int                      n_dofs_per_cell_1d = fe.tensor_degree() + 1;
     std::array<long long unsigned int, dim> n_dofs_1d;
     for(auto d = 0U; d < dim; ++d)
     {
       const long long unsigned int n_cells_1d = prms.n_root_cells_1d(d) * (1 << prms.n_refinements);
-      n_dofs_1d[d]          = n_cells_1d * (n_dofs_per_cell_1d - 1) + 1;
+      n_dofs_1d[d]                            = n_cells_1d * (n_dofs_per_cell_1d - 1) + 1;
     }
     Tensors::TensorHelper<dim, long long unsigned int> dof_tensor(n_dofs_1d);
     return dof_tensor.n_flat();
   }
 
   AssertThrow(false, ExcMessage("Dof layout is not supported."));
-  return static_cast<long long unsigned int>(-1);//numbers::invalid_dof_index;
+  return static_cast<long long unsigned int>(-1); // numbers::invalid_dof_index;
 }
 
 

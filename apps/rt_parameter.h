@@ -170,7 +170,8 @@ Parameter::exceeds_dof_limits(const long long unsigned int n_dofs) const
     return false;
   Assert(dof_limits.first < dof_limits.second, ExcMessage("Invalid closed range."));
   const auto [lower_bound, upper_bound] = dof_limits;
-  bool exceeds = n_dofs < static_cast<long long unsigned int>(lower_bound) || static_cast<long long unsigned int>(upper_bound) < n_dofs;
+  bool exceeds = n_dofs < static_cast<long long unsigned int>(lower_bound) ||
+                 static_cast<long long unsigned int>(upper_bound) < n_dofs;
   return exceeds;
 }
 
