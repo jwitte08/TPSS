@@ -104,6 +104,10 @@ def main():
                 for dly in dof_layouts:
                     exec_name = '{}_{}_{}_DIM{}_DEG{}.exe'.format(target,dly,smo,dim,deg)
 
+                    #: remove old executable (if existent)
+                    if os.path.isfile(path_old):
+                        os.remove(path_old)
+
                     #: set compile-time parameters and compile
                     print ("compile {} ...".format(exec_name))
                     ctprm_py = find_ctprm_py()
