@@ -1,0 +1,67 @@
+#!/bin/bash
+#SBATCH -N &NODES&
+#SBATCH --ntasks-per-node=&PPN&
+#SBATCH -p devel
+#SBATCH -A bw18C003
+#
+# overview of SBATCH parameters:
+# -N 2/--nodes=2 number of nodes
+# -n 8/--ntasks=8 total number of mpi processes (2x4)
+# --ntasks-per-nodes=4 ...
+# -t 1-0/--time=1-0 max. runtime/walltime (time formats see 'man sbatch')
+# -p devel/--partition=devel run in partition (=queue) devel
+# -A account/--account=account charge resources to this account/RV
+# more options:
+# --begin=<timespec>  start the job at the time specified f.e.
+# --begin=now+1hour  start in 1 hour from now (see man sbatch)
+# -d afterok:<jobid> start the job after another job with jobid <jobid> has
+# successfully finished (see man sbatch)
+# --reservation=<reservationname> (from sinfo -T): run in reservation
+# -w|--nodelist=<nodes> run on named nodes
+# -s|--share share the node with other jobs (hits queue)
+# -i|--input connect standard input and
+# -e|--error connect standard error and
+# -o|--output standard output, see man sbatch
+
+module load gcc/8.3.0-xtq5hpz
+module load openmpi/4.0.1-c5o2xs3
+
+echo "Starting at `date`"
+echo "Running on hosts: $SLURM_NODELIST"
+echo "Running on $SLURM_NNODES nodes."
+echo "Running on $SLURM_NPROCS processors."
+echo "Current working directory is `pwd`"
+echo "LD_LIBRARY_PATH is $LD_LIBRARY_PATH"
+echo "current mpicc is $(which mpicc)"
+echo "tmpdir is ${TMPDIR}"
+set|grep I_MPI
+set|grep OMPI
+echo "OMP_NUM_THREADS=$OMP_NUM_THREADS"
+echo "DEAL_II_NUM_THREADS=$DEAL_II_NUM_THREADS"
+
+rundate=$(date +%Y-%m-%d_%R)
+
+dim=$1 # number of dimensions
+smo=$2 # smoothing variant
+dly=$3 # dof layout
+tst=$4 # test variant identifier
+
+target="&MYPROG&"
+
+declare -a refinements=('4' '5' '6' '7' '8')
+# args=${refinements[*]}
+declare -a degrees=(3)
+
+for deg in ${degrees[*]}
+do
+    for ref in ${refinements[*]}
+    do
+    ODIR="`pwd`/srun_log"
+    mkdir -p ${ODIR}
+    exec="${target}_${dly}_${smo}_DIM${dim}_DEG${deg}.exe"
+
+    echo "srun --mpi=pmi2 `pwd`/apps/${exec} ${ref} ${tst} -f ${ODIR}/${exec}_${rundate}.txt"
+    srun --mpi=pmi2 `pwd`/apps/${exec} ${ref} ${tst} -f ${ODIR}/${exec}_${rundate}.txt
+    echo "Program finished with exit code $? at: `date`"
+    done
+done
