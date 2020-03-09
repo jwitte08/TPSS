@@ -162,6 +162,8 @@ protected:
 
 // --------------------------------   PatchWorker   --------------------------------
 
+
+
 template<int dim, typename number>
 PatchWorker<dim, number>::PatchWorker(const PatchInfo<dim> & patch_info_in)
   : patch_info(&patch_info_in), patch_variant(patch_info_in.get_additional_data().patch_variant)
@@ -222,6 +224,7 @@ PatchWorker<dim, number>::is_interior(const unsigned int patch) const
   return is_interior_patch;
 }
 
+
 template<int dim, typename number>
 inline unsigned int
 PatchWorker<dim, number>::n_cells_per_subdomain() const
@@ -230,6 +233,7 @@ PatchWorker<dim, number>::n_cells_per_subdomain() const
   const auto n_cells = TPSS::UniversalInfo<dim>::n_cells(patch_variant);
   return n_cells;
 }
+
 
 template<int dim, typename number>
 inline unsigned int

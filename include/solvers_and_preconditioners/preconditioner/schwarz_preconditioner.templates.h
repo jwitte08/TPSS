@@ -259,7 +259,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
       for(auto & elem : local_solution)
         elem *= make_vectorized_array<value_type>(additional_data.local_relaxation);
 
-      // prolongate and add local solution u_j, that is u_j += R_j^T u_j
+      // prolongate and add local solution u_j, that is u += R_j^T u_j
       transfer->scatter_add(solution, local_solution);
     }
   };
