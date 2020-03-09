@@ -28,7 +28,7 @@ struct TestParameter
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::IterativeAcc;
   double   cg_reduction         = 1.e-8;
-  double   coarse_grid_accuracy = 1.e-8;
+  double   coarse_grid_accuracy = 1.e-12;
   unsigned n_refinements        = 1;
   unsigned n_smoothing_steps    = 1;
   unsigned n_samples            = 10;
@@ -68,14 +68,14 @@ struct TestParameter
   }
 };
 
-template<int dim, int fe_degree>
+template<int             dim,
+         int             fe_degree,
+         int             n_patch_dofs_1d = -1,
+         TPSS::DoFLayout dof_layout      = TPSS::DoFLayout::DGQ>
 struct Test
 {
-  static constexpr int n_patch_dofs_per_direction =
-    TPSS::UniversalInfo<dim>::n_cells_per_direction(CT::PATCH_VARIANT_) * (fe_degree + 1);
-  static constexpr auto dof_layout = TPSS::DoFLayout::DGQ;
   using PoissonProblem =
-    typename Poisson::ModelProblem<dim, fe_degree, dof_layout, double, n_patch_dofs_per_direction>;
+    typename Poisson::ModelProblem<dim, fe_degree, dof_layout, double, n_patch_dofs_1d>;
   using VECTOR           = typename PoissonProblem::VECTOR;
   using SCHWARZ_SMOOTHER = typename PoissonProblem::SCHWARZ_SMOOTHER;
   using SYSTEM_MATRIX    = typename PoissonProblem::SYSTEM_MATRIX;
@@ -111,12 +111,12 @@ struct Test
     rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
     rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
     rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = prms.n_smoothing_steps;
-    rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(8, fe_degree + 1);
+    rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5, fe_degree + 1);
     rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
     rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
 
-    //: misc
-    // rt_parameters.compressed = prms.compressed;
+    // //: misc
+    // // rt_parameters.compressed = prms.compressed;
 
     if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
       std::cout << write_header();
@@ -189,11 +189,15 @@ struct Test
   {
     std::ostringstream oss;
     const auto         n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
+    const std::string  str_schwarz_variant =
+      TPSS::getstr_schwarz_variant(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_);
 
-    oss << TPSS::getstr_schwarz_variant(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_);
+    oss << std::scientific << std::setprecision(2);
+    oss << n_mpi_procs << "prcs";
+    oss << "_" << TPSS::str_dof_layout(dof_layout);
+    oss << "_" << str_schwarz_variant;
     oss << "_" << dim << "D";
     oss << "_" << fe_degree << "deg";
-    oss << "_" << n_mpi_procs << "procs";
     oss << "_" << Util::si_metric_prefix(n_dofs_global) << "DoFs";
     return oss.str();
   }
@@ -272,6 +276,7 @@ struct Test
       time.print_last_lap_wall_time_data(pcout);
       pcout << std::endl;
     }
+
     if(prms.do_test_variant(3))
     {
       pcout << Util::parameter_to_fstring("Testing solve()", "");
@@ -416,7 +421,9 @@ struct Test
       const unsigned fine_level = poisson_problem.triangulation.n_global_levels() - 1;
       const auto     mf_storage = poisson_problem.template build_mf_storage<double>(fine_level);
       LEVEL_MATRIX   level_matrix;
-      level_matrix.initialize(mf_storage, poisson_problem.equation_data);
+      level_matrix.initialize(mf_storage,
+                              *(poisson_problem.mg_constrained_dofs),
+                              poisson_problem.equation_data);
       n_dofs_global                  = level_matrix.m();
       const auto   subdomain_handler = poisson_problem.build_patch_storage(fine_level, mf_storage);
       const auto & schwarz_data      = poisson_problem.rt_parameters.multigrid.pre_smoother.schwarz;
@@ -666,8 +673,7 @@ main(int argc, char * argv[])
   // deallog.depth_console(3);
 
   // *** init TBB and MPI
-  constexpr unsigned int           max_threads = 1; // no multithreading !?
-  Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, max_threads);
+  Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
 
   // *** run-time options
   TestParameter prms;
@@ -679,12 +685,16 @@ main(int argc, char * argv[])
     prms.n_samples = std::atoi(argv[3]);
 
   // *** run tests
-  Timer              time(MPI_COMM_WORLD, true);
-  const bool         is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
-  const auto         pcout         = ConditionalOStream(std::cout, is_first_proc);
-  std::ostringstream oss;
-  Test<CT::DIMENSION_, CT::FE_DEGREE_> tester(prms);
+  constexpr int  dim        = CT::DIMENSION_;
+  constexpr int  fe_degree  = CT::FE_DEGREE_;
+  constexpr auto dof_layout = CT::DOF_LAYOUT_;
+  constexpr int  n_patch_dofs_1d_static =
+    TPSS::UniversalInfo<dim>::n_dofs_1d(CT::PATCH_VARIANT_, dof_layout, fe_degree);
+  const bool is_first_proc = (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0);
+  const auto pcout         = ConditionalOStream(std::cout, is_first_proc);
+  Test<dim, fe_degree, n_patch_dofs_1d_static, dof_layout> tester(prms);
 
+  Timer time(MPI_COMM_WORLD, true);
   time.start();
   tester.partial();
   time.stop();

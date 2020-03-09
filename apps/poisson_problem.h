@@ -117,7 +117,7 @@ struct ModelProblem : public Subscriptor
   SolverSelector<VECTOR>                         iterative_solver;
 
   // *** multigrid
-  MGConstrainedDoFs                          mg_constrained_dofs;
+  std::shared_ptr<MGConstrainedDoFs>         mg_constrained_dofs;
   MGLevelObject<LEVEL_MATRIX>                mg_matrices;
   MG_TRANSFER                                mg_transfer;
   mutable std::shared_ptr<ColoringBase<dim>> user_coloring;
@@ -256,7 +256,7 @@ struct ModelProblem : public Subscriptor
 
   template<typename OtherNumber>
   std::shared_ptr<const MatrixFree<dim, OtherNumber>>
-  build_mf_storage(const unsigned int level) const
+  build_mf_storage(const unsigned int level)
   {
     AssertIndexRange(level, triangulation.n_global_levels());
 
@@ -275,6 +275,11 @@ struct ModelProblem : public Subscriptor
         (update_gradients | update_JxW_values | update_normal_vectors | update_quadrature_points);
     }
 
+    if(!mg_constrained_dofs)
+    {
+      mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
+      setup_mg_constraints(*mg_constrained_dofs);
+    }
     /// TODO check if this is more efficient than using
     /// MGConstrainedDoFs::get_level_constraints() in case of using MPI
     AffineConstraints<double> level_constraints;
@@ -283,7 +288,7 @@ struct ModelProblem : public Subscriptor
       IndexSet relevant_dofs;
       DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, relevant_dofs);
       level_constraints.reinit(relevant_dofs);
-      level_constraints.add_lines(mg_constrained_dofs.get_boundary_indices(level));
+      level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
     }
     level_constraints.close();
 
@@ -596,6 +601,18 @@ struct ModelProblem : public Subscriptor
 
 
   void
+  setup_mg_constraints(MGConstrainedDoFs & mg_constrained_dofs)
+  {
+    mg_constrained_dofs.initialize(dof_handler);
+    if constexpr(dof_layout == TPSS::DoFLayout::Q)
+    {
+      mg_constrained_dofs.make_zero_boundary_constraints(dof_handler,
+                                                         equation_data.dirichlet_boundary_ids);
+    }
+  }
+
+
+  void
   prepare_multigrid()
   {
     // *** clear multigrid infrastructure
@@ -608,7 +625,7 @@ struct ModelProblem : public Subscriptor
     mg_schwarz_smoother_post.reset();
     mg_transfer.clear();
     mg_matrices.clear_elements();
-    mg_constrained_dofs.clear();
+    mg_constrained_dofs.reset();
 
     // *** setup multigrid data
     const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
@@ -616,23 +633,19 @@ struct ModelProblem : public Subscriptor
     pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
 
     // *** initialize multigrid constraints
-    mg_constrained_dofs.initialize(dof_handler);
-    if constexpr(dof_layout == TPSS::DoFLayout::Q)
-    {
-      mg_constrained_dofs.make_zero_boundary_constraints(dof_handler,
-                                                         equation_data.dirichlet_boundary_ids);
-    }
+    mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
+    setup_mg_constraints(*mg_constrained_dofs);
 
     // *** initialize level matrices A_l
     mg_matrices.resize(mg_level_min, mg_level_max);
     for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
     {
       const auto mf_storage_level = build_mf_storage<value_type_mg>(level);
-      mg_matrices[level].initialize(mf_storage_level, mg_constrained_dofs, equation_data);
+      mg_matrices[level].initialize(mf_storage_level, *mg_constrained_dofs, equation_data);
     }
 
     // *** initialize multigrid transfer R_l
-    mg_transfer.initialize_constraints(mg_constrained_dofs);
+    mg_transfer.initialize_constraints(*mg_constrained_dofs);
     mg_transfer.build(dof_handler);
 
     // *** initialize Schwarz smoother S_l
