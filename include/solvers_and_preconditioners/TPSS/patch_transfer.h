@@ -70,8 +70,24 @@ public:
   const PatchDoFWorker<dim, Number> &
   get_patch_dof_worker() const;
 
-  ArrayView<const types::global_dof_index>
-  get_global_dof_indices(const unsigned int lane) const;
+  // ArrayView<const types::global_dof_index>
+  // get_global_dof_indices(const unsigned int lane) const;
+
+  ArrayView<const unsigned int>
+  get_dof_indices(const unsigned int lane) const
+  {
+    if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
+      return get_dof_indices(0);
+
+    if(caching_strategy == TPSS::CachingStrategy::Cached)
+      return patch_dof_worker.get_dof_indices_on_patch_(patch_id, lane);
+
+    AssertDimension(this->global_dof_indices[lane].size(), n_dofs_per_patch());
+    return ArrayView<const types::global_dof_index>(global_dof_indices[lane].data(),
+                                                    global_dof_indices[lane].size());
+    // AssertThrow(false, ExcMessage("Not implemented."));
+    // return ArrayView<const unsigned int>{};
+  }
 
   /**
    * Extract from the global dof values @p src the patch relevant dof values.
@@ -162,7 +178,7 @@ private:
    * associated global dof indices. The data field has patch-based
    * lexicographical ordering.
    */
-  std::array<std::vector<types::global_dof_index>, macro_size> global_dof_indices;
+  std::array<std::vector<unsigned int>, macro_size> global_dof_indices;
 
   /**
    * Current patch id identifying a unique patch given by @p subdomain_handler.
@@ -409,19 +425,20 @@ PatchTransfer<dim, Number, fe_degree>::get_patch_dof_worker() const
 }
 
 
-template<int dim, typename Number, int fe_degree>
-ArrayView<const types::global_dof_index>
-PatchTransfer<dim, Number, fe_degree>::get_global_dof_indices(const unsigned int lane) const
-{
-  if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
-    return get_global_dof_indices(0);
+// template<int dim, typename Number, int fe_degree>
+// ArrayView<const types::global_dof_index>
+// PatchTransfer<dim, Number, fe_degree>::get_global_dof_indices(const unsigned int lane) const
+// {
+//   if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
+//     return get_global_dof_indices(0);
 
-  if(caching_strategy == TPSS::CachingStrategy::Cached)
-    return patch_dof_worker.get_dof_indices_on_patch(patch_id, lane);
-  AssertDimension(this->global_dof_indices[lane].size(), n_dofs_per_patch());
-  return ArrayView<const types::global_dof_index>(global_dof_indices[lane].data(),
-                                                  global_dof_indices[lane].size());
-}
+//   if(caching_strategy == TPSS::CachingStrategy::Cached)
+//     return patch_dof_worker.get_dof_indices_on_patch(patch_id, lane);
+
+//   AssertDimension(this->global_dof_indices[lane].size(), n_dofs_per_patch());
+//   return ArrayView<const types::global_dof_index>(global_dof_indices[lane].data(),
+//                                                   global_dof_indices[lane].size());
+// }
 
 
 template<int dim, typename Number, int fe_degree>
@@ -448,15 +465,16 @@ PatchTransfer<dim, Number, fe_degree>::n_dofs_per_patch() const
 // }
 
 
-// TODO
+// TODO !!!
 template<int dim, typename Number, int fe_degree>
 inline void
 PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned int patch_id)
 {
   AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
-  for(auto lane = 0U; lane < macro_size; ++lane)
+  for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
   {
-    auto && global_dof_indices_at_lane = patch_dof_worker.fill_dof_indices_on_patch(patch_id, lane);
+    auto && global_dof_indices_at_lane =
+      patch_dof_worker.fill_dof_indices_on_patch_(patch_id, lane);
     AssertDimension(global_dof_indices_at_lane.size(), n_dofs_per_patch());
     std::swap(this->global_dof_indices[lane], global_dof_indices_at_lane);
   }

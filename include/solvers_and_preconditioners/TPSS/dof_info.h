@@ -209,6 +209,9 @@ struct DoFInfo
   void
   clear();
 
+  void
+  compress();
+
   const AdditionalData &
   get_additional_data() const;
 
@@ -259,6 +262,12 @@ struct DoFInfo
    */
   std::vector<types::global_dof_index> global_dof_indices_patchwise;
 
+  /**
+   * The array caches the proc-local global dof indices for each macro patch stored in @p
+   * patch_info in flat format.
+   */
+  std::vector<unsigned int> dof_indices_patchwise;
+
   const PatchInfo<dim> * patch_info = nullptr;
 
   std::array<const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> *, dim>
@@ -279,6 +288,7 @@ struct DoFInfo<dim, Number>::AdditionalData
   unsigned int                 level = numbers::invalid_unsigned_int;
   std::set<types::boundary_id> dirichlet_ids;
   TPSS::CachingStrategy        caching_strategy = TPSS::CachingStrategy::Cached;
+  std::shared_ptr<const Utilities::MPI::Partitioner> vector_partitioner_in;
 };
 
 
@@ -574,9 +584,23 @@ DoFInfo<dim, Number>::clear()
   global_dof_indices_cellwise.clear();
   start_of_dof_indices_patchwise.clear();
   global_dof_indices_patchwise.clear();
+  dof_indices_patchwise.clear();
   dof_handler     = nullptr;
   additional_data = AdditionalData{};
   l2h.clear();
+}
+
+
+template<int dim, typename Number>
+inline void
+DoFInfo<dim, Number>::compress()
+{
+  if(additional_data.caching_strategy == TPSS::CachingStrategy::Cached)
+  {
+    start_and_number_of_dof_indices_cellwise.clear();
+    global_dof_indices_cellwise.clear();
+    global_dof_indices_patchwise.clear();
+  }
 }
 
 

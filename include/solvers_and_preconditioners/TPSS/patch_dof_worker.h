@@ -59,11 +59,32 @@ public:
   get_dof_indices_on_patch(const unsigned int patch_id, const unsigned int lane) const;
 
   /**
+   * Returns cached global dof indices on patch @patch_id at vectorization lane
+   * @p lane. The returned array is subject to patch local lexicographical ordering.
+   */
+  ArrayView<const unsigned int>
+  get_dof_indices_on_patch_(const unsigned int patch_id, const unsigned int lane) const;
+
+  /**
    * Returns global dof indices on the fly on patch @patch_id at vectorization
    * lane @p lane. The returned array is subject to lexicographical ordering.
    */
   std::vector<types::global_dof_index>
   fill_dof_indices_on_patch(const unsigned int patch_id, const unsigned int lane) const;
+
+  std::vector<unsigned int>
+  fill_dof_indices_on_patch_(const unsigned int patch_id, const unsigned int lane) const
+  {
+    const auto &              global_dof_indices = fill_dof_indices_on_patch(patch_id, lane);
+    std::vector<unsigned int> dof_indices;
+    std::transform(global_dof_indices.cbegin(),
+                   global_dof_indices.cend(),
+                   std::back_inserter(dof_indices),
+                   [&](const auto global_dof_index) {
+                     return dof_info->vector_partitioner->global_to_local(global_dof_index);
+                   });
+    return dof_indices;
+  }
 
   const DoFInfo<dim, Number> &
   get_dof_info() const;
@@ -326,6 +347,26 @@ PatchDoFWorker<dim, Number>::get_dof_indices_on_patch(const unsigned int patch_i
   const auto [dof_start, n_dofs] = get_dof_start_and_quantity_on_patch(patch_id, lane);
   const auto begin               = dof_info->global_dof_indices_patchwise.data() + dof_start;
   return ArrayView<const types::global_dof_index>(begin, n_dofs);
+}
+
+
+template<int dim, typename Number>
+ArrayView<const unsigned int>
+PatchDoFWorker<dim, Number>::get_dof_indices_on_patch_(const unsigned int patch_id,
+                                                       const unsigned int lane) const
+{
+  // AssertIndexRange(lane, macro_size);
+  AssertIndexRange(lane, this->n_lanes_filled(patch_id));
+  Assert(dof_info, ExcMessage("Dof info is not set."));
+  Assert(!(dof_info->global_dof_indices_patchwise.empty()),
+         ExcMessage("Dof indices aren't cached."));
+  // /// Return indices of first lane if the current lane @lane is not filled.
+  // if(lane >= this->n_lanes_filled(patch_id))
+  //   return get_dof_indices_on_patch(patch_id, 0);
+
+  const auto [dof_start, n_dofs] = get_dof_start_and_quantity_on_patch(patch_id, lane);
+  const auto begin               = dof_info->dof_indices_patchwise.data() + dof_start;
+  return ArrayView<const unsigned int>(begin, n_dofs);
 }
 
 

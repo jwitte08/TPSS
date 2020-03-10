@@ -9,7 +9,6 @@ DoFInfo<dim, Number>::initialize(
   const PatchInfo<dim> *                                                    patch_info_in,
   const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> * shape_info_in,
   const AdditionalData &                                                    additional_data_in)
-
 {
   Assert(patch_info_in->get_internal_data()->level != numbers::invalid_unsigned_int,
          ExcMessage("Handles level cells only."));
@@ -142,11 +141,32 @@ DoFInfo<dim, Number>::initialize_impl()
       }
     }
     start_of_dof_indices_patchwise.emplace_back(global_dof_indices_patchwise.size());
+  }
 
-    // /// Clear the cell-wise cached global dof indices
-    // /// TODO reasonable? compress function is better to postpone clear
-    // start_and_number_of_dof_indices_cellwise.clear();
-    // global_dof_indices_cellwise.clear();
+  /// initialize MPI vector partitioner
+  {
+    if(additional_data.vector_partitioner_in)
+      this->vector_partitioner = additional_data.vector_partitioner_in;
+    else
+    {
+      PatchDoFWorker<dim, Number> patch_worker(*this);
+      this->vector_partitioner = patch_worker.initialize_vector_partitioner();
+    }
+  }
+
+  /// convert global dof indices into proc-local dof indices
+  if(additional_data.caching_strategy == TPSS::CachingStrategy::Cached)
+  {
+    dof_indices_patchwise.clear();
+    std::transform(global_dof_indices_patchwise.cbegin(),
+                   global_dof_indices_patchwise.cend(),
+                   std::back_inserter(dof_indices_patchwise),
+                   [&](const auto global_dof_index) {
+                     return vector_partitioner->global_to_local(global_dof_index);
+                   });
+
+    compress();
+    // TODO !!! clear global_dof_indices_patchwise
   }
 }
 
