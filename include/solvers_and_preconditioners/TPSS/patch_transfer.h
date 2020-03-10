@@ -83,7 +83,7 @@ public:
       return patch_dof_worker.get_dof_indices_on_patch_(patch_id, lane);
 
     AssertDimension(this->global_dof_indices[lane].size(), n_dofs_per_patch());
-    return ArrayView<const types::global_dof_index>(global_dof_indices[lane].data(),
+    return ArrayView<const unsigned int>(global_dof_indices[lane].data(),
                                                     global_dof_indices[lane].size());
     // AssertThrow(false, ExcMessage("Not implemented."));
     // return ArrayView<const unsigned int>{};
