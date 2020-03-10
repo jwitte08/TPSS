@@ -70,24 +70,8 @@ public:
   const PatchDoFWorker<dim, Number> &
   get_patch_dof_worker() const;
 
-  // ArrayView<const types::global_dof_index>
-  // get_global_dof_indices(const unsigned int lane) const;
-
   ArrayView<const unsigned int>
-  get_dof_indices(const unsigned int lane) const
-  {
-    if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
-      return get_dof_indices(0);
-
-    if(caching_strategy == TPSS::CachingStrategy::Cached)
-      return patch_dof_worker.get_dof_indices_on_patch_(patch_id, lane);
-
-    AssertDimension(this->global_dof_indices[lane].size(), n_dofs_per_patch());
-    return ArrayView<const unsigned int>(global_dof_indices[lane].data(),
-                                                    global_dof_indices[lane].size());
-    // AssertThrow(false, ExcMessage("Not implemented."));
-    // return ArrayView<const unsigned int>{};
-  }
+  get_dof_indices(const unsigned int lane) const;
 
   /**
    * Extract from the global dof values @p src the patch relevant dof values.
@@ -425,20 +409,20 @@ PatchTransfer<dim, Number, fe_degree>::get_patch_dof_worker() const
 }
 
 
-// template<int dim, typename Number, int fe_degree>
-// ArrayView<const types::global_dof_index>
-// PatchTransfer<dim, Number, fe_degree>::get_global_dof_indices(const unsigned int lane) const
-// {
-//   if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
-//     return get_global_dof_indices(0);
+template<int dim, typename Number, int fe_degree>
+ArrayView<const unsigned int>
+PatchTransfer<dim, Number, fe_degree>::get_dof_indices(const unsigned int lane) const
+{
+  if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
+    return get_dof_indices(0);
 
-//   if(caching_strategy == TPSS::CachingStrategy::Cached)
-//     return patch_dof_worker.get_dof_indices_on_patch(patch_id, lane);
+  if(caching_strategy == TPSS::CachingStrategy::Cached)
+    return patch_dof_worker.get_dof_indices_on_patch(patch_id, lane);
 
-//   AssertDimension(this->global_dof_indices[lane].size(), n_dofs_per_patch());
-//   return ArrayView<const types::global_dof_index>(global_dof_indices[lane].data(),
-//                                                   global_dof_indices[lane].size());
-// }
+  AssertDimension(this->global_dof_indices[lane].size(), n_dofs_per_patch());
+  return ArrayView<const unsigned int>(global_dof_indices[lane].data(),
+                                       global_dof_indices[lane].size());
+}
 
 
 template<int dim, typename Number, int fe_degree>
@@ -449,23 +433,6 @@ PatchTransfer<dim, Number, fe_degree>::n_dofs_per_patch() const
 }
 
 
-// template<int dim, typename Number, int fe_degree>
-// inline ArrayView<const unsigned int>
-// PatchTransfer<dim, Number, fe_degree>::patch_dof_indices_on_cell(const unsigned int cell_no)
-// const
-// {
-//   const auto n_dofs_per_cell_static = cell_dof_tensor.n_flat();
-//   cell_dof_indices_scratchpad.resize(n_dofs_per_cell_static);
-//   for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell_static; ++cell_dof_index)
-//   {
-//     const unsigned int patch_dof_index = patch_dof_tensor.dof_index(cell_no, cell_dof_index);
-//     cell_dof_indices_scratchpad[cell_dof_index] = patch_dof_index;
-//   }
-//   return ArrayView<const unsigned>(cell_dof_indices_scratchpad);
-// }
-
-
-// TODO !!!
 template<int dim, typename Number, int fe_degree>
 inline void
 PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned int patch_id)
@@ -473,8 +440,7 @@ PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned in
   AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
   for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
   {
-    auto && global_dof_indices_at_lane =
-      patch_dof_worker.fill_dof_indices_on_patch_(patch_id, lane);
+    auto && global_dof_indices_at_lane = patch_dof_worker.fill_dof_indices_on_patch(patch_id, lane);
     AssertDimension(global_dof_indices_at_lane.size(), n_dofs_per_patch());
     std::swap(this->global_dof_indices[lane], global_dof_indices_at_lane);
   }

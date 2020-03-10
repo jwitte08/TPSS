@@ -103,8 +103,6 @@ SubdomainHandler<dim, number>::internal_reinit()
         AssertIndexRange(unique_dofh_index, additional_data.dirichlet_ids.size());
         dof_info_data.dirichlet_ids = additional_data.dirichlet_ids.at(unique_dofh_index);
       }
-      if(TPSS::PatchVariant::cell == additional_data.patch_variant)
-        dof_info_data.vector_partitioner_in = mf_storage->get_vector_partitioner(dofh_index);
       auto & dof_info                     = dof_infos[unique_dofh_index];
       const auto [dummy, not_initialized] = initialized_indices.insert(unique_dofh_index);
       (void)dummy;
@@ -115,29 +113,6 @@ SubdomainHandler<dim, number>::internal_reinit()
                             dof_info_data);
     }
   }
-  // { // *** initialize MPI vector partitioners
-  //   if(TPSS::PatchVariant::cell == additional_data.patch_variant)
-  //   {
-  //     std::set<unsigned int> initialized_indices;
-  //     for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
-  //     {
-  //       const auto unique_dofh_index        = get_unique_dofh_index(dofh_index);
-  //       auto &     dof_info                 = dof_infos[unique_dofh_index];
-  //       const auto [dummy, not_initialized] = initialized_indices.insert(unique_dofh_index);
-  //       (void)dummy;
-  //       if(not_initialized)
-  //         dof_info.vector_partitioner = mf_storage->get_vector_partitioner(dofh_index);
-  //     }
-  //   }
-  //   else // entire assembly of vector partitioners
-  //   {
-  //     for(auto & dof_info : dof_infos)
-  //     {
-  //       TPSS::PatchDoFWorker<dim, number> patch_dof_worker(dof_info);
-  //       dof_info.vector_partitioner = patch_dof_worker.initialize_vector_partitioner();
-  //     }
-  //   }
-  // }
 
 
   // *** map the patch batches to MatrixFree's cell batches
