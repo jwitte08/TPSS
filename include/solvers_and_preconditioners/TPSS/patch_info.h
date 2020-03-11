@@ -74,6 +74,9 @@ public:
   std::pair<int, int>
   get_cell_level_and_index(const unsigned int cell_position) const;
 
+  const std::vector<std::pair<int, int>> &
+  get_cell_level_and_index_pairs() const;
+
   CellIterator
   get_cell_iterator(const unsigned int cell_position) const;
 
@@ -193,9 +196,8 @@ struct PatchInfo<dim>::AdditionalData
                      const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> &
                        colored_iterators,
                      const std::string)>
-                        visualize_coloring;
-  TPSS::CachingStrategy caching_strategy = TPSS::CachingStrategy::Cached;
-  bool                  print_details    = false; // DEBUG
+       visualize_coloring;
+  bool print_details = false; // DEBUG
 };
 
 
@@ -319,13 +321,6 @@ struct PatchInfo<dim>::InternalData
   void
   clear();
 
-  /*
-   * Experimental. If we have extracted all informations on dofs and mesh cells
-   * we are able to delete the @p cell_iterators field.
-   */
-  void
-  compress() const;
-
   bool
   empty() const;
 
@@ -341,24 +336,24 @@ struct PatchInfo<dim>::InternalData
   unsigned int level = numbers::invalid_unsigned_int;
 
   /**
-   * Flat array that stores all CellIterators for the construction of
-   * (macro) patches. The successive alignment of CellIterators is
-   * such that all interior subdomains are stored first, then the ones
-   * at the physical boundary
-   *
-   * Lexicographical:  cell_no  <  lane  <  patch id  <  color
+   * Temporary array storing all cells to build regular patches of cells as
+   * CellIterator. During the initialization this array is compressed to @p
+   * cell_level_and_index_pairs.
    */
-  mutable std::vector<CellIterator> cell_iterators;
+  std::vector<CellIterator> cell_iterators;
 
   /**
-   * Flat array that stores all CellIterators for the construction of
-   * (macro) patches. The successive alignment of CellIterators is
-   * such that all interior subdomains are stored first, then the ones
-   * at the physical boundary
+   * This flat array stores all cells required to build regular patches of cells. The
+   * successive alignment of patches of cells is such that all interior
+   * subdomains are stored first, then the ones at the physical boundary. The
+   * array has following lexicographical ordering:
    *
-   * Lexicographical:  cell_no  <  lane  <  patch id  <  color
+   *    cell_no  <  patch id  <  color
+   *
+   * Each cell within a regular patch @p patch_id of color @p color is identified by its
+   * local number @p cell_no. The local cell numbering is again lexicographic.
    */
-  mutable std::vector<std::pair<int, int>> cell_level_and_index_pairs;
+  std::vector<std::pair<int, int>> cell_level_and_index_pairs;
 
   /**
    * Numbers of physical subdomains for each color.
@@ -375,7 +370,7 @@ struct PatchInfo<dim>::InternalData
    */
   const Triangulation<dim> * triangulation = nullptr;
 
-  // TODO we should not need dof handler !
+  // TODO we should not need dof handler !!!
   const DoFHandler<dim> * dof_handler = nullptr;
 };
 
@@ -616,6 +611,14 @@ PatchInfo<dim>::get_cell_level_and_index(const unsigned int cell_position) const
 
 
 template<int dim>
+inline const std::vector<std::pair<int, int>> &
+PatchInfo<dim>::get_cell_level_and_index_pairs() const
+{
+  return get_internal_data()->cell_level_and_index_pairs;
+}
+
+
+template<int dim>
 inline typename PatchInfo<dim>::CellIterator
 PatchInfo<dim>::get_cell_iterator(const unsigned int cell_position) const
 {
@@ -813,14 +816,6 @@ PatchInfo<dim>::InternalData::clear()
   cell_level_and_index_pairs.clear();
   triangulation = nullptr;
   dof_handler   = nullptr;
-}
-
-
-template<int dim>
-inline void
-PatchInfo<dim>::InternalData::compress() const
-{
-  cell_iterators.clear();
 }
 
 
