@@ -41,16 +41,17 @@ echo "DEAL_II_NUM_THREADS=$DEAL_II_NUM_THREADS"
 
 rundate=$(date +%Y-%m-%d_%R)
 
-dim=$1 # number of dimensions
-smo=$2 # smoothing variant
-dly=$3 # dof layout
-tst=$4 # test variant identifier
-
+#: compile time parameters
 target="&MYPROG&"
-
-declare -a refinements=('4' '5' '6' '7' '8')
-# args=${refinements[*]}
+dly=$1 # dof layout
+smo=$2 # smoothing variant
+dim=3
 declare -a degrees=(3)
+
+#: runtime paramaters
+declare -a refinements=('4' '5' '6' '7' '8' '9')
+tst=$3 # test variant identifier
+n_samples=10 # number of test repetitions
 
 for deg in ${degrees[*]}
 do
@@ -58,10 +59,11 @@ do
     do
     ODIR="`pwd`/srun_log"
     mkdir -p ${ODIR}
-    exec="${target}_${dly}_${smo}_DIM${dim}_DEG${deg}.exe"
+    exec_name="${target}_${dly}_${smo}_DIM${dim}_DEG${deg}"
+    exec="${exec_name}.exe"
 
-    echo "srun --mpi=pmi2 `pwd`/apps/${exec} ${ref} ${tst} -f ${ODIR}/${exec}_${rundate}.txt"
-    srun --mpi=pmi2 `pwd`/apps/${exec} ${ref} ${tst} -f ${ODIR}/${exec}_${rundate}.txt
+    echo "srun --mpi=pmi2 `pwd`/apps/${exec} ${ref} ${tst} ${n_samples} &> ${exec_name}_REF${ref}.log"
+    srun --mpi=pmi2 `pwd`/apps/${exec} ${ref} ${tst} ${n_samples} &> ${exec_name}_REF${ref}.log
     echo "Program finished with exit code $? at: `date`"
     done
 done
