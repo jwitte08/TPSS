@@ -500,8 +500,13 @@ struct ModelProblem : public Subscriptor
   void
   prepare_linear_system(const bool do_compute_rhs = true)
   {
-    /// initialize constraints (strong B.C.)
+    /// clear constraints and vectors
     constraints.clear();
+    system_u.reinit(0);
+    system_delta_u.reinit(0);
+    system_rhs.reinit(0);
+
+    /// initialize constraints (strong B.C.)
     if constexpr(dof_layout == TPSS::DoFLayout::Q)
     {
       IndexSet locally_relevant_dofs;

@@ -631,6 +631,7 @@ struct Test
       timings_solve.setup.push_back(t_setup);
 
       //: solve
+      poisson_problem.prepare_linear_system(); // reinits solution and rhs vector
       time.restart();
       poisson_problem.solve(gmg_preconditioner);
       print_row(pcout, 20, "VmPeak", "VmSize", "VmHWM", "VmRSS");
