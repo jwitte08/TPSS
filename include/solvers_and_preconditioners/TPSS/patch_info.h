@@ -101,15 +101,6 @@ public:
   std::vector<unsigned int> n_lanes_filled;
 
   /**
-   * A flat array that stores the information if each face within a
-   * macro face is at the physical boundary. Faces are ordered in
-   * the standard deal.II way, see GeometryInfo. The integer must be
-   * reinterpreted as std::bitset of length @p macro_size.
-   * Lexicographical:   face number   <   patch id
-   */
-  std::vector<unsigned int> at_boundary_mask;
-
-  /**
    * Container storing the partitioning into colored batches of
    * interior/boundary, incomplete/complete subdomains.
    */
@@ -575,7 +566,6 @@ inline void
 PatchInfo<dim>::clear()
 {
   patch_starts.clear();
-  at_boundary_mask.clear();
   subdomain_partition_data.clear();
 
   internal_data.clear();
