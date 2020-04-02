@@ -112,7 +112,7 @@ protected:
   using Number                             = typename T::template type<1>;
   using Tester                             = TestTensorProductMatrix<dim, Number>;
   using TesterV                            = TestTensorProductMatrix<dim, VectorizedArray<Number>>;
-  static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
+  static constexpr unsigned int macro_size = VectorizedArray<Number>::size();
 
   void
   SetUp() override

@@ -141,7 +141,7 @@ public:
 private:
   using This                            = MatrixIntegrator<dim, fe_degree, Number>;
   static constexpr int fe_order         = fe_degree + 1;
-  static constexpr int macro_size       = VectorizedArray<Number>::n_array_elements;
+  static constexpr int macro_size       = VectorizedArray<Number>::size();
   static constexpr int n_blocks_offdiag = dim * (dim - 1);
 
 private:
@@ -1227,7 +1227,7 @@ public:
   using gradient_type =
     typename FEEvaluation<dim, fe_degree, fe_degree + 1, 1, Number>::gradient_type;
   static constexpr unsigned int n_components = dim;
-  static constexpr unsigned int macro_size   = VectorizedArray<Number>::n_array_elements;
+  static constexpr unsigned int macro_size   = VectorizedArray<Number>::size();
 
 private:
   std::shared_ptr<const MatrixFree<dim, Number>> data;

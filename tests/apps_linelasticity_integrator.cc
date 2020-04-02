@@ -216,7 +216,7 @@ protected:
   using PatchTransfer                      = typename LevelMatrix::transfer_type;
   using VectorizedMatrixType               = Table<2, VectorizedArray<double>>;
   static constexpr unsigned int fe_order   = fe_degree + 1;
-  static constexpr unsigned int macro_size = VectorizedArray<double>::n_array_elements;
+  static constexpr unsigned int macro_size = VectorizedArray<double>::size();
 
   struct Params
   {

@@ -32,7 +32,7 @@ template<int dim, typename number>
 class PatchWorker
 {
 public:
-  static constexpr unsigned int macro_size = dealii::VectorizedArray<number>::n_array_elements;
+  static constexpr unsigned int macro_size = dealii::VectorizedArray<number>::size();
   using CellIterator                       = typename PatchInfo<dim>::CellIterator;
   enum class RangeVariant
   {

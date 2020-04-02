@@ -218,7 +218,7 @@ public:
   using transfer_type = typename TPSS::PatchTransfer<dim, Number, fe_degree>;
 
   // static constexpr int fe_order   = fe_degree + 1;
-  // static constexpr int macro_size = VectorizedArray<Number>::n_array_elements;
+  // static constexpr int macro_size = VectorizedArray<Number>::size();
 
   void
   initialize(const EquationData & equation_data_in)
@@ -1081,7 +1081,7 @@ public:
   using transfer_type = typename TPSS::PatchTransfer<dim, Number, fe_degree>;
 
   // static constexpr int fe_order   = fe_degree + 1;
-  static constexpr int macro_size = VectorizedArray<Number>::n_array_elements;
+  static constexpr int macro_size = VectorizedArray<Number>::size();
 
   void
   initialize(const EquationData & equation_data_in)

@@ -19,7 +19,7 @@ struct MatrixFreeConnect
    */
   struct DoFInfoLocal;
 
-  static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
+  static constexpr unsigned int macro_size = VectorizedArray<Number>::size();
 
   void
   initialize(const MatrixFree<dim, Number> *                     mf_storage_in,

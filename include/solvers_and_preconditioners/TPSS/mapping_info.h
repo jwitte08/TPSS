@@ -34,7 +34,7 @@ public:
   using GeometryType               = internal::MatrixFreeFunctions::GeometryType;
   using PatchType                  = GeometryType;
   using VectorizedArrayType        = VectorizedArray<number>;
-  static constexpr auto macro_size = VectorizedArray<number>::n_array_elements;
+  static constexpr auto macro_size = VectorizedArray<number>::size();
 
   struct AdditionalData;
 
@@ -149,7 +149,7 @@ struct MappingInfo<dim, number>::LocalData
   // {
   //   for (unsigned int direction = 0; direction < dim; ++direction)
   //     for (unsigned int cell = 0; cell < h_lengths[direction].size(); ++cell)
-  // 	for (unsigned int vv = 0; vv < VectorizedArray<number>::n_array_elements; ++vv)
+  // 	for (unsigned int vv = 0; vv < VectorizedArray<number>::size(); ++vv)
   // 	  if (std::fabs (h_lengths[direction][cell][vv] - other.h_lengths[direction][cell][vv]) >
   // zero_tolerance) 	    return false;
   //   return true;

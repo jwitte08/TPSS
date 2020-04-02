@@ -253,7 +253,7 @@ public:
   // {
   //   static_assert(std::is_same<Number, scalar_value_type>::value, "Copy is only valid if the
   //   underlying class is of scalar value type"); AssertIndexRange(lane,
-  //   VectorizedArray<scalar_value_type>::n_array_elements); std::vector<std::array<Table<2,
+  //   VectorizedArray<scalar_value_type>::size()); std::vector<std::array<Table<2,
   //   scalar_value_type>, order>> tensors_lane; const auto & other_tensors =
   //   other.elementary_tensors;
   // }

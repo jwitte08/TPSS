@@ -31,7 +31,7 @@ value(const Function<dim, Number> &               func,
       const unsigned int                          component = 0)
 {
   VectorizedArray<Number> value;
-  for(unsigned int v = 0; v < VectorizedArray<Number>::n_array_elements; ++v)
+  for(unsigned int v = 0; v < VectorizedArray<Number>::size(); ++v)
   {
     Point<dim> single_point;
     for(unsigned int d = 0; d < dim; ++d)
@@ -51,7 +51,7 @@ value(const TensorFunction<1, dim, Number> &      func,
       const Point<dim, VectorizedArray<Number>> & macro_point)
 {
   Tensor<1, dim, VectorizedArray<Number>> value;
-  for(unsigned int v = 0; v < VectorizedArray<Number>::n_array_elements; ++v)
+  for(unsigned int v = 0; v < VectorizedArray<Number>::size(); ++v)
   {
     Point<dim> single_point;
     for(unsigned int d = 0; d < dim; ++d)
@@ -67,7 +67,7 @@ template<int dim, typename Number>
 std::string
 print_point(const Point<dim, VectorizedArray<Number>> & macro_point)
 {
-  constexpr auto     macro_size = VectorizedArray<Number>::n_array_elements;
+  constexpr auto     macro_size = VectorizedArray<Number>::size();
   std::ostringstream osstream;
   osstream << std::scientific << std::setprecision(2) << "{ ";
   for(unsigned int lane = 0; lane < macro_size; ++lane)
@@ -85,7 +85,7 @@ template<typename Number>
 std::string
 print_value(const VectorizedArray<Number> & macro_value)
 {
-  constexpr auto     macro_size = VectorizedArray<Number>::n_array_elements;
+  constexpr auto     macro_size = VectorizedArray<Number>::size();
   std::ostringstream osstream;
   osstream << std::scientific << std::setprecision(2) << "{ ";
   for(unsigned int lane = 0; lane < macro_size; ++lane)

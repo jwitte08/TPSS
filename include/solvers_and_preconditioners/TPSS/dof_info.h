@@ -184,7 +184,7 @@ public:
 template<int dim, typename Number>
 struct DoFInfo
 {
-  static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
+  static constexpr unsigned int macro_size = VectorizedArray<Number>::size();
 
   struct AdditionalData;
 

@@ -36,7 +36,7 @@ protected:
   using SystemMatrix               = typename PoissonProblem::SYSTEM_MATRIX;
   using LevelMatrix                = typename PoissonProblem::LEVEL_MATRIX;
   using vector_type                = typename PoissonProblem::VECTOR;
-  static constexpr unsigned int macro_size = VectorizedArray<double>::n_array_elements;
+  static constexpr unsigned int macro_size = VectorizedArray<double>::size();
 
   struct Params
   {

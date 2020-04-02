@@ -40,7 +40,7 @@ PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
   //     }
   //   }
   //   //: fill the unused lanes with meaningful data to avoid divison by zero in LAC solvers
-  //   for(unsigned int lane = n_lanes_filled; lane < VectorizedArray<Number>::n_array_elements;
+  //   for(unsigned int lane = n_lanes_filled; lane < VectorizedArray<Number>::size();
   //       ++lane)
   //     for(auto & elem : dst)
   //       elem[lane] = elem[0];

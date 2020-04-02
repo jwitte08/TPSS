@@ -119,9 +119,11 @@ compare_inverse_matrix(const FullMatrix<Number> & inverse_matrix,
     EXPECT_NEAR(id(i, i), 1., std::numeric_limits<Number>::epsilon() * 100. * n_entries);
     for(auto j = 0U; j < id.m(); ++j)
       if(i != j)
-        EXPECT_NEAR(id(i, j),
-                    std::numeric_limits<Number>::epsilon(),
-                    std::numeric_limits<Number>::epsilon() * 100. * n_entries);
+	{
+	  EXPECT_NEAR(id(i, j),
+		      std::numeric_limits<Number>::epsilon(),
+		      std::numeric_limits<Number>::epsilon() * 100. * n_entries);
+	}
   }
   pcout << oss.str();
 }

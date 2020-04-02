@@ -111,7 +111,7 @@ get_macro_size()
   using UnvectorizedNumber = typename ExtractScalarType<Number>::type;
   return (std::is_same<Number, UnvectorizedNumber>::value == true) ?
            1U :
-           dealii::VectorizedArray<UnvectorizedNumber>::n_array_elements;
+           dealii::VectorizedArray<UnvectorizedNumber>::size();
 }
 
 template<typename T1, typename T2>
@@ -141,11 +141,11 @@ operator/(const Utilities::MPI::MinMaxAvg & mma_in, const double t)
 
 
 template<typename Number>
-std::bitset<VectorizedArray<Number>::n_array_elements>
+std::bitset<VectorizedArray<Number>::size()>
 less_than(const VectorizedArray<Number> & lhs, const VectorizedArray<Number> & rhs)
 {
-  std::bitset<VectorizedArray<Number>::n_array_elements> flag;
-  for(auto lane = 0U; lane < VectorizedArray<Number>::n_array_elements; ++lane)
+  std::bitset<VectorizedArray<Number>::size()> flag;
+  for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
     flag[lane] = lhs[lane] < rhs[lane];
   return flag;
 }
@@ -184,7 +184,7 @@ template<typename Number>
 Number &
 scalar_value(VectorizedArray<Number> & value, const unsigned int lane = 0)
 {
-  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
+  AssertIndexRange(lane, VectorizedArray<Number>::size());
   return value[lane];
 }
 
@@ -203,7 +203,7 @@ template<typename Number>
 const Number &
 scalar_value(const VectorizedArray<Number> & value, const unsigned int lane = 0)
 {
-  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
+  AssertIndexRange(lane, VectorizedArray<Number>::size());
   return value[lane];
 }
 
@@ -220,7 +220,7 @@ VectorizedArray<double>
 make_random_value()
 {
   VectorizedArray<double> value;
-  for(auto lane = 0U; lane < VectorizedArray<double>::n_array_elements; ++lane)
+  for(auto lane = 0U; lane < VectorizedArray<double>::size(); ++lane)
     value[lane] = make_random_value<double>();
   return value;
 }
@@ -270,7 +270,7 @@ varray_to_string(const VectorizedArray<Number> & array)
 {
   std::ostringstream osstream;
   osstream << "[";
-  constexpr auto n_elems = VectorizedArray<Number>::n_array_elements;
+  constexpr auto n_elems = VectorizedArray<Number>::size();
   for(unsigned int k = 0; k < n_elems - 1; ++k)
     osstream << array[k] << "|";
   osstream << array[n_elems - 1] << "]";
@@ -287,7 +287,7 @@ FullMatrix<Number>
 vectorized_table_to_fullmatrix(const Table<2, VectorizedArray<Number>> & table,
                                const unsigned int                        lane = 0)
 {
-  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
+  AssertIndexRange(lane, VectorizedArray<Number>::size());
   FullMatrix<Number> matrix{table.n_rows(), table.n_cols()};
   for(unsigned int i = 0; i < table.n_rows(); ++i)
     for(unsigned int j = 0; j < table.n_cols(); ++j)
@@ -331,7 +331,7 @@ Vector<Number>
 array_view_to_vector(const ArrayView<const VectorizedArray<Number>> & view,
                      const unsigned int                               lane = 0)
 {
-  AssertIndexRange(lane, VectorizedArray<Number>::n_array_elements);
+  AssertIndexRange(lane, VectorizedArray<Number>::size());
   Vector<Number> vec(view.size());
   std::transform(view.cbegin(), view.cend(), vec.begin(), [lane](const auto & elem) {
     return elem[lane];

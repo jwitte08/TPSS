@@ -143,7 +143,7 @@ test_rank_two_vectorized_kronecker_svd()
   t5(1, 0)                             = make_vectorized_array<double>(0);
   t6(0, 0)                             = make_vectorized_array<double>(1);
   t6(1, 1)                             = make_vectorized_array<double>(4);
-  if(VectorizedArray<double>::n_array_elements > 2)
+  if(VectorizedArray<double>::size() > 2)
     t6(1, 1)[2] = 3.1415;
   t6(0, 1)                             = make_vectorized_array<double>(2);
   t6(1, 0)                             = make_vectorized_array<double>(2);
@@ -158,7 +158,7 @@ test_rank_two_vectorized_kronecker_svd()
   t8(1, 1)                             = make_vectorized_array<double>(0);
   t8(0, 1)                             = make_vectorized_array<double>(1);
   t8(0, 0)[0]                          = -2;
-  if(VectorizedArray<double>::n_array_elements > 2)
+  if(VectorizedArray<double>::size() > 2)
     t8(0, 0)[3] = -200;
   t8(1, 0) = make_vectorized_array<double>(1);
   std::array<Table<2, VectorizedArray<double>>, 2>              kp3  = {t5, t6};

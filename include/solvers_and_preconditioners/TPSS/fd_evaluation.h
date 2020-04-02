@@ -37,7 +37,7 @@ public:
   using CellAssembler =
     typename TPSS::MatrixEvaluator<fe_degree + 1, n_q_points_1d_, VectorizedArray<Number>>;
   using value_type                         = Number;
-  static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
+  static constexpr unsigned int macro_size = VectorizedArray<Number>::size();
 
   static constexpr unsigned int fe_order               = fe_degree + 1;
   static constexpr unsigned int n_q_points_1d_static   = n_q_points_1d_;

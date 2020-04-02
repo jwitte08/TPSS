@@ -82,7 +82,7 @@ VectorizedArray<Number>
 invert_safe(const VectorizedArray<Number> x)
 {
   VectorizedArray<Number> ret;
-  constexpr std::size_t   macro_size = VectorizedArray<Number>::n_array_elements;
+  constexpr std::size_t   macro_size = VectorizedArray<Number>::size();
   for(std::size_t lane = 0; lane < macro_size; lane++)
   {
     if(std::abs(x[lane]) <= std::numeric_limits<Number>::epsilon())
@@ -225,7 +225,7 @@ template<typename Number>
 bool
 operator>(VectorizedArray<Number> a, VectorizedArray<Number> b)
 {
-  constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
+  constexpr std::size_t macro_size = VectorizedArray<Number>::size();
   for(std::size_t lane = 0; lane < macro_size; lane++)
     if(a[lane] <= b[lane])
       return false;
@@ -238,7 +238,7 @@ template<typename Number>
 bool
 operator>(VectorizedArray<Number> a, Number b)
 {
-  constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
+  constexpr std::size_t macro_size = VectorizedArray<Number>::size();
   for(std::size_t lane = 0; lane < macro_size; lane++)
     if(a[lane] <= b)
       return false;
@@ -310,7 +310,7 @@ void printTable(Table<2, Number> tab, double digits = 2)
 template<typename Number>
 void printTable(Table<2, VectorizedArray<Number>> tab)
 {
-  constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
+  constexpr std::size_t macro_size = VectorizedArray<Number>::size();
   std::size_t           m          = tab.size()[0];
   std::size_t           n          = tab.size()[1];
   std::cout << "------------------------------------\n";
@@ -343,7 +343,7 @@ template<typename Number>
 void
 printAlignedVector(AlignedVector<VectorizedArray<Number>> vec)
 {
-  constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
+  constexpr std::size_t macro_size = VectorizedArray<Number>::size();
   std::size_t           m          = vec.size();
   std::cout << "######################################";
   for(std::size_t lane = 0; lane < macro_size; lane++)
@@ -406,7 +406,7 @@ svd(const Table<2, VectorizedArray<Number>> & matrix,
     AlignedVector<VectorizedArray<Number>> &  singular_values,
     Table<2, VectorizedArray<Number>> &       VT)
 {
-  constexpr std::size_t macro_size = VectorizedArray<Number>::n_array_elements;
+  constexpr std::size_t macro_size = VectorizedArray<Number>::size();
   for(std::size_t lane = 0; lane < macro_size; lane++)
   {
     Table<2, Number>      lane_matrix(matrix.size()[0], matrix.size()[1]);

@@ -112,7 +112,7 @@ struct PatchMatrix
 {
   using scalar_value_type                  = typename PatchOperator::value_type;
   using value_type                         = VectorizedArray<scalar_value_type>;
-  static constexpr unsigned int macro_size = VectorizedArray<scalar_value_type>::n_array_elements;
+  static constexpr unsigned int macro_size = VectorizedArray<scalar_value_type>::size();
 
   void
   reinit(const PatchOperator * patch_operator_in, const unsigned int patch_id)

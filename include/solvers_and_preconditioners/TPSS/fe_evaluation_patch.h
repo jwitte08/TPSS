@@ -18,7 +18,7 @@ class FEEvaluationPatch : public PatchMFWorker<dim, Number>
 public:
   using cell_evaluator_type                = FEEvaluation<dim, fe_degree, n_q_points_1d, 1, Number>;
   using patch_worker_type                  = PatchMFWorker<dim, Number>;
-  static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
+  static constexpr unsigned int macro_size = VectorizedArray<Number>::size();
 
   FEEvaluationPatch(const SubdomainHandler<dim, Number> & sd_handler_in,
                     const unsigned int                    dofh_index = 0);

@@ -43,7 +43,7 @@ public:
   using CellIterator                                   = typename PatchInfo<dim>::CellIterator;
   static constexpr unsigned int fe_order               = fe_degree + 1;
   static constexpr unsigned int n_dofs_per_cell_static = Utilities::pow(fe_order, dim);
-  static constexpr unsigned int macro_size             = VectorizedArray<Number>::n_array_elements;
+  static constexpr unsigned int macro_size             = VectorizedArray<Number>::size();
 
   // // TODO construct indices at compile time ?
   // struct GetIndexing;

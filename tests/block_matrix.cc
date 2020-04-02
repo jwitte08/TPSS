@@ -71,7 +71,7 @@ protected:
   static constexpr int dim                 = T::template type<0>::template value<0>();
   using Number                             = typename T::template type<1>;
   using TesterV                            = TestBlockMatrix<dim, VectorizedArray<Number>>;
-  static constexpr unsigned int macro_size = VectorizedArray<Number>::n_array_elements;
+  static constexpr unsigned int macro_size = VectorizedArray<Number>::size();
 
   void
   SetUp() override
