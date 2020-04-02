@@ -200,7 +200,6 @@ PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
    * PatchInfo::patch_starts
    */
   patch_info_in.patch_starts.clear();
-  patch_info_in.at_boundary_mask.clear();
   patch_info_in.subdomain_partition_data.clear();
   partition_patches(patch_info_in);
   const auto & partition_data = patch_info_in.subdomain_partition_data;
