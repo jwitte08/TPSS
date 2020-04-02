@@ -28,7 +28,7 @@ PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
   const auto n_cells_stored_after_init = internal_data.cell_iterators.size();
   (void)n_cells_stored_after_init;
 
-  // *** store internal data depending on caching strategies
+  // *** store internal data
   internal_data.triangulation = &(dof_handler->get_triangulation());
   // TODO we should not need to store the dof handler
   internal_data.dof_handler = dof_handler;

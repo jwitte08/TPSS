@@ -89,9 +89,6 @@ public:
   std::vector<std::array<CellIterator, macro_size>>
   get_cell_collection(const unsigned int patch_id) const;
 
-  std::vector<ArrayView<const CellIterator>>
-  get_cell_collection_views(unsigned int patch_id) const;
-
   unsigned int
   get_cell_position(const unsigned int patch_id,
                     const unsigned int cell_no,
@@ -203,7 +200,6 @@ PatchWorker<dim, number>::PatchWorker(PatchInfo<dim> & patch_info_in)
    * PatchInfo::patch_starts
    */
   patch_info_in.patch_starts.clear();
-  patch_info_in.at_boundary_mask.clear();
   patch_info_in.subdomain_partition_data.clear();
   partition_patches(patch_info_in);
   const auto & partition_data = patch_info_in.subdomain_partition_data;
@@ -360,28 +356,32 @@ PatchWorker<dim, number>::get_partition_data() const
 
 
 template<int dim, typename number>
-inline std::array<unsigned int, GeometryInfo<dim>::faces_per_cell>
-PatchWorker<dim, number>::get_at_boundary_masks_flat(const unsigned int patch) const
-{
-  Assert(patch_info != nullptr, ExcNotInitialized());
-  AssertIndexRange(patch, get_partition_data().n_subdomains());
-  std::array<unsigned int, GeometryInfo<dim>::faces_per_cell> at_bdry_mask;
-  std::copy_n(patch_info->at_boundary_mask.data() + GeometryInfo<dim>::faces_per_cell * patch,
-              GeometryInfo<dim>::faces_per_cell,
-              at_bdry_mask.begin());
-  return at_bdry_mask;
-}
-
-
-template<int dim, typename number>
 inline std::array<std::bitset<PatchWorker<dim, number>::macro_size>,
                   GeometryInfo<dim>::faces_per_cell>
-PatchWorker<dim, number>::get_at_boundary_masks(const unsigned int patch) const
+PatchWorker<dim, number>::get_at_boundary_masks(const unsigned int patch_id) const
 {
-  std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> at_bdry_mask;
-  const auto & at_bdry_mask_flat = get_at_boundary_masks_flat(patch);
-  std::copy(at_bdry_mask_flat.cbegin(), at_bdry_mask_flat.cend(), at_bdry_mask.begin());
-  return at_bdry_mask;
+  Assert(patch_info != nullptr, ExcNotInitialized());
+  AssertIndexRange(patch_id, get_partition_data().n_subdomains());
+
+  const auto get_mask =
+    [](auto && macro_cell, const unsigned int dimension, const unsigned int face_no_1d) {
+      std::bitset<macro_size> bitset_mask;
+      const auto              face_no = 2 * dimension + face_no_1d;
+      for(unsigned int lane = 0; lane < macro_size; ++lane)
+        bitset_mask[lane] = macro_cell[lane]->face(face_no)->at_boundary();
+      return bitset_mask;
+    };
+
+  // TODO patch face contains interior cell face and cell face at physical boundary
+  std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> at_bdry_masks;
+  const auto & cell_collection = get_cell_collection(patch_id);
+  for(unsigned int d = 0; d < dim; ++d)
+  {
+    at_bdry_masks[d * 2]     = get_mask(cell_collection.front(), d, /*face_no*/ 0);
+    at_bdry_masks[d * 2 + 1] = get_mask(cell_collection.back(), d, /*face_no*/ 1);
+  }
+
+  return at_bdry_masks;
 }
 
 
@@ -476,43 +476,6 @@ PatchWorker<dim, number>::get_cell_collection(const unsigned int patch_id) const
       cell_collect[cell_no][lane] = patch_info->get_cell_iterator(cell_position);
     }
   return cell_collect;
-}
-
-
-template<int dim, typename number>
-inline std::vector<ArrayView<const typename PatchWorker<dim, number>::CellIterator>>
-PatchWorker<dim, number>::get_cell_collection_views(unsigned int patch_id) const
-{
-  Assert(patch_info != nullptr, ExcNotInitialized());
-  AssertIndexRange(patch_id, get_partition_data().n_subdomains());
-  const auto patch_size = n_cells_per_subdomain();
-
-  const auto get_views = [&](const auto & begin) {
-    std::vector<ArrayView<const CellIterator>> views;
-    for(unsigned int m = 0; m < n_lanes_filled(patch_id); ++m)
-    {
-      const auto first = begin + m * patch_size;
-      views.emplace_back(ArrayView<const CellIterator>(first, patch_size));
-    }
-    return views;
-  };
-
-  if(!patch_info->get_internal_data()->cell_iterators.empty()) // cached
-  {
-    const auto & cell_iterators = patch_info->get_internal_data()->cell_iterators;
-    const auto & patch_starts   = patch_info->patch_starts;
-    const auto   begin          = cell_iterators.data() + patch_starts[patch_id];
-    return get_views(begin);
-  }
-
-  cell_iterators_scratchpad.clear();
-  for(auto lane = 0U; lane < n_lanes_filled(patch_id); ++lane)
-    for(auto cell_no = 0U; cell_no < patch_size; ++cell_no)
-    {
-      const auto cell_position = get_cell_position(patch_id, cell_no, lane);
-      cell_iterators_scratchpad.emplace_back(patch_info->get_cell_iterator(cell_position));
-    }
-  return get_views(cell_iterators_scratchpad.data());
 }
 
 

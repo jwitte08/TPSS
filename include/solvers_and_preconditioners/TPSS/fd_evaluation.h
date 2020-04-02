@@ -469,10 +469,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::reinit(const unsigned int 
   AssertIndexRange(patch, n_subdomains);
   patch_id = patch;
 
-  const auto & at_boundary_masks_in = patch_worker.get_at_boundary_masks(patch);
-  std::copy_n(at_boundary_masks_in.cbegin(),
-              GeometryInfo<dim>::faces_per_cell,
-              at_boundary_masks.begin());
+  this->at_boundary_masks = patch_worker.get_at_boundary_masks(patch);
 
   if(TPSS::DoFLayout::Q == get_dof_layout())
   {

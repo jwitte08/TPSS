@@ -9,7 +9,6 @@ DoFInfo<dim, Number>::initialize(
   const PatchInfo<dim> *                                                    patch_info_in,
   const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> * shape_info_in,
   const AdditionalData &                                                    additional_data_in)
-
 {
   Assert(patch_info_in->get_internal_data()->level != numbers::invalid_unsigned_int,
          ExcMessage("Handles level cells only."));
@@ -62,11 +61,22 @@ DoFInfo<dim, Number>::initialize_impl()
   if(DoFLayout::Q == get_dof_layout())
     l2h = FETools::lexicographic_to_hierarchic_numbering(dof_handler->get_fe());
 
-  // TODO: maybe initialize vector partitioner at the same time
-
   /// cache global dof indices once for each cell owned by this processor
   /// (including ghost cells)
   {
+    /// LAMBDA checks if cell is ghost on current level
+    const auto   my_subdomain_id   = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+    const auto & is_ghost_on_level = [my_subdomain_id](const auto & cell) {
+      const bool is_owned      = cell.level_subdomain_id() == my_subdomain_id;
+      const bool is_artificial = cell.level_subdomain_id() == numbers::artificial_subdomain_id;
+      return !is_owned && !is_artificial;
+    };
+
+    std::vector<types::global_dof_index> dof_indices_on_ghosts;
+    const IndexSet                       owned_dof_indices =
+      std::move(dof_handler->locally_owned_mg_dofs(additional_data.level));
+    IndexSet ghost_dof_indices(owned_dof_indices.size());
+
     PatchWorker<dim, Number> patch_worker(*patch_info);
     const auto               n_cells_plain = patch_info->n_cells_plain();
     const auto               n_subdomains  = patch_worker.get_partition_data().n_subdomains();
@@ -93,9 +103,9 @@ DoFInfo<dim, Number>::initialize_impl()
         }
     }
 
-    /// Cache the global dof indices (in compressed format) in @p
-    /// global_dof_indices_cellwise. Given the @p cell_position we access the associated dof
-    /// indices via @p start_and_number_of_dof_indices_cellwise.
+    /// Cache the global dof indices in @p global_dof_indices_cellwise. Given
+    /// the @p cell_position we access the associated dof indices via @p
+    /// start_and_number_of_dof_indices_cellwise.
     global_dof_indices_cellwise.clear();
     start_and_number_of_dof_indices_cellwise.resize(n_cells_plain);
     for(auto cell_index = 0U; cell_index < cell_index_to_cell_position.size(); ++cell_index)
@@ -114,11 +124,38 @@ DoFInfo<dim, Number>::initialize_impl()
         std::copy(level_dof_indices.cbegin(),
                   level_dof_indices.cend(),
                   std::back_inserter(global_dof_indices_cellwise));
+
+        if(is_ghost_on_level(cell))
+          for(const auto dof_index : level_dof_indices)
+            if(!owned_dof_indices.is_element(dof_index))
+              dof_indices_on_ghosts.push_back(dof_index);
       }
+
+    /// First, sort and compress duplicates of ghosted global dof indices. Then,
+    /// fill ghost index set.
+    std::sort(dof_indices_on_ghosts.begin(), dof_indices_on_ghosts.end());
+    const auto end_without_duplicates =
+      std::unique(dof_indices_on_ghosts.begin(), dof_indices_on_ghosts.end());
+    ghost_dof_indices.add_indices(dof_indices_on_ghosts.begin(), end_without_duplicates);
+    ghost_dof_indices.compress();
+
+    /// Initialize vector partitioner based on locally owned and ghosted dof indices.
+    const auto partitioner =
+      std::make_shared<Utilities::MPI::Partitioner>(owned_dof_indices, MPI_COMM_WORLD);
+    partitioner->set_ghost_indices(ghost_dof_indices);
+    this->vector_partitioner = partitioner;
+
+    /// Convert global dof indices into process local dof indices
+    dof_indices_cellwise.clear();
+    std::transform(global_dof_indices_cellwise.cbegin(),
+                   global_dof_indices_cellwise.cend(),
+                   std::back_inserter(dof_indices_cellwise),
+                   [&](const auto global_dof_index) {
+                     return vector_partitioner->global_to_local(global_dof_index);
+                   });
   }
 
-  /// Completely cache all global dof indices for each macro patch. TODO: delete
-  /// cell-based cached global dof indices ?
+  /// Completely cache all global dof indices for each macro patch.
   if(additional_data.caching_strategy == TPSS::CachingStrategy::Cached)
   {
     /// At this point we are able to use a reduced but sufficient set of
@@ -129,24 +166,22 @@ DoFInfo<dim, Number>::initialize_impl()
     const auto                  n_subdomains   = partition_data.n_subdomains();
 
     start_of_dof_indices_patchwise.clear();
-    global_dof_indices_patchwise.clear();
+    dof_indices_patchwise.clear();
     for(auto patch_id = 0U; patch_id < n_subdomains; ++patch_id)
     {
-      start_of_dof_indices_patchwise.emplace_back(global_dof_indices_patchwise.size());
+      start_of_dof_indices_patchwise.emplace_back(dof_indices_patchwise.size());
       for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch_id); ++lane)
       {
         const auto & dof_indices_on_patch = patch_worker.fill_dof_indices_on_patch(patch_id, lane);
         std::copy(dof_indices_on_patch.cbegin(),
                   dof_indices_on_patch.cend(),
-                  std::back_inserter(global_dof_indices_patchwise));
+                  std::back_inserter(dof_indices_patchwise));
       }
     }
-    start_of_dof_indices_patchwise.emplace_back(global_dof_indices_patchwise.size());
+    start_of_dof_indices_patchwise.emplace_back(dof_indices_patchwise.size());
 
-    // /// Clear the cell-wise cached global dof indices
-    // /// TODO reasonable? compress function is better to postpone clear
-    // start_and_number_of_dof_indices_cellwise.clear();
-    // global_dof_indices_cellwise.clear();
+    // // TODO !!! check compression
+    // compress();
   }
 }
 

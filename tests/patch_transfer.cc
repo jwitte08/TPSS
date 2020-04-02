@@ -81,12 +81,12 @@ protected:
     const auto   patch_transfer = std::make_shared<PatchTransfer>(*fdss_storage);
     const auto & dof_handler    = poisson_problem->dof_handler;
 
-    Vector<double> dof_vector(dof_handler.n_dofs(global_level));
+    LinearAlgebra::distributed::Vector<double> dof_vector(dof_handler.n_dofs(global_level));
     fill_with_random_values(dof_vector);
 
     const auto &   partition_data = fdss_storage->get_partition_data();
     const auto     n_subdomains   = partition_data.n_subdomains();
-    Vector<double> dst(dof_handler.n_dofs(global_level));
+    LinearAlgebra::distributed::Vector<double> dst(dof_handler.n_dofs(global_level));
     dst *= 0.;
 
     *pcout << "Restrict & Prolongate = Identity ...  \n\n";

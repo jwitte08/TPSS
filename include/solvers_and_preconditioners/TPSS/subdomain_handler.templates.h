@@ -81,7 +81,6 @@ SubdomainHandler<dim, number>::internal_reinit()
   patch_info_data.level                 = additional_data.level;
   patch_info_data.coloring_func         = additional_data.coloring_func;
   patch_info_data.manual_gathering_func = additional_data.manual_gathering_func;
-  patch_info_data.caching_strategy      = additional_data.caching_strategy;
   patch_info_data.print_details         = additional_data.print_details;
   patch_info.initialize(dof_handlers.front(), patch_info_data);
   for(const auto & info : patch_info.time_data)
@@ -111,29 +110,6 @@ SubdomainHandler<dim, number>::internal_reinit()
                             &patch_info,
                             &(get_shape_info(dofh_index)),
                             dof_info_data);
-    }
-  }
-  { // *** initialize MPI vector partitioners
-    if(TPSS::PatchVariant::cell == additional_data.patch_variant)
-    {
-      std::set<unsigned int> initialized_indices;
-      for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
-      {
-        const auto unique_dofh_index        = get_unique_dofh_index(dofh_index);
-        auto &     dof_info                 = dof_infos[unique_dofh_index];
-        const auto [dummy, not_initialized] = initialized_indices.insert(unique_dofh_index);
-        (void)dummy;
-        if(not_initialized)
-          dof_info.vector_partitioner = mf_storage->get_vector_partitioner(dofh_index);
-      }
-    }
-    else // entire assembly of vector partitioners
-    {
-      for(auto & dof_info : dof_infos)
-      {
-        TPSS::PatchDoFWorker<dim, number> patch_dof_worker(dof_info);
-        dof_info.vector_partitioner = patch_dof_worker.initialize_vector_partitioner();
-      }
     }
   }
 

@@ -46,14 +46,25 @@ PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
   //       elem[lane] = elem[0];
   // }
   // else // compressed
+  // /// !!! OLD
+  // {
+  //   for(unsigned int lane = 0; lane < macro_size; ++lane)
+  //   {
+  //     const auto & global_dof_indices = get_global_dof_indices(lane);
+  //     AssertDimension(dst.size(), global_dof_indices.size());
+  //     auto dof_index = global_dof_indices.cbegin();
+  //     for(auto dst_value = dst.begin(); dst_value != dst.end(); ++dof_index, ++dst_value)
+  //       (*dst_value)[lane] = src((*dof_index));
+  //   }
+  // }
   {
     for(unsigned int lane = 0; lane < macro_size; ++lane)
     {
-      const auto & global_dof_indices = get_global_dof_indices(lane);
+      const auto & global_dof_indices = get_dof_indices(lane);
       AssertDimension(dst.size(), global_dof_indices.size());
       auto dof_index = global_dof_indices.cbegin();
       for(auto dst_value = dst.begin(); dst_value != dst.end(); ++dof_index, ++dst_value)
-        (*dst_value)[lane] = src((*dof_index));
+        (*dst_value)[lane] = src.local_element(*dof_index);
     }
   }
 
@@ -129,14 +140,26 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
   //   }
   // }
   // else // compressed
+
+  // /// !!! OLD
+  // {
+  //   for(unsigned int lane = 0; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
+  //   {
+  //     const auto & global_dof_indices = get_global_dof_indices(lane);
+  //     AssertDimension(src.size(), global_dof_indices.size());
+  //     auto dof_index = global_dof_indices.cbegin();
+  //     for(auto src_value = src.cbegin(); src_value != src.cend(); ++dof_index, ++src_value)
+  //       dst((*dof_index)) += (*src_value)[lane];
+  //   }
+  // }
   {
     for(unsigned int lane = 0; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
     {
-      const auto & global_dof_indices = get_global_dof_indices(lane);
+      const auto & global_dof_indices = get_dof_indices(lane);
       AssertDimension(src.size(), global_dof_indices.size());
       auto dof_index = global_dof_indices.cbegin();
       for(auto src_value = src.cbegin(); src_value != src.cend(); ++dof_index, ++src_value)
-        dst((*dof_index)) += (*src_value)[lane];
+        dst.local_element(*dof_index) += (*src_value)[lane];
     }
   }
 }

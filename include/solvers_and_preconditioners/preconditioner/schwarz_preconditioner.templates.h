@@ -288,6 +288,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   /// we do not control the initialization of @p residual_in such that we have
   /// to compare it globally
   const VectorType * residual;
+  // !!! globally_compatible ist überflüssig
   if(is_globally_compatible(residual_in, subdomain_handler->get_vector_partitioners()))
   {
     // std::cout << "residual is compatible" << std::endl;
