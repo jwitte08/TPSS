@@ -100,7 +100,7 @@ public:
   get_matrix_free() const;
 
   const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>> &
-  get_shape_info(const unsigned int dofh_index = 0, const unsigned int dimension = 0) const;
+  get_shape_info(const unsigned int dofh_index = 0) const;
 
   std::vector<TimeInfo>
   get_time_data() const;
@@ -187,6 +187,10 @@ struct SubdomainHandler<dim, number>::AdditionalData
                      std::vector<std::vector<CellIterator>> &            cell_collections)>
     manual_gathering_func;
 
+  /*
+   * Oth table direction : dofh_index
+   * 1st table direction : dummy
+   */
   Table<2, internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>>> shape_infos;
   std::vector<std::set<types::boundary_id>>                                   dirichlet_ids;
 
@@ -324,16 +328,15 @@ SubdomainHandler<dim, number>::get_partition_data() const
 
 template<int dim, typename number>
 inline const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>> &
-SubdomainHandler<dim, number>::get_shape_info(const unsigned int dofh_index,
-                                              const unsigned int dimension) const
+SubdomainHandler<dim, number>::get_shape_info(const unsigned int dofh_index) const
 {
   AssertIndexRange(dofh_index, n_components());
-  AssertIndexRange(dimension, dim);
+  AssertDimension(additional_data.shape_infos.size(1), 1);
   if(!additional_data.shape_infos.empty())
-    return additional_data.shape_infos(dofh_index, dimension);
+    return additional_data.shape_infos(dofh_index, /*dummy*/ 0); // !!!
   /// assuming isotropy of tensor product elements and quadrature
   Assert(this->mf_storage, ExcMessage("MatrixFree object not initialized."));
-  return get_matrix_free().get_shape_info(dofh_index, 0);
+  return get_matrix_free().get_shape_info(dofh_index, /*quad_index*/ 0);
 }
 
 

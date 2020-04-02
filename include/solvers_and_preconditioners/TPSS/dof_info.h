@@ -196,12 +196,13 @@ struct DoFInfo
              const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> * shape_info,
              const AdditionalData & additional_data = AdditionalData{});
 
-  void
-  initialize(const DoFHandler<dim> * dof_handler,
-             const PatchInfo<dim> *  patch_info,
-             const std::array<internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> *,
-                              dim> & shape_infos,
-             const AdditionalData &  additional_data = AdditionalData{});
+  // void
+  // initialize(const DoFHandler<dim> * dof_handler,
+  //            const PatchInfo<dim> *  patch_info,
+  //            const std::array<internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>>
+  //            *,
+  //                             dim> & shape_infos,
+  //            const AdditionalData &  additional_data = AdditionalData{});
 
   void
   initialize_impl();
@@ -279,8 +280,7 @@ struct DoFInfo
 
   const PatchInfo<dim> * patch_info = nullptr;
 
-  std::array<const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> *, dim>
-    shape_infos;
+  const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> * shape_info;
 
   std::shared_ptr<const Utilities::MPI::Partitioner> vector_partitioner;
 

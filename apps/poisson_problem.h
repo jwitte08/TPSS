@@ -547,12 +547,9 @@ struct ModelProblem : public Subscriptor
       mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
       mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
       auto & shape_infos = mgss_data.shape_infos;
-      shape_infos.reinit(1, dim);
-      for(auto d = 0U; d < dim; ++d)
-      {
-        const auto mf_storage = mg_matrices[mg_matrices.max_level()].get_matrix_free();
-        shape_infos(0, d)     = mf_storage->get_shape_info(0);
-      }
+      shape_infos.reinit(/*dofh_index*/ 1, /*dummy*/ 1);
+      const auto mf_storage = mg_matrices[mg_matrices.max_level()].get_matrix_free();
+      shape_infos(0, 0)     = mf_storage->get_shape_info(0);
       mgss->initialize(mg_matrices, mgss_data);
       mg_schwarz_smoother_pre = mgss;
     }

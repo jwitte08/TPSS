@@ -89,8 +89,8 @@ public:
   Tensor<1, dim, VectorizedArray<Number>>
   get_normal_vector(const int face_no, const int direction) const;
 
-  const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> &
-  get_shape_info(const unsigned int dimension) const;
+  const internal::MatrixFreeFunctions::UnivariateShapeData<VectorizedArray<Number>> &
+  get_shape_data(const unsigned int dimension) const;
 
   const SubdomainHandler<dim, Number> &
   get_subdomain_handler() const;
@@ -402,7 +402,7 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
     /// static variables fe_order and n_q_points_1d_static have to define the maximum
     /// number for any dimension
     AssertIndexRange(patch_worker.get_dof_tensor().n_dofs_per_cell_1d(d), fe_order + 1);
-    AssertIndexRange(patch_worker.get_shape_info(d).get_shape_data().quadrature.size(), n_q_points_1d_static + 1);
+    AssertIndexRange(get_shape_data(d).quadrature.size(), n_q_points_1d_static + 1);
     /// currently assume isotropy ... TODO
     AssertDimension(n_dofs_per_cell_1d(d), fe_order);
     AssertDimension(n_q_points_1d(d), n_q_points_1d_static);
@@ -419,20 +419,20 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
   /// Extract one-dimensional quadrature weights of reference interval
   for(auto d = 0U; d < dim; ++d)
   {
-    const auto & shape_info = patch_worker.get_shape_info(d);
-    const auto & quadrature = shape_info.get_shape_data().quadrature;
+    const auto & shape_data = get_shape_data(d);
+    const auto & quadrature = shape_data.quadrature;
     AssertIndexRange(static_cast<int>(quadrature.size()), n_q_points_1d_static + 1);
     const auto & unit_weights = quadrature.get_weights();
     auto         W            = &(get_q_weight_impl(0, d));
     std::copy(unit_weights.cbegin(), unit_weights.cend(), W);
 
     /// Extract one-dimensional shape function values on cell and face quadratures
-    auto values_in_begin = shape_info.get_shape_data().shape_values.begin();
+    auto values_in_begin = shape_data.shape_values.begin();
     auto values_begin    = &(shape_value_impl(0, 0, d, 0));
     std::copy_n(values_in_begin, fe_order * n_q_points_1d_static, values_begin);
     for(const auto face_no : {0, 1})
     {
-      auto values_face_in_begin = shape_info.get_shape_data().shape_data_on_face[face_no].begin();
+      auto values_face_in_begin = shape_data.shape_data_on_face[face_no].begin();
       auto values_face_begin    = &(shape_value_face_impl(0, face_no, d, 0));
       std::copy_n(values_face_in_begin, fe_order, values_face_begin);
     }
@@ -581,10 +581,10 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate_gradients()
   /// scale univariate reference gradients with h_d^{-1}
   for(unsigned int d = 0; d < dim; ++d)
   {
-    const auto & shape_info         = get_shape_info(d);
+    const auto & shape_data         = get_shape_data(d);
     const auto   n_q_points_1d      = this->n_q_points_1d(d);
     const auto   n_dofs_per_cell_1d = this->n_dofs_per_cell_1d(d);
-    const auto * unit_grads_begin   = shape_info.get_shape_data().shape_gradients.begin();
+    const auto * unit_grads_begin   = shape_data.shape_gradients.begin();
     for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
     {
       const auto h_inv = 1. / get_h(d, cell_no);
@@ -600,7 +600,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate_gradients()
 
       for(const int face_no : {0, 1})
       {
-        const auto * unit_grads_on_face = shape_info.get_shape_data().shape_data_on_face[face_no].begin() + fe_order;
+        const auto * unit_grads_on_face = shape_data.shape_data_on_face[face_no].begin() + fe_order;
         auto *       grad_on_face       = &(shape_gradient_face_impl(0, face_no, d, cell_no));
         std::transform(unit_grads_on_face,
                        unit_grads_on_face + fe_order,
@@ -755,11 +755,11 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_constrained_dof_indice
 
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
-inline const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> &
-FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_shape_info(
+inline const internal::MatrixFreeFunctions::UnivariateShapeData<VectorizedArray<Number>> &
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_shape_data(
   const unsigned int dimension) const
 {
-  return patch_worker.get_shape_info(dimension);
+  return patch_worker.get_shape_info().get_shape_data(dimension);
 }
 
 
@@ -802,7 +802,7 @@ inline unsigned int
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_q_points_1d(
   const unsigned int dimension) const
 {
-  return get_shape_info(dimension).get_shape_data().quadrature.size();
+  return get_shape_data(dimension).quadrature.size();
 }
 
 

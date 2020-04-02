@@ -72,7 +72,7 @@ public:
   get_dof_tensor() const;
 
   const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> &
-  get_shape_info(const unsigned int dimension) const;
+  get_shape_info() const;
 
   /**
    * Returns the start position of global dof indices on patch @patch_id at
@@ -135,11 +135,12 @@ inline PatchDoFWorker<dim, Number>::PatchDoFWorker(const DoFInfo<dim, Number> & 
     patch_dof_tensor(TPSS::UniversalInfo<dim>::n_cells_per_direction(
                        this->patch_info->get_additional_data().patch_variant),
                      /// currently assuming isotropy ...
-                     get_shape_info(0).get_shape_data().fe_degree + 1,
+                     get_shape_info().get_shape_data().fe_degree + 1,
                      dof_info_in.get_dof_layout())
 {
   for(auto d = 0U; d < dim; ++d)
-    AssertDimension(get_dof_tensor().n_dofs_per_cell_1d(d), get_shape_info(d).get_shape_data().fe_degree + 1);
+    AssertDimension(get_dof_tensor().n_dofs_per_cell_1d(d),
+                    get_shape_info().get_shape_data(d).fe_degree + 1);
   Assert(dof_info->get_additional_data().level != numbers::invalid_unsigned_int,
          ExcMessage("Implemented for level cells only."));
 }
@@ -347,12 +348,10 @@ PatchDoFWorker<dim, Number>::get_dof_tensor() const
 
 template<int dim, typename Number>
 inline const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> &
-PatchDoFWorker<dim, Number>::get_shape_info(const unsigned int dimension) const
+PatchDoFWorker<dim, Number>::get_shape_info() const
 {
-  AssertIndexRange(dimension, dim);
-  const auto * shape_info = dof_info->shape_infos[dimension];
-  Assert(shape_info, ExcMessage("Shape info not set."));
-  return *shape_info;
+  Assert(dof_info->shape_info, ExcMessage("shape_info is not set."));
+  return *(dof_info->shape_info);
 }
 
 

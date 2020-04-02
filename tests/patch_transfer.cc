@@ -84,8 +84,8 @@ protected:
     LinearAlgebra::distributed::Vector<double> dof_vector(dof_handler.n_dofs(global_level));
     fill_with_random_values(dof_vector);
 
-    const auto &   partition_data = fdss_storage->get_partition_data();
-    const auto     n_subdomains   = partition_data.n_subdomains();
+    const auto &                               partition_data = fdss_storage->get_partition_data();
+    const auto                                 n_subdomains   = partition_data.n_subdomains();
     LinearAlgebra::distributed::Vector<double> dst(dof_handler.n_dofs(global_level));
     dst *= 0.;
 
