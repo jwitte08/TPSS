@@ -364,6 +364,10 @@ public:
   std::shared_ptr<const SubdomainHandler<dim, typename MatrixType::value_type>>
   get_subdomain_handler(unsigned int level = numbers::invalid_unsigned_int) const
   {
+    if(level == numbers::invalid_unsigned_int)
+      level = max_level();
+    Assert(min_level() <= level && level <= max_level(),
+           ExcIndexRange(level, min_level(), max_level() + 1));
     return get_preconditioner(level)->get_subdomain_handler();
   }
 
