@@ -23,6 +23,14 @@ public:
   FEEvaluationPatch(const SubdomainHandler<dim, Number> & sd_handler_in,
                     const unsigned int                    dofh_index = 0);
 
+  ~FEEvaluationPatch()
+  {
+    cell_eval.reset();
+    current_patch_id   = numbers::invalid_unsigned_int;
+    current_patch_lane = numbers::invalid_unsigned_int;
+    current_cell_no    = numbers::invalid_unsigned_int;
+  }
+
   void
   reinit(const unsigned int patch_id, const unsigned int patch_lane);
 

@@ -777,6 +777,11 @@ public:
   using This                 = Operator;
   using patch_evaluator_type = TPSS::FEEvaluationPatch<dim, fe_degree, fe_degree + 1, Number>;
 
+  ~Operator()
+  {
+    clear();
+  }
+
   /// system matrix initialize
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage,
@@ -811,6 +816,7 @@ public:
   unsigned int
   m(const unsigned int patch_id) const
   {
+    Assert(eval_patch, ExcMessage("Evaluator is not set."));
     return eval_patch->n_dofs_on_patch(patch_id, 0);
   }
 
@@ -851,6 +857,7 @@ public:
                  const unsigned int                               patch_id,
                  const unsigned int                               lane) const
   {
+    Assert(eval_patch, ExcMessage("Evaluator is not set."));
     eval_patch->reinit(patch_id, lane);
     const auto phi     = eval_patch->cell_eval;
     const auto n_cells = eval_patch->n_cells_per_subdomain();
@@ -887,7 +894,7 @@ public:
   }
 
   void
-  reinit_patch_evaluator(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  reinit_patch_evaluator(const SubdomainHandler<dim, Number> & subdomain_handler)
   {
     eval_patch = std::make_shared<patch_evaluator_type>(subdomain_handler);
   }
@@ -909,6 +916,8 @@ public:
   }
 
   using Base::Tvmult;
+
+  // mutable patch_evaluator_type * eval_patch = nullptr;
 
 protected:
   void
@@ -936,6 +945,7 @@ Operator<dim, fe_degree, Number>::clear()
 {
   mf_storage.reset();
   time_infos.clear();
+  eval_patch.reset();
   Base::clear();
 }
 
