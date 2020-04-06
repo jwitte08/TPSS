@@ -37,6 +37,7 @@
 
 #include <deal.II/numerics/vector_tools.h>
 
+#include "solvers_and_preconditioners/TPSS/alignedlinalg.h"
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
 #include "solvers_and_preconditioners/TPSS/matrix_helper.h"
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
@@ -70,6 +71,34 @@ template<int             dim,
          int n_patch_dofs = -1>
 struct ModelProblem : public Subscriptor
 {
+  template<typename MatrixType, typename VectorType = Vector<Number>>
+  struct MatrixWrapper
+  {
+    MatrixWrapper(const MatrixType & matrix_in) : matrix(matrix_in)
+    {
+    }
+
+    void
+    vmult(VectorType dst, const VectorType src) const
+    {
+    }
+
+    const MatrixType & matrix;
+  };
+
+  template<typename PreconType, typename VectorType = Vector<Number>>
+  struct PreconWrapper
+  {
+    PreconWrapper(const PreconType & precon_in) : precon(precon_in)
+    {
+    }
+
+    void
+    vmult(VectorType dst, const VectorType src) const;
+
+    const PreconType & precon;
+  };
+
   static constexpr unsigned int fe_order          = fe_degree + 1;
   static constexpr unsigned int n_q_points_static = fe_degree + 1;
 
@@ -335,6 +364,7 @@ struct ModelProblem : public Subscriptor
     precondition_data.symmetrized      = schwarz_data.symmetrize_smoothing;
     const auto schwarz_preconditioner  = std::make_shared<SCHWARZ_PRECONDITIONER>();
     schwarz_preconditioner->initialize(patch_storage, matrix, precondition_data);
+
     return schwarz_preconditioner;
   }
 
@@ -536,22 +566,58 @@ struct ModelProblem : public Subscriptor
 
 
   void
+  compute_local_damping(MG_SMOOTHER_SCHWARZ &         mg_smoothers,
+                        MGLevelObject<LEVEL_MATRIX> & mg_matrices)
+  {
+    AssertDimension(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD), 1);
+    for(auto level = mg_smoothers.min_level(); level <= mg_smoothers.max_level(); ++level)
+    {
+      const auto subdomain_handler      = mg_smoothers.get_subdomain_handler(level);
+      const auto schwarz_preconditioner = mg_smoothers.get_preconditioner(level);
+      auto &     level_matrix           = mg_matrices[level];
+      auto eval = std::make_shared<typename LEVEL_MATRIX::patch_evaluator_type>(*subdomain_handler);
+      level_matrix.reinit_patch_evaluator(*subdomain_handler);
+      const auto local_inverses = schwarz_preconditioner->get_local_solvers();
+      TPSS::PatchTransfer<dim, Number, fe_degree> patch_transfer(*subdomain_handler);
+      for(auto patch = 0U; patch < local_inverses->size(); ++patch)
+      {
+        const auto &              tildeAj = local_inverses->at(patch);
+        PatchMatrix<LEVEL_MATRIX> Aj;
+        Aj.reinit(&level_matrix, patch);
+
+        // PreconWrapper<PatchMatrix<LEVEL_MATRIX>>
+        const auto & tildeAjinv            = Tensors::inverse_matrix_to_table(tildeAj);
+        const auto   preconditioned_system = matrix_multiplication(tildeAjinv, Aj.as_table());
+        for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
+        {
+          const auto & M           = table_to_fullmatrix(preconditioned_system, lane);
+          const auto & eigenvalues = compute_eigenvalues(M);
+          std::cout << vector_to_string(eigenvalues) << std::endl;
+        }
+      }
+    }
+  }
+
+
+  void
   prepare_mg_smoothers()
   {
     /// setup Schwarz-type pre-smoother
     if(rt_parameters.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
     {
-      const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
-      typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
-      mgss_data.coloring_func = std::ref(*user_coloring);
-      mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
-      mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
-      auto & shape_infos = mgss_data.shape_infos;
+      const auto mg_smoothers = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+      typename MG_SMOOTHER_SCHWARZ::AdditionalData mg_smoothers_data;
+      mg_smoothers_data.coloring_func = std::ref(*user_coloring);
+      mg_smoothers_data.parameters    = rt_parameters.multigrid.pre_smoother;
+      mg_smoothers_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
+      auto & shape_infos = mg_smoothers_data.shape_infos;
       shape_infos.reinit(/*dofh_index*/ 1, /*dummy*/ 1);
       const auto mf_storage = mg_matrices[mg_matrices.max_level()].get_matrix_free();
       shape_infos(0, 0)     = mf_storage->get_shape_info(0);
-      mgss->initialize(mg_matrices, mgss_data);
-      mg_schwarz_smoother_pre = mgss;
+      mg_smoothers->initialize(mg_matrices, mg_smoothers_data);
+      // if constexpr(dof_layout == TPSS::DoFLayout::Q)
+      compute_local_damping(*mg_smoothers, mg_matrices);
+      mg_schwarz_smoother_pre = mg_smoothers;
     }
     else
       AssertThrow(false, ExcMessage("Smoothing variant not implemented. TODO"));

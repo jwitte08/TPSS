@@ -917,8 +917,6 @@ public:
 
   using Base::Tvmult;
 
-  // mutable patch_evaluator_type * eval_patch = nullptr;
-
 protected:
   void
   apply_add(LinearAlgebra::distributed::Vector<Number> &       dst,
