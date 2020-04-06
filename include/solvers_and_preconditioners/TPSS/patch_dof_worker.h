@@ -133,9 +133,9 @@ inline PatchDoFWorker<dim, Number>::PatchDoFWorker(const DoFInfo<dim, Number> & 
     dof_info(&dof_info_in),
     dof_layout(dof_info_in.get_dof_layout()),
     patch_dof_tensor(TPSS::UniversalInfo<dim>::n_cells_per_direction(
-                       this->patch_info->get_additional_data().patch_variant),
+                       dof_info_in.patch_info->get_additional_data().patch_variant),
                      /// currently assuming isotropy ...
-                     get_shape_info().get_shape_data().fe_degree + 1,
+                     dof_info_in.shape_info->get_shape_data().fe_degree + 1,
                      dof_info_in.get_dof_layout())
 {
   for(auto d = 0U; d < dim; ++d)
