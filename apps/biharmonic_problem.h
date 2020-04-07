@@ -1,3 +1,6 @@
+#ifndef APPS_BIHARMONICPROBLEM_H_
+#define APPS_BIHARMONICPROBLEM_H_
+
 /* ---------------------------------------------------------------------
  * based on step-47
  *
@@ -59,6 +62,7 @@
 #include <iostream>
 
 
+#include "biharmonic_integrator.h"
 #include "equation_data.h"
 #include "mesh.h"
 #include "rt_parameter.h"
@@ -73,6 +77,8 @@ template<int dim>
 class ModelProblem
 {
 public:
+  static_assert(dim == 2, "only implemented in 2D");
+
   ModelProblem(const unsigned int fe_degree);
 
   void
@@ -587,4 +593,9 @@ ModelProblem<dim>::run()
     *pcout << std::endl;
   }
 }
+
+
+
 } // namespace Biharmonic
+
+#endif // APPS_BIHARMONICPROBLEM_H_
