@@ -166,18 +166,12 @@ struct CellLaplace
   using Number                  = typename EvaluatorType::value_type;
   static constexpr int fe_order = EvaluatorType::fe_order;
 
-  CellLaplace(const Laplace::EquationData & equation_data_in) : equation_data(equation_data_in)
-  {
-  }
-
   void
   operator()(const EvaluatorType &,
              const EvaluatorType &               eval,
              Table<2, VectorizedArray<Number>> & cell_matrix,
              const int                           direction,
              const int                           cell_no) const;
-
-  const Laplace::EquationData equation_data;
 };
 
 template<typename EvaluatorType>
@@ -237,7 +231,7 @@ public:
 
     Evaluator              eval(subdomain_handler);
     CellMass<Evaluator>    cell_mass_operation;
-    CellLaplace<Evaluator> cell_laplace_operation(equation_data);
+    CellLaplace<Evaluator> cell_laplace_operation;
     FaceLaplace<Evaluator> nitsche_operation(equation_data);
 
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
@@ -1100,7 +1094,7 @@ public:
 
     Evaluator                               eval(subdomain_handler);
     Laplace::DG::FD::CellMass<Evaluator>    cell_mass_operation;
-    Laplace::DG::FD::CellLaplace<Evaluator> cell_laplace_operation(equation_data);
+    Laplace::DG::FD::CellLaplace<Evaluator> cell_laplace_operation;
 
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
     {
