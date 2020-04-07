@@ -413,6 +413,7 @@ template<int dim, typename Number, int fe_degree>
 ArrayView<const unsigned int>
 PatchTransfer<dim, Number, fe_degree>::get_dof_indices(const unsigned int lane) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
   if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
     return get_dof_indices(0);
 
