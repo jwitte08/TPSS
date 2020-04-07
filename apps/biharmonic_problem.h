@@ -91,6 +91,12 @@ public:
   void
   output_results(const unsigned int iteration) const;
 
+  unsigned int
+  max_level() const
+  {
+    return triangulation.n_global_levels() - 1;
+  }
+
   RT::Parameter                       rt_parameters;
   std::shared_ptr<ConditionalOStream> pcout;
 

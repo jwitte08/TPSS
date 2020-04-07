@@ -30,13 +30,6 @@ protected:
   static constexpr unsigned int macro_size = VectorizedArray<double>::size();
 
 
-  struct Params
-  {
-    unsigned int       n_refinements = 0;
-    TPSS::PatchVariant patch_variant = TPSS::PatchVariant::vertex;
-  };
-
-
   void
   SetUp() override
   {
@@ -71,41 +64,56 @@ protected:
   }
 
 
-  // FullMatrix<double>
-  // assemble_system_matrix() const
-  // {
-  //   AssertThrow(biharmonic_problem, ExcMessage("Not initialized."));
-  //   const auto & system_matrix_mf = biharmonic_problem->system_matrix;
-  //   const auto   table            = Tensors::matrix_to_table(system_matrix_mf);
-  //   return table_to_fullmatrix(table);
-  // }
-
-
-  // template<typename PatchTransfer, typename VectorType>
-  // std::vector<unsigned int>
-  // extract_dof_indices_per_patch(const unsigned int patch,
-  //                               PatchTransfer &    patch_transfer,
-  //                               VectorType &       vector,
-  //                               const unsigned int lane = 0)
-  // {
-  //   patch_transfer.reinit(patch);
-  //   for(auto i = 0U; i < vector.size(); ++i)
-  //     vector(i) = static_cast<double>(i) + 0.1;
-  //   const auto                indices      = patch_transfer.gather(vector);
-  //   const auto                indices_view = make_array_view(indices.begin(), indices.end());
-  //   const auto                indices_lane = array_view_to_vector(indices_view, lane);
-  //   std::vector<unsigned int> indices_per_patch;
-  //   std::copy(indices_lane.begin(), indices_lane.end(), std::back_inserter(indices_per_patch));
-  //   return indices_per_patch;
-  // }
-
-
   void
   check_local_matrices()
   {
     initialize();
 
-    biharmonic_problem->system_matrix.print_formatted(std::cout);
+    /// matrix-free dummy
+    const auto mf_storage = std::make_shared<MatrixFree<dim, double>>();
+    {
+      typename MatrixFree<dim, double>::AdditionalData additional_data;
+      additional_data.mg_level = biharmonic_problem->max_level();
+      QGauss<1> quadrature(fe_degree + 1);
+      mf_storage->reinit(biharmonic_problem->mapping,
+                         biharmonic_problem->dof_handler,
+                         biharmonic_problem->constraints,
+                         quadrature,
+                         additional_data);
+    }
+
+    /// distribute subdomains
+    const auto subdomain_handler = std::make_shared<SubdomainHandler<dim, double>>();
+    {
+      typename SubdomainHandler<dim, double>::AdditionalData additional_data;
+      additional_data.level            = biharmonic_problem->max_level();
+      additional_data.smoother_variant = TPSS::SmootherVariant::additive;
+      additional_data.patch_variant    = TPSS::PatchVariant::vertex;
+      subdomain_handler->reinit(mf_storage, additional_data);
+    }
+
+    /// compare local matrices
+    TPSS::PatchTransfer<dim, double, fe_degree> patch_transfer(*subdomain_handler);
+    const auto & patch_worker = patch_transfer.get_patch_dof_worker();
+    for(auto patch = 0U; patch < patch_worker.get_partition_data().n_subdomains(); ++patch)
+    {
+      patch_transfer.reinit(patch);
+      for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch); ++lane)
+      {
+        std::vector<types::global_dof_index> dof_indices_on_patch;
+        {
+          const auto view = patch_transfer.get_dof_indices(lane);
+          std::copy(view.cbegin(), view.cend(), std::back_inserter(dof_indices_on_patch));
+        }
+        FullMatrix<double> local_matrix(dof_indices_on_patch.size());
+        local_matrix.extract_submatrix_from(biharmonic_problem->system_matrix,
+                                            dof_indices_on_patch,
+                                            dof_indices_on_patch);
+        local_matrix.print_formatted(std::cout);
+      }
+    }
+
+    // biharmonic_problem->system_matrix.print_formatted(std::cout);
   }
 
 
@@ -128,7 +136,6 @@ protected:
   std::ofstream                       ofs;
   std::shared_ptr<ConditionalOStream> pcout_owned;
 
-  Params                                   params;
   RT::Parameter                            rt_parameters;
   std::shared_ptr<const BiharmonicProblem> biharmonic_problem;
 };
