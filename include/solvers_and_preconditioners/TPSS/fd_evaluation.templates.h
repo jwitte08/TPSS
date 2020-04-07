@@ -1,4 +1,108 @@
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+void
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate(const bool do_gradients,
+                                                               const bool do_hessians)
+{
+  /// univariate Jacobian, that is h_d, times quadrature weight
+  const VectorizedArray<Number> * weight = this->q_weights_unit;
+  for(unsigned int d = 0; d < dim; ++d)
+    for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
+    {
+      const auto h = get_h(d, cell_no);
+      for(unsigned int q = 0; q < n_q_points_1d_static; ++q)
+        get_JxW_impl(q, d, cell_no) = h * weight[q]; // JxW
+    }
+
+  if(do_gradients)
+    evaluate_gradients();
+
+  if(do_hessians)
+    evaluate_hessians();
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+void
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate_gradients()
+{
+  /// scale univariate reference gradients with h_d^{-1}
+  for(unsigned int d = 0; d < dim; ++d)
+  {
+    const auto & shape_data         = get_shape_data(d);
+    const auto   n_q_points_1d      = this->n_q_points_1d(d);
+    const auto   n_dofs_per_cell_1d = this->n_dofs_per_cell_1d(d);
+    const auto * unit_grads_begin   = shape_data.shape_gradients.begin();
+    for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
+    {
+      const auto h_inv = 1. / get_h(d, cell_no);
+      for(unsigned int dof = 0; dof < n_dofs_per_cell_1d; ++dof)
+      {
+        const auto * unit_grad_begin = unit_grads_begin + dof * n_q_points_1d;
+        auto *       grad            = &(shape_gradient_impl(dof, 0, d, cell_no));
+        std::transform(unit_grad_begin,
+                       unit_grad_begin + n_q_points_1d,
+                       grad,
+                       [h_inv](const auto & unit_grad) { return unit_grad * h_inv; });
+      }
+
+      for(const int face_no : {0, 1})
+      {
+        const auto * unit_grads_on_face = shape_data.shape_data_on_face[face_no].begin() + fe_order;
+        auto *       grad_on_face       = &(shape_gradient_face_impl(0, face_no, d, cell_no));
+        std::transform(unit_grads_on_face,
+                       unit_grads_on_face + fe_order,
+                       grad_on_face,
+                       [h_inv](const auto & unit_grad) { return unit_grad * h_inv; });
+      }
+    }
+  }
+
+  gradients_filled = true;
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+void
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate_hessians()
+{
+  /// scale univariate reference hessians with h_d^{-2}
+  for(unsigned int d = 0; d < dim; ++d)
+  {
+    const auto & shape_data          = get_shape_data(d);
+    const auto   n_q_points_1d       = this->n_q_points_1d(d);
+    const auto   n_dofs_per_cell_1d  = this->n_dofs_per_cell_1d(d);
+    const auto * unit_hessians_begin = shape_data.shape_hessians.begin();
+    for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
+    {
+      const auto h_inv = 1. / get_h(d, cell_no);
+      for(unsigned int dof = 0; dof < n_dofs_per_cell_1d; ++dof)
+      {
+        const auto * unit_hessian_begin = unit_hessians_begin + dof * n_q_points_1d;
+        auto *       hessian            = &(shape_hessian_impl(dof, 0, d, cell_no));
+        std::transform(unit_hessian_begin,
+                       unit_hessian_begin + n_q_points_1d,
+                       hessian,
+                       [h_inv](const auto & unit_hessian) { return unit_hessian * h_inv * h_inv; });
+      }
+
+      for(const int face_no : {0, 1})
+      {
+        const auto * unit_hessians_on_face =
+          shape_data.shape_data_on_face[face_no].begin() + 2 * fe_order;
+        auto * hessian_on_face = &(shape_hessian_face_impl(0, face_no, d, cell_no));
+        std::transform(unit_hessians_on_face,
+                       unit_hessians_on_face + fe_order,
+                       hessian_on_face,
+                       [h_inv](const auto & unit_hessian) { return unit_hessian * h_inv * h_inv; });
+      }
+    }
+  }
+
+  hessians_filled = true;
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 template<typename CellOperation>
 std::array<Table<2, VectorizedArray<Number>>, dim>
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action(

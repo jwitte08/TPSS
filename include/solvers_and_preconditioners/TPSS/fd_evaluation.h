@@ -57,7 +57,7 @@ public:
   reinit(const unsigned int patch);
 
   void
-  evaluate(const bool gradients);
+  evaluate(const bool do_gradients, const bool do_hessians);
 
   VectorizedArray<Number>
   get_average_factor(const int direction, const int cell_no, const int face_no) const;
@@ -122,6 +122,15 @@ public:
                       const int direction,
                       const int cell_no) const;
 
+  const VectorizedArray<Number> &
+  shape_hessian(const int dof, const int q_point_no, const int direction, const int cell_no) const;
+
+  const VectorizedArray<Number> &
+  shape_hessian_face(const int dof,
+                     const int face_no,
+                     const int direction,
+                     const int cell_no) const;
+
   const ArrayView<VectorizedArray<Number>>
   acquire_scratch_chunk(const std::size_t size);
 
@@ -173,6 +182,9 @@ private:
 
   void
   evaluate_gradients();
+
+  void
+  evaluate_hessians();
 
   template<int fe_degree_ansatz, int n_q_points_ansatz>
   void post_process_constraints(
@@ -236,6 +248,18 @@ private:
                            const int face_no,
                            const int direction,
                            const int cell_no) const;
+
+  VectorizedArray<Number> &
+  shape_hessian_impl(const int dof,
+                     const int q_point_no,
+                     const int direction,
+                     const int cell_no) const;
+
+  VectorizedArray<Number> &
+  shape_hessian_face_impl(const int dof,
+                          const int face_no,
+                          const int direction,
+                          const int cell_no) const;
 
   template<int fe_degree_ansatz, int n_q_points_ansatz, typename CellOperation>
   std::array<Table<2, VectorizedArray<Number>>, dim>
@@ -342,6 +366,29 @@ private:
   std::array<VectorizedArray<Number> *, dim> gradients_face;
 
   /**
+   * Stores for each dimension (array position) the second derivatives of
+   * univariate shape function evaluated in univariate quadrature points
+   * (q_point_index) with lexicographic order:
+   *
+   *   q_point_index < dof_index < cell_no
+   *
+   * On vertex patches we have two cells (cell_no) in each
+   * direction. Evaluations at univariate quadrature points are in real space
+   * subject to a Cartesian mapping. For illustration, let
+   *
+   *   PHI(x_1,x_2,x_3) = phi_1(x_1) phi_2(x_2) phi_3(x_3)
+   *
+   * define a tensor product shape function, then, @p hessians[i] stores the
+   * second derivatives of d^2/dx_i^2 phi_i(x_i) in real space.
+   */
+  std::array<VectorizedArray<Number> *, dim> hessians;
+
+  /**
+   * lexicographical ordering: dof_index < face_no < cell_no
+   */
+  std::array<VectorizedArray<Number> *, dim> hessians_face;
+
+  /**
    * scratch data array provided by underlying MatrixFree
    */
   AlignedVector<VectorizedArray<Number>> * scratch_fedata;
@@ -368,6 +415,7 @@ private:
 
   bool values_filled    = false;
   bool gradients_filled = false;
+  bool hessians_filled  = false;
 };
 
 
@@ -480,7 +528,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::reinit(const unsigned int 
   h_lengths = mapping_info.template h_lengths_begin(patch);
 
   gradients_filled = false;
-  evaluate(true);
+  hessians_filled  = false;
+  evaluate(true, true);
 }
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
@@ -499,10 +548,14 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::malloc_fedata()
   constexpr unsigned int gradients_length =
     n_q_points_1d_static * fe_order * n_cells_per_direction * dim;
   constexpr unsigned int gradients_length_face = fe_order * 2 * n_cells_per_direction * dim;
-  constexpr unsigned int JxWs_length           = n_q_points_1d_static * n_cells_per_direction * dim;
+  constexpr unsigned int hessians_length =
+    n_q_points_1d_static * fe_order * n_cells_per_direction * dim;
+  constexpr unsigned int hessians_length_face = fe_order * 2 * n_cells_per_direction * dim;
+  constexpr unsigned int JxWs_length          = n_q_points_1d_static * n_cells_per_direction * dim;
   constexpr unsigned int size_to_be_allocated =
     scratch_pad_length + unit_weights_length + values_length + values_length_face +
-    gradients_length + gradients_length_face + JxWs_length; // total size
+    gradients_length + gradients_length_face + hessians_length + hessians_length_face +
+    JxWs_length; // total size
 
   // *** allocate memory
   this->scratch_fedata->resize(size_to_be_allocated);
@@ -515,7 +568,13 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::malloc_fedata()
   for(unsigned int d = 0; d < dim; ++d)
     this->gradients_face[d] =
       this->gradients[0] + gradients_length + fe_order * 2 * n_cells_per_direction * d;
-  this->JxWs                  = this->gradients_face[0] + gradients_length_face;
+  for(unsigned int d = 0; d < dim; ++d)
+    this->hessians[d] = this->gradients_face[0] + gradients_length_face +
+                        n_q_points_1d_static * fe_order * n_cells_per_direction * d;
+  for(unsigned int d = 0; d < dim; ++d)
+    this->hessians_face[d] =
+      this->hessians[0] + hessians_length + fe_order * 2 * n_cells_per_direction * d;
+  this->JxWs                  = this->hessians_face[0] + hessians_length_face;
   this->scratch_fedata_end    = this->JxWs + JxWs_length;
   this->scratch_pad           = this->scratch_fedata_end;
   this->scratch_pad_remainder = this->scratch_pad;
@@ -552,69 +611,6 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::compute_unit_mass(
 }
 
 
-
-template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
-inline void
-FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate(const bool do_gradients)
-{
-  /// univariate Jacobian, that is h_d, times quadrature weight
-  const VectorizedArray<Number> * weight = this->q_weights_unit;
-  for(unsigned int d = 0; d < dim; ++d)
-    for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
-    {
-      const auto h = get_h(d, cell_no);
-      for(unsigned int q = 0; q < n_q_points_1d_static; ++q)
-        get_JxW_impl(q, d, cell_no) = h * weight[q]; // JxW
-    }
-
-  if(do_gradients)
-    evaluate_gradients();
-}
-
-
-template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
-inline void
-FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate_gradients()
-{
-  gradients_filled = false;
-
-  /// scale univariate reference gradients with h_d^{-1}
-  for(unsigned int d = 0; d < dim; ++d)
-  {
-    const auto & shape_data         = get_shape_data(d);
-    const auto   n_q_points_1d      = this->n_q_points_1d(d);
-    const auto   n_dofs_per_cell_1d = this->n_dofs_per_cell_1d(d);
-    const auto * unit_grads_begin   = shape_data.shape_gradients.begin();
-    for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
-    {
-      const auto h_inv = 1. / get_h(d, cell_no);
-      for(unsigned int dof = 0; dof < n_dofs_per_cell_1d; ++dof)
-      {
-        const auto * unit_grad_begin = unit_grads_begin + dof * n_q_points_1d;
-        auto *       grad            = &(shape_gradient_impl(dof, 0, d, cell_no));
-        std::transform(unit_grad_begin,
-                       unit_grad_begin + n_q_points_1d,
-                       grad,
-                       [h_inv](const auto & unit_grad) { return unit_grad * h_inv; });
-      }
-
-      for(const int face_no : {0, 1})
-      {
-        const auto * unit_grads_on_face = shape_data.shape_data_on_face[face_no].begin() + fe_order;
-        auto *       grad_on_face       = &(shape_gradient_face_impl(0, face_no, d, cell_no));
-        std::transform(unit_grads_on_face,
-                       unit_grads_on_face + fe_order,
-                       grad_on_face,
-                       [h_inv](const auto & unit_grad) { return unit_grad * h_inv; });
-      }
-    }
-  }
-
-  gradients_filled = true;
-}
-
-
-
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline VectorizedArray<Number>
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_average_factor(const int direction,
@@ -628,7 +624,6 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_average_factor(const i
       factor[lane] = 1.;
   return factor;
 }
-
 
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
@@ -922,6 +917,62 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_gradient_face_impl(
   AssertIndexRange(direction, dim);
   AssertIndexRange(face_no, 2);
   return *(this->gradients_face[direction] + dof + face_no * fe_order +
+           cell_no * n_cells_per_direction * fe_order);
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline const VectorizedArray<Number> &
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_hessian(const int dof,
+                                                                    const int q_point_no,
+                                                                    const int direction,
+                                                                    const int cell_no) const
+{
+  return shape_hessian_impl(dof, q_point_no, direction, cell_no);
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline VectorizedArray<Number> &
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_hessian_impl(const int dof,
+                                                                         const int q_point_no,
+                                                                         const int direction,
+                                                                         const int cell_no) const
+{
+  AssertIndexRange(dof, static_cast<int>(n_dofs_per_cell_1d(direction)));
+  AssertIndexRange(q_point_no, n_q_points_1d(direction));
+  AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
+  AssertIndexRange(direction, dim);
+  constexpr auto n_dofs_per_cell_1d_static = fe_order * n_q_points_1d_static;
+  return *(this->hessians[direction] + q_point_no + dof * n_q_points_1d_static +
+           cell_no * n_dofs_per_cell_1d_static);
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline const VectorizedArray<Number> &
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_hessian_face(const int dof,
+                                                                         const int face_no,
+                                                                         const int direction,
+                                                                         const int cell_no) const
+{
+  return shape_hessian_face_impl(dof, face_no, direction, cell_no);
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline VectorizedArray<Number> &
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_hessian_face_impl(
+  const int dof,
+  const int face_no,
+  const int direction,
+  const int cell_no) const
+{
+  AssertIndexRange(dof, static_cast<int>(n_dofs_per_cell_1d(direction)));
+  AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
+  AssertIndexRange(direction, dim);
+  AssertIndexRange(face_no, 2);
+  return *(this->hessians_face[direction] + dof + face_no * fe_order +
            cell_no * n_cells_per_direction * fe_order);
 }
 
