@@ -18,6 +18,7 @@ set(sourcefiles
   poisson_distorted.cc
   poisson_mpiscaling.cc
   poisson_standard.cc
+  biharmonic_c0ip.cc
   )
 
 foreach(src ${sourcefiles})

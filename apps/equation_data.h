@@ -16,6 +16,9 @@
 
 using namespace dealii;
 
+
+
+// ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 namespace Laplace
 {
 struct EquationData
@@ -23,6 +26,7 @@ struct EquationData
   std::set<types::boundary_id> dirichlet_boundary_ids = {0};
   double                       ip_factor              = 1.;
 };
+
 
 template<int dim>
 class SolutionBase
@@ -48,6 +52,7 @@ const Point<3> SolutionBase<3>::source_centers[SolutionBase<3>::n_source_centers
 
 template<int dim>
 const double SolutionBase<dim>::width = 1. / 3.;
+
 
 template<int dim>
 class Solution : public Function<dim>, protected SolutionBase<dim>
@@ -104,7 +109,6 @@ public:
   }
 };
 
-constexpr double wave_number = 3.;
 
 template<int dim>
 class RightHandSide : public Function<dim>
@@ -125,6 +129,7 @@ public:
 private:
   Solution<dim> solution_function;
 };
+
 
 struct ZeroDirichletUnitCubeData
 {
@@ -216,6 +221,7 @@ public:
   }
 };
 
+
 template<int dim>
 class ManufacturedLoad : public Function<dim>
 {
@@ -235,6 +241,7 @@ private:
   std::shared_ptr<const Function<dim>> solution_function;
 };
 
+
 template<int dim>
 class RandomLoad : public Function<dim>
 {
@@ -246,8 +253,13 @@ public:
   }
 };
 
+
+
 } // end namespace Laplace
 
+
+
+// ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 namespace LinElasticity
 {
 struct EquationData
@@ -288,6 +300,7 @@ struct EquationData
   }
 };
 
+
 template<int dim>
 class AnalyticalSolution : public TensorFunction<1, dim>
 {
@@ -318,6 +331,7 @@ public:
 private:
   const EquationData equation_data;
 };
+
 
 template<int dim>
 class VolumeForce : public TensorFunction<1, dim>
@@ -369,6 +383,7 @@ private:
   const EquationData equation_data;
 };
 
+
 template<int dim>
 class VolumeForceRandom : public TensorFunction<1, dim>
 {
@@ -383,7 +398,81 @@ public:
   }
 };
 
+
+
 } // end namespace LinElasticity
 
+namespace Biharmonic
+{
+struct EquationData
+{
+  std::set<types::boundary_id> dirichlet_boundary_ids = {0};
+  double                       ip_factor              = 1.;
+};
+
+
+// In the following namespace, let us define the exact solution against
+// which we will compare the numerically computed one. It has the form
+// $u(x,y) = \sin(\pi x) \sin(\pi y)$ (only the 2d case is implemented),
+// and the namespace also contains a class that corresponds to the right
+// hand side that produces this solution.
+namespace ExactSolution
+{
+using numbers::PI;
+
+template<int dim>
+class Solution : public Function<dim>
+{
+public:
+  static_assert(dim == 2, "Only dim==2 is implemented.");
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    return std::sin(PI * p[0]) * std::sin(PI * p[1]);
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    Tensor<1, dim> r;
+    r[0] = PI * std::cos(PI * p[0]) * std::sin(PI * p[1]);
+    r[1] = PI * std::cos(PI * p[1]) * std::sin(PI * p[0]);
+    return r;
+  }
+
+  virtual void
+  hessian_list(const std::vector<Point<dim>> &        points,
+               std::vector<SymmetricTensor<2, dim>> & hessians,
+               const unsigned int /*component*/ = 0) const override
+  {
+    for(unsigned i = 0; i < points.size(); ++i)
+    {
+      const double x = points[i][0];
+      const double y = points[i][1];
+
+      hessians[i][0][0] = -PI * PI * std::sin(PI * x) * std::sin(PI * y);
+      hessians[i][0][1] = PI * PI * std::cos(PI * x) * std::cos(PI * y);
+      hessians[i][1][1] = -PI * PI * std::sin(PI * x) * std::sin(PI * y);
+    }
+  }
+};
+
+
+template<int dim>
+class RightHandSide : public Function<dim>
+{
+public:
+  static_assert(dim == 2, "Only dim==2 is implemented");
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+
+  {
+    return 4 * std::pow(PI, 4.0) * std::sin(PI * p[0]) * std::sin(PI * p[1]);
+  }
+};
+} // namespace ExactSolution
+} // namespace Biharmonic
 
 #endif /* EQUATION_DATA_H_ */
