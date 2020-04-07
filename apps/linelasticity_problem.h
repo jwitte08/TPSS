@@ -27,24 +27,24 @@
 
 #include <deal.II/meshworker/assembler.h>
 
-#include <deal.II/multigrid/mg_coarse.h>
-#include <deal.II/multigrid/mg_matrix.h>
-#include <deal.II/multigrid/mg_smoother.h>
-#include <deal.II/multigrid/mg_tools.h>
-#include <deal.II/multigrid/mg_transfer_matrix_free.h>
-#include <deal.II/multigrid/multigrid.h>
+
 
 #include "solvers_and_preconditioners/TPSS/block_matrix.h"
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
 
+
+
 #include "coloring.h"
 #include "equation_data.h"
 #include "linelasticity_integrator.h"
 #include "mesh.h"
+#include "multigrid.h"
 #include "postprocess.h"
 #include "rt_parameter.h"
 #include "vectorization_helper.h"
+
+
 
 using namespace dealii;
 

@@ -27,24 +27,16 @@
 
 #include <deal.II/matrix_free/matrix_free.h>
 
-#include <deal.II/multigrid/mg_coarse.h>
-#include <deal.II/multigrid/mg_constrained_dofs.h>
-#include <deal.II/multigrid/mg_matrix.h>
-#include <deal.II/multigrid/mg_smoother.h>
-#include <deal.II/multigrid/mg_tools.h>
-#include <deal.II/multigrid/mg_transfer_matrix_free.h>
-#include <deal.II/multigrid/multigrid.h>
-
 #include <deal.II/numerics/vector_tools.h>
 
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
 #include "solvers_and_preconditioners/TPSS/matrix_helper.h"
-#include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
 
 #include "coloring.h"
 #include "equation_data.h"
 #include "laplace_integrator.h"
 #include "mesh.h"
+#include "multigrid.h"
 #include "postprocess.h"
 #include "rt_parameter.h"
 #include "utilities.h"
