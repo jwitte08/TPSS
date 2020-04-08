@@ -356,7 +356,7 @@ FaceLaplace<EvaluatorType>::operator()(const EvaluatorType &,
   const auto normal1        = eval_test.get_normal(face_no1); // on cell 1
   const auto average_factor = eval_test.get_average_factor(direction, cell_no0, face_no0);
   const auto penalty        = equation_data.ip_factor * average_factor *
-                       Laplace::DG::FD::compute_penalty(eval_test, direction, cell_no0, face_no0);
+                       Laplace::DG::FD::compute_penalty(eval_test, direction, cell_no0, cell_no1);
 
   auto value_on_interface01{make_vectorized_array<Number>(0.)};
   auto value_on_interface10{make_vectorized_array<Number>(0.)};
