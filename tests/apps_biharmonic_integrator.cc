@@ -52,6 +52,7 @@ protected:
     const auto initialize_problem = [&](auto & new_problem) {
       new_problem->pcout = pcout_owned;
       new_problem->make_grid();
+      new_problem->triangulation.refine_global(rt_parameters.mesh.n_refinements);
       new_problem->setup_system();
       new_problem->assemble_system();
     };
@@ -91,11 +92,23 @@ protected:
       additional_data.patch_variant    = TPSS::PatchVariant::vertex;
       subdomain_handler->reinit(mf_storage, additional_data);
     }
-
-    /// compare local matrices
     TPSS::PatchTransfer<dim, double, fe_degree> patch_transfer(*subdomain_handler);
     const auto & patch_worker = patch_transfer.get_patch_dof_worker();
-    for(auto patch = 0U; patch < patch_worker.get_partition_data().n_subdomains(); ++patch)
+    const auto   n_subdomains = patch_worker.get_partition_data().n_subdomains();
+
+    /// assemble local matrices (as Kronecker tensor)
+    using FDIntegrator = C0IP::FD::MatrixIntegrator<dim, fe_degree, double>;
+    using LocalMatrix  = typename FDIntegrator::matrix_type;
+    std::vector<LocalMatrix> local_matrices(n_subdomains);
+    FDIntegrator             integrator;
+    integrator.template assemble_subspace_inverses<bool>(
+      *subdomain_handler,
+      local_matrices,
+      /*dummy*/ false,
+      patch_worker.get_partition_data().get_patch_range());
+
+    /// compare local matrices
+    for(auto patch = 0U; patch < n_subdomains; ++patch)
     {
       patch_transfer.reinit(patch);
       for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch); ++lane)
@@ -109,9 +122,19 @@ protected:
         local_matrix.extract_submatrix_from(biharmonic_problem->system_matrix,
                                             dof_indices_on_patch,
                                             dof_indices_on_patch);
-        local_matrix.print_formatted(std::cout);
+        const auto local_matrix_tp = table_to_fullmatrix(local_matrices[patch].as_table(), lane);
+        compare_matrix(local_matrix_tp, local_matrix);
+
+        // const auto local_inverse_tp =
+        //   table_to_fullmatrix(local_matrices[patch].as_inverse_table(), lane);
+        // FullMatrix<double> C(local_matrix.m());
+        // local_inverse_tp.mmult(C, local_matrix);
+        // C.print_formatted(std::cout);
+        // const auto eigenvalues = compute_eigenvalues(C);
+        // std::cout << vector_to_string(eigenvalues) << std::endl;
       }
     }
+
 
     // biharmonic_problem->system_matrix.print_formatted(std::cout);
   }
@@ -146,7 +169,10 @@ TYPED_TEST_SUITE_P(TestBiharmonicIntegrator);
 
 TYPED_TEST_P(TestBiharmonicIntegrator, CheckVertexPatchMatrix)
 {
-  using Fixture = TestBiharmonicIntegrator<TypeParam>;
+  using Fixture                             = TestBiharmonicIntegrator<TypeParam>;
+  Fixture::rt_parameters.mesh.n_refinements = 0;
+  Fixture::check_local_matrices();
+  Fixture::rt_parameters.mesh.n_refinements = 1;
   Fixture::check_local_matrices();
 }
 

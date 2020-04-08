@@ -16,7 +16,6 @@
 #include <deal.II/meshworker/loop.h>
 
 
-
 #include "solvers_and_preconditioners/TPSS/fd_evaluation.h"
 #include "solvers_and_preconditioners/TPSS/tensor_product_matrix.h"
 // #include "solvers_and_preconditioners/TPSS/matrix_helper.h"
@@ -25,15 +24,12 @@
 // #include "solvers_and_preconditioners/smoother/schwarz_smoother.h"
 
 
-
 #include "equation_data.h"
 #include "laplace_integrator.h"
 
 
 
 using namespace dealii;
-
-
 
 namespace Biharmonic
 {
@@ -116,7 +112,6 @@ public:
           kronecker_tensor[d] = d == direction ? bilaplace_matrices[direction] : mass_matrices[d];
         return kronecker_tensor;
       };
-
       std::vector<std::array<Table<2, VectorizedArray<Number>>, dim>> rank1_tensors;
       for(auto direction = 0; direction < dim; ++direction)
         rank1_tensors.emplace_back(BxMxM(direction));
