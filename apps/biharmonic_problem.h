@@ -293,54 +293,54 @@ ModelProblem<dim>::assemble_system()
                          const unsigned int & nsf,
                          ScratchData<dim> &   scratch_data,
                          CopyData &           copy_data) {
-    // FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
-    // fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
+    FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
+    fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
 
-    // copy_data.face_data.emplace_back();
-    // CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+    copy_data.face_data.emplace_back();
+    CopyData::FaceData & copy_data_face = copy_data.face_data.back();
 
-    // copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
+    copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
 
-    // const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
-    // copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
+    const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
+    copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
 
-    // const unsigned int p = fe.degree;
-    // const double       gamma_over_h =
-    //   std::max((1.0 * p * (p + 1) /
-    //             cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f])),
-    //            (1.0 * p * (p + 1) /
-    //             ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf])));
+    const unsigned int p = fe.degree;
+    const double       gamma_over_h =
+      std::max((1.0 * p * (p + 1) /
+                cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f])),
+               (1.0 * p * (p + 1) /
+                ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf])));
 
-    // for(unsigned int qpoint = 0; qpoint < fe_interface_values.n_quadrature_points; ++qpoint)
-    // {
-    //   const auto & n = fe_interface_values.normal(qpoint);
+    for(unsigned int qpoint = 0; qpoint < fe_interface_values.n_quadrature_points; ++qpoint)
+    {
+      const auto & n = fe_interface_values.normal(qpoint);
 
-    //   for(unsigned int i = 0; i < n_interface_dofs; ++i)
-    //   {
-    //     const double av_hessian_i_dot_n_dot_n =
-    //       (fe_interface_values.average_hessian(i, qpoint) * n * n);
-    //     const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
+      for(unsigned int i = 0; i < n_interface_dofs; ++i)
+      {
+        const double av_hessian_i_dot_n_dot_n =
+          (fe_interface_values.average_hessian(i, qpoint) * n * n);
+        const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
 
-    //     for(unsigned int j = 0; j < n_interface_dofs; ++j)
-    //     {
-    //       const double av_hessian_j_dot_n_dot_n =
-    //         (fe_interface_values.average_hessian(j, qpoint) * n * n);
-    //       const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
+        for(unsigned int j = 0; j < n_interface_dofs; ++j)
+        {
+          const double av_hessian_j_dot_n_dot_n =
+            (fe_interface_values.average_hessian(j, qpoint) * n * n);
+          const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
 
-    //       copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n       // - {grad^2 v n n
-    //       }
-    //                                              * jump_grad_j_dot_n           // [grad u n]
-    //                                            - av_hessian_j_dot_n_dot_n      // - {grad^2 u n n
-    //                                            }
-    //                                                * jump_grad_i_dot_n         // [grad v n]
-    //                                            +                               // +
-    //                                            gamma_over_h *                  // gamma/h
-    //                                              jump_grad_i_dot_n *           // [grad v n]
-    //                                              jump_grad_j_dot_n) *          // [grad u n]
-    //                                           fe_interface_values.JxW(qpoint); // dx
-    //     }
-    //   }
-    // }
+          copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n       // - {grad^2 v n n
+                                                                               //
+                                                 * jump_grad_j_dot_n           // [grad u n]
+                                               - av_hessian_j_dot_n_dot_n      // - {grad^2 u n n
+                                                                               //
+                                                   * jump_grad_i_dot_n         // [grad v n]
+                                               +                               // +
+                                               gamma_over_h *                  // gamma/h
+                                                 jump_grad_i_dot_n *           // [grad v n]
+                                                 jump_grad_j_dot_n) *          // [grad u n]
+                                              fe_interface_values.JxW(qpoint); // dx
+        }
+      }
+    }
   };
 
 
@@ -348,74 +348,74 @@ ModelProblem<dim>::assemble_system()
                              const unsigned int & face_no,
                              ScratchData<dim> &   scratch_data,
                              CopyData &           copy_data) {
-    // FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
-    // fe_interface_values.reinit(cell, face_no);
-    // const auto & q_points = fe_interface_values.get_quadrature_points();
+    FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
+    fe_interface_values.reinit(cell, face_no);
+    const auto & q_points = fe_interface_values.get_quadrature_points();
 
-    // copy_data.face_data.emplace_back();
-    // CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+    copy_data.face_data.emplace_back();
+    CopyData::FaceData & copy_data_face = copy_data.face_data.back();
 
-    // const unsigned int n_dofs        = fe_interface_values.n_current_interface_dofs();
-    // copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
+    const unsigned int n_dofs        = fe_interface_values.n_current_interface_dofs();
+    copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
 
-    // copy_data_face.cell_matrix.reinit(n_dofs, n_dofs);
+    copy_data_face.cell_matrix.reinit(n_dofs, n_dofs);
 
-    // const std::vector<double> &         JxW     = fe_interface_values.get_JxW_values();
-    // const std::vector<Tensor<1, dim>> & normals = fe_interface_values.get_normal_vectors();
-
-
-    // const ExactSolution::Solution<dim> exact_solution;
-    // std::vector<Tensor<1, dim>>        exact_gradients(q_points.size());
-    // exact_solution.gradient_list(q_points, exact_gradients);
+    const std::vector<double> &         JxW     = fe_interface_values.get_JxW_values();
+    const std::vector<Tensor<1, dim>> & normals = fe_interface_values.get_normal_vectors();
 
 
-    // // Positively, because we now only deal with one cell adjacent to the
-    // // face (as we are on the boundary), the computation of the penalty
-    // // factor $\gamma$ is substantially simpler:
-    // const unsigned int p = fe.degree;
-    // const double       gamma_over_h =
-    //   (1.0 * p * (p + 1) /
-    //    cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]));
+    const ExactSolution::Solution<dim> exact_solution;
+    std::vector<Tensor<1, dim>>        exact_gradients(q_points.size());
+    exact_solution.gradient_list(q_points, exact_gradients);
 
-    // for(unsigned int qpoint = 0; qpoint < q_points.size(); ++qpoint)
-    // {
-    //   const auto & n = normals[qpoint];
 
-    //   for(unsigned int i = 0; i < n_dofs; ++i)
-    //   {
-    //     const double av_hessian_i_dot_n_dot_n =
-    //       (fe_interface_values.average_hessian(i, qpoint) * n * n);
-    //     const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
+    // Positively, because we now only deal with one cell adjacent to the
+    // face (as we are on the boundary), the computation of the penalty
+    // factor $\gamma$ is substantially simpler:
+    const unsigned int p = fe.degree;
+    const double       gamma_over_h =
+      (1.0 * p * (p + 1) /
+       cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]));
 
-    //     for(unsigned int j = 0; j < n_dofs; ++j)
-    //     {
-    //       const double av_hessian_j_dot_n_dot_n =
-    //         (fe_interface_values.average_hessian(j, qpoint) * n * n);
-    //       const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
+    for(unsigned int qpoint = 0; qpoint < q_points.size(); ++qpoint)
+    {
+      const auto & n = normals[qpoint];
 
-    //       copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n  // - {grad^2 v n n}
-    //                                              * jump_grad_j_dot_n      //   [grad u n]
-    //                                                                       //
-    //                                            - av_hessian_j_dot_n_dot_n // - {grad^2 u n n}
-    //                                                * jump_grad_i_dot_n    //   [grad v n]
-    //                                                                       //
-    //                                            + gamma_over_h             //  gamma/h
-    //                                                * jump_grad_i_dot_n    // [grad v n]
-    //                                                * jump_grad_j_dot_n    // [grad u n]
-    //                                            ) *
-    //                                           JxW[qpoint]; // dx
-    //     }
+      for(unsigned int i = 0; i < n_dofs; ++i)
+      {
+        const double av_hessian_i_dot_n_dot_n =
+          (fe_interface_values.average_hessian(i, qpoint) * n * n);
+        const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
 
-    //     copy_data.cell_rhs(i) += (-av_hessian_i_dot_n_dot_n *       // - {grad^2 v n n }
-    //                                 (exact_gradients[qpoint] * n)   //   (grad u_exact . n)
-    //                               +                                 // +
-    //                               gamma_over_h                      //  gamma/h
-    //                                 * jump_grad_i_dot_n             // [grad v n]
-    //                                 * (exact_gradients[qpoint] * n) // (grad u_exact . n)
-    //                               ) *
-    //                              JxW[qpoint]; // dx
-    //   }
-    // }
+        for(unsigned int j = 0; j < n_dofs; ++j)
+        {
+          const double av_hessian_j_dot_n_dot_n =
+            (fe_interface_values.average_hessian(j, qpoint) * n * n);
+          const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
+
+          copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n  // - {grad^2 v n n}
+                                                 * jump_grad_j_dot_n      //   [grad u n]
+                                                                          //
+                                               - av_hessian_j_dot_n_dot_n // - {grad^2 u n n}
+                                                   * jump_grad_i_dot_n    //   [grad v n]
+                                                                          //
+                                               + (2. * gamma_over_h)      //  gamma/h
+                                                   * jump_grad_i_dot_n    // [grad v n]
+                                                   * jump_grad_j_dot_n    // [grad u n]
+                                               ) *
+                                              JxW[qpoint]; // dx
+        }
+
+        copy_data.cell_rhs(i) += (-av_hessian_i_dot_n_dot_n *       // - {grad^2 v n n }
+                                    (exact_gradients[qpoint] * n)   //   (grad u_exact . n)
+                                  +                                 // +
+                                  (2. * gamma_over_h)               //  gamma/h
+                                    * jump_grad_i_dot_n             // [grad v n]
+                                    * (exact_gradients[qpoint] * n) // (grad u_exact . n)
+                                  ) *
+                                 JxW[qpoint]; // dx
+      }
+    }
   };
 
   auto copier = [&](const CopyData & copy_data) {

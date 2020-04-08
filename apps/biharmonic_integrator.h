@@ -70,6 +70,8 @@ public:
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
 
+    Laplace::DG::FD::CellMass<evaluator_type> cell_mass;
+
     const auto cell_bilaplace = [](const evaluator_type &              eval_u,
                                    const evaluator_type &              eval_v,
                                    Table<2, VectorizedArray<Number>> & cell_matrix,
@@ -91,8 +93,98 @@ public:
         }
     };
 
-    Laplace::DG::FD::CellMass<evaluator_type>    cell_mass;
     Laplace::DG::FD::CellLaplace<evaluator_type> cell_laplace;
+
+    const auto compute_penalty =
+      [&](const evaluator_type & eval, const int direction, const int cell_no, const int ncell_no) {
+        constexpr Number gamma = fe_degree * (fe_degree + 1);
+        const auto       h     = eval.get_h(direction, cell_no);
+        const auto       nh    = eval.get_h(direction, ncell_no);
+        return 2. * std::max(gamma / h, gamma / nh); // default: at boundary
+      };
+
+    const auto face_nitsche = [&](const evaluator_type &              eval_u,
+                                  const evaluator_type &              eval_v,
+                                  Table<2, VectorizedArray<Number>> & cell_matrix,
+                                  const int                           direction,
+                                  const int                           cell_no,
+                                  const int                           face_no) {
+      const auto normal         = eval_v.get_normal(face_no);
+      const auto sqnormal       = normal * normal;
+      const auto average_factor = eval_v.get_average_factor(direction, cell_no, face_no);
+      const auto penalty = average_factor * compute_penalty(eval_v, direction, cell_no, cell_no);
+
+      auto value_on_face = make_vectorized_array<Number>(0.);
+      for(int i = 0; i < fe_degree + 1; ++i)
+      {
+        const auto & grad_vi = eval_v.shape_gradient_face(i, face_no, direction, cell_no);
+        const auto & hess_vi = eval_v.shape_hessian_face(i, face_no, direction, cell_no);
+        for(int j = 0; j < fe_degree + 1; ++j)
+        {
+          const auto & grad_uj = eval_u.shape_gradient_face(j, face_no, direction, cell_no);
+          const auto & hess_uj = eval_u.shape_hessian_face(j, face_no, direction, cell_no);
+
+          value_on_face = penalty * grad_vi * normal * grad_uj * normal;
+          value_on_face -= (grad_vi * normal) * (average_factor * hess_uj * sqnormal);
+          value_on_face -= (grad_uj * normal) * (average_factor * hess_vi * sqnormal);
+
+          cell_matrix(i, j) += value_on_face;
+        }
+      }
+    };
+
+    const auto interface_nitsche = [&](const evaluator_type &              eval_u,
+                                       const evaluator_type &              eval_v,
+                                       Table<2, VectorizedArray<Number>> & cell_matrix01,
+                                       Table<2, VectorizedArray<Number>> & cell_matrix10,
+                                       const int                           cell_no0, // left cell
+                                       const int                           direction) {
+      const auto cell_no1 = cell_no0 + 1;                 // right cell
+      const auto face_no0 = 1;                            // interface seen from left cell
+      const auto face_no1 = 0;                            // interface seen from right cell
+      AssertDimension(cell_no0, 0);                       // vertex patch has one interface
+      const auto normal0   = eval_v.get_normal(face_no0); // on cell 0
+      const auto normal1   = eval_v.get_normal(face_no1); // on cell 1
+      const auto sqnormal0 = normal0 * normal0;
+      const auto sqnormal1 = normal1 * normal1;
+      const auto penalty   = 0.5 * compute_penalty(eval_v, direction, cell_no0, cell_no1);
+
+      auto value_on_interface01{make_vectorized_array<Number>(0.)};
+      auto value_on_interface10{make_vectorized_array<Number>(0.)};
+      for(int i = 0; i < fe_degree + 1; ++i)
+      {
+        const auto & hess_v0i = eval_v.shape_hessian_face(i, face_no0, direction, cell_no0);
+        const auto & grad_v0i = eval_v.shape_gradient_face(i, face_no0, direction, cell_no0);
+        const auto & hess_v1i = eval_v.shape_hessian_face(i, face_no1, direction, cell_no1);
+        const auto & grad_v1i = eval_v.shape_gradient_face(i, face_no1, direction, cell_no1);
+        for(int j = 0; j < fe_degree + 1; ++j)
+        {
+          const auto & hess_u0j = eval_u.shape_hessian_face(j, face_no0, direction, cell_no0);
+          const auto & grad_u0j = eval_u.shape_gradient_face(j, face_no0, direction, cell_no0);
+          const auto & hess_u1j = eval_u.shape_hessian_face(j, face_no1, direction, cell_no1);
+          const auto & grad_u1j = eval_u.shape_gradient_face(j, face_no1, direction, cell_no1);
+
+          /// consistency + symmetry
+          value_on_interface01 = penalty * grad_v0i * normal0 * grad_u1j * normal1;
+          value_on_interface01 -= (grad_v0i * normal0) * (0.5 * hess_u1j * sqnormal1);
+          value_on_interface01 -= (grad_u1j * normal1) * (0.5 * hess_v0i * sqnormal0);
+
+          value_on_interface10 = penalty * grad_v1i * normal1 * grad_u0j * normal0;
+          value_on_interface10 -= (grad_v1i * normal1) * (0.5 * hess_u0j * sqnormal0);
+          value_on_interface10 -= (grad_u0j * normal0) * (0.5 * hess_v1i * sqnormal1);
+
+          cell_matrix01(i, j) += value_on_interface01;
+          cell_matrix10(i, j) += value_on_interface10;
+        }
+      }
+    };
+
+    // // DEBUG
+    // const auto cell_void = [](const evaluator_type &              eval_u,
+    //                                const evaluator_type &              eval_v,
+    //                                Table<2, VectorizedArray<Number>> & cell_matrix,
+    //                                const int                           direction,
+    // 			      const int                           cell_no) {};
 
     evaluator_type eval(subdomain_handler); // common evaluator for test + ansatz
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
@@ -100,9 +192,10 @@ public:
       eval.reinit(patch);
 
       /// compute 1D matrices
-      const auto mass_matrices      = eval.patch_action(cell_mass);
-      const auto bilaplace_matrices = eval.patch_action(cell_bilaplace);
-      const auto laplace_matrices   = eval.patch_action(cell_laplace);
+      const auto mass_matrices = eval.patch_action(cell_mass);
+      const auto bilaplace_matrices =
+        eval.patch_action(cell_bilaplace, face_nitsche, interface_nitsche);
+      const auto laplace_matrices = eval.patch_action(cell_laplace);
 
       /// store rank1 tensors of separable Kronecker representation
       /// BxMxM + MxBxM + MxMxB
