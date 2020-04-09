@@ -70,8 +70,50 @@ public:
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
 
-    Laplace::DG::FD::CellMass<evaluator_type> cell_mass;
+    evaluator_type eval(subdomain_handler); // common evaluator for test + ansatz
+    for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
+    {
+      /// compute 1D matrices
+      eval.reinit(patch);
+      const auto mass_matrices      = assemble_mass_tensor(eval);
+      const auto bilaplace_matrices = assemble_bilaplace_tensor(eval);
+      const auto laplace_matrices   = assemble_laplace_tensor(eval);
 
+      /// store rank1 tensors of separable Kronecker representation
+      /// BxMxM + MxBxM + MxMxB
+      const auto & BxMxM = [&](const int direction) {
+        std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
+        for(auto d = 0; d < dim; ++d)
+          kronecker_tensor[d] = d == direction ? bilaplace_matrices[direction] : mass_matrices[d];
+        return kronecker_tensor;
+      };
+      std::vector<std::array<Table<2, VectorizedArray<Number>>, dim>> rank1_tensors;
+      for(auto direction = 0; direction < dim; ++direction)
+        rank1_tensors.emplace_back(BxMxM(direction));
+
+      /// store rank1 tensors of mixed derivatives
+      /// 2(LxLxM + LxMxL + MxLxL)
+      const auto & LxLxM = [&](const int direction1, const int direction2) {
+        std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
+        for(auto d = 0; d < dim; ++d)
+          kronecker_tensor[d] =
+            (d == direction1 || d == direction2) ? laplace_matrices[d] : mass_matrices[d];
+        return kronecker_tensor;
+      };
+      for(auto direction1 = 0; direction1 < dim; ++direction1)
+        for(auto direction2 = 0; direction2 < dim; ++direction2)
+          if(direction1 != direction2)
+            rank1_tensors.emplace_back(LxLxM(direction1, direction2));
+
+      /// submit vector of rank1 Kronecker tensors
+      local_matrices[patch].reinit(rank1_tensors);
+    }
+  }
+
+  template<bool c0ip = true>
+  std::array<Table<2, VectorizedArray<Number>>, dim>
+  assemble_bilaplace_tensor(evaluator_type & eval) const
+  {
     const auto cell_bilaplace = [](const evaluator_type &              eval_u,
                                    const evaluator_type &              eval_v,
                                    Table<2, VectorizedArray<Number>> & cell_matrix,
@@ -92,8 +134,6 @@ public:
           cell_matrix(i, j) += integral;
         }
     };
-
-    Laplace::DG::FD::CellLaplace<evaluator_type> cell_laplace;
 
     const auto compute_penalty =
       [&](const evaluator_type & eval, const int direction, const int cell_no, const int ncell_no) {
@@ -179,53 +219,28 @@ public:
       }
     };
 
-    // // DEBUG
-    // const auto cell_void = [](const evaluator_type &              eval_u,
-    //                                const evaluator_type &              eval_v,
-    //                                Table<2, VectorizedArray<Number>> & cell_matrix,
-    //                                const int                           direction,
-    // 			      const int                           cell_no) {};
+    if constexpr(c0ip)
+      return eval.patch_action(cell_bilaplace, face_nitsche, interface_nitsche);
+    return eval.patch_action(cell_bilaplace);
+  }
 
-    evaluator_type eval(subdomain_handler); // common evaluator for test + ansatz
-    for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
+  template<bool sipg = false>
+  std::array<Table<2, VectorizedArray<Number>>, dim>
+  assemble_laplace_tensor(evaluator_type & eval) const
+  {
+    if constexpr(sipg)
     {
-      eval.reinit(patch);
-
-      /// compute 1D matrices
-      const auto mass_matrices = eval.patch_action(cell_mass);
-      const auto bilaplace_matrices =
-        eval.patch_action(cell_bilaplace, face_nitsche, interface_nitsche);
-      const auto laplace_matrices = eval.patch_action(cell_laplace);
-
-      /// store rank1 tensors of separable Kronecker representation
-      /// BxMxM + MxBxM + MxMxB
-      const auto & BxMxM = [&](const int direction) {
-        std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
-        for(auto d = 0; d < dim; ++d)
-          kronecker_tensor[d] = d == direction ? bilaplace_matrices[direction] : mass_matrices[d];
-        return kronecker_tensor;
-      };
-      std::vector<std::array<Table<2, VectorizedArray<Number>>, dim>> rank1_tensors;
-      for(auto direction = 0; direction < dim; ++direction)
-        rank1_tensors.emplace_back(BxMxM(direction));
-
-      /// store rank1 tensors of mixed derivatives
-      /// 2(LxLxM + LxMxL + MxLxL)
-      const auto & LxLxM = [&](const int direction1, const int direction2) {
-        std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
-        for(auto d = 0; d < dim; ++d)
-          kronecker_tensor[d] =
-            (d == direction1 || d == direction2) ? laplace_matrices[d] : mass_matrices[d];
-        return kronecker_tensor;
-      };
-      for(auto direction1 = 0; direction1 < dim; ++direction1)
-        for(auto direction2 = 0; direction2 < dim; ++direction2)
-          if(direction1 != direction2)
-            rank1_tensors.emplace_back(LxLxM(direction1, direction2));
-
-      /// submit vector of rank1 Kronecker tensors
-      local_matrices[patch].reinit(rank1_tensors);
+      Laplace::DG::FD::CellLaplace<evaluator_type> cell_laplace;
+      Laplace::DG::FD::FaceLaplace<evaluator_type> nitsche(Laplace::EquationData{});
+      return eval.patch_action(cell_laplace, nitsche, nitsche);
     }
+    return eval.patch_action(Laplace::DG::FD::CellLaplace<evaluator_type>{});
+  }
+
+  std::array<Table<2, VectorizedArray<Number>>, dim>
+  assemble_mass_tensor(evaluator_type & eval) const
+  {
+    return eval.patch_action(Laplace::DG::FD::CellMass<evaluator_type>{});
   }
 
   std::shared_ptr<transfer_type>
