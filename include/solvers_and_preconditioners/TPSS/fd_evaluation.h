@@ -174,6 +174,9 @@ private:
   void
   malloc_fedata();
 
+  const VectorizedArray<Number> &
+  get_h_impl(const int direction, const int cell_no) const;
+
   VectorizedArray<Number> &
   get_JxW_impl(const int q_point_no, const int direction, const int cell_no) const;
 
@@ -632,6 +635,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_boundary_mask(const in
                                                                         const int cell_no,
                                                                         const int face_no) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
   AssertIndexRange(direction, dim);
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
   AssertIndexRange(face_no, 2);
@@ -670,6 +675,17 @@ inline const VectorizedArray<Number> &
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_h(const int direction,
                                                             const int cell_no) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
+  return get_h_impl(direction, cell_no);
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline const VectorizedArray<Number> &
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_h_impl(const int direction,
+                                                                 const int cell_no) const
+{
   AssertIndexRange(cell_no, static_cast<int>(n_cells_per_direction));
   AssertIndexRange(direction, dim);
   return *(this->h_lengths + cell_no + direction * n_cells_per_direction);
@@ -682,6 +698,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_JxW(const int q_point_
                                                               const int direction,
                                                               const int cell_no) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
   return get_JxW_impl(q_point_no, direction, cell_no);
 }
 
@@ -705,6 +723,8 @@ inline const VectorizedArray<Number> &
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_q_weight(const int q_point_no,
                                                                    const int direction) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
   return get_q_weight_impl(q_point_no, direction);
 }
 
@@ -724,6 +744,9 @@ template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline VectorizedArray<Number>
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_normal(const int face_no) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
+  AssertIndexRange(face_no, 2);
   return make_vectorized_array<Number>(face_no == 0 ? -1. : 1.);
 }
 
@@ -733,6 +756,10 @@ inline Tensor<1, dim, VectorizedArray<Number>>
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_normal_vector(const int face_no,
                                                                         const int direction) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
+  AssertIndexRange(direction, dim);
+  AssertIndexRange(face_no, 2);
   Tensor<1, dim, VectorizedArray<Number>> normal_vector;
   normal_vector *= 0.;
   normal_vector[direction] = get_normal(face_no);
@@ -754,6 +781,7 @@ inline const internal::MatrixFreeFunctions::UnivariateShapeData<VectorizedArray<
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_shape_data(
   const unsigned int dimension) const
 {
+  AssertIndexRange(dimension, dim);
   return patch_worker.get_shape_info().get_shape_data(dimension);
 }
 
@@ -770,6 +798,7 @@ template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline unsigned int
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_cells_1d(const unsigned int dimension) const
 {
+  AssertIndexRange(dimension, dim);
   return patch_worker.get_dof_tensor().n_cells_1d(dimension);
 }
 
@@ -779,6 +808,7 @@ inline unsigned int
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_dofs_plain_1d(
   const unsigned int dimension) const
 {
+  AssertIndexRange(dimension, dim);
   return patch_worker.n_dofs_plain_1d(dimension);
 }
 
@@ -788,6 +818,7 @@ inline unsigned int
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_dofs_per_cell_1d(
   const unsigned int dimension) const
 {
+  AssertIndexRange(dimension, dim);
   return patch_worker.get_dof_tensor().n_dofs_per_cell_1d(dimension);
 }
 
@@ -797,6 +828,7 @@ inline unsigned int
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_q_points_1d(
   const unsigned int dimension) const
 {
+  AssertIndexRange(dimension, dim);
   return get_shape_data(dimension).quadrature.size();
 }
 
@@ -816,6 +848,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_value(const int dof,
                                                                   const int direction,
                                                                   const int cell_no) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
   return shape_value_impl(dof, q_point_no, direction, cell_no);
 }
 
@@ -844,6 +878,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_value_face(const int
                                                                        const int direction,
                                                                        const int cell_no) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
   return shape_value_face_impl(dof, face_no, direction, cell_no);
 }
 
@@ -872,6 +908,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_gradient(const int d
                                                                      const int direction,
                                                                      const int cell_no) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
   return shape_gradient_impl(dof, q_point_no, direction, cell_no);
 }
 
@@ -900,6 +938,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_gradient_face(const 
                                                                           const int direction,
                                                                           const int cell_no) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
   return shape_gradient_face_impl(dof, face_no, direction, cell_no);
 }
 
@@ -928,6 +968,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_hessian(const int do
                                                                     const int direction,
                                                                     const int cell_no) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
   return shape_hessian_impl(dof, q_point_no, direction, cell_no);
 }
 
@@ -956,6 +998,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::shape_hessian_face(const i
                                                                          const int direction,
                                                                          const int cell_no) const
 {
+  Assert(patch_id != numbers::invalid_unsigned_int,
+         ExcMessage("FDEvaluation is not initialized. Did you miss to call reinit()?"));
   return shape_hessian_face_impl(dof, face_no, direction, cell_no);
 }
 

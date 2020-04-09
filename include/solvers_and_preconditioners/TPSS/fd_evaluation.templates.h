@@ -8,7 +8,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate(const bool do_gra
   for(unsigned int d = 0; d < dim; ++d)
     for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
     {
-      const auto h = get_h(d, cell_no);
+      const auto h = get_h_impl(d, cell_no);
       for(unsigned int q = 0; q < n_q_points_1d_static; ++q)
         get_JxW_impl(q, d, cell_no) = h * weight[q]; // JxW
     }
@@ -34,7 +34,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate_gradients()
     const auto * unit_grads_begin   = shape_data.shape_gradients.begin();
     for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
     {
-      const auto h_inv = 1. / get_h(d, cell_no);
+      const auto h_inv = 1. / get_h_impl(d, cell_no);
       for(unsigned int dof = 0; dof < n_dofs_per_cell_1d; ++dof)
       {
         const auto * unit_grad_begin = unit_grads_begin + dof * n_q_points_1d;
@@ -74,7 +74,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate_hessians()
     const auto * unit_hessians_begin = shape_data.shape_hessians.begin();
     for(unsigned int cell_no = 0; cell_no < n_cells_per_direction; ++cell_no)
     {
-      const auto h_inv = 1. / get_h(d, cell_no);
+      const auto h_inv = 1. / get_h_impl(d, cell_no);
       for(unsigned int dof = 0; dof < n_dofs_per_cell_1d; ++dof)
       {
         const auto * unit_hessian_begin = unit_hessians_begin + dof * n_q_points_1d;
