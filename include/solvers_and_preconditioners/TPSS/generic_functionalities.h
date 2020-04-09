@@ -62,10 +62,48 @@ template<typename Number>
 Vector<Number>
 compute_eigenvalues_symm(const FullMatrix<Number> & matrix, FullMatrix<Number> & Q)
 {
-  AssertDimension(matrix.m(), matrix.n());
   LAPACKFullMatrix<Number> lapack_matrix(matrix.m());
   lapack_matrix = matrix;
   return compute_eigenvalues_symm(lapack_matrix, Q);
+}
+
+/*
+ * Compute generalized eigenvalues and eigenvectors given the generalized
+ * eigenvalue problem A v = \lambda B v. Each column of Q represents an
+ * eigenvector, in the order of the returned eigenvalues.
+ */
+template<typename Number>
+std::vector<Number>
+compute_generalized_eigenvalues_symm(LAPACKFullMatrix<Number> & A,
+                                     LAPACKFullMatrix<Number> & B,
+                                     FullMatrix<Number> &       Q)
+{
+  AssertDimension(A.m(), A.n());
+  AssertDimension(B.m(), B.n());
+  AssertDimension(A.m(), B.n());
+  std::vector<Vector<Number>> eigenvectors(A.m(), Vector<Number>(A.m()));
+  A.compute_generalized_eigenvalues_symmetric(B, eigenvectors);
+  Q.reinit(eigenvectors.front().size(), eigenvectors.size());
+  for(auto i = 0U; i < Q.m(); ++i)
+    for(auto j = 0U; j < Q.n(); ++j)
+      Q(i, j) = eigenvectors[j][i];
+  std::vector<Number> eigenvalues(eigenvectors.size());
+  for(auto i = 0U; i < eigenvalues.size(); ++i)
+    eigenvalues[i] = A.eigenvalue(i).real();
+  return eigenvalues;
+}
+
+template<typename Number>
+std::vector<Number>
+compute_generalized_eigenvalues_symm(FullMatrix<Number> & A,
+                                     FullMatrix<Number> & B,
+                                     FullMatrix<Number> & Q)
+{
+  LAPACKFullMatrix<Number> A_lapack(A.m(), A.n());
+  A_lapack = A;
+  LAPACKFullMatrix<Number> B_lapack(B.m(), B.n());
+  B_lapack = B;
+  return compute_generalized_eigenvalues_symm(A_lapack, B_lapack, Q);
 }
 
 template<typename Number>
