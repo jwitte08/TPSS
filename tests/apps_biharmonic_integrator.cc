@@ -191,46 +191,46 @@ protected:
     std::cout << "Eigenvalues(L^2):" << std::endl;
     eigenvalues_sqL.print(std::cout);
 
-    std::cout << "compare Qb and Ql:" << std::endl;
-    compare_matrix(Qb, Ql);
-    std::cout << "compare Qbip and Ql:" << std::endl;
-    compare_matrix(Qbip, Ql);
-    std::cout << "compare Qbip and Qsql:" << std::endl;
-    compare_matrix(Qbip, Qsql);
-    std::cout << "compare Qbip and Qm:" << std::endl;
-    compare_matrix(Qbip, Qm);
+    // std::cout << "compare Qb and Ql:" << std::endl;
+    // compare_matrix(Qb, Ql);
+    // std::cout << "compare Qbip and Ql:" << std::endl;
+    // compare_matrix(Qbip, Ql);
+    // std::cout << "compare Qbip and Qsql:" << std::endl;
+    // compare_matrix(Qbip, Qsql);
+    // std::cout << "compare Qbip and Qm:" << std::endl;
+    // compare_matrix(Qbip, Qm);
 
     // // DEBUG: Qb is orthogonal!
     // FullMatrix<double> QbT_Qb(Qb.n());
     // Qb.Tmmult(QbT_Qb, Qb);
     // QbT_Qb.print_formatted(std::cout);
 
-    { // check eigendecomposition of Bip
-      FullMatrix<double> Lambda(Bip.m());
-      FullMatrix<double> tmp(Bip.m());
-      Qbip.Tmmult(tmp, Bip);
-      tmp.mmult(Lambda, Qbip);
-      std::cout << "check eigendecomposition:   Qbip^T Bip Qbip = Lambda(Bip)" << std::endl;
-      Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-10);
-    }
+    // { // check eigendecomposition of Bip
+    //   FullMatrix<double> Lambda(Bip.m());
+    //   FullMatrix<double> tmp(Bip.m());
+    //   Qbip.Tmmult(tmp, Bip);
+    //   tmp.mmult(Lambda, Qbip);
+    //   std::cout << "check eigendecomposition:   Qbip^T Bip Qbip = Lambda(Bip)" << std::endl;
+    //   Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-8);
+    // }
 
-    { // check if eigenvectors of Bip diagonalize L
-      FullMatrix<double> Lambda(L.m());
-      FullMatrix<double> tmp(L.m());
-      Qbip.Tmmult(tmp, L);
-      tmp.mmult(Lambda, Qbip);
-      std::cout << "check:   Qbip^T L Qbip = Lambda(L)" << std::endl;
-      Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-10);
-    }
+    // { // check if eigenvectors of Bip diagonalize L
+    //   FullMatrix<double> Lambda(L.m());
+    //   FullMatrix<double> tmp(L.m());
+    //   Qbip.Tmmult(tmp, L);
+    //   tmp.mmult(Lambda, Qbip);
+    //   std::cout << "check:   Qbip^T L Qbip = Lambda(L)" << std::endl;
+    //   Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-8);
+    // }
 
-    { // check if eigenvectors of Bip diagonalize L^2
-      FullMatrix<double> Lambda(sqL.m());
-      FullMatrix<double> tmp(sqL.m());
-      Qbip.Tmmult(tmp, sqL);
-      tmp.mmult(Lambda, Qbip);
-      std::cout << "check:   Qbip^T L^2 Qbip = Lambda(L^2)" << std::endl;
-      Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-10);
-    }
+    // { // check if eigenvectors of Bip diagonalize L^2
+    //   FullMatrix<double> Lambda(sqL.m());
+    //   FullMatrix<double> tmp(sqL.m());
+    //   Qbip.Tmmult(tmp, sqL);
+    //   tmp.mmult(Lambda, Qbip);
+    //   std::cout << "check:   Qbip^T L^2 Qbip = Lambda(L^2)" << std::endl;
+    //   Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-8);
+    // }
 
     { // generalized eigenproblem of Bip subject to L
       FullMatrix<double> Q(Bip.m(), Bip.n());
@@ -242,7 +242,7 @@ protected:
       tmp.mmult(Lambda, Q);
       std::cout << "check:   Q^T Bip Q = Lambda(Bip)   (generalized eigenvalues subject to L)"
                 << std::endl;
-      Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-10);
+      Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-8);
     }
 
     { // generalized eigenproblem of Bip subject to L^2
@@ -255,21 +255,21 @@ protected:
       tmp.mmult(Lambda, Q);
       std::cout << "check:   Q^T Bip Q = Lambda(Bip)   (generalized eigenvalues subject to L^2)"
                 << std::endl;
-      Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-10);
+      Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-8);
     }
 
-    { // generalized eigenproblem of B subject to L
-      FullMatrix<double> Q(B.m(), B.n());
-      compute_generalized_eigenvalues_symm(B, L, Q);
+    // { // generalized eigenproblem of B subject to L
+    //   FullMatrix<double> Q(B.m(), B.n());
+    //   compute_generalized_eigenvalues_symm(B, L, Q);
 
-      FullMatrix<double> Lambda(B.m());
-      FullMatrix<double> tmp(B.m());
-      Q.Tmmult(tmp, B);
-      tmp.mmult(Lambda, Q);
-      std::cout << "check:   Q^T B Q = Lambda(B)   (generalized eigenvalues subject to L)"
-                << std::endl;
-      Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-10);
-    }
+    //   FullMatrix<double> Lambda(B.m());
+    //   FullMatrix<double> tmp(B.m());
+    //   Q.Tmmult(tmp, B);
+    //   tmp.mmult(Lambda, Q);
+    //   std::cout << "check:   Q^T B Q = Lambda(B)   (generalized eigenvalues subject to L)"
+    //             << std::endl;
+    //   Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-8);
+    // }
 
     { // check if gen. eigenvectors of Bip subject to M diagonalize L or L^2
       FullMatrix<double> Q(Bip.m(), Bip.n());
@@ -299,6 +299,20 @@ protected:
         std::cout << "check:   Q^T L^2 Q = Lambda(L^2)" << std::endl;
         Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-8);
       }
+    }
+
+    {
+      FullMatrix<double> Q(Bip.m(), Bip.n());
+      compute_generalized_eigenvalues_symm(Bip, M, Q);
+
+      FullMatrix<double> Lambda(Bip.m());
+      FullMatrix<double> tmp(Bip.m());
+      Q.Tmmult(tmp, Bip);
+      tmp.mmult(Lambda, Q);
+      FullMatrix<double> invsqrtLambda(Bip.m());
+      for(auto i = 0U; i < Lambda.m(); ++i)
+        invsqrtLambda(i, i) = 1. / std::sqrt(Lambda(i, i));
+      FullMatrix<double> invsqrtBip(Bip.m());
     }
   }
 
@@ -353,7 +367,8 @@ REGISTER_TYPED_TEST_SUITE_P(TestBiharmonicIntegrator,
                             CheckVertexPatchEigendecomp1D);
 
 using TestParamsQuadratic = testing::Types<Util::NonTypeParams<2, 2>>;
-using TestParamsHighOrder = testing::Types<Util::NonTypeParams<2, 5>>;
+using TestParamsHighOrder =
+  testing::Types<Util::NonTypeParams<2, 5>, Util::NonTypeParams<2, 7>, Util::NonTypeParams<2, 11>>;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestBiharmonicIntegrator, TestParamsQuadratic);
 INSTANTIATE_TYPED_TEST_SUITE_P(HighOrder2D, TestBiharmonicIntegrator, TestParamsHighOrder);
