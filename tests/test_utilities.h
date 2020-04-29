@@ -25,6 +25,9 @@
 
 namespace Util
 {
+template<typename Number>
+constexpr Number numeric_eps = std::pow(10, std::log10(std::numeric_limits<Number>::epsilon()) / 2);
+
 struct PrintFormat
 {
   static constexpr unsigned int precision   = 3;
@@ -32,7 +35,7 @@ struct PrintFormat
   static constexpr unsigned int width       = 0;
   static constexpr char const * zero_string = " ";
   static constexpr double       denominator = 1.;
-  static constexpr double       threshold   = std::numeric_limits<double>::epsilon() * 100.;
+  static constexpr double       threshold   = numeric_eps<double>;
 };
 
 /// Compare pair of matrices of FullMatrix type
@@ -61,11 +64,9 @@ compare_matrix(const FullMatrix<Number> & matrix,
                         PrintFormat::threshold);
   auto diff(matrix);
   diff.add(-1., other);
-  const double n_entries = other.m() * other.n();
   EXPECT_PRED_FORMAT2(testing::FloatLE,
                       diff.frobenius_norm(),
-                      std::numeric_limits<Number>::epsilon() * 100. *
-                        std::max(n_entries, other.frobenius_norm()))
+                      numeric_eps<Number> * other.frobenius_norm())
     << oss.str();
   pcout << oss.str();
 }
@@ -113,16 +114,16 @@ compare_inverse_matrix(const FullMatrix<Number> & inverse_matrix,
                      PrintFormat::zero_string,
                      PrintFormat::denominator,
                      PrintFormat::threshold);
-  const double n_entries = id.m() * id.n();
+  // const double n_entries = id.m() * id.n();
   for(auto i = 0U; i < id.m(); ++i)
   {
-    EXPECT_NEAR(id(i, i), 1., std::numeric_limits<Number>::epsilon() * 100. * n_entries);
+    EXPECT_NEAR(id(i, i), 1., numeric_eps<Number> /* n_entries*/);
     for(auto j = 0U; j < id.m(); ++j)
       if(i != j)
       {
         EXPECT_NEAR(id(i, j),
                     std::numeric_limits<Number>::epsilon(),
-                    std::numeric_limits<Number>::epsilon() * 100. * n_entries);
+                    numeric_eps<Number> /* n_entries*/);
       }
   }
   pcout << oss.str();
@@ -146,10 +147,7 @@ compare_vector(const Vector<Number> &     vector,
     const auto value       = vector[i];
     const auto other_value = other[i];
     const auto diff        = std::abs(value - other_value);
-    EXPECT_PRED_FORMAT2(testing::FloatLE,
-                        diff,
-                        std::numeric_limits<Number>::epsilon() * std::max(1000., other_value))
-      << oss.str();
+    EXPECT_PRED_FORMAT2(testing::FloatLE, diff, numeric_eps<Number> * other_value) << oss.str();
   }
   pcout << oss.str();
 }
@@ -173,10 +171,7 @@ compare_vector(const VectorType &         vector,
     const auto value       = vector[i];
     const auto other_value = other[i];
     const auto diff        = std::abs(value - other_value);
-    EXPECT_PRED_FORMAT2(testing::FloatLE,
-                        diff,
-                        std::numeric_limits<Number>::epsilon() * std::max(1000., other_value))
-      << oss.str();
+    EXPECT_PRED_FORMAT2(testing::FloatLE, diff, numeric_eps<Number> * other_value) << oss.str();
   }
   pcout << oss.str();
 }
