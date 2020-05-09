@@ -8,6 +8,7 @@ main(int argc, char * argv[])
     using namespace dealii;
     using namespace Biharmonic;
 
+    deallog.depth_console(3);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     const unsigned int               fe_degree = 2;
     Assert(fe_degree >= 2,
@@ -15,7 +16,15 @@ main(int argc, char * argv[])
                       "only works if one uses elements of polynomial "
                       "degree at least 2."));
 
-    ModelProblem<2> biharmonic_problem(fe_degree);
+    RT::Parameter prms;
+    prms.solver.variant          = "direct";
+    prms.solver.variant          = "cg";
+    prms.solver.n_iterations_max = 500;
+    prms.solver.rel_tolerance    = 1.e-8;
+    prms.n_cycles                = 1;
+    // prms.multigrid.coarse_grid.solver_variant = CoarseGridParameter::SolverVariant::FullSVD;
+
+    ModelProblem<2> biharmonic_problem(prms, fe_degree);
     biharmonic_problem.run();
   }
   catch(std::exception & exc)

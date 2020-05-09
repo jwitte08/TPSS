@@ -65,6 +65,8 @@
 #include "biharmonic_integrator.h"
 #include "equation_data.h"
 #include "mesh.h"
+#include "multigrid.h"
+#include "postprocess.h"
 #include "rt_parameter.h"
 
 
@@ -72,115 +74,6 @@
 namespace Biharmonic
 {
 using namespace dealii;
-
-template<int dim>
-class ModelProblem
-{
-public:
-  static_assert(dim == 2, "only implemented in 2D");
-
-  ModelProblem(const unsigned int fe_degree);
-
-  void
-  run();
-
-  void
-  make_grid();
-  void
-  setup_system();
-  void
-  assemble_system();
-  void
-  solve();
-  void
-  compute_errors();
-  void
-  output_results(const unsigned int iteration) const;
-
-  unsigned int
-  max_level() const
-  {
-    return triangulation.n_global_levels() - 1;
-  }
-
-  RT::Parameter                       rt_parameters;
-  std::shared_ptr<ConditionalOStream> pcout;
-
-  parallel::distributed::Triangulation<dim> triangulation;
-  MappingQ<dim>                             mapping;
-  FE_Q<dim>                                 fe;
-  DoFHandler<dim>                           dof_handler;
-  AffineConstraints<double>                 constraints;
-
-  SparsityPattern      sparsity_pattern;
-  SparseMatrix<double> system_matrix;
-
-  Vector<double> solution;
-  Vector<double> system_rhs;
-};
-
-
-
-template<int dim>
-ModelProblem<dim>::ModelProblem(const unsigned int fe_degree)
-  : pcout(
-      std::make_shared<ConditionalOStream>(std::cout,
-                                           Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
-    triangulation(MPI_COMM_WORLD,
-                  Triangulation<dim>::limit_level_difference_at_vertices,
-                  parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
-    mapping(1),
-    fe(fe_degree)
-{
-  AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
-              ExcMessage("One process only."));
-}
-
-
-
-template<int dim>
-void
-ModelProblem<dim>::make_grid()
-{
-  GridGenerator::hyper_cube(triangulation, 0., 1.);
-  triangulation.refine_global(1);
-
-  *pcout << "Number of active cells: " << triangulation.n_active_cells() << std::endl
-         << "Total number of cells: " << triangulation.n_cells() << std::endl;
-}
-
-
-
-template<int dim>
-void
-ModelProblem<dim>::setup_system()
-{
-  dof_handler.clear();
-  dof_handler.initialize(triangulation, fe);
-  dof_handler.distribute_mg_dofs();
-
-  *pcout << "   Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
-
-  constraints.clear();
-  DoFTools::make_hanging_node_constraints(dof_handler, constraints);
-
-  VectorTools::interpolate_boundary_values(dof_handler,
-                                           0,
-                                           ExactSolution::Solution<dim>(),
-                                           constraints);
-  constraints.close();
-
-
-  DynamicSparsityPattern dsp(dof_handler.n_dofs());
-  DoFTools::make_flux_sparsity_pattern(dof_handler, dsp, constraints, true);
-  sparsity_pattern.copy_from(dsp);
-  system_matrix.reinit(sparsity_pattern);
-
-  solution.reinit(dof_handler.n_dofs());
-  system_rhs.reinit(dof_handler.n_dofs());
-}
-
-
 
 template<int dim>
 struct ScratchData
@@ -216,8 +109,10 @@ struct ScratchData
 
 struct CopyData
 {
-  CopyData(const unsigned int dofs_per_cell)
-    : cell_matrix(dofs_per_cell, dofs_per_cell),
+  CopyData(const unsigned int dofs_per_cell,
+           const unsigned int level_in = numbers::invalid_unsigned_int)
+    : level(level_in),
+      cell_matrix(dofs_per_cell, dofs_per_cell),
       cell_rhs(dofs_per_cell),
       local_dof_indices(dofs_per_cell)
   {
@@ -233,6 +128,7 @@ struct CopyData
     std::vector<types::global_dof_index> joint_dof_indices;
   };
 
+  unsigned int                         level;
   FullMatrix<double>                   cell_matrix;
   Vector<double>                       cell_rhs;
   std::vector<types::global_dof_index> local_dof_indices;
@@ -242,183 +138,397 @@ struct CopyData
 
 
 template<int dim>
+class ModelProblem
+{
+public:
+  using VECTOR = Vector<double>;
+
+  using MG_TRANSFER        = MGTransferPrebuilt<VECTOR>;
+  using GMG_PRECONDITIONER = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
+
+  static_assert(dim == 2, "only implemented in 2D");
+
+  ModelProblem(const RT::Parameter & rt_parameters_in, const unsigned int fe_degree);
+
+  void
+  run();
+
+  void
+  make_grid();
+
+  void
+  setup_system();
+
+  template<typename IteratorType>
+  void
+  cell_worker_impl(const IteratorType & cell,
+                   ScratchData<dim> &   scratch_data,
+                   CopyData &           copy_data) const;
+
+  template<typename IteratorType>
+  void
+  face_worker_impl(const IteratorType & cell,
+                   const unsigned int & f,
+                   const unsigned int & sf,
+                   const IteratorType & ncell,
+                   const unsigned int & nf,
+                   const unsigned int & nsf,
+                   ScratchData<dim> &   scratch_data,
+                   CopyData &           copy_data) const;
+
+  template<typename IteratorType>
+  void
+  boundary_worker_impl(const IteratorType & cell,
+                       const unsigned int & face_no,
+                       ScratchData<dim> &   scratch_data,
+                       CopyData &           copy_data) const;
+
+  void
+  assemble_system();
+
+  void
+  prepare_multigrid();
+
+  const GMG_PRECONDITIONER &
+  prepare_preconditioner_mg()
+  {
+    prepare_multigrid();
+    AssertThrow(multigrid, ExcNotInitialized());
+
+    preconditioner_mg = std::make_shared<GMG_PRECONDITIONER>(dof_handler, *multigrid, mg_transfer);
+    return *preconditioner_mg;
+  }
+
+  void
+  solve();
+
+  void
+  compute_errors();
+
+  void
+  output_results(const unsigned int iteration) const;
+
+  unsigned int
+  max_level() const
+  {
+    return triangulation.n_global_levels() - 1;
+  }
+
+  RT::Parameter                       rt_parameters;
+  std::shared_ptr<ConditionalOStream> pcout;
+  mutable PostProcessData             pp_data;
+
+  parallel::distributed::Triangulation<dim> triangulation;
+  MappingQ<dim>                             mapping;
+  FE_Q<dim>                                 fe;
+  DoFHandler<dim>                           dof_handler;
+  AffineConstraints<double>                 constraints;
+
+  SparsityPattern      sparsity_pattern;
+  SparseMatrix<double> system_matrix;
+  VECTOR               system_u;
+  VECTOR               system_rhs;
+
+  // *** multigrid
+  std::shared_ptr<MGConstrainedDoFs>  mg_constrained_dofs;
+  MG_TRANSFER                         mg_transfer;
+  MGLevelObject<SparsityPattern>      mg_sparsity_patterns;
+  MGLevelObject<SparseMatrix<double>> mg_matrices;
+  // mutable std::shared_ptr<ColoringBase<dim>> user_coloring;
+  // std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_pre;
+  // std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_post;
+  std::shared_ptr<const MGSmootherIdentity<VECTOR>> mg_smoother_identity;
+  const MGSmootherBase<VECTOR> *                    mg_smoother_pre;
+  const MGSmootherBase<VECTOR> *                    mg_smoother_post;
+  CoarseGridSolver<SparseMatrix<double>, VECTOR>    coarse_grid_solver;
+  MGCoarseGridSVD<double, VECTOR>                   coarse_grid_svd;
+  const MGCoarseGridBase<VECTOR> *                  mg_coarse_grid;
+  mg::Matrix<VECTOR>                                mg_matrix_wrapper;
+  std::shared_ptr<Multigrid<VECTOR>>                multigrid;
+
+  std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
+};
+
+
+
+template<int dim>
+ModelProblem<dim>::ModelProblem(const RT::Parameter & rt_parameters_in,
+                                const unsigned int    fe_degree)
+  : rt_parameters(rt_parameters_in),
+    pcout(
+      std::make_shared<ConditionalOStream>(std::cout,
+                                           Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
+    triangulation(MPI_COMM_WORLD,
+                  Triangulation<dim>::limit_level_difference_at_vertices,
+                  parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
+    mapping(1),
+    fe(fe_degree)
+{
+  AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
+              ExcMessage("One process only."));
+}
+
+
+
+template<int dim>
+void
+ModelProblem<dim>::make_grid()
+{
+  GridGenerator::hyper_cube(triangulation, 0., 1.);
+  // triangulation.refine_global(1);
+
+  *pcout << "Number of active cells: " << triangulation.n_active_cells() << std::endl
+         << "Total number of cells: " << triangulation.n_cells() << std::endl;
+}
+
+
+
+template<int dim>
+void
+ModelProblem<dim>::setup_system()
+{
+  constraints.clear();
+  system_u.reinit(0);
+  system_rhs.reinit(0);
+  dof_handler.clear();
+  dof_handler.initialize(triangulation, fe);
+  dof_handler.distribute_mg_dofs();
+
+  *pcout << "   Number of degrees of freedom: " << dof_handler.n_dofs() << std::endl;
+
+  constraints.clear();
+  DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+
+  VectorTools::interpolate_boundary_values(dof_handler,
+                                           0,
+                                           ExactSolution::Solution<dim>(),
+                                           constraints);
+  constraints.close();
+
+
+  DynamicSparsityPattern dsp(dof_handler.n_dofs());
+  const bool             direct_solver_used = (rt_parameters.solver.variant == "direct");
+  DoFTools::make_flux_sparsity_pattern(dof_handler,
+                                       dsp,
+                                       constraints,
+                                       direct_solver_used ? true : false);
+  sparsity_pattern.copy_from(dsp);
+  system_matrix.reinit(sparsity_pattern);
+
+  system_u.reinit(dof_handler.n_dofs());
+  system_rhs.reinit(dof_handler.n_dofs());
+}
+
+
+
+template<int dim>
+template<typename IteratorType>
+void
+ModelProblem<dim>::cell_worker_impl(const IteratorType & cell,
+                                    ScratchData<dim> &   scratch_data,
+                                    CopyData &           copy_data) const
+{
+  copy_data.cell_matrix = 0;
+  copy_data.cell_rhs    = 0;
+
+  FEValues<dim> & fe_values = scratch_data.fe_values;
+  fe_values.reinit(cell);
+
+  cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
+
+  const ExactSolution::RightHandSide<dim> right_hand_side;
+
+  const unsigned int dofs_per_cell = scratch_data.fe_values.get_fe().dofs_per_cell;
+
+  for(unsigned int qpoint = 0; qpoint < fe_values.n_quadrature_points; ++qpoint)
+  {
+    for(unsigned int i = 0; i < dofs_per_cell; ++i)
+    {
+      const Tensor<2, dim> hessian_i = fe_values.shape_hessian(i, qpoint);
+
+      for(unsigned int j = 0; j < dofs_per_cell; ++j)
+      {
+        const Tensor<2, dim> hessian_j = fe_values.shape_hessian(j, qpoint);
+
+        copy_data.cell_matrix(i, j) += scalar_product(hessian_i,   // nabla^2 phi_i(x)
+                                                      hessian_j) * // nabla^2 phi_j(x)
+                                       fe_values.JxW(qpoint);      // dx
+      }
+
+      copy_data.cell_rhs(i) += fe_values.shape_value(i, qpoint) * // phi_i(x)
+                               right_hand_side.value(fe_values.quadrature_point(qpoint)) * // f(x)
+                               fe_values.JxW(qpoint);                                      // dx
+    }
+  }
+}
+
+
+template<int dim>
+template<typename IteratorType>
+void
+ModelProblem<dim>::face_worker_impl(const IteratorType & cell,
+                                    const unsigned int & f,
+                                    const unsigned int & sf,
+                                    const IteratorType & ncell,
+                                    const unsigned int & nf,
+                                    const unsigned int & nsf,
+                                    ScratchData<dim> &   scratch_data,
+                                    CopyData &           copy_data) const
+{
+  FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
+  fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
+
+  copy_data.face_data.emplace_back();
+  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+
+  copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
+
+  const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
+  copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
+
+  const unsigned int p            = fe.degree;
+  const double       gamma_over_h = std::max(
+    (1.0 * p * (p + 1) / cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f])),
+    (1.0 * p * (p + 1) / ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf])));
+
+  for(unsigned int qpoint = 0; qpoint < fe_interface_values.n_quadrature_points; ++qpoint)
+  {
+    const auto & n = fe_interface_values.normal(qpoint);
+
+    for(unsigned int i = 0; i < n_interface_dofs; ++i)
+    {
+      const double av_hessian_i_dot_n_dot_n =
+        (fe_interface_values.average_hessian(i, qpoint) * n * n);
+      const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
+
+      for(unsigned int j = 0; j < n_interface_dofs; ++j)
+      {
+        const double av_hessian_j_dot_n_dot_n =
+          (fe_interface_values.average_hessian(j, qpoint) * n * n);
+        const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
+
+        copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n       // - {grad^2 v n n
+                                                                             //
+                                               * jump_grad_j_dot_n           // [grad u n]
+                                             - av_hessian_j_dot_n_dot_n      // - {grad^2 u n n
+                                                                             //
+                                                 * jump_grad_i_dot_n         // [grad v n]
+                                             +                               // +
+                                             gamma_over_h *                  // gamma/h
+                                               jump_grad_i_dot_n *           // [grad v n]
+                                               jump_grad_j_dot_n) *          // [grad u n]
+                                            fe_interface_values.JxW(qpoint); // dx
+      }
+    }
+  }
+}
+
+
+
+template<int dim>
+template<typename IteratorType>
+void
+ModelProblem<dim>::boundary_worker_impl(const IteratorType & cell,
+                                        const unsigned int & face_no,
+                                        ScratchData<dim> &   scratch_data,
+                                        CopyData &           copy_data) const
+{
+  FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
+  fe_interface_values.reinit(cell, face_no);
+  const auto & q_points = fe_interface_values.get_quadrature_points();
+
+  copy_data.face_data.emplace_back();
+  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+
+  const unsigned int n_dofs        = fe_interface_values.n_current_interface_dofs();
+  copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
+
+  copy_data_face.cell_matrix.reinit(n_dofs, n_dofs);
+
+  const std::vector<double> &         JxW     = fe_interface_values.get_JxW_values();
+  const std::vector<Tensor<1, dim>> & normals = fe_interface_values.get_normal_vectors();
+
+
+  const ExactSolution::Solution<dim> exact_solution;
+  std::vector<Tensor<1, dim>>        exact_gradients(q_points.size());
+  exact_solution.gradient_list(q_points, exact_gradients);
+
+
+  // Positively, because we now only deal with one cell adjacent to the
+  // face (as we are on the boundary), the computation of the penalty
+  // factor $\gamma$ is substantially simpler:
+  const unsigned int p = fe.degree;
+  const double       gamma_over_h =
+    (1.0 * p * (p + 1) /
+     cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]));
+
+  for(unsigned int qpoint = 0; qpoint < q_points.size(); ++qpoint)
+  {
+    const auto & n = normals[qpoint];
+
+    for(unsigned int i = 0; i < n_dofs; ++i)
+    {
+      const double av_hessian_i_dot_n_dot_n =
+        (fe_interface_values.average_hessian(i, qpoint) * n * n);
+      const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
+
+      for(unsigned int j = 0; j < n_dofs; ++j)
+      {
+        const double av_hessian_j_dot_n_dot_n =
+          (fe_interface_values.average_hessian(j, qpoint) * n * n);
+        const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
+
+        copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n  // - {grad^2 v n n}
+                                               * jump_grad_j_dot_n      //   [grad u n]
+                                                                        //
+                                             - av_hessian_j_dot_n_dot_n // - {grad^2 u n n}
+                                                 * jump_grad_i_dot_n    //   [grad v n]
+                                                                        //
+                                             + (2. * gamma_over_h)      //  gamma/h
+                                                 * jump_grad_i_dot_n    // [grad v n]
+                                                 * jump_grad_j_dot_n    // [grad u n]
+                                             ) *
+                                            JxW[qpoint]; // dx
+      }
+
+      copy_data.cell_rhs(i) += (-av_hessian_i_dot_n_dot_n *       // - {grad^2 v n n }
+                                  (exact_gradients[qpoint] * n)   //   (grad u_exact . n)
+                                +                                 // +
+                                (2. * gamma_over_h)               //  gamma/h
+                                  * jump_grad_i_dot_n             // [grad v n]
+                                  * (exact_gradients[qpoint] * n) // (grad u_exact . n)
+                                ) *
+                               JxW[qpoint]; // dx
+    }
+  }
+}
+
+
+
+template<int dim>
 void
 ModelProblem<dim>::assemble_system()
 {
-  using Iterator = typename DoFHandler<dim>::active_cell_iterator;
-
-  auto cell_worker = [&](const Iterator &   cell,
-                         ScratchData<dim> & scratch_data,
-                         CopyData &         copy_data) {
-    copy_data.cell_matrix = 0;
-    copy_data.cell_rhs    = 0;
-
-    FEValues<dim> & fe_values = scratch_data.fe_values;
-    fe_values.reinit(cell);
-
-    cell->get_dof_indices(copy_data.local_dof_indices);
-
-    const ExactSolution::RightHandSide<dim> right_hand_side;
-
-    const unsigned int dofs_per_cell = scratch_data.fe_values.get_fe().dofs_per_cell;
-
-    for(unsigned int qpoint = 0; qpoint < fe_values.n_quadrature_points; ++qpoint)
-    {
-      for(unsigned int i = 0; i < dofs_per_cell; ++i)
-      {
-        const Tensor<2, dim> hessian_i = fe_values.shape_hessian(i, qpoint);
-
-        for(unsigned int j = 0; j < dofs_per_cell; ++j)
-        {
-          const Tensor<2, dim> hessian_j = fe_values.shape_hessian(j, qpoint);
-
-          copy_data.cell_matrix(i, j) += scalar_product(hessian_i,   // nabla^2 phi_i(x)
-                                                        hessian_j) * // nabla^2 phi_j(x)
-                                         fe_values.JxW(qpoint);      // dx
-        }
-
-        copy_data.cell_rhs(i) += fe_values.shape_value(i, qpoint) * // phi_i(x)
-                                 right_hand_side.value(fe_values.quadrature_point(qpoint)) * // f(x)
-                                 fe_values.JxW(qpoint);                                      // dx
-      }
-    }
+  auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+    cell_worker_impl(cell, scratch_data, copy_data);
   };
-
-
-  auto face_worker = [&](const Iterator &     cell,
+  auto face_worker = [&](const auto &         cell,
                          const unsigned int & f,
                          const unsigned int & sf,
-                         const Iterator &     ncell,
+                         const auto &         ncell,
                          const unsigned int & nf,
                          const unsigned int & nsf,
                          ScratchData<dim> &   scratch_data,
                          CopyData &           copy_data) {
-    FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
-    fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
-
-    copy_data.face_data.emplace_back();
-    CopyData::FaceData & copy_data_face = copy_data.face_data.back();
-
-    copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
-
-    const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
-    copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
-
-    const unsigned int p = fe.degree;
-    const double       gamma_over_h =
-      std::max((1.0 * p * (p + 1) /
-                cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f])),
-               (1.0 * p * (p + 1) /
-                ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf])));
-
-    for(unsigned int qpoint = 0; qpoint < fe_interface_values.n_quadrature_points; ++qpoint)
-    {
-      const auto & n = fe_interface_values.normal(qpoint);
-
-      for(unsigned int i = 0; i < n_interface_dofs; ++i)
-      {
-        const double av_hessian_i_dot_n_dot_n =
-          (fe_interface_values.average_hessian(i, qpoint) * n * n);
-        const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
-
-        for(unsigned int j = 0; j < n_interface_dofs; ++j)
-        {
-          const double av_hessian_j_dot_n_dot_n =
-            (fe_interface_values.average_hessian(j, qpoint) * n * n);
-          const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
-
-          copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n       // - {grad^2 v n n
-                                                                               //
-                                                 * jump_grad_j_dot_n           // [grad u n]
-                                               - av_hessian_j_dot_n_dot_n      // - {grad^2 u n n
-                                                                               //
-                                                   * jump_grad_i_dot_n         // [grad v n]
-                                               +                               // +
-                                               gamma_over_h *                  // gamma/h
-                                                 jump_grad_i_dot_n *           // [grad v n]
-                                                 jump_grad_j_dot_n) *          // [grad u n]
-                                              fe_interface_values.JxW(qpoint); // dx
-        }
-      }
-    }
+    face_worker_impl(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
   };
-
-
-  auto boundary_worker = [&](const Iterator &     cell,
+  auto boundary_worker = [&](const auto &         cell,
                              const unsigned int & face_no,
                              ScratchData<dim> &   scratch_data,
                              CopyData &           copy_data) {
-    FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
-    fe_interface_values.reinit(cell, face_no);
-    const auto & q_points = fe_interface_values.get_quadrature_points();
-
-    copy_data.face_data.emplace_back();
-    CopyData::FaceData & copy_data_face = copy_data.face_data.back();
-
-    const unsigned int n_dofs        = fe_interface_values.n_current_interface_dofs();
-    copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
-
-    copy_data_face.cell_matrix.reinit(n_dofs, n_dofs);
-
-    const std::vector<double> &         JxW     = fe_interface_values.get_JxW_values();
-    const std::vector<Tensor<1, dim>> & normals = fe_interface_values.get_normal_vectors();
-
-
-    const ExactSolution::Solution<dim> exact_solution;
-    std::vector<Tensor<1, dim>>        exact_gradients(q_points.size());
-    exact_solution.gradient_list(q_points, exact_gradients);
-
-
-    // Positively, because we now only deal with one cell adjacent to the
-    // face (as we are on the boundary), the computation of the penalty
-    // factor $\gamma$ is substantially simpler:
-    const unsigned int p = fe.degree;
-    const double       gamma_over_h =
-      (1.0 * p * (p + 1) /
-       cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]));
-
-    for(unsigned int qpoint = 0; qpoint < q_points.size(); ++qpoint)
-    {
-      const auto & n = normals[qpoint];
-
-      for(unsigned int i = 0; i < n_dofs; ++i)
-      {
-        const double av_hessian_i_dot_n_dot_n =
-          (fe_interface_values.average_hessian(i, qpoint) * n * n);
-        const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
-
-        for(unsigned int j = 0; j < n_dofs; ++j)
-        {
-          const double av_hessian_j_dot_n_dot_n =
-            (fe_interface_values.average_hessian(j, qpoint) * n * n);
-          const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
-
-          copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n  // - {grad^2 v n n}
-                                                 * jump_grad_j_dot_n      //   [grad u n]
-                                                                          //
-                                               - av_hessian_j_dot_n_dot_n // - {grad^2 u n n}
-                                                   * jump_grad_i_dot_n    //   [grad v n]
-                                                                          //
-                                               + (2. * gamma_over_h)      //  gamma/h
-                                                   * jump_grad_i_dot_n    // [grad v n]
-                                                   * jump_grad_j_dot_n    // [grad u n]
-                                               ) *
-                                              JxW[qpoint]; // dx
-        }
-
-        copy_data.cell_rhs(i) += (-av_hessian_i_dot_n_dot_n *       // - {grad^2 v n n }
-                                    (exact_gradients[qpoint] * n)   //   (grad u_exact . n)
-                                  +                                 // +
-                                  (2. * gamma_over_h)               //  gamma/h
-                                    * jump_grad_i_dot_n             // [grad v n]
-                                    * (exact_gradients[qpoint] * n) // (grad u_exact . n)
-                                  ) *
-                                 JxW[qpoint]; // dx
-      }
-    }
+    boundary_worker_impl(cell, face_no, scratch_data, copy_data);
   };
-
-  auto copier = [&](const CopyData & copy_data) {
+  const auto copier = [&](const CopyData & copy_data) {
     constraints.distribute_local_to_global(copy_data.cell_matrix,
                                            copy_data.cell_rhs,
                                            copy_data.local_dof_indices,
@@ -430,7 +540,6 @@ ModelProblem<dim>::assemble_system()
       constraints.distribute_local_to_global(cdf.cell_matrix, cdf.joint_dof_indices, system_matrix);
     }
   };
-
 
   const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
   ScratchData<dim>   scratch_data(mapping,
@@ -458,15 +567,191 @@ ModelProblem<dim>::assemble_system()
 
 template<int dim>
 void
+ModelProblem<dim>::prepare_multigrid()
+{
+  // *** clear multigrid infrastructure
+  multigrid.reset();
+  mg_matrix_wrapper.reset();
+  coarse_grid_solver.clear();
+  mg_smoother_post = nullptr;
+  mg_smoother_pre  = nullptr;
+  // mg_schwarz_smoother_pre.reset();
+  // mg_schwarz_smoother_post.reset();
+  mg_transfer.clear();
+  // mg_matrices.clear_elements();
+  mg_constrained_dofs.reset();
+
+  // *** setup multigrid data
+  const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
+  const unsigned mg_level_max = max_level();
+  pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
+
+  // *** initialize multigrid constraints
+  mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
+  mg_constrained_dofs->initialize(dof_handler);
+  mg_constrained_dofs->make_zero_boundary_constraints(dof_handler, std::set<types::boundary_id>{0});
+
+  // *** initialize level matrices A_l
+  system_matrix.print_formatted(std::cout);
+  mg_matrices.resize(mg_level_min, mg_level_max);
+  mg_sparsity_patterns.resize(mg_level_min, mg_level_max);
+  for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
+  {
+    DynamicSparsityPattern dsp(dof_handler.n_dofs(level), dof_handler.n_dofs(level));
+    MGTools::make_sparsity_pattern(dof_handler, dsp, level);
+    mg_sparsity_patterns[level].copy_from(dsp);
+    mg_matrices[level].reinit(mg_sparsity_patterns[level]);
+
+    // assemble
+    AffineConstraints<double> level_constraints;
+    IndexSet                  relevant_dofs;
+    DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, relevant_dofs);
+    level_constraints.reinit(relevant_dofs);
+    level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
+    level_constraints.close();
+
+    auto cell_worker =
+      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+        cell_worker_impl(cell, scratch_data, copy_data);
+      };
+    auto face_worker = [&](const auto &         cell,
+                           const unsigned int & f,
+                           const unsigned int & sf,
+                           const auto &         ncell,
+                           const unsigned int & nf,
+                           const unsigned int & nsf,
+                           ScratchData<dim> &   scratch_data,
+                           CopyData &           copy_data) {
+      face_worker_impl(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+    };
+    auto boundary_worker = [&](const auto &         cell,
+                               const unsigned int & face_no,
+                               ScratchData<dim> &   scratch_data,
+                               CopyData &           copy_data) {
+      boundary_worker_impl(cell, face_no, scratch_data, copy_data);
+    };
+    const auto copier = [&](const CopyData & copy_data) {
+      AssertDimension(copy_data.level, level);
+      level_constraints.distribute_local_to_global(copy_data.cell_matrix,
+                                                   copy_data.local_dof_indices,
+                                                   mg_matrices[copy_data.level]);
+
+      for(auto & cdf : copy_data.face_data)
+      {
+        level_constraints.distribute_local_to_global(cdf.cell_matrix,
+                                                     cdf.joint_dof_indices,
+                                                     mg_matrices[copy_data.level]);
+      }
+    };
+
+    const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
+    ScratchData<dim>   scratch_data(mapping,
+                                  fe,
+                                  n_gauss_points,
+                                  update_values | update_gradients | update_hessians |
+                                    update_quadrature_points | update_JxW_values,
+                                  update_values | update_gradients | update_hessians |
+                                    update_quadrature_points | update_JxW_values |
+                                    update_normal_vectors);
+    CopyData           copy_data(dof_handler.get_fe().dofs_per_cell, level);
+    MeshWorker::mesh_loop(dof_handler.begin_mg(level),
+                          dof_handler.end_mg(level),
+                          cell_worker,
+                          copier,
+                          scratch_data,
+                          copy_data,
+                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                            MeshWorker::assemble_own_interior_faces_once,
+                          boundary_worker,
+                          face_worker);
+
+    mg_matrices[level].print_formatted(std::cout);
+  }
+
+  // *** initialize multigrid transfer R_l
+  mg_transfer.initialize_constraints(*mg_constrained_dofs);
+  mg_transfer.build(dof_handler);
+
+  // *** initialize Schwarz smoother S_l
+  mg_smoother_identity = std::make_shared<const MGSmootherIdentity<VECTOR>>();
+  mg_smoother_pre      = mg_smoother_identity.get();
+  mg_smoother_post     = mg_smoother_identity.get();
+  // prepare_mg_smoothers();
+
+  // /// set pre-smoother
+  // pp_data.n_colors_system.push_back(n_colors_system());
+  // if(rt_parameters.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+  // {
+  //   AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Is not initialized."));
+  //   mg_smoother_pre = mg_schwarz_smoother_pre.get();
+  // }
+  // else
+  //   AssertThrow(false, ExcMessage("Pre-smoothing variant is not implemented. TODO"));
+
+  // /// set post-smoother
+  // if(rt_parameters.multigrid.post_smoother.variant ==
+  // SmootherParameter::SmootherVariant::Schwarz)
+  // {
+  //   AssertThrow(mg_schwarz_smoother_post, ExcMessage("Is not initialized."));
+  //   mg_smoother_post = mg_schwarz_smoother_post.get();
+  // }
+  // else
+  //   AssertThrow(false, ExcMessage("Post-smoothing variant is not implemented. TODO"));
+
+  // *** initialize coarse grid solver
+  // coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
+  // mg_coarse_grid = &coarse_grid_solver;
+  FullMatrix<double> coarse_matrix(mg_matrices[mg_level_min].m());
+  coarse_matrix.copy_from(mg_matrices[mg_level_min]);
+  coarse_grid_svd.initialize(coarse_matrix);
+  coarse_matrix.print_formatted(std::cout);
+  mg_coarse_grid = &coarse_grid_svd;
+
+  mg_matrix_wrapper.initialize(mg_matrices);
+  multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
+                                                  *mg_coarse_grid,
+                                                  mg_transfer,
+                                                  *mg_smoother_pre,
+                                                  *mg_smoother_post,
+                                                  mg_level_min,
+                                                  mg_level_max);
+}
+
+
+
+template<int dim>
+void
 ModelProblem<dim>::solve()
 {
   *pcout << "   Solving system..." << std::endl;
 
-  SparseDirectUMFPACK A_direct;
-  A_direct.initialize(system_matrix);
-  A_direct.vmult(solution, system_rhs);
+  if(rt_parameters.solver.variant == "direct")
+  {
+    SparseDirectUMFPACK A_direct;
+    A_direct.initialize(system_matrix);
+    A_direct.vmult(system_u, system_rhs);
+    return;
+  }
 
-  constraints.distribute(solution);
+  ReductionControl       solver_control;
+  SolverSelector<VECTOR> iterative_solver;
+  solver_control.set_max_steps(rt_parameters.solver.n_iterations_max);
+  solver_control.set_reduction(rt_parameters.solver.rel_tolerance);
+  solver_control.set_tolerance(rt_parameters.solver.abs_tolerance);
+  solver_control.log_history(true);
+  solver_control.log_result(true);
+  solver_control.enable_history_data();
+
+  // PreconditionIdentity preconditioner;
+  prepare_preconditioner_mg();
+  iterative_solver.set_control(solver_control);
+  iterative_solver.select(rt_parameters.solver.variant);
+  iterative_solver.solve(system_matrix, system_u, system_rhs, *preconditioner_mg);
+  constraints.distribute(system_u);
+
+  const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
+  pp_data.average_reduction_system.push_back(reduction_rate);
+  pp_data.n_iterations_system.push_back(n_frac);
 }
 
 
@@ -484,7 +769,7 @@ ModelProblem<dim>::compute_errors()
     Vector<float> norm_per_cell(triangulation.n_active_cells());
     VectorTools::integrate_difference(mapping,
                                       dof_handler,
-                                      solution,
+                                      system_u,
                                       ExactSolution::Solution<dim>(),
                                       norm_per_cell,
                                       QGauss<dim>(fe.degree + 2),
@@ -498,7 +783,7 @@ ModelProblem<dim>::compute_errors()
     Vector<float> norm_per_cell(triangulation.n_active_cells());
     VectorTools::integrate_difference(mapping,
                                       dof_handler,
-                                      solution,
+                                      system_u,
                                       ExactSolution::Solution<dim>(),
                                       norm_per_cell,
                                       QGauss<dim>(fe.degree + 2),
@@ -535,7 +820,7 @@ ModelProblem<dim>::compute_errors()
     for(auto & cell : dof_handler.active_cell_iterators())
     {
       fe_values.reinit(cell);
-      fe_values[scalar].get_function_hessians(solution, hessians);
+      fe_values[scalar].get_function_hessians(system_u, hessians);
       exact_solution.hessian_list(fe_values.get_quadrature_points(), exact_hessians);
 
       double local_error = 0;
@@ -563,7 +848,7 @@ ModelProblem<dim>::output_results(const unsigned int iteration) const
   DataOut<dim> data_out;
 
   data_out.attach_dof_handler(dof_handler);
-  data_out.add_data_vector(solution, "solution");
+  data_out.add_data_vector(system_u, "u");
   data_out.build_patches();
 
   std::ofstream output_vtu(("output_" + Utilities::int_to_string(iteration, 6) + ".vtu").c_str());
@@ -578,7 +863,7 @@ ModelProblem<dim>::run()
 {
   make_grid();
 
-  const unsigned int n_cycles = 4;
+  const unsigned int n_cycles = rt_parameters.n_cycles;
   for(unsigned int cycle = 0; cycle < n_cycles; ++cycle)
   {
     *pcout << "Cycle: " << cycle << " of " << n_cycles << std::endl;
