@@ -94,6 +94,7 @@ def main():
             x, y = zip(*xydata)
             plt.plot(x,y)
             plt.title("$\phi_{%d}$" % i)
+            #plt.grid(True, which='both')
         fig.tight_layout(rect=[0, 0.03, 1, 0.95]) # see evernote
         fig.suptitle("Shape function basis")
         fig.savefig("shapefunctions.svg",papertype='a4')
@@ -119,7 +120,7 @@ def main():
         fig.suptitle(title_eigen)
         fig.savefig("eigenfunctions_"+fsp+".svg",papertype='a4')
 
-        plt.show()
+        #plt.show()
 
     return 0
 

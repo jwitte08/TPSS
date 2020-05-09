@@ -131,9 +131,9 @@ protected:
           table_to_fullmatrix(local_matrices[patch].as_inverse_table(), lane);
         FullMatrix<double> C(local_matrix.m());
         local_inverse_tp.mmult(C, local_matrix);
-        C.print_formatted(std::cout);
+        C.print_formatted(pcout_owned->get_stream());
         const auto eigenvalues = compute_eigenvalues(C);
-        std::cout << vector_to_string(eigenvalues) << std::endl;
+        *pcout_owned << vector_to_string(eigenvalues) << std::endl;
       }
     }
   }
@@ -157,102 +157,118 @@ protected:
     const auto LLip = integrator.template assemble_laplace_tensor<true>(eval);
     const auto MM   = integrator.assemble_mass_tensor(eval);
 
+    const auto check_eigenvectors =
+      [this](const auto & A, const auto & Q, const auto & eigenvalues) {
+        FullMatrix<double> Lambda(A.m());
+        FullMatrix<double> tmp(A.m());
+        Q.Tmmult(tmp, A);
+        tmp.mmult(Lambda, Q);
+        FullMatrix<double> Lambda_ref(Q.m());
+        for(auto i = 0U; i < eigenvalues.size(); ++i)
+          Lambda_ref(i, i) = eigenvalues[i];
+        compare_matrix(Lambda, Lambda_ref);
+      };
+
     const auto         lane = 0U;
     auto               B    = table_to_fullmatrix(BB[0], lane);
     FullMatrix<double> Qb(B.m(), B.n());
     const auto         eigenvalues_B = compute_eigenvalues_symm(B, Qb);
-    auto               Bip           = table_to_fullmatrix(BBip[0], lane);
+    check_eigenvectors(B, Qb, eigenvalues_B);
+    auto               Bip = table_to_fullmatrix(BBip[0], lane);
     FullMatrix<double> Qbip(Bip.m(), Bip.n());
     const auto         eigenvalues_Bip = compute_eigenvalues_symm(Bip, Qbip);
-    auto               L               = table_to_fullmatrix(LL[0], lane);
+    check_eigenvectors(Bip, Qbip, eigenvalues_Bip);
+    auto               L = table_to_fullmatrix(LL[0], lane);
     FullMatrix<double> Ql(L.m(), L.n());
     const auto         eigenvalues_L = compute_eigenvalues_symm(L, Ql);
+    check_eigenvectors(L, Ql, eigenvalues_L);
     auto               Lip = table_to_fullmatrix(LLip[0], lane); // same as L due to zero-jumps!
     FullMatrix<double> Qlip(Lip.m(), Lip.n());
     const auto         eigenvalues_Lip = compute_eigenvalues_symm(Lip, Qlip);
-    auto               M               = table_to_fullmatrix(MM[0], lane);
+    check_eigenvectors(Lip, Qlip, eigenvalues_Lip);
+    auto               M = table_to_fullmatrix(MM[0], lane);
     FullMatrix<double> Qm(M.m(), M.n());
     const auto         eigenvalues_M = compute_eigenvalues_symm(M, Qm);
+    check_eigenvectors(M, Qm, eigenvalues_M);
     FullMatrix<double> sqL(L.m(), L.n());
     L.mmult(sqL, L);
     FullMatrix<double> Qsql(sqL.m(), sqL.n());
     const auto         eigenvalues_sqL = compute_eigenvalues_symm(sqL, Qsql);
+    check_eigenvectors(sqL, Qsql, eigenvalues_sqL);
 
-    // std::cout << "Eigenvalues(B):" << std::endl;
-    // eigenvalues_B.print(std::cout);
-    // std::cout << "Eigenvalues(Bip):" << std::endl;
-    // eigenvalues_Bip.print(std::cout);
-    // std::cout << "Eigenvalues(L):" << std::endl;
-    // eigenvalues_L.print(std::cout);
-    // std::cout << "Eigenvalues(Lip):" << std::endl;
-    // eigenvalues_Lip.print(std::cout);
-    // std::cout << "Eigenvalues(M):" << std::endl;
-    // eigenvalues_M.print(std::cout);
-    // std::cout << "Eigenvalues(L^2):" << std::endl;
-    // eigenvalues_sqL.print(std::cout);
+    // // std::cout << "Eigenvalues(B):" << std::endl;
+    // // eigenvalues_B.print(std::cout);
+    // // std::cout << "Eigenvalues(Bip):" << std::endl;
+    // // eigenvalues_Bip.print(std::cout);
+    // // std::cout << "Eigenvalues(L):" << std::endl;
+    // // eigenvalues_L.print(std::cout);
+    // // std::cout << "Eigenvalues(Lip):" << std::endl;
+    // // eigenvalues_Lip.print(std::cout);
+    // // std::cout << "Eigenvalues(M):" << std::endl;
+    // // eigenvalues_M.print(std::cout);
+    // // std::cout << "Eigenvalues(L^2):" << std::endl;
+    // // eigenvalues_sqL.print(std::cout);
+
+    // {
+    //   *pcout_owned << "\nIs L^2 diagonalizable in terms of eigenvectors Ql of L?" << std::endl;
+    //   FullMatrix<double> Lambda(sqL.m());
+    //   FullMatrix<double> tmp(sqL.m());
+    //   Qsql.Tmmult(tmp, sqL);
+    //   tmp.mmult(Lambda, Qsql);
+    //   FullMatrix<double> Lambda_ref(Qsql.m());
+    //   for(auto i = 0U; i < eigenvalues_sqL.size(); ++i)
+    //     Lambda_ref(i, i) = eigenvalues_sqL[i];
+    //   compare_matrix(Lambda, Lambda_ref);
+
+    //   // is diagonalizable?
+    //   Ql.Tmmult(tmp, sqL);
+    //   tmp.mmult(Lambda, Ql);
+    //   compare_matrix(Lambda, Lambda_ref);
+    // }
+    // {
+    //   *pcout_owned << "\nIs Bip diagonalizable in terms of eigenvectors Ql of L?" << std::endl;
+    //   FullMatrix<double> Lambda(Bip.m());
+    //   FullMatrix<double> tmp(Bip.m());
+    //   Qbip.Tmmult(tmp, Bip);
+    //   tmp.mmult(Lambda, Qbip);
+    //   FullMatrix<double> Lambda_ref(Qbip.m());
+    //   for(auto i = 0U; i < eigenvalues_Bip.size(); ++i)
+    //     Lambda_ref(i, i) = eigenvalues_Bip[i];
+    //   compare_matrix(Lambda, Lambda_ref);
+
+    //   // is diagonalizable?
+    //   Ql.Tmmult(tmp, Bip);
+    //   tmp.mmult(Lambda, Ql);
+    //   compare_matrix(Lambda, Lambda_ref);
+    // }
+    // {
+    //   *pcout_owned << "\nIs B diagonalizable in terms of eigenvectors Ql of L?" << std::endl;
+    //   FullMatrix<double> Lambda(B.m());
+    //   FullMatrix<double> tmp(B.m());
+    //   Qb.Tmmult(tmp, B);
+    //   tmp.mmult(Lambda, Qb);
+    //   FullMatrix<double> Lambda_ref(Qb.m());
+    //   for(auto i = 0U; i < eigenvalues_B.size(); ++i)
+    //     Lambda_ref(i, i) = eigenvalues_B[i];
+    //   compare_matrix(Lambda, Lambda_ref);
+
+    //   // is diagonalizable?
+    //   Ql.Tmmult(tmp, B);
+    //   tmp.mmult(Lambda, Ql);
+    //   compare_matrix(Lambda, Lambda_ref);
+    //   compare_matrix(Qb, Ql);
+    // }
 
     {
-      std::cout << "\nIs L^2 diagonalizable in terms of eigenvectors Ql of L?" << std::endl;
-      FullMatrix<double> Lambda(sqL.m());
-      FullMatrix<double> tmp(sqL.m());
-      Qsql.Tmmult(tmp, sqL);
-      tmp.mmult(Lambda, Qsql);
-      FullMatrix<double> Lambda_ref(Qsql.m());
-      for(auto i = 0U; i < eigenvalues_sqL.size(); ++i)
-        Lambda_ref(i, i) = eigenvalues_sqL[i];
-      compare_matrix(Lambda, Lambda_ref);
-
-      // is diagonalizable?
-      Ql.Tmmult(tmp, sqL);
-      tmp.mmult(Lambda, Ql);
-      compare_matrix(Lambda, Lambda_ref);
-    }
-
-    {
-      std::cout << "\nIs Bip diagonalizable in terms of eigenvectors Ql of L?" << std::endl;
-      FullMatrix<double> Lambda(Bip.m());
-      FullMatrix<double> tmp(Bip.m());
-      Qbip.Tmmult(tmp, Bip);
-      tmp.mmult(Lambda, Qbip);
-      FullMatrix<double> Lambda_ref(Qbip.m());
-      for(auto i = 0U; i < eigenvalues_Bip.size(); ++i)
-        Lambda_ref(i, i) = eigenvalues_Bip[i];
-      compare_matrix(Lambda, Lambda_ref);
-
-      // is diagonalizable?
-      Ql.Tmmult(tmp, Bip);
-      tmp.mmult(Lambda, Ql);
-      compare_matrix(Lambda, Lambda_ref);
-    }
-
-    {
-      std::cout << "\nIs B diagonalizable in terms of eigenvectors Ql of L?" << std::endl;
-      FullMatrix<double> Lambda(B.m());
-      FullMatrix<double> tmp(B.m());
-      Qb.Tmmult(tmp, B);
-      tmp.mmult(Lambda, Qb);
-      FullMatrix<double> Lambda_ref(Qb.m());
-      for(auto i = 0U; i < eigenvalues_B.size(); ++i)
-        Lambda_ref(i, i) = eigenvalues_B[i];
-      compare_matrix(Lambda, Lambda_ref);
-
-      // is diagonalizable?
-      Ql.Tmmult(tmp, B);
-      tmp.mmult(Lambda, Ql);
-      compare_matrix(Lambda, Lambda_ref);
-      compare_matrix(Qb, Ql);
-    }
-
-    {
-      std::cout << "\nConstructing 1D reference problem" << std::endl;
+      *pcout_owned << "\nConstructing 1D reference problem" << std::endl;
       Triangulation<1> tria;
       GridGenerator::hyper_cube(tria, 0., 1.);
       tria.refine_global(1);
       FE_Q<1>       fe(fe_degree);
       DoFHandler<1> dofh;
       dofh.initialize(tria, fe);
-      std::cout << "Distributed " << dofh.n_dofs() << " dofs subject to " << fe.get_name()
-                << std::endl;
+      *pcout_owned << "Distributed " << dofh.n_dofs() << " dofs subject to " << fe.get_name()
+                   << std::endl;
 
       /// assemble mass matrix
       QGauss<1>                            quad(fe_degree + 1);
@@ -299,19 +315,20 @@ protected:
         }
       }
       AssertDimension(inner_dof_indices.size(), dofh.n_dofs() - 2);
-      std::cout << "Global DoFs on patch in lexicographic order: "
-                << vector_to_string(inner_dof_indices) << std::endl;
+      *pcout_owned << "Global DoFs on patch in lexicographic order: "
+                   << vector_to_string(inner_dof_indices) << std::endl;
       FullMatrix<double> mass(dofh.n_dofs() - 2, dofh.n_dofs() - 2);
       mass.extract_submatrix_from(Mass, inner_dof_indices, inner_dof_indices);
 
       /// compare mass matrices
       FullMatrix<double> Qmass(mass.m(), mass.n());
       const auto         eigenvalues_mass = compute_eigenvalues_symm(mass, Qmass);
-      std::cout << "Eigenvalues(mass):" << std::endl;
-      eigenvalues_mass.print(std::cout);
+      *pcout_owned << "Eigenvalues(mass):" << std::endl;
+      eigenvalues_mass.print(ofs);
       compare_matrix(M, mass);
 
       /// store evaluations of shape functions (phi_i) in GNUPLOT data files
+      constexpr unsigned int n_subdivisions = 400;
       for(auto i = 0U; i < inner_dof_indices.size(); ++i)
       {
         DataOut<1> data_out;
@@ -321,7 +338,7 @@ protected:
         Vector<double> e_dof(dofh.n_dofs());
         e_dof(dof) = 1.;
         data_out.add_data_vector(e_dof, name, DataOut<1>::type_dof_data);
-        data_out.build_patches(/*n_subdivisions*/ 50);
+        data_out.build_patches(n_subdivisions);
         std::ofstream file(name + ".dat");
         data_out.write_gnuplot(file);
       }
@@ -350,9 +367,8 @@ protected:
             const auto dof = inner_dof_indices[j];
             v(dof)         = Q(j, i);
           }
-          // v.print(std::cout);
           data_out.add_data_vector(v, name, DataOut<1>::type_dof_data);
-          data_out.build_patches(/*n_subdivisions*/ 100);
+          data_out.build_patches(n_subdivisions);
           std::ofstream file(name + ".dat");
           data_out.write_gnuplot(file);
         }
@@ -361,34 +377,23 @@ protected:
       { // write eigendecomposition data:   Bip q = \lambda L^2 q
         FullMatrix<double> Q(Bip.m(), Bip.n());
         const auto         eigenvalues = compute_generalized_eigenvalues_symm(Bip, sqL, Q);
-
-        FullMatrix<double> Lambda(Bip.m());
-        FullMatrix<double> tmp(Bip.m());
-        Q.Tmmult(tmp, Bip);
-        tmp.mmult(Lambda, Q);
-        FullMatrix<double> Lambda_ref(Q.m());
-        for(auto i = 0U; i < eigenvalues.size(); ++i)
-          Lambda_ref(i, i) = eigenvalues[i];
-        compare_matrix(Lambda, Lambda_ref);
-        // Lambda.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-8);
+        check_eigenvectors(Bip, Q, eigenvalues);
         write_eigenfunction_data(Q, "EF_Bip_wrt_sqL");
         write_eigenvalue_data(eigenvalues, "EV_Bip_wrt_sqL");
       }
-
       { // write eigendecomposition data:   L q = \lambda M q
         FullMatrix<double> Q(L.m(), L.n());
         const auto         eigenvalues = compute_generalized_eigenvalues_symm(L, M, Q);
-
-        FullMatrix<double> Lambda(L.m());
-        FullMatrix<double> tmp(L.m());
-        Q.Tmmult(tmp, L);
-        tmp.mmult(Lambda, Q);
-        FullMatrix<double> Lambda_ref(Q.m());
-        for(auto i = 0U; i < eigenvalues.size(); ++i)
-          Lambda_ref(i, i) = eigenvalues[i];
-        compare_matrix(Lambda, Lambda_ref);
+        check_eigenvectors(L, Q, eigenvalues);
         write_eigenfunction_data(Q, "EF_L_wrt_M");
         write_eigenvalue_data(eigenvalues, "EV_L_wrt_M");
+      }
+      { // write eigendecomposition data:   Bip q = \lambda M q
+        FullMatrix<double> Q(Bip.m(), Bip.n());
+        const auto         eigenvalues = compute_generalized_eigenvalues_symm(Bip, M, Q);
+        check_eigenvectors(Bip, Q, eigenvalues);
+        write_eigenfunction_data(Q, "EF_Bip_wrt_M");
+        write_eigenvalue_data(eigenvalues, "EV_Bip_wrt_M");
       }
 
       { // write eigendecomposition data:   Bip q = \lambda q
@@ -405,6 +410,16 @@ protected:
         std::vector<double> evs(eigenvalues_L.begin(), eigenvalues_L.end());
         write_eigenfunction_data(Ql, "EF_L");
         write_eigenvalue_data(evs, "EV_L");
+      }
+      { // write eigendecomposition data:   L^2 q = \lambda q
+        std::vector<double> evs(eigenvalues_sqL.begin(), eigenvalues_sqL.end());
+        write_eigenfunction_data(Qsql, "EF_sqL");
+        write_eigenvalue_data(evs, "EV_sqL");
+      }
+      { // write eigendecomposition data:   M q = \lambda q
+        std::vector<double> evs(eigenvalues_M.begin(), eigenvalues_M.end());
+        write_eigenfunction_data(Qm, "EF_M");
+        write_eigenvalue_data(evs, "EV_M");
       }
     }
   }
@@ -459,7 +474,7 @@ REGISTER_TYPED_TEST_SUITE_P(TestBiharmonicIntegrator,
                             CheckVertexPatchMatrix,
                             CheckVertexPatchEigendecomp1D);
 
-using TestParamsQuadratic = testing::Types<Util::NonTypeParams<2, 2>>;
+using TestParamsQuadratic = testing::Types<Util::NonTypeParams<2, 11>>;
 using TestParamsHighOrder = testing::Types<Util::NonTypeParams<2, 5>, Util::NonTypeParams<2, 7>>;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestBiharmonicIntegrator, TestParamsQuadratic);
