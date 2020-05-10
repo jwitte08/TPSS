@@ -41,8 +41,10 @@ using namespace dealii;
 
 struct SmootherParameter
 {
-  enum class SmootherVariant // TODO
+  enum class SmootherVariant
   {
+    None,
+    GaussSeidel,
     Schwarz
   };
   static std::string
@@ -416,7 +418,7 @@ CoarseGridParameter::to_string() const
 std::string
 SmootherParameter::str_smoother_variant(const SmootherParameter::SmootherVariant variant)
 {
-  const std::string str_variant[] = {"Schwarz Smoother"};
+  const std::string str_variant[] = {"None", "Gauss-Seidel", "Schwarz Smoother"};
   return str_variant[(int)variant];
 }
 
