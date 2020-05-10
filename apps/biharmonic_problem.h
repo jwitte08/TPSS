@@ -143,8 +143,9 @@ class ModelProblem
 public:
   using VECTOR = Vector<double>;
 
-  using MG_TRANSFER        = MGTransferPrebuilt<VECTOR>;
-  using GMG_PRECONDITIONER = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
+  using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
+  using GAUSS_SEIDEL_SMOOTHER = PreconditionSOR<SparseMatrix<double>>;
+  using GMG_PRECONDITIONER    = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 
   static_assert(dim == 2, "only implemented in 2D");
 
@@ -199,6 +200,10 @@ public:
     return *preconditioner_mg;
   }
 
+  template<typename PreconditionerType>
+  void
+  iterative_solve_impl(const PreconditionerType & preconditioner);
+
   void
   solve();
 
@@ -212,6 +217,21 @@ public:
   max_level() const
   {
     return triangulation.n_global_levels() - 1;
+  }
+
+  template<typename T>
+  void
+  print_parameter(const std::string & description, const T & value) const
+  {
+    *pcout << Util::parameter_to_fstring(description, value);
+  }
+
+  void
+  print_informations() const
+  {
+    print_parameter("Finite element:", fe.get_name());
+    *pcout << rt_parameters.to_string();
+    *pcout << std::endl;
   }
 
   RT::Parameter                       rt_parameters;
@@ -238,13 +258,15 @@ public:
   // std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_pre;
   // std::shared_ptr<const MG_SMOOTHER_SCHWARZ> mg_schwarz_smoother_post;
   std::shared_ptr<const MGSmootherIdentity<VECTOR>> mg_smoother_identity;
-  const MGSmootherBase<VECTOR> *                    mg_smoother_pre;
-  const MGSmootherBase<VECTOR> *                    mg_smoother_post;
-  CoarseGridSolver<SparseMatrix<double>, VECTOR>    coarse_grid_solver;
-  MGCoarseGridSVD<double, VECTOR>                   coarse_grid_svd;
-  const MGCoarseGridBase<VECTOR> *                  mg_coarse_grid;
-  mg::Matrix<VECTOR>                                mg_matrix_wrapper;
-  std::shared_ptr<Multigrid<VECTOR>>                multigrid;
+  std::shared_ptr<const mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, VECTOR>>
+                                                 mg_smoother_gauss_seidel;
+  const MGSmootherBase<VECTOR> *                 mg_smoother_pre;
+  const MGSmootherBase<VECTOR> *                 mg_smoother_post;
+  CoarseGridSolver<SparseMatrix<double>, VECTOR> coarse_grid_solver;
+  MGCoarseGridSVD<double, VECTOR>                coarse_grid_svd;
+  const MGCoarseGridBase<VECTOR> *               mg_coarse_grid;
+  mg::Matrix<VECTOR>                             mg_matrix_wrapper;
+  std::shared_ptr<Multigrid<VECTOR>>             multigrid;
 
   std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
 };
@@ -274,11 +296,16 @@ template<int dim>
 void
 ModelProblem<dim>::make_grid()
 {
-  GridGenerator::hyper_cube(triangulation, 0., 1.);
+  *pcout << create_mesh(triangulation, rt_parameters.mesh);
+  // this->level = triangulation.n_global_levels() - 1;
+  pp_data.n_cells_global.push_back(triangulation.n_global_active_cells());
+  pp_data.n_dimensions = dim;
+
+  // GridGenerator::hyper_cube(triangulation, 0., 1.);
   // triangulation.refine_global(1);
 
-  *pcout << "Number of active cells: " << triangulation.n_active_cells() << std::endl
-         << "Total number of cells: " << triangulation.n_cells() << std::endl;
+  // *pcout << "Number of active cells: " << triangulation.n_active_cells() << std::endl
+  //        << "Total number of cells: " << triangulation.n_cells() << std::endl;
 }
 
 
@@ -592,7 +619,7 @@ ModelProblem<dim>::prepare_multigrid()
   mg_constrained_dofs->make_zero_boundary_constraints(dof_handler, std::set<types::boundary_id>{0});
 
   // *** initialize level matrices A_l
-  system_matrix.print_formatted(std::cout);
+  // system_matrix.print_formatted(std::cout);
   mg_matrices.resize(mg_level_min, mg_level_max);
   mg_sparsity_patterns.resize(mg_level_min, mg_level_max);
   for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
@@ -665,7 +692,7 @@ ModelProblem<dim>::prepare_multigrid()
                           boundary_worker,
                           face_worker);
 
-    mg_matrices[level].print_formatted(std::cout);
+    // mg_matrices[level].print_formatted(std::cout);
   }
 
   // *** initialize multigrid transfer R_l
@@ -673,30 +700,53 @@ ModelProblem<dim>::prepare_multigrid()
   mg_transfer.build(dof_handler);
 
   // *** initialize Schwarz smoother S_l
-  mg_smoother_identity = std::make_shared<const MGSmootherIdentity<VECTOR>>();
-  mg_smoother_pre      = mg_smoother_identity.get();
-  mg_smoother_post     = mg_smoother_identity.get();
   // prepare_mg_smoothers();
 
-  // /// set pre-smoother
+  // *** set pre- and post-smoother
   // pp_data.n_colors_system.push_back(n_colors_system());
-  // if(rt_parameters.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
-  // {
-  //   AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Is not initialized."));
-  //   mg_smoother_pre = mg_schwarz_smoother_pre.get();
-  // }
-  // else
-  //   AssertThrow(false, ExcMessage("Pre-smoothing variant is not implemented. TODO"));
-
-  // /// set post-smoother
-  // if(rt_parameters.multigrid.post_smoother.variant ==
-  // SmootherParameter::SmootherVariant::Schwarz)
-  // {
-  //   AssertThrow(mg_schwarz_smoother_post, ExcMessage("Is not initialized."));
-  //   mg_smoother_post = mg_schwarz_smoother_post.get();
-  // }
-  // else
-  //   AssertThrow(false, ExcMessage("Post-smoothing variant is not implemented. TODO"));
+  switch(rt_parameters.multigrid.pre_smoother.variant)
+  {
+    case SmootherParameter::SmootherVariant::None:
+      mg_smoother_identity = std::make_shared<const MGSmootherIdentity<VECTOR>>();
+      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+      mg_smoother_pre = mg_smoother_identity.get();
+      break;
+    case SmootherParameter::SmootherVariant::GaussSeidel:
+    {
+      auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, VECTOR>>();
+      tmp->initialize(mg_matrices);
+      tmp->set_steps(rt_parameters.multigrid.pre_smoother.n_smoothing_steps);
+      tmp->set_symmetric(true);
+      mg_smoother_gauss_seidel = tmp;
+      mg_smoother_pre          = mg_smoother_gauss_seidel.get();
+    }
+    break;
+    case SmootherParameter::SmootherVariant::Schwarz:
+      AssertThrow(false, ExcMessage("TODO !!!"));
+      // AssertThrow(mg_schwarz_smoother_pre);
+      // mg_smoother_pre      = mg_schwarz_smoother_pre.get();
+      break;
+    default:
+      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  }
+  switch(rt_parameters.multigrid.post_smoother.variant)
+  {
+    case SmootherParameter::SmootherVariant::None:
+      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+      mg_smoother_post = mg_smoother_identity.get();
+      break;
+    case SmootherParameter::SmootherVariant::GaussSeidel:
+      AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
+      mg_smoother_post = mg_smoother_gauss_seidel.get();
+      break;
+    case SmootherParameter::SmootherVariant::Schwarz:
+      AssertThrow(false, ExcMessage("TODO !!!"));
+      // AssertThrow(mg_schwarz_smoother_post);
+      // mg_smoother_post      = mg_schwarz_smoother_post.get();
+      break;
+    default:
+      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  }
 
   // *** initialize coarse grid solver
   // coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
@@ -704,7 +754,7 @@ ModelProblem<dim>::prepare_multigrid()
   FullMatrix<double> coarse_matrix(mg_matrices[mg_level_min].m());
   coarse_matrix.copy_from(mg_matrices[mg_level_min]);
   coarse_grid_svd.initialize(coarse_matrix);
-  coarse_matrix.print_formatted(std::cout);
+  // coarse_matrix.print_formatted(std::cout);
   mg_coarse_grid = &coarse_grid_svd;
 
   mg_matrix_wrapper.initialize(mg_matrices);
@@ -715,6 +765,39 @@ ModelProblem<dim>::prepare_multigrid()
                                                   *mg_smoother_post,
                                                   mg_level_min,
                                                   mg_level_max);
+}
+
+
+
+template<int dim>
+template<typename PreconditionerType>
+void
+ModelProblem<dim>::iterative_solve_impl(const PreconditionerType & preconditioner)
+{
+  // ReductionControl       solver_control;
+  // solver_control.set_max_steps(rt_parameters.solver.n_iterations_max);
+  // solver_control.set_reduction(rt_parameters.solver.rel_tolerance);
+  // solver_control.set_tolerance(rt_parameters.solver.abs_tolerance);
+  // solver_control.log_history(true);
+  // solver_control.log_result(true);
+  // solver_control.enable_history_data();
+
+  IterationNumberControl solver_control;
+  solver_control.set_max_steps(rt_parameters.solver.n_iterations_max);
+  solver_control.set_tolerance(rt_parameters.solver.abs_tolerance);
+  solver_control.log_history(true);
+  solver_control.log_result(true);
+  solver_control.enable_history_data();
+
+  SolverSelector<VECTOR> iterative_solver;
+  iterative_solver.set_control(solver_control);
+  iterative_solver.select(rt_parameters.solver.variant);
+  iterative_solver.solve(system_matrix, system_u, system_rhs, preconditioner);
+  constraints.distribute(system_u);
+
+  const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
+  pp_data.average_reduction_system.push_back(reduction_rate);
+  pp_data.n_iterations_system.push_back(n_frac);
 }
 
 
@@ -733,25 +816,23 @@ ModelProblem<dim>::solve()
     return;
   }
 
-  ReductionControl       solver_control;
-  SolverSelector<VECTOR> iterative_solver;
-  solver_control.set_max_steps(rt_parameters.solver.n_iterations_max);
-  solver_control.set_reduction(rt_parameters.solver.rel_tolerance);
-  solver_control.set_tolerance(rt_parameters.solver.abs_tolerance);
-  solver_control.log_history(true);
-  solver_control.log_result(true);
-  solver_control.enable_history_data();
+  else
+  {
+    switch(rt_parameters.solver.precondition_variant)
+    {
+      case SolverParameter::PreconditionVariant::None:
+        iterative_solve_impl(PreconditionIdentity{});
+        break;
 
-  // PreconditionIdentity preconditioner;
-  prepare_preconditioner_mg();
-  iterative_solver.set_control(solver_control);
-  iterative_solver.select(rt_parameters.solver.variant);
-  iterative_solver.solve(system_matrix, system_u, system_rhs, *preconditioner_mg);
-  constraints.distribute(system_u);
+      case SolverParameter::PreconditionVariant::GMG:
+        prepare_preconditioner_mg();
+        iterative_solve_impl(*preconditioner_mg);
+        break;
 
-  const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
-  pp_data.average_reduction_system.push_back(reduction_rate);
-  pp_data.n_iterations_system.push_back(n_frac);
+      default:
+        AssertThrow(false, ExcNotImplemented());
+    }
+  }
 }
 
 
@@ -861,6 +942,7 @@ template<int dim>
 void
 ModelProblem<dim>::run()
 {
+  print_informations();
   make_grid();
 
   const unsigned int n_cycles = rt_parameters.n_cycles;
