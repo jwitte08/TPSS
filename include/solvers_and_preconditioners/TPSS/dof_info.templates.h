@@ -59,7 +59,8 @@ DoFInfo<dim, Number>::initialize_impl()
 {
   /// fill the lexicographic-to-hierarchic-numbering map
   if(DoFLayout::Q == get_dof_layout())
-    l2h = FETools::lexicographic_to_hierarchic_numbering(dof_handler->get_fe());
+    l2h =
+      FETools::lexicographic_to_hierarchic_numbering<dim>(dof_handler->get_fe().tensor_degree());
 
   /// cache global dof indices once for each cell owned by this processor
   /// (including ghost cells)

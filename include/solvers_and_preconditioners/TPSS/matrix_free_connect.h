@@ -1,6 +1,7 @@
 #ifndef MATRIXFREECONNECT_H
 #define MATRIXFREECONNECT_H
 
+#include "dof_info.h"
 #include "patch_info.h"
 #include "patch_worker.h"
 
