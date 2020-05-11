@@ -9,63 +9,13 @@ PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
   AssertDimension(src.size(), subdomain_handler.get_dof_handler().n_dofs(level));
 
   AlignedVector<VectorizedArray<Number>> dst(n_dofs_per_patch());
-
-  // if(!compressed)
-  // {
-  //   std::vector<ArrayView<const CellIterator>> cell_collection =
-  //     patch_worker.get_cell_collection_views(patch_id);
-  //   const unsigned int n_lanes_filled = cell_collection.size();
-  //   Assert(n_lanes_filled > 0, ExcMessage("No vectorization lane filled."));
-  //   for(unsigned int lane = 0; lane < n_lanes_filled; ++lane)
-  //   {
-  //     const auto &       cell_view = cell_collection[lane];
-  //     const unsigned int n_cells   = cell_view.size();
-  //     Assert(n_cells > 0, ExcMessage("No cell contained in collection."));
-  //     for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
-  //     {
-  //       const ArrayView<const unsigned> &    patch_dofs = patch_dof_indices_on_cell(cell_no);
-  //       const CellIterator &                 cell       = cell_view[cell_no];
-  //       std::vector<types::global_dof_index> global_dofs_on_cell;
-  //       global_dofs_on_cell.resize(n_dofs_per_cell_static);
-  //       cell->get_active_or_mg_dof_indices(global_dofs_on_cell);
-  //       std::vector<Number> global_values;
-  //       global_values.resize(n_dofs_per_cell_static);
-  //       empty_constraints.get_dof_values(src,
-  //                                        global_dofs_on_cell.cbegin(),
-  //                                        global_values.begin(),
-  //                                        global_values.end());
-  //       auto dof = patch_dofs.cbegin();
-  //       for(auto value = global_values.cbegin(); value != global_values.cend(); ++value, ++dof)
-  //         dst[*dof][lane] = *value;
-  //     }
-  //   }
-  //   //: fill the unused lanes with meaningful data to avoid divison by zero in LAC solvers
-  //   for(unsigned int lane = n_lanes_filled; lane < VectorizedArray<Number>::size();
-  //       ++lane)
-  //     for(auto & elem : dst)
-  //       elem[lane] = elem[0];
-  // }
-  // else // compressed
-  // /// !!! OLD
-  // {
-  //   for(unsigned int lane = 0; lane < macro_size; ++lane)
-  //   {
-  //     const auto & global_dof_indices = get_global_dof_indices(lane);
-  //     AssertDimension(dst.size(), global_dof_indices.size());
-  //     auto dof_index = global_dof_indices.cbegin();
-  //     for(auto dst_value = dst.begin(); dst_value != dst.end(); ++dof_index, ++dst_value)
-  //       (*dst_value)[lane] = src((*dof_index));
-  //   }
-  // }
+  for(unsigned int lane = 0; lane < macro_size; ++lane)
   {
-    for(unsigned int lane = 0; lane < macro_size; ++lane)
-    {
-      const auto & global_dof_indices = get_dof_indices(lane);
-      AssertDimension(dst.size(), global_dof_indices.size());
-      auto dof_index = global_dof_indices.cbegin();
-      for(auto dst_value = dst.begin(); dst_value != dst.end(); ++dof_index, ++dst_value)
-        (*dst_value)[lane] = src.local_element(*dof_index);
-    }
+    const auto & global_dof_indices = get_dof_indices(lane);
+    AssertDimension(dst.size(), global_dof_indices.size());
+    auto dof_index = global_dof_indices.cbegin();
+    for(auto dst_value = dst.begin(); dst_value != dst.end(); ++dof_index, ++dst_value)
+      (*dst_value)[lane] = internal::local_element(src, *dof_index);
   }
 
   AssertDimension(dst.size(), n_dofs_per_patch());
@@ -112,55 +62,13 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
   AssertDimension(dst.size(), subdomain_handler.get_dof_handler().n_dofs(level));
   AssertDimension(src.size(), n_dofs_per_patch());
 
-  // if(!compressed)
-  // {
-  //   std::vector<ArrayView<const CellIterator>> cell_collection =
-  //     patch_worker.get_cell_collection_views(patch_id);
-  //   const unsigned int n_lanes_filled = cell_collection.size();
-  //   Assert(n_lanes_filled > 0, ExcMessage("No vectorization lane filled."));
-  //   std::vector<Number> src_per_cell;
-  //   src_per_cell.resize(n_dofs_per_cell_static);
-  //   for(unsigned int lane = 0; lane < n_lanes_filled; ++lane)
-  //   {
-  //     const auto &       cell_view = cell_collection[lane];
-  //     const unsigned int n_cells   = cell_view.size();
-  //     Assert(n_cells > 0, ExcMessage("No cell contained in collection."));
-  //     for(unsigned int cell_no = 0; cell_no < n_cells; ++cell_no)
-  //     {
-  //       const ArrayView<const unsigned> &    patch_dofs = patch_dof_indices_on_cell(cell_no);
-  //       const CellIterator &                 cell       = cell_view[cell_no];
-  //       std::vector<types::global_dof_index> global_dofs_on_cell;
-  //       global_dofs_on_cell.resize(n_dofs_per_cell_static);
-  //       cell->get_active_or_mg_dof_indices(global_dofs_on_cell);
-  //       const unsigned * dof = patch_dofs.begin();
-  //       for(auto out = src_per_cell.begin(); out != src_per_cell.end(); ++out, ++dof)
-  //         *out = src[*dof][lane];
-  //       empty_constraints.distribute_local_to_global(src_per_cell, global_dofs_on_cell, dst);
-  //     }
-  //   }
-  // }
-  // else // compressed
-
-  // /// !!! OLD
-  // {
-  //   for(unsigned int lane = 0; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
-  //   {
-  //     const auto & global_dof_indices = get_global_dof_indices(lane);
-  //     AssertDimension(src.size(), global_dof_indices.size());
-  //     auto dof_index = global_dof_indices.cbegin();
-  //     for(auto src_value = src.cbegin(); src_value != src.cend(); ++dof_index, ++src_value)
-  //       dst((*dof_index)) += (*src_value)[lane];
-  //   }
-  // }
+  for(unsigned int lane = 0; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
   {
-    for(unsigned int lane = 0; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
-    {
-      const auto & global_dof_indices = get_dof_indices(lane);
-      AssertDimension(src.size(), global_dof_indices.size());
-      auto dof_index = global_dof_indices.cbegin();
-      for(auto src_value = src.cbegin(); src_value != src.cend(); ++dof_index, ++src_value)
-        dst.local_element(*dof_index) += (*src_value)[lane];
-    }
+    const auto & global_dof_indices = get_dof_indices(lane);
+    AssertDimension(src.size(), global_dof_indices.size());
+    auto dof_index = global_dof_indices.cbegin();
+    for(auto src_value = src.cbegin(); src_value != src.cend(); ++dof_index, ++src_value)
+      internal::local_element(dst, *dof_index) += (*src_value)[lane];
   }
 }
 

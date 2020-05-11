@@ -13,8 +13,69 @@
 
 using namespace dealii;
 
+
+
 namespace TPSS
 {
+namespace internal
+{
+/**
+ * Read access to the proc-local entry at @p dof_index. The Vector class has
+ * not to distinguish between proc-local and global entries and, thus, does
+ * not require the interface local_element() compared to
+ * LinearAlgebra::distributed::Vector.
+ */
+template<typename VectorType>
+const typename VectorType::value_type
+local_element(const VectorType & vec, const unsigned int dof_index)
+{
+  AssertThrow(false, ExcMessage("This VectorType is not supported."));
+}
+
+template<typename Number>
+const Number
+local_element(const Vector<Number> & vec, const unsigned int dof_index)
+{
+  return vec[dof_index];
+}
+
+template<typename Number>
+const Number
+local_element(const LinearAlgebra::distributed::Vector<Number> & vec, const unsigned int dof_index)
+{
+  return vec.local_element(dof_index);
+}
+
+/**
+ * Write access to the proc-local entry at @p dof_index. The Vector class has
+ * not to distinguish between proc-local and global entries and, thus, does
+ * not require the interface local_element() compared to
+ * LinearAlgebra::distributed::Vector.
+ */
+template<typename VectorType>
+typename VectorType::value_type &
+local_element(const VectorType & vec, const unsigned int dof_index)
+{
+  AssertThrow(false, ExcMessage("This VectorType is not supported."));
+}
+
+template<typename Number>
+Number &
+local_element(Vector<Number> & vec, const unsigned int dof_index)
+{
+  return vec[dof_index];
+}
+
+template<typename Number>
+Number &
+local_element(LinearAlgebra::distributed::Vector<Number> & vec, const unsigned int dof_index)
+{
+  return vec.local_element(dof_index);
+}
+} // namespace internal
+
+
+
 /**
  * Transfer class modeling the (mathematical) restriction operator from global
  * degrees of freedom onto subdomain degrees of freedom and its transpose
