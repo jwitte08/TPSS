@@ -226,12 +226,185 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Tvmult_add(
 
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+template<typename OtherVectorType>
+bool
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::is_globally_compatible(
+  const OtherVectorType &) const
+{
+  AssertThrow(false, ExcMessage("VectorType is not supported."));
+  return false;
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+bool
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::is_globally_compatible(
+  const LinearAlgebra::distributed::Vector<value_type> & vec) const
+{
+  const auto & partitioner   = subdomain_handler->get_vector_partitioner();
+  const bool   is_compatible = vec.partitioners_are_globally_compatible(*partitioner);
+  return is_compatible;
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+bool
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::is_globally_compatible(
+  const LinearAlgebra::distributed::BlockVector<value_type> & vec) const
+{
+  bool         is_compatible = true;
+  const auto & partitioners  = subdomain_handler->get_vector_partitioners();
+  AssertThrow(partitioners.size() == subdomain_handler->n_components(),
+              ExcMessage("There are no partitioners."));
+  for(unsigned int b = 0; b < subdomain_handler->n_components(); ++b)
+  {
+    is_compatible =
+      is_compatible && vec.block(b).partitioners_are_globally_compatible(*(partitioners[b]));
+  }
+  return is_compatible;
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+template<typename OtherVectorType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
+  initialize_ghosted_vector_if_needed(OtherVectorType &) const
+{
+  AssertThrow(false, ExcMessage("VectorType is not supported."));
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
+  initialize_ghosted_vector_if_needed(LinearAlgebra::distributed::Vector<value_type> & vec) const
+{
+  const auto partitioner = subdomain_handler->get_vector_partitioner();
+  if(vec.partitioners_are_compatible(*partitioner))
+    return;
+  vec.reinit(partitioner);
+  // std::cout << "initialize ghost on level " << level << std::endl;
+}
+
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
+  initialize_ghosted_vector_if_needed(
+    LinearAlgebra::distributed::BlockVector<value_type> & vec) const
+{
+  const auto & partitioners = subdomain_handler->get_vector_partitioners();
+  if(vec.n_blocks() == subdomain_handler->n_components())
+  {
+    bool is_compatible = true;
+    for(unsigned int b = 0; b < vec.n_blocks(); ++b)
+      is_compatible &= vec.block(b).partitioners_are_compatible(*(partitioners[b]));
+    if(is_compatible)
+      return; //: skip initialization
+  }
+
+  //: initialize ghosted vector
+  const unsigned int n_components = subdomain_handler->n_components();
+  vec.reinit(n_components, /*block_size*/ 0, /*omit_zeroing_entries*/ false);
+  for(unsigned int b = 0; b < n_components; ++b)
+    vec.block(b).reinit(partitioners[b]);
+  /// since the 'block size' has not been set in the reinit() call we have to
+  /// finalize the initialization by updating the intrinsic block sizes,
+  /// calling collect_sizes()
+  vec.collect_sizes();
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+template<typename OtherVectorType>
+std::pair<OtherVectorType *, const OtherVectorType *>
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::preprocess_solution_and_residual(
+  OtherVectorType &       solution_in,
+  const OtherVectorType & residual_in) const
+{
+  Timer              timer;
+  VectorType *       solution;
+  const VectorType * residual;
+
+  if(is_globally_compatible(solution_in))
+  {
+    solution = &solution_in;
+    residual = &residual_in;
+  }
+  else // set ghosted vector with write access
+  {
+    timer.restart();
+    initialize_ghosted_vector_if_needed(*solution_ghosted);
+    solution_ghosted->zero_out_ghosts();
+    TPSS::internal::copy_locally_owned_data(*solution_ghosted, solution_in);
+    solution = solution_ghosted.get();
+
+    initialize_ghosted_vector_if_needed(*residual_ghosted);
+    TPSS::internal::copy_locally_owned_data(*residual_ghosted, residual_in);
+    residual_ghosted->update_ghost_values();
+    residual = residual_ghosted.get();
+    time_data.at(3).add_time(timer.wall_time());
+  }
+  return {solution, residual};
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+std::pair<
+  Vector<typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> *,
+  const Vector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> *>
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::preprocess_solution_and_residual(
+  Vector<typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    solution_in,
+  const Vector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    residual_in) const
+{
+  return {&solution_in, &residual_in};
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_solution(
+  Vector<typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &,
+  const Vector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &) const
+{
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+template<typename OtherVectorType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_solution(
+  OtherVectorType &       solution_dst,
+  const OtherVectorType & solution_src) const
+{
+  Timer timer;
+  if(&solution_src == solution_ghosted.get())
+  {
+    timer.restart();
+    TPSS::internal::copy_locally_owned_data(solution_dst, solution_src);
+    time_data.at(3).add_time(timer.wall_time());
+  }
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_solvers(
   VectorType &       solution_in,
   const VectorType & residual_in,
   const unsigned int color) const
 {
+  // *** pre-process solution and residual vectors (if needed)
+  auto [solution, residual] = preprocess_solution_and_residual(solution_in, residual_in);
+
+  // *** apply local inverses for all subdomains of the given color
   const auto apply_inverses_add = [this](const SubdomainHandler<dim, value_type> & data,
                                          VectorType &                              solution,
                                          const VectorType &                        residual,
@@ -264,60 +437,15 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
     }
   };
 
-  // *** initialize ghosted vectors
-  Timer timer;
-
-  /// we do not control the initialization of @p solution_in such that we have
-  /// to compare it globally
-  VectorType * solution;
-  if(is_globally_compatible(solution_in, subdomain_handler->get_vector_partitioners()))
-  {
-    // std::cout << "solution is compatible" << std::endl;
-    solution = &solution_in;
-  }
-  else // set ghosted vector with write access
-  {
-    timer.restart();
-    initialize_ghosted_vector(*solution_ghosted);
-    solution_ghosted->zero_out_ghosts();
-    copy_locally_owned_data(*solution_ghosted, solution_in);
-    solution = solution_ghosted.get();
-    time_data.at(3).add_time(timer.wall_time());
-  }
-
-  /// we do not control the initialization of @p residual_in such that we have
-  /// to compare it globally
-  const VectorType * residual;
-  // !!! globally_compatible ist überflüssig
-  if(is_globally_compatible(residual_in, subdomain_handler->get_vector_partitioners()))
-  {
-    // std::cout << "residual is compatible" << std::endl;
-    residual = &residual_in;
-  }
-  else // set ghosted vector with read access
-  {
-    timer.restart();
-    initialize_ghosted_vector(*residual_ghosted);
-    copy_locally_owned_data(*residual_ghosted, residual_in);
-    residual_ghosted->update_ghost_values();
-    residual = residual_ghosted.get();
-    time_data.at(3).add_time(timer.wall_time());
-  }
-
-  // *** loop over all subdomains of the given color
   subdomain_handler->template loop<const VectorType, VectorType>(std::ref(apply_inverses_add),
                                                                  *solution,
                                                                  *residual,
                                                                  color);
-
-  // *** compress add, i.e. transfer ghost values to their owners
+  /// compress add, i.e. transfer ghost values to their owners
   solution->compress(VectorOperation::add);
-  if(solution == solution_ghosted.get())
-  {
-    timer.restart();
-    copy_locally_owned_data(solution_in, *solution_ghosted);
-    time_data.at(3).add_time(timer.wall_time());
-  }
+
+  // *** post-process solution (if needed)
+  postprocess_solution(solution_in, *solution);
 }
 
 
@@ -353,7 +481,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::multiplicative
   const std::vector<unsigned int> color_sequence = get_color_sequence(transpose);
   AssertThrow(!color_sequence.empty(), ExcMessage("There are no colors."));
   // std::cout << std::boolalpha << color_sequence.empty() << std::endl;
-  VectorType residual{rhs};
+  VectorType residual(rhs);
   Timer      timer;
 
   // apply inverses of first color (no update of residual needed since the initial solution is zero)

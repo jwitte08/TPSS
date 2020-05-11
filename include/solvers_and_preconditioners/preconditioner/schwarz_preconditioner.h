@@ -16,6 +16,41 @@
 
 
 
+namespace TPSS
+{
+namespace internal
+{
+template<typename OtherVectorType>
+void
+copy_locally_owned_data(OtherVectorType &, const OtherVectorType &)
+{
+  AssertThrow(false, ExcMessage("VectorType is not supported."));
+}
+
+template<typename Number>
+void
+copy_locally_owned_data(LinearAlgebra::distributed::Vector<Number> &       dst,
+                        const LinearAlgebra::distributed::Vector<Number> & src)
+{
+  dst.copy_locally_owned_data_from(src);
+}
+
+template<typename Number>
+void
+copy_locally_owned_data(LinearAlgebra::distributed::BlockVector<Number> &       dst,
+                        const LinearAlgebra::distributed::BlockVector<Number> & src)
+{
+  AssertDimension(dst.n_blocks(), src.n_blocks());
+  for(unsigned int b = 0; b < src.n_blocks(); ++b)
+    dst.block(b).copy_locally_owned_data_from(src.block(b));
+}
+} // namespace internal
+} // namespace TPSS
+
+
+/**
+ * TODO[description missing]
+ */
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 class SchwarzPreconditioner : public PreconditionerBase<VectorType>
 {
@@ -151,31 +186,44 @@ private:
                       const VectorType & residual,
                       const unsigned int color) const;
 
+  /**
+   * We do not control the initialization of solution and residual vectors
+   * passed to vmult() and methods the like. In case of MPI parallel vectors the
+   * partitioning of vectors passed to @p apply_local_solvers might differ from
+   * what we require for (vertex) patches. Therefore, we have to set up ghosted
+   * vectors if the global partitioning of @p solution_in and @p residual_in
+   * does not coincide with the one stored in @p subdomain_handler.
+   */
+  template<typename OtherVectorType = VectorType>
+  std::pair<OtherVectorType *, const OtherVectorType *>
+  preprocess_solution_and_residual(OtherVectorType &       solution_in,
+                                   const OtherVectorType & residual_in) const;
+
+  /**
+   * Nothing has to be done for serial vectors.
+   */
+  std::pair<Vector<value_type> *, const Vector<value_type> *>
+  preprocess_solution_and_residual(Vector<value_type> &       solution_in,
+                                   const Vector<value_type> & residual_in) const;
+
+  /**
+   * If @p solution_src (the solution vector after applying local solvers)
+   * coincides with the internal ghosted vector @p solution_ghosted we have to
+   * copy all locally owned entries to @p solution_dst (the solution vector
+   * returned by this preconditioner).
+   */
+  template<typename OtherVectorType = VectorType>
+  void
+  postprocess_solution(OtherVectorType & solution_dst, const OtherVectorType & solution_src) const;
+
+  /**
+   * Nothing has to be done for serial vectors.
+   */
+  void
+  postprocess_solution(Vector<value_type> &, const Vector<value_type> &) const;
+
   void
   compute_inverses();
-
-  template<typename OtherVectorType>
-  void
-  copy_locally_owned_data(OtherVectorType &, const OtherVectorType &) const
-  {
-    AssertThrow(false, ExcMessage("VectorType not supported."));
-  }
-
-  void
-  copy_locally_owned_data(LinearAlgebra::distributed::Vector<value_type> &       dst,
-                          const LinearAlgebra::distributed::Vector<value_type> & src) const
-  {
-    dst.copy_locally_owned_data_from(src);
-  }
-
-  void
-  copy_locally_owned_data(LinearAlgebra::distributed::BlockVector<value_type> &       dst,
-                          const LinearAlgebra::distributed::BlockVector<value_type> & src) const
-  {
-    const unsigned int n_components = subdomain_handler->n_components();
-    for(unsigned int b = 0; b < n_components; ++b)
-      dst.block(b).copy_locally_owned_data_from(src.block(b));
-  }
 
   /**
    * The sequence of colors for the smoothing step. Colors are defined by the PartitionData of @p
@@ -184,91 +232,51 @@ private:
   std::vector<unsigned int>
   get_color_sequence(const bool transpose) const;
 
+  /**
+   * Does nothing. See specializations below.
+   */
   template<typename OtherVectorType>
   void
-  initialize_ghosted_vector(OtherVectorType &) const
-  {
-    AssertThrow(false, ExcMessage("VectorType not supported."));
-  }
+  initialize_ghosted_vector_if_needed(OtherVectorType &) const;
 
-  /*
-   * Initializes MPI vectors with respect to the MPI partitioners stored in
-   * SubdomainHandler. This method should only be used for 'private' vectors
-   * such that local compatibility checks are sufficient.
+  /**
+   * Initializes MPI vectors, here LinearAlgebra::distributed::Vector with
+   * respect to the MPI partitioners stored in SubdomainHandler. This method
+   * should only be used for 'private' vectors such that local compatibility
+   * checks are sufficient.
    */
   void
-  initialize_ghosted_vector(LinearAlgebra::distributed::Vector<value_type> & vec) const
-  {
-    const auto partitioner = subdomain_handler->get_vector_partitioner();
-    if(vec.partitioners_are_compatible(*partitioner))
-      return;
-    vec.reinit(partitioner);
-    // std::cout << "initialize ghost on level " << level << std::endl;
-  }
+  initialize_ghosted_vector_if_needed(LinearAlgebra::distributed::Vector<value_type> & vec) const;
 
-  /*
-   * Initializes MPI vectors with respect to the MPI partitioners stored in
-   * SubdomainHandler. This method should only be used for 'private' vectors
-   * such that local compatibility checks are sufficient.
+  /**
+   * Same as above, here for LinearAlgebra::distributed::BlockVector.
    */
   void
-  initialize_ghosted_vector(LinearAlgebra::distributed::BlockVector<value_type> & vec) const
-  {
-    const auto & partitioners = subdomain_handler->get_vector_partitioners();
-    if(vec.n_blocks() == subdomain_handler->n_components())
-    {
-      bool is_compatible = true;
-      for(unsigned int b = 0; b < vec.n_blocks(); ++b)
-        is_compatible &= vec.block(b).partitioners_are_compatible(*(partitioners[b]));
-      if(is_compatible)
-        return;
-    }
+  initialize_ghosted_vector_if_needed(
+    LinearAlgebra::distributed::BlockVector<value_type> & vec) const;
 
-    const unsigned int n_components = subdomain_handler->n_components();
-    vec.reinit(n_components, /*block_size*/ 0, /*omit_zeroing_entries*/ false);
-    for(unsigned int b = 0; b < n_components; ++b)
-      vec.block(b).reinit(partitioners[b]);
-    /// since the 'block size' has not been set in the reinit() call we have to
-    /// finalize the initialization by updating the vector intrinsic information
-    /// on the block sizes, namely collect_sizes()
-    vec.collect_sizes();
-  }
-
+  /**
+   * Does nothing. See specializations below.
+   */
   template<typename OtherVectorType>
   bool
-  is_globally_compatible(
-    const OtherVectorType &,
-    const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> &) const
-  {
-    AssertThrow(false, ExcMessage("VectorType not supported."));
-    return false;
-  }
+  is_globally_compatible(const OtherVectorType &) const;
 
+  /**
+   * Initializes MPI vectors, here LinearAlgebra::distributed::Vector with
+   * respect to the MPI partitioners stored in SubdomainHandler. This method is
+   * applied to external vectors, for instance passed to vmult() and methods the
+   * like, and, thus, checks if the global partitioning coincides with the one
+   * required by SubdomainHandler.
+   */
   bool
-  is_globally_compatible(
-    const LinearAlgebra::distributed::Vector<value_type> &                  vec1,
-    const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> & partitioners) const
-  {
-    AssertThrow(!partitioners.empty(), ExcMessage("There are no partitioners."));
-    const bool is_compatible = vec1.partitioners_are_globally_compatible(*partitioners.front());
-    return is_compatible;
-  }
+  is_globally_compatible(const LinearAlgebra::distributed::Vector<value_type> & vec) const;
 
+  /**
+   * Same as above, here for LinearAlgebra::distributed::BlockVector.
+   */
   bool
-  is_globally_compatible(
-    const LinearAlgebra::distributed::BlockVector<value_type> &             vec1,
-    const std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> & partitioners) const
-  {
-    bool is_compatible = true;
-    AssertThrow(partitioners.size() == subdomain_handler->n_components(),
-                ExcMessage("There are no partitioners."));
-    for(unsigned int b = 0; b < subdomain_handler->n_components(); ++b)
-    {
-      is_compatible =
-        is_compatible && vec1.block(b).partitioners_are_globally_compatible(*(partitioners[b]));
-    }
-    return is_compatible;
-  }
+  is_globally_compatible(const LinearAlgebra::distributed::BlockVector<value_type> & vec) const;
 
   /**
    *  Note that the first step in the multiplicative Schwarz smoothing algorithm is same we have to
