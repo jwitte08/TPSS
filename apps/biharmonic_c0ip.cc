@@ -9,7 +9,7 @@ main(int argc, char * argv[])
     using namespace dealii;
     using namespace Biharmonic;
 
-    deallog.depth_console(3);
+    // deallog.depth_console(3);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     constexpr int                    dim       = CT::DIMENSION_;
     constexpr int                    fe_degree = CT::FE_DEGREE_;
@@ -23,17 +23,15 @@ main(int argc, char * argv[])
     // 1: CG solver (no preconditioner)
     // 2: CG solver (GMG preconditioner without smoothing)
     // 3: CG solver (GMG preconditioner with symm. Gauss-Seidel smoothing)
-    constexpr unsigned int test_index_max = 3;
-    unsigned int           test_index     = 0;
+    // 4: CG solver (GMG preconditioner with Schwarz smoothing)
+    constexpr unsigned int test_index_max = 4;
+    unsigned int           test_index     = 4;
     if(argc > 1)
       test_index = std::atoi(argv[1]);
     AssertThrow(test_index <= test_index_max, ExcMessage("test_index is not valid"));
-    unsigned int n_cycles = 1;
-    if(argc > 2)
-      n_cycles = std::atoi(argv[2]);
     {
       //: discretization
-      prms.n_cycles = n_cycles;
+      prms.n_cycles = argc > 2 ? std::atoi(argv[2]) : 3;
       // prms.dof_limits            = {1e5, 2e7};
       prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
       prms.mesh.n_refinements    = 1;
@@ -45,11 +43,12 @@ main(int argc, char * argv[])
       prms.solver.precondition_variant = test_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
-      prms.solver.n_iterations_max = 100;
+      prms.solver.n_iterations_max = 200;
 
       //: multigrid
       const double damping_factor =
-        TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim);
+        (argc > 3) ? std::atof(argv[3]) :
+                     TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim);
       prms.multigrid.coarse_level               = 0;
       prms.multigrid.coarse_grid.solver_variant = CoarseGridParameter::SolverVariant::IterativeAcc;
       prms.multigrid.coarse_grid.iterative_solver                                   = "cg";
@@ -58,7 +57,8 @@ main(int argc, char * argv[])
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::None,
-        SmootherParameter::SmootherVariant::GaussSeidel};
+        SmootherParameter::SmootherVariant::GaussSeidel,
+        SmootherParameter::SmootherVariant::Schwarz};
       prms.multigrid.pre_smoother.variant                  = smoother_variant[test_index];
       prms.multigrid.pre_smoother.n_smoothing_steps        = 2;
       prms.multigrid.pre_smoother.schwarz.patch_variant    = CT::PATCH_VARIANT_;
@@ -70,7 +70,8 @@ main(int argc, char * argv[])
       prms.multigrid.post_smoother.schwarz.reverse_smoothing = true;
     }
 
-    ModelProblem<dim> biharmonic_problem(prms, fe_degree);
+    EquationData                 equation_data;
+    ModelProblem<dim, fe_degree> biharmonic_problem(prms, equation_data);
     biharmonic_problem.run();
   }
   catch(std::exception & exc)

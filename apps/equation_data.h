@@ -404,13 +404,6 @@ public:
 
 namespace Biharmonic
 {
-struct EquationData
-{
-  std::set<types::boundary_id> dirichlet_boundary_ids = {0};
-  double                       ip_factor              = 1.;
-};
-
-
 // In the following namespace, let us define the exact solution against
 // which we will compare the numerically computed one. It has the form
 // $u(x,y) = \sin(\pi x) \sin(\pi y)$ (only the 2d case is implemented),
@@ -456,6 +449,14 @@ public:
       hessians[i][1][1] = -PI * PI * std::sin(PI * x) * std::sin(PI * y);
     }
   }
+
+  double
+  bilaplacian(const Point<dim> & p, const unsigned int /*component*/ = 0) const
+  {
+    const auto & x = p[0];
+    const auto & y = p[1];
+    return 4 * std::pow(PI, 4.0) * std::sin(PI * x) * std::sin(PI * y);
+  }
 };
 
 
@@ -473,6 +474,110 @@ public:
   }
 };
 } // namespace ExactSolution
+
+
+
+namespace ZeroBoundary
+{
+using numbers::PI;
+
+template<int dim>
+class Solution : public Function<dim>
+{
+public:
+  static_assert(dim == 2, "Only dim==2 is implemented.");
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    return std::sin(PI * p[0]) * std::sin(PI * p[1]);
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    Tensor<1, dim> r;
+    r[0] = PI * std::cos(PI * p[0]) * std::sin(PI * p[1]);
+    r[1] = PI * std::cos(PI * p[1]) * std::sin(PI * p[0]);
+    return r;
+  }
+
+  virtual void
+  hessian_list(const std::vector<Point<dim>> &        points,
+               std::vector<SymmetricTensor<2, dim>> & hessians,
+               const unsigned int /*component*/ = 0) const override
+  {
+    for(unsigned i = 0; i < points.size(); ++i)
+    {
+      const double x = points[i][0];
+      const double y = points[i][1];
+
+      hessians[i][0][0] = -PI * PI * std::sin(PI * x) * std::sin(PI * y);
+      hessians[i][0][1] = PI * PI * std::cos(PI * x) * std::cos(PI * y);
+      hessians[i][1][1] = -PI * PI * std::sin(PI * x) * std::sin(PI * y);
+    }
+  }
+
+  double
+  bilaplacian(const Point<dim> & p, const unsigned int /*component*/ = 0) const
+  {
+    const auto & x = p[0];
+    const auto & y = p[1];
+    return 4 * std::pow(PI, 4.0) * std::sin(PI * x) * std::sin(PI * y);
+  }
+};
+
+
+template<int dim>
+class ManufacturedLoad : public Function<dim>
+{
+public:
+  virtual double
+  value(const Point<dim> & p, const unsigned int = 0) const override final
+  {
+    return solution.bilaplacian(p);
+  }
+
+private:
+  Solution<dim> solution;
+};
+} // namespace ZeroBoundary
+
+
+
+struct EquationData
+{
+  enum LocalSolverVariant
+  {
+    Exact,
+    Bilaplacian
+  };
+
+  static std::string
+  str_local_solver(const LocalSolverVariant variant);
+
+  std::string
+  to_string() const
+  {
+    std::ostringstream oss;
+    oss << Util::parameter_to_fstring("Equation Data:", "");
+    oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
+    oss << Util::parameter_to_fstring("Local solver:", str_local_solver(local_solver_variant));
+    return oss.str();
+  }
+
+  std::set<types::boundary_id> dirichlet_boundary_ids = {0};
+  double                       ip_factor              = 1.;
+  LocalSolverVariant           local_solver_variant   = LocalSolverVariant::Exact;
+};
+
+
+std::string
+EquationData::str_local_solver(const LocalSolverVariant variant)
+{
+  const std::string str_variant[] = {"Exact", "Bilaplacian (no mixed derivatives)"};
+  return str_variant[(int)variant];
+}
 } // namespace Biharmonic
 
 #endif /* EQUATION_DATA_H_ */

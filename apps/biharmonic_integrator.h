@@ -93,17 +93,20 @@ public:
 
       /// store rank1 tensors of mixed derivatives
       /// 2(LxLxM + LxMxL + MxLxL)
-      const auto & LxLxM = [&](const int direction1, const int direction2) {
-        std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
-        for(auto d = 0; d < dim; ++d)
-          kronecker_tensor[d] =
-            (d == direction1 || d == direction2) ? laplace_matrices[d] : mass_matrices[d];
-        return kronecker_tensor;
-      };
-      for(auto direction1 = 0; direction1 < dim; ++direction1)
-        for(auto direction2 = 0; direction2 < dim; ++direction2)
-          if(direction1 != direction2)
-            rank1_tensors.emplace_back(LxLxM(direction1, direction2));
+      if(equation_data.local_solver_variant == EquationData::LocalSolverVariant::Exact)
+      {
+        const auto & LxLxM = [&](const int direction1, const int direction2) {
+          std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
+          for(auto d = 0; d < dim; ++d)
+            kronecker_tensor[d] =
+              (d == direction1 || d == direction2) ? laplace_matrices[d] : mass_matrices[d];
+          return kronecker_tensor;
+        };
+        for(auto direction1 = 0; direction1 < dim; ++direction1)
+          for(auto direction2 = 0; direction2 < dim; ++direction2)
+            if(direction1 != direction2)
+              rank1_tensors.emplace_back(LxLxM(direction1, direction2));
+      }
 
       /// submit vector of rank1 Kronecker tensors
       local_matrices[patch].reinit(rank1_tensors);
@@ -221,6 +224,7 @@ public:
 
     if constexpr(c0ip)
       return eval.patch_action(cell_bilaplace, face_nitsche, interface_nitsche);
+    (void)face_nitsche, (void)interface_nitsche;
     return eval.patch_action(cell_bilaplace);
   }
 
