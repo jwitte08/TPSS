@@ -63,6 +63,7 @@
 
 
 #include "biharmonic_integrator.h"
+#include "coloring.h"
 #include "equation_data.h"
 #include "mesh.h"
 #include "multigrid.h"
@@ -76,11 +77,12 @@ namespace Biharmonic
 using namespace dealii;
 
 template<int dim, int fe_degree = 2, typename Number = double>
-class SparseMatrixAugmented : public SparseMatrix<double>,
+class SparseMatrixAugmented : public SparseMatrix<Number>,
                               public C0IP::FD::MatrixIntegrator<dim, fe_degree, Number>
 {
 public:
   using value_type            = Number;
+  using matrix_type           = SparseMatrix<Number>;
   using local_integrator_type = C0IP::FD::MatrixIntegrator<dim, fe_degree, Number>;
 
   void
@@ -96,6 +98,20 @@ public:
   {
     AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
     return mf_storage;
+  }
+
+  using matrix_type::vmult;
+
+  void
+  vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const
+  {
+    AssertDimension(dst.size(), matrix_type::m());
+    AssertDimension(src.size(), matrix_type::n());
+    Vector<Number> v(matrix_type::n()); // src
+    std::copy(src.cbegin(), src.cend(), v.begin());
+    Vector<Number> w(matrix_type::m()); // dst
+    matrix_type::vmult(w, v);           // w = A v
+    std::copy(w.begin(), w.end(), dst.begin());
   }
 
   std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
@@ -152,6 +168,7 @@ struct CopyData
   {
     FullMatrix<double>                   cell_matrix;
     std::vector<types::global_dof_index> joint_dof_indices;
+    Vector<double>                       cell_rhs;
   };
 
   unsigned int                         level;
@@ -173,9 +190,8 @@ public:
   using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
   using GAUSS_SEIDEL_SMOOTHER = PreconditionSOR<MATRIX>;
   using PATCH_MATRIX          = Tensors::TensorProductMatrix<dim, VectorizedArray<double>>;
-  // using SCHWARZ_PRECONDITIONER = SchwarzPreconditioner<dim, MATRIX, VECTOR, PATCH_MATRIX>;
-  using MG_SMOOTHER_SCHWARZ = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
-  using GMG_PRECONDITIONER  = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
+  using MG_SMOOTHER_SCHWARZ   = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
+  using GMG_PRECONDITIONER    = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 
   static_assert(dim == 2, "only implemented in 2D");
 
@@ -185,19 +201,25 @@ public:
   void
   run();
 
-  void
+  bool
   make_grid();
+
+  bool
+  make_grid(const unsigned int n_refinements);
+
+  void
+  make_grid_impl(const MeshParameter & mesh_prms);
 
   void
   setup_system();
 
-  template<typename IteratorType>
+  template<typename IteratorType, bool is_multigrid = false>
   void
   cell_worker_impl(const IteratorType & cell,
                    ScratchData<dim> &   scratch_data,
                    CopyData &           copy_data) const;
 
-  template<typename IteratorType>
+  template<typename IteratorType, bool is_multigrid = false>
   void
   face_worker_impl(const IteratorType & cell,
                    const unsigned int & f,
@@ -208,7 +230,7 @@ public:
                    ScratchData<dim> &   scratch_data,
                    CopyData &           copy_data) const;
 
-  template<typename IteratorType>
+  template<typename IteratorType, bool is_multigrid = false>
   void
   boundary_worker_impl(const IteratorType & cell,
                        const unsigned int & face_no,
@@ -282,18 +304,20 @@ public:
   FE_Q<dim>                                 fe;
   DoFHandler<dim>                           dof_handler;
   AffineConstraints<double>                 constraints;
+  AffineConstraints<double>                 zero_constraints;
 
   SparsityPattern sparsity_pattern;
   MATRIX          system_matrix;
   VECTOR          system_u;
+  VECTOR          system_delta_u;
   VECTOR          system_rhs;
 
   // *** multigrid
-  std::shared_ptr<MGConstrainedDoFs> mg_constrained_dofs;
-  MG_TRANSFER                        mg_transfer;
-  MGLevelObject<SparsityPattern>     mg_sparsity_patterns;
-  MGLevelObject<MATRIX>              mg_matrices;
-  // mutable std::shared_ptr<ColoringBase<dim>> user_coloring;
+  std::shared_ptr<MGConstrainedDoFs>                mg_constrained_dofs;
+  MG_TRANSFER                                       mg_transfer;
+  MGLevelObject<SparsityPattern>                    mg_sparsity_patterns;
+  MGLevelObject<MATRIX>                             mg_matrices;
+  mutable std::shared_ptr<ColoringBase<dim>>        user_coloring;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_pre;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_post;
   std::shared_ptr<const MGSmootherIdentity<VECTOR>> mg_smoother_identity;
@@ -302,7 +326,6 @@ public:
   const MGSmootherBase<VECTOR> *     mg_smoother_pre;
   const MGSmootherBase<VECTOR> *     mg_smoother_post;
   CoarseGridSolver<MATRIX, VECTOR>   coarse_grid_solver;
-  MGCoarseGridSVD<double, VECTOR>    coarse_grid_svd;
   const MGCoarseGridBase<VECTOR> *   mg_coarse_grid;
   mg::Matrix<VECTOR>                 mg_matrix_wrapper;
   std::shared_ptr<Multigrid<VECTOR>> multigrid;
@@ -326,7 +349,8 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
                   Triangulation<dim>::limit_level_difference_at_vertices,
                   parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
     mapping(1),
-    fe(fe_degree)
+    fe(fe_degree),
+    user_coloring(std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh))
 {
   AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
               ExcMessage("One process only."));
@@ -338,10 +362,38 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
 
 
 template<int dim, int fe_degree>
-void
+bool
 ModelProblem<dim, fe_degree>::make_grid()
 {
-  *pcout << create_mesh(triangulation, rt_parameters.mesh) << std::endl;
+  make_grid_impl(rt_parameters.mesh);
+  return true;
+}
+
+
+
+template<int dim, int fe_degree>
+bool
+ModelProblem<dim, fe_degree>::make_grid(const unsigned int n_refinements)
+{
+  MeshParameter mesh_prms = rt_parameters.mesh;
+  mesh_prms.n_refinements = n_refinements;
+
+  const auto n_dofs_est = estimate_n_dofs(fe, mesh_prms);
+  if(rt_parameters.exceeds_dof_limits(n_dofs_est))
+    return false;
+
+  make_grid_impl(mesh_prms);
+  return true;
+}
+
+
+
+template<int dim, int fe_degree>
+void
+ModelProblem<dim, fe_degree>::make_grid_impl(const MeshParameter & mesh_prms)
+{
+  triangulation.clear();
+  *pcout << create_mesh(triangulation, mesh_prms) << std::endl;
   pp_data.n_cells_global.push_back(triangulation.n_global_active_cells());
   pp_data.n_dimensions = dim;
 }
@@ -352,9 +404,6 @@ template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::setup_system()
 {
-  constraints.clear();
-  system_u.reinit(0);
-  system_rhs.reinit(0);
   dof_handler.clear();
   dof_handler.initialize(triangulation, fe);
   dof_handler.distribute_mg_dofs();
@@ -362,14 +411,12 @@ ModelProblem<dim, fe_degree>::setup_system()
   print_parameter("Number of degrees of freedom:", dof_handler.n_dofs());
 
   constraints.clear();
-  DoFTools::make_hanging_node_constraints(dof_handler, constraints);
-
-  VectorTools::interpolate_boundary_values(dof_handler,
-                                           0,
-                                           ExactSolution::Solution<dim>(),
-                                           constraints);
+  VectorTools::interpolate_boundary_values(dof_handler, 0, *analytical_solution, constraints);
   constraints.close();
-
+  zero_constraints.clear();
+  for(const auto boundary_id : equation_data.dirichlet_boundary_ids)
+    DoFTools::make_zero_boundary_constraints(dof_handler, boundary_id, zero_constraints);
+  zero_constraints.close();
 
   DynamicSparsityPattern dsp(dof_handler.n_dofs());
   const bool             direct_solver_used = (rt_parameters.solver.variant == "direct");
@@ -380,14 +427,20 @@ ModelProblem<dim, fe_degree>::setup_system()
   sparsity_pattern.copy_from(dsp);
   system_matrix.reinit(sparsity_pattern);
 
+  system_u.reinit(0);
+  system_delta_u.reinit(0);
+  system_rhs.reinit(0);
   system_u.reinit(dof_handler.n_dofs());
+  constraints.distribute(system_u); // set boundary values (particular solution)
+  system_delta_u.reinit(dof_handler.n_dofs());
+  zero_constraints.distribute(system_delta_u); // set zero boundary values (homogen. solution)
   system_rhs.reinit(dof_handler.n_dofs());
 }
 
 
 
 template<int dim, int fe_degree>
-template<typename IteratorType>
+template<typename IteratorType, bool is_multigrid>
 void
 ModelProblem<dim, fe_degree>::cell_worker_impl(const IteratorType & cell,
                                                ScratchData<dim> &   scratch_data,
@@ -400,8 +453,6 @@ ModelProblem<dim, fe_degree>::cell_worker_impl(const IteratorType & cell,
   fe_values.reinit(cell);
 
   cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
-
-  const ExactSolution::RightHandSide<dim> right_hand_side;
 
   const unsigned int dofs_per_cell = scratch_data.fe_values.get_fe().dofs_per_cell;
 
@@ -420,16 +471,31 @@ ModelProblem<dim, fe_degree>::cell_worker_impl(const IteratorType & cell,
                                        fe_values.JxW(qpoint);      // dx
       }
 
-      copy_data.cell_rhs(i) += fe_values.shape_value(i, qpoint) * // phi_i(x)
-                               right_hand_side.value(fe_values.quadrature_point(qpoint)) * // f(x)
-                               fe_values.JxW(qpoint);                                      // dx
+      if(!is_multigrid)
+        copy_data.cell_rhs(i) += fe_values.shape_value(i, qpoint) * // phi_i(x)
+                                 load_function->value(fe_values.quadrature_point(qpoint)) * // f(x)
+                                 fe_values.JxW(qpoint);                                     // dx
     }
+  }
+
+  /// For non-zero boundary conditions we compute the negative residual, namely
+  /// -(A u0 - b) with u0 being a particular solution that satisfies (strong)
+  /// boundary conditions, and store it as right hand side vector. Then, we are
+  /// left with finding a homogeneous solution u based on this right hand side.
+  if(!is_multigrid)
+  {
+    Vector<double> u0(copy_data.local_dof_indices.size());
+    for(auto i = 0U; i < u0.size(); ++i)
+      u0(i) = system_u(copy_data.local_dof_indices[i]);
+    Vector<double> w0(copy_data.local_dof_indices.size());
+    copy_data.cell_matrix.vmult(w0, u0);
+    copy_data.cell_rhs -= w0;
   }
 }
 
 
 template<int dim, int fe_degree>
-template<typename IteratorType>
+template<typename IteratorType, bool is_multigrid>
 void
 ModelProblem<dim, fe_degree>::face_worker_impl(const IteratorType & cell,
                                                const unsigned int & f,
@@ -451,10 +517,9 @@ ModelProblem<dim, fe_degree>::face_worker_impl(const IteratorType & cell,
   const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
   copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
 
-  const unsigned int p            = fe.degree;
-  const double       gamma_over_h = std::max(
-    (1.0 * p * (p + 1) / cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f])),
-    (1.0 * p * (p + 1) / ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf])));
+  const auto   h  = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
+  const auto   nh = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
+  const double gamma_over_h = 0.5 * C0IP::compute_penalty_impl(fe_degree, h, nh);
 
   for(unsigned int qpoint = 0; qpoint < fe_interface_values.n_quadrature_points; ++qpoint)
   {
@@ -486,12 +551,33 @@ ModelProblem<dim, fe_degree>::face_worker_impl(const IteratorType & cell,
       }
     }
   }
+
+  /// For non-zero boundary conditions we compute the negative residual, namely
+  /// -(A u0 - b) with u0 being a particular solution that satisfies (strong)
+  /// boundary conditions, and store it as right hand side vector. Then, we are
+  /// left with finding a homogeneous solution u based on this right hand side.
+  if(!is_multigrid)
+  {
+    const bool cell_is_at_boundary     = cell->at_boundary();
+    const bool neighbor_is_at_boundary = ncell->at_boundary();
+    /// Particular solution u0 is only non-zero at the physical boundary.
+    if(cell_is_at_boundary | neighbor_is_at_boundary)
+    {
+      AssertDimension(n_interface_dofs, copy_data_face.joint_dof_indices.size());
+      Vector<double> u0(copy_data_face.joint_dof_indices.size());
+      for(auto i = 0U; i < u0.size(); ++i)
+        u0(i) = system_u(copy_data_face.joint_dof_indices[i]);
+      copy_data_face.cell_rhs.reinit(u0.size());
+      copy_data_face.cell_matrix.vmult(copy_data_face.cell_rhs, u0);
+      copy_data_face.cell_rhs *= -1.;
+    }
+  }
 }
 
 
 
 template<int dim, int fe_degree>
-template<typename IteratorType>
+template<typename IteratorType, bool is_multigrid>
 void
 ModelProblem<dim, fe_degree>::boundary_worker_impl(const IteratorType & cell,
                                                    const unsigned int & face_no,
@@ -513,19 +599,12 @@ ModelProblem<dim, fe_degree>::boundary_worker_impl(const IteratorType & cell,
   const std::vector<double> &         JxW     = fe_interface_values.get_JxW_values();
   const std::vector<Tensor<1, dim>> & normals = fe_interface_values.get_normal_vectors();
 
+  std::vector<Tensor<1, dim>> exact_gradients(q_points.size());
+  analytical_solution->gradient_list(q_points, exact_gradients);
 
-  const ExactSolution::Solution<dim> exact_solution;
-  std::vector<Tensor<1, dim>>        exact_gradients(q_points.size());
-  exact_solution.gradient_list(q_points, exact_gradients);
-
-
-  // Positively, because we now only deal with one cell adjacent to the
-  // face (as we are on the boundary), the computation of the penalty
-  // factor $\gamma$ is substantially simpler:
-  const unsigned int p = fe.degree;
-  const double       gamma_over_h =
-    (1.0 * p * (p + 1) /
-     cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]));
+  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  /// gamma_over_h is interior penalty, thus, weighted by 0.5
+  const double gamma_over_h = 0.5 * C0IP::compute_penalty_impl(fe_degree, h, h);
 
   for(unsigned int qpoint = 0; qpoint < q_points.size(); ++qpoint)
   {
@@ -556,15 +635,32 @@ ModelProblem<dim, fe_degree>::boundary_worker_impl(const IteratorType & cell,
                                             JxW[qpoint]; // dx
       }
 
-      copy_data.cell_rhs(i) += (-av_hessian_i_dot_n_dot_n *       // - {grad^2 v n n }
-                                  (exact_gradients[qpoint] * n)   //   (grad u_exact . n)
-                                +                                 // +
-                                (2. * gamma_over_h)               //  gamma/h
-                                  * jump_grad_i_dot_n             // [grad v n]
-                                  * (exact_gradients[qpoint] * n) // (grad u_exact . n)
-                                ) *
-                               JxW[qpoint]; // dx
+      if(!is_multigrid)
+        copy_data.cell_rhs(i) += (-av_hessian_i_dot_n_dot_n *       // - {grad^2 v n n }
+                                    (exact_gradients[qpoint] * n)   //   (grad u_exact . n)
+                                  +                                 // +
+                                  (2. * gamma_over_h)               //  gamma/h
+                                    * jump_grad_i_dot_n             // [grad v n]
+                                    * (exact_gradients[qpoint] * n) // (grad u_exact . n)
+                                  ) *
+                                 JxW[qpoint]; // dx
     }
+  }
+
+  /// For non-zero boundary conditions we compute the negative residual, namely
+  /// -(A u0 - b) with u0 being a particular solution that satisfies (strong)
+  /// boundary conditions, and store it as right hand side vector. Then, we are
+  /// left with finding a homogeneous solution u based on this right hand side.
+  if(!is_multigrid)
+  {
+    AssertDimension(n_dofs, copy_data.cell_rhs.size());
+    AssertDimension(n_dofs, copy_data.cell_dof_indices.size());
+    Vector<double> u0(n_dofs);
+    for(auto i = 0U; i < n_dofs; ++i)
+      u0(i) = system_u(copy_data.local_dof_indices[i]);
+    Vector<double> w0(u0.size());
+    copy_data_face.cell_matrix.vmult(w0, u0);
+    copy_data.cell_rhs -= w0;
   }
 }
 
@@ -577,6 +673,7 @@ ModelProblem<dim, fe_degree>::assemble_system()
   auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
     cell_worker_impl(cell, scratch_data, copy_data);
   };
+
   auto face_worker = [&](const auto &         cell,
                          const unsigned int & f,
                          const unsigned int & sf,
@@ -587,14 +684,23 @@ ModelProblem<dim, fe_degree>::assemble_system()
                          CopyData &           copy_data) {
     face_worker_impl(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
   };
+
   auto boundary_worker = [&](const auto &         cell,
                              const unsigned int & face_no,
                              ScratchData<dim> &   scratch_data,
                              CopyData &           copy_data) {
     boundary_worker_impl(cell, face_no, scratch_data, copy_data);
   };
+
+  /// The copier has to use homogeneous boundary constraints for dof transfer
+  /// since we would like to assemble a system matrix for the homogeneous
+  /// solution @p system_delta_u. The particular solution u0 with the correct
+  /// heterogeneous boundary values is incorporated in the right hand side. This
+  /// is like using Newton's method on a linear system, thus, resulting in one
+  /// Newton step with @p system_delta_u being the Newton update and @p system_u
+  /// the initial value (with boundary values set).
   const auto copier = [&](const CopyData & copy_data) {
-    constraints.template distribute_local_to_global<SparseMatrix<double>, VECTOR>(
+    zero_constraints.template distribute_local_to_global<SparseMatrix<double>, VECTOR>(
       copy_data.cell_matrix,
       copy_data.cell_rhs,
       copy_data.local_dof_indices,
@@ -603,9 +709,12 @@ ModelProblem<dim, fe_degree>::assemble_system()
 
     for(auto & cdf : copy_data.face_data)
     {
-      constraints.template distribute_local_to_global<SparseMatrix<double>>(cdf.cell_matrix,
-                                                                            cdf.joint_dof_indices,
-                                                                            system_matrix);
+      if(cdf.cell_rhs.size() == 0) // only filled on cells at the boundary
+        zero_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+          cdf.cell_matrix, cdf.joint_dof_indices, system_matrix);
+      else
+        zero_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+          cdf.cell_matrix, cdf.cell_rhs, cdf.joint_dof_indices, system_matrix, system_rhs);
     }
   };
 
@@ -647,9 +756,9 @@ ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
 
   const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
   typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
-  // mgss_data.coloring_func = std::ref(*user_coloring);
-  mgss_data.parameters = rt_parameters.multigrid.pre_smoother;
-  mgss_data.dirichlet_ids.emplace_back(std::set<types::boundary_id>{0});
+  mgss_data.coloring_func = std::ref(*user_coloring);
+  mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
+  mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
   mgss->initialize(mg_matrices, mgss_data);
   mg_schwarz_smoother_pre = mgss;
 
@@ -658,17 +767,11 @@ ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
     typename SubdomainHandler<dim, double>::AdditionalData sd_handler_data;
     rt_parameters.template fill_schwarz_smoother_data<dim, double>(sd_handler_data,
                                                                    /*is_pre?*/ false);
-    sd_handler_data.level = mg_matrices.max_level();
-    // if(rt_parameters.multigrid.post_smoother.schwarz.manual_coloring)
-    //   sd_handler_data.coloring_func = std::ref(*user_coloring);
-    const bool is_shallow_copyable =
-      mg_schwarz_smoother_pre->get_preconditioner()->is_shallow_copyable(sd_handler_data);
-    AssertThrow(is_shallow_copyable, ExcMessage("Is not shallow-copyable!"));
 
     const auto mgss_post = std::make_shared<MG_SMOOTHER_SCHWARZ>();
     typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data_post;
-    // mgss_data_post.coloring_func = std::ref(*user_coloring);
-    mgss_data_post.parameters = rt_parameters.multigrid.post_smoother;
+    mgss_data_post.coloring_func = std::ref(*user_coloring);
+    mgss_data_post.parameters    = rt_parameters.multigrid.post_smoother;
     mgss_post->initialize(*mg_schwarz_smoother_pre, mgss_data_post);
     mg_schwarz_smoother_post = mgss_post;
   }
@@ -689,7 +792,7 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
   mg_schwarz_smoother_pre.reset();
   mg_schwarz_smoother_post.reset();
   mg_transfer.clear();
-  // mg_matrices.clear_elements();
+  mg_matrices.clear_elements();
   mg_constrained_dofs.reset();
 
   // *** setup multigrid data
@@ -700,7 +803,8 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
   // *** initialize multigrid constraints
   mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
   mg_constrained_dofs->initialize(dof_handler);
-  mg_constrained_dofs->make_zero_boundary_constraints(dof_handler, std::set<types::boundary_id>{0});
+  mg_constrained_dofs->make_zero_boundary_constraints(dof_handler,
+                                                      equation_data.dirichlet_boundary_ids);
 
   // *** initialize level matrices A_l
   mg_matrices.resize(mg_level_min, mg_level_max);
@@ -720,26 +824,32 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
     level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
     level_constraints.close();
 
+    using LevelCellIterator = typename DoFHandler<dim>::level_cell_iterator;
+
     auto cell_worker =
-      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        cell_worker_impl(cell, scratch_data, copy_data);
+      [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+        cell_worker_impl<LevelCellIterator, /*is_multigrid?*/ true>(cell, scratch_data, copy_data);
       };
-    auto face_worker = [&](const auto &         cell,
-                           const unsigned int & f,
-                           const unsigned int & sf,
-                           const auto &         ncell,
-                           const unsigned int & nf,
-                           const unsigned int & nsf,
-                           ScratchData<dim> &   scratch_data,
-                           CopyData &           copy_data) {
-      face_worker_impl(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+
+    auto face_worker = [&](const LevelCellIterator & cell,
+                           const unsigned int &      f,
+                           const unsigned int &      sf,
+                           const LevelCellIterator & ncell,
+                           const unsigned int &      nf,
+                           const unsigned int &      nsf,
+                           ScratchData<dim> &        scratch_data,
+                           CopyData &                copy_data) {
+      face_worker_impl<LevelCellIterator, true>(
+        cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
     };
-    auto boundary_worker = [&](const auto &         cell,
-                               const unsigned int & face_no,
-                               ScratchData<dim> &   scratch_data,
-                               CopyData &           copy_data) {
-      boundary_worker_impl(cell, face_no, scratch_data, copy_data);
+
+    auto boundary_worker = [&](const LevelCellIterator & cell,
+                               const unsigned int &      face_no,
+                               ScratchData<dim> &        scratch_data,
+                               CopyData &                copy_data) {
+      boundary_worker_impl<LevelCellIterator, true>(cell, face_no, scratch_data, copy_data);
     };
+
     const auto copier = [&](const CopyData & copy_data) {
       AssertDimension(copy_data.level, level);
       level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
@@ -836,12 +946,8 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
   }
 
   // *** initialize coarse grid solver
-  // coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
-  // mg_coarse_grid = &coarse_grid_solver;
-  FullMatrix<double> coarse_matrix(mg_matrices[mg_level_min].m());
-  coarse_matrix.copy_from(mg_matrices[mg_level_min]);
-  coarse_grid_svd.initialize(coarse_matrix);
-  mg_coarse_grid = &coarse_grid_svd;
+  coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
+  mg_coarse_grid = &coarse_grid_solver;
 
   mg_matrix_wrapper.initialize(mg_matrices);
   multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
@@ -879,8 +985,8 @@ ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & pr
   SolverSelector<VECTOR> iterative_solver;
   iterative_solver.set_control(solver_control);
   iterative_solver.select(rt_parameters.solver.variant);
-  iterative_solver.solve(system_matrix, system_u, system_rhs, preconditioner);
-  constraints.distribute(system_u);
+  iterative_solver.solve(system_matrix, system_delta_u, system_rhs, preconditioner);
+  system_u += system_delta_u;
 
   const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
   pp_data.average_reduction_system.push_back(reduction_rate);
@@ -901,7 +1007,8 @@ ModelProblem<dim, fe_degree>::solve()
   {
     SparseDirectUMFPACK A_direct;
     A_direct.template initialize<SparseMatrix<double>>(system_matrix);
-    A_direct.vmult(system_u, system_rhs);
+    A_direct.vmult(system_delta_u, system_rhs);
+    system_u += system_delta_u;
     print_parameter("Average reduction (solver):", "direct solver");
     print_parameter("Number of iterations (solver):", "---");
     return;
@@ -942,13 +1049,14 @@ ModelProblem<dim, fe_degree>::compute_errors()
     VectorTools::integrate_difference(mapping,
                                       dof_handler,
                                       system_u,
-                                      ExactSolution::Solution<dim>(),
+                                      *analytical_solution,
                                       norm_per_cell,
                                       QGauss<dim>(fe.degree + 2),
                                       VectorTools::L2_norm);
     const double error_norm =
       VectorTools::compute_global_error(triangulation, norm_per_cell, VectorTools::L2_norm);
     print_parameter("Error in the L2 norm:", error_norm);
+    pp_data.L2_error.push_back(error_norm);
   }
 
   {
@@ -956,13 +1064,14 @@ ModelProblem<dim, fe_degree>::compute_errors()
     VectorTools::integrate_difference(mapping,
                                       dof_handler,
                                       system_u,
-                                      ExactSolution::Solution<dim>(),
+                                      *analytical_solution,
                                       norm_per_cell,
                                       QGauss<dim>(fe.degree + 2),
                                       VectorTools::H1_seminorm);
     const double error_norm =
       VectorTools::compute_global_error(triangulation, norm_per_cell, VectorTools::H1_seminorm);
     print_parameter("Error in the H1 seminorm:", error_norm);
+    pp_data.H1semi_error.push_back(error_norm);
   }
 
   // Now also compute an approximation to the $H^2$ seminorm error. The actual
@@ -974,9 +1083,8 @@ ModelProblem<dim, fe_degree>::compute_errors()
   // contributions. This is *not* an equivalent norm to the energy norm for
   // the problem, but still gives us an idea of how fast the error converges.
   {
-    const QGauss<dim>            quadrature_formula(fe.degree + 2);
-    ExactSolution::Solution<dim> exact_solution;
-    Vector<double>               error_per_cell(triangulation.n_active_cells());
+    const QGauss<dim> quadrature_formula(fe.degree + 2);
+    Vector<double>    error_per_cell(triangulation.n_active_cells());
 
     FEValues<dim> fe_values(mapping,
                             fe,
@@ -993,7 +1101,7 @@ ModelProblem<dim, fe_degree>::compute_errors()
     {
       fe_values.reinit(cell);
       fe_values[scalar].get_function_hessians(system_u, hessians);
-      exact_solution.hessian_list(fe_values.get_quadrature_points(), exact_hessians);
+      analytical_solution->hessian_list(fe_values.get_quadrature_points(), exact_hessians);
 
       double local_error = 0;
       for(unsigned int q_point = 0; q_point < n_q_points; ++q_point)
@@ -1034,22 +1142,29 @@ void
 ModelProblem<dim, fe_degree>::run()
 {
   print_informations();
-  make_grid();
 
   const unsigned int n_cycles = rt_parameters.n_cycles;
   for(unsigned int cycle = 0; cycle < n_cycles; ++cycle)
   {
     *pcout << "Cycle: " << cycle << " of " << n_cycles << std::endl;
 
-    triangulation.refine_global(1);
+    const unsigned int n_refinements = rt_parameters.mesh.n_refinements + cycle;
+    if(!make_grid(n_refinements))
+    {
+      *pcout << "NO MESH CREATED AT CYCLE " << cycle << " !!!\n\n";
+      continue;
+    }
+
     setup_system();
 
     assemble_system();
+
     solve();
 
     output_results(cycle);
 
     compute_errors();
+
     *pcout << std::endl;
   }
 }

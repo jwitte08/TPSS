@@ -323,8 +323,9 @@ public:
     fill_schwarz_smoother_data<dim, typename MatrixType::value_type>(sd_handler_data, schwarz_data);
     for(unsigned level = mg_level_min; level <= mg_level_max; ++level)
     {
-      sd_handler_data.level         = level;
-      sd_handler_data.coloring_func = additional_data.coloring_func;
+      sd_handler_data.level = level;
+      if(prms.schwarz.manual_coloring)
+        sd_handler_data.coloring_func = additional_data.coloring_func;
       AssertThrow(other.get_preconditioner(level)->is_shallow_copyable(sd_handler_data),
                   ExcMessage("Is not shallow copyable. Check the SchwarzSmootherData settings."));
     }

@@ -18,10 +18,6 @@
 
 #include "solvers_and_preconditioners/TPSS/fd_evaluation.h"
 #include "solvers_and_preconditioners/TPSS/tensor_product_matrix.h"
-// #include "solvers_and_preconditioners/TPSS/matrix_helper.h"
-// #include "solvers_and_preconditioners/TPSS/patch_transfer.h"
-// #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
-// #include "solvers_and_preconditioners/smoother/schwarz_smoother.h"
 
 
 #include "equation_data.h"
@@ -29,10 +25,10 @@
 
 
 
-using namespace dealii;
-
 namespace Biharmonic
 {
+using namespace dealii;
+
 /*
  * Linear operators associated to the C0 interior penalty formulation for the
  * biharmonic problem with clamped boundary conditions
@@ -42,6 +38,20 @@ namespace Biharmonic
 
 namespace C0IP
 {
+/**
+ * Standard (interior) penalty to obtain well-posedness of the Nitsche
+ * method. The penalty is weighted for face integrals at the physical
+ * boundary. The interior penalty is obtained by multiplying with 1/2.
+ */
+template<typename Number>
+Number
+compute_penalty_impl(const int degree, const Number h_left, const Number h_right)
+{
+  const auto one_over_h = (0.5 / h_left) + (0.5 / h_right);
+  const auto gamma      = degree == 0 ? 1 : degree * (degree + 1);
+  return 2.0 * gamma * one_over_h;
+}
+
 namespace FD
 {
 template<int dim, int fe_degree, typename Number>
@@ -140,10 +150,9 @@ public:
 
     const auto compute_penalty =
       [&](const evaluator_type & eval, const int direction, const int cell_no, const int ncell_no) {
-        constexpr Number gamma = fe_degree * (fe_degree + 1);
-        const auto       h     = eval.get_h(direction, cell_no);
-        const auto       nh    = eval.get_h(direction, ncell_no);
-        return 2. * std::max(gamma / h, gamma / nh); // default: at boundary
+        const auto h  = eval.get_h(direction, cell_no);
+        const auto nh = eval.get_h(direction, ncell_no);
+        return compute_penalty_impl(fe_degree, h, nh);
       };
 
     const auto face_nitsche = [&](const evaluator_type &              eval_u,
