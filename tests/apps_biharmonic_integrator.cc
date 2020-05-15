@@ -26,7 +26,7 @@ class TestBiharmonicIntegrator : public testing::Test
 protected:
   static constexpr int dim                 = T::template value<0>();
   static constexpr int fe_degree           = T::template value<1>();
-  using BiharmonicProblem                  = ModelProblem<dim>;
+  using BiharmonicProblem                  = ModelProblem<dim, fe_degree>;
   static constexpr unsigned int macro_size = VectorizedArray<double>::size();
 
 
@@ -36,6 +36,9 @@ protected:
     ofs.open("apps_biharmonic_integrator.log", std::ios_base::app);
     const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
     pcout_owned              = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
+
+    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = TPSS::PatchVariant::vertex;
+    rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
   }
 
 
@@ -52,13 +55,13 @@ protected:
     const auto initialize_problem = [&](auto & new_problem) {
       new_problem->pcout = pcout_owned;
       new_problem->make_grid();
-      new_problem->triangulation.refine_global(rt_parameters.mesh.n_refinements);
+      // new_problem->triangulation.refine_global(rt_parameters.mesh.n_refinements);
       new_problem->setup_system();
       new_problem->assemble_system();
     };
 
     /// initialize biharmonic model problem
-    const auto new_problem = std::make_shared<BiharmonicProblem>(fe_degree);
+    const auto new_problem = std::make_shared<BiharmonicProblem>(rt_parameters);
     initialize_problem(new_problem);
     biharmonic_problem = new_problem;
 
@@ -456,8 +459,10 @@ TYPED_TEST_SUITE_P(TestBiharmonicIntegrator);
 
 TYPED_TEST_P(TestBiharmonicIntegrator, CheckVertexPatchMatrix)
 {
-  using Fixture                             = TestBiharmonicIntegrator<TypeParam>;
-  Fixture::rt_parameters.mesh.n_refinements = 0;
+  using Fixture                                = TestBiharmonicIntegrator<TypeParam>;
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::rt_parameters.mesh.n_refinements    = 0;
   Fixture::check_local_matrices();
   Fixture::rt_parameters.mesh.n_refinements = 1;
   Fixture::check_local_matrices();
@@ -465,8 +470,10 @@ TYPED_TEST_P(TestBiharmonicIntegrator, CheckVertexPatchMatrix)
 
 TYPED_TEST_P(TestBiharmonicIntegrator, CheckVertexPatchEigendecomp1D)
 {
-  using Fixture                             = TestBiharmonicIntegrator<TypeParam>;
-  Fixture::rt_parameters.mesh.n_refinements = 0;
+  using Fixture                                = TestBiharmonicIntegrator<TypeParam>;
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::rt_parameters.mesh.n_refinements    = 0;
   Fixture::check_1d_eigendecompositions();
 }
 
@@ -474,7 +481,7 @@ REGISTER_TYPED_TEST_SUITE_P(TestBiharmonicIntegrator,
                             CheckVertexPatchMatrix,
                             CheckVertexPatchEigendecomp1D);
 
-using TestParamsQuadratic = testing::Types<Util::NonTypeParams<2, 11>>;
+using TestParamsQuadratic = testing::Types<Util::NonTypeParams<2, 2>>;
 using TestParamsHighOrder = testing::Types<Util::NonTypeParams<2, 5>, Util::NonTypeParams<2, 7>>;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestBiharmonicIntegrator, TestParamsQuadratic);
