@@ -275,6 +275,14 @@ public:
     return triangulation.n_global_levels() - 1;
   }
 
+  unsigned int
+  n_colors_system()
+  {
+    if(mg_schwarz_smoother_pre)
+      return mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
+    return numbers::invalid_unsigned_int;
+  }
+
   template<typename T>
   void
   print_parameter(const std::string & description, const T & value) const
@@ -340,8 +348,10 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
                                            const EquationData &  equation_data_in)
   : rt_parameters(rt_parameters_in),
     equation_data(equation_data_in),
-    analytical_solution(std::make_shared<ZeroBoundary::Solution<dim>>()),
-    load_function(std::make_shared<ZeroBoundary::ManufacturedLoad<dim>>()),
+    // analytical_solution(std::make_shared<ZeroBoundary::Solution<dim>>()),
+    // load_function(std::make_shared<ZeroBoundary::Load<dim>>()),
+    analytical_solution(std::make_shared<GaussianBells::Solution<dim>>()),
+    load_function(std::make_shared<GaussianBells::Load<dim>>()),
     pcout(
       std::make_shared<ConditionalOStream>(std::cout,
                                            Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
@@ -426,6 +436,7 @@ ModelProblem<dim, fe_degree>::setup_system()
                                        direct_solver_used ? true : false);
   sparsity_pattern.copy_from(dsp);
   system_matrix.reinit(sparsity_pattern);
+  pp_data.n_dofs_global.push_back(system_matrix.m());
 
   system_u.reinit(0);
   system_delta_u.reinit(0);
@@ -900,7 +911,6 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
   mg_transfer.build(dof_handler);
 
   // *** initialize Schwarz smoother S_l
-  pp_data.n_colors_system.push_back(numbers::invalid_unsigned_int); // default
   switch(rt_parameters.multigrid.pre_smoother.variant)
   {
     case SmootherParameter::SmootherVariant::None:
@@ -920,7 +930,6 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
     break;
     case SmootherParameter::SmootherVariant::Schwarz:
       prepare_schwarz_smoothers();
-      // pp_data.n_colors_system.push_back(n_colors_system()); // TODO !!!
       AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
       mg_smoother_pre = mg_schwarz_smoother_pre.get();
       break;
@@ -944,6 +953,8 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
     default:
       AssertThrow(false, ExcMessage("Invalid smoothing variant."));
   }
+
+  pp_data.n_colors_system.push_back(n_colors_system());
 
   // *** initialize coarse grid solver
   coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
@@ -1114,6 +1125,7 @@ ModelProblem<dim, fe_degree>::compute_errors()
 
     const double error_norm = error_per_cell.l2_norm();
     print_parameter("Error in the broken H2 seminorm:", error_norm);
+    pp_data.H2semi_error.push_back(error_norm);
   }
 }
 
@@ -1131,8 +1143,8 @@ ModelProblem<dim, fe_degree>::output_results(const unsigned int iteration) const
   data_out.add_data_vector(system_u, "u");
   data_out.build_patches();
 
-  std::ofstream output_vtu(("output_" + Utilities::int_to_string(iteration, 6) + ".vtu").c_str());
-  data_out.write_vtu(output_vtu);
+  std::ofstream output_vtk(("output_" + Utilities::int_to_string(iteration, 6) + ".vtk").c_str());
+  data_out.write_vtk(output_vtk);
 }
 
 

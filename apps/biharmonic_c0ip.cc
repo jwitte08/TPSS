@@ -1,5 +1,84 @@
+#include <deal.II/base/convergence_table.h>
+
+
 #include "biharmonic_problem.h"
 #include "ct_parameter.h"
+
+
+
+std::string
+write_ppdata_to_string(const PostProcessData & pp_data)
+{
+  std::ostringstream oss;
+  ConvergenceTable   info_table;
+  Assert(!pp_data.n_cells_global.empty(), ExcMessage("No cells to post process."));
+  for(unsigned run = 0; run < pp_data.n_cells_global.size(); ++run)
+  {
+    info_table.add_value("n_levels", pp_data.n_mg_levels.at(run));
+    info_table.add_value("n_cells", pp_data.n_cells_global.at(run));
+    info_table.add_value("n_dofs", pp_data.n_dofs_global.at(run));
+    info_table.add_value("n_colors", pp_data.n_colors_system.at(run));
+    info_table.add_value("n_iter", pp_data.n_iterations_system.at(run));
+    info_table.add_value("reduction", pp_data.average_reduction_system.at(run));
+    info_table.add_value("L2_error", pp_data.L2_error.at(run));
+    info_table.add_value("H2semiO_error", pp_data.H2semi_error.at(run));
+  }
+  info_table.set_scientific("reduction", true);
+  info_table.set_precision("reduction", 3);
+  info_table.set_scientific("L2_error", true);
+  info_table.set_precision("L2_error", 3);
+  info_table.evaluate_convergence_rates("L2_error", ConvergenceTable::reduction_rate);
+  info_table.evaluate_convergence_rates("L2_error",
+                                        "n_dofs",
+                                        ConvergenceTable::reduction_rate_log2,
+                                        pp_data.n_dimensions);
+  info_table.set_scientific("H2semiO_error", true);
+  info_table.set_precision("H2semiO_error", 3);
+  info_table.evaluate_convergence_rates("H2semiO_error", ConvergenceTable::reduction_rate);
+  info_table.evaluate_convergence_rates("H2semiO_error",
+                                        "n_dofs",
+                                        ConvergenceTable::reduction_rate_log2,
+                                        pp_data.n_dimensions);
+
+  info_table.write_text(oss);
+  return oss.str();
+}
+
+std::string
+get_filename(const RT::Parameter &            prms,
+             const Biharmonic::EquationData & equation_data,
+             const bool                       add_damping = false)
+{
+  std::ostringstream oss;
+  const auto         n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
+  const std::string  str_schwarz_variant =
+    TPSS::getstr_schwarz_variant(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_);
+  const auto damping = prms.multigrid.pre_smoother.schwarz.damping_factor *
+                       prms.multigrid.pre_smoother.schwarz.local_damping_factor;
+  const auto short_name = [](const std::string & str_in) {
+    std::string sname = str_in.substr(0, 4);
+    std::transform(sname.begin(), sname.end(), sname.begin(), [](auto c) {
+      return std::tolower(c);
+    });
+    return sname;
+  };
+
+  oss << "biharmonic";
+  oss << std::scientific << std::setprecision(2);
+  oss << "_" << n_mpi_procs << "prcs";
+  if(prms.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+  {
+    oss << "_" << str_schwarz_variant;
+    oss << "_" << short_name(equation_data.str_local_solver());
+  }
+  oss << "_" << CT::DIMENSION_ << "D";
+  oss << "_" << CT::FE_DEGREE_ << "deg";
+  if(add_damping)
+    oss << "_" << damping << "damp";
+  return oss.str();
+}
+
+
 
 int
 main(int argc, char * argv[])
@@ -70,7 +149,19 @@ main(int argc, char * argv[])
 
     EquationData                 equation_data;
     ModelProblem<dim, fe_degree> biharmonic_problem(prms, equation_data);
+    std::fstream                 fout;
+    const auto                   filename = get_filename(prms, equation_data, argc > 1);
+    fout.open(filename + ".log", std::ios_base::out);
+
+    auto pcout               = std::make_shared<ConditionalOStream>(fout, true);
+    biharmonic_problem.pcout = pcout;
     biharmonic_problem.run();
+    *pcout << std::endl << std::endl << write_ppdata_to_string(biharmonic_problem.pp_data);
+    fout.close();
+
+    fout.open(filename + ".tab", std::ios_base::out);
+    fout << write_ppdata_to_string(biharmonic_problem.pp_data);
+    fout.close();
   }
 
   catch(std::exception & exc)

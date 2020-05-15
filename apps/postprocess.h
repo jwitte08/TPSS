@@ -12,10 +12,13 @@
 
 #include <deal.II/lac/solver_control.h>
 
+
+
 struct PostProcessData
 {
   std::vector<double>                  average_reduction_system;
   unsigned int                         n_dimensions = 0;
+  std::vector<double>                  H2semi_error;
   std::vector<double>                  H1semi_error;
   std::vector<double>                  L2_error;
   std::vector<unsigned int>            n_cells_global;
@@ -26,6 +29,8 @@ struct PostProcessData
   std::vector<double>                  setup_time;
   std::vector<double>                  solve_time;
 };
+
+
 
 /**
  * compute the average reduction rho over n iterations and the
