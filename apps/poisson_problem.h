@@ -402,7 +402,7 @@ struct ModelProblem : public Subscriptor
   {
     discrete_rhs      = 0.;
     discrete_solution = 0.;
-    constraints.distribute(discrete_solution);
+    constraints.distribute(discrete_solution); // set boundary values
     discrete_solution.update_ghost_values();
 
     FEEvaluation<dim, fe_degree> phi(*mf_storage);

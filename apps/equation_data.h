@@ -54,26 +54,78 @@ template<int dim>
 const double SolutionBase<dim>::width = 1. / 3.;
 
 
+using dealii::numbers::PI;
+
 template<int dim>
 class Solution : public Function<dim>, protected SolutionBase<dim>
 {
 public:
+  using SolutionBase<dim>::width;
+  using SolutionBase<dim>::n_source_centers;
+
   Solution() : Function<dim>(), SolutionBase<dim>()
   {
   }
 
+  constexpr double
+  u0() const
+  {
+    return 1. / dealii::Utilities::fixed_power<dim>(std::sqrt(2 * PI) * width);
+  }
+
+  constexpr double
+  v0() const
+  {
+    return -1. / (width * width);
+  }
+
+  double
+  bell(const Point<dim> & p, const unsigned int i) const
+  {
+    AssertIndexRange(i, n_source_centers);
+    const dealii::Tensor<1, dim> x_minus_xi = p - SolutionBase<dim>::source_centers[i];
+    return std::exp(v0() * x_minus_xi.norm_square());
+  }
+
+  double
+  value_impl(const Point<dim> & p, const unsigned int i) const
+  {
+    return u0() * bell(p, i);
+  }
+
+  Tensor<1, dim>
+  gradient_impl(const Point<dim> & p, const unsigned int i) const
+  {
+    const dealii::Tensor<1, dim> x_minus_xi = p - SolutionBase<dim>::source_centers[i];
+    return u0() * 2. * v0() * bell(p, i) * x_minus_xi;
+  }
+
+  double
+  laplacian_impl(const dealii::Point<dim> & p, const unsigned int i) const
+  {
+    double     lapl       = 0;
+    const auto x_minus_xi = p - SolutionBase<dim>::source_centers[i];
+    lapl += bell(p, i) * (static_cast<double>(dim) + 2. * v0() * x_minus_xi.norm_square());
+    lapl *= u0() * 2. * v0();
+    return lapl;
+  }
+
+  // double
+  // bilaplacian_impl(const dealii::Point<dim> & p, const unsigned int i) const
+  // {
+  //   double lapl = 0;
+  //   const auto x_minus_xi = p - SolutionBase<dim>::source_centers[i];
+  //   lapl += bell(p, i) * (static_cast<double>(dim) + 2. * v0() * x_minus_xi.norm_square());
+  //   lapl *= u0() * 2. * v0();
+  //   return lapl;
+  // }
+
   virtual double
   value(const Point<dim> & p, const unsigned int = 0) const override final
   {
-    double       val   = 0;
-    const double pi    = dealii::numbers::PI;
-    const double width = SolutionBase<dim>::width;
-    for(unsigned int i = 0; i < SolutionBase<dim>::n_source_centers; ++i)
-    {
-      const dealii::Tensor<1, dim> x_minus_xi = p - SolutionBase<dim>::source_centers[i];
-      val += std::exp(-x_minus_xi.norm_square() / (width * width));
-    }
-    val /= dealii::Utilities::fixed_power<dim>(std::sqrt(2 * pi) * width);
+    double val = 0;
+    for(unsigned int i = 0; i < n_source_centers; ++i)
+      val += value_impl(p, i);
     return val;
   }
 
@@ -81,32 +133,36 @@ public:
   gradient(const Point<dim> & p, const unsigned int = 0) const override final
   {
     dealii::Tensor<1, dim> grad;
-    const double           pi    = dealii::numbers::PI;
-    const double           width = SolutionBase<dim>::width;
-    for(unsigned int i = 0; i < SolutionBase<dim>::n_source_centers; ++i)
-    {
-      const dealii::Tensor<1, dim> x_minus_xi = p - SolutionBase<dim>::source_centers[i];
-      grad +=
-        -2. / (width * width) * std::exp(-x_minus_xi.norm_square() / (width * width)) * x_minus_xi;
-    }
-    return (grad / dealii::Utilities::fixed_power<dim>(std::sqrt(2 * pi) * width));
+    for(unsigned int i = 0; i < n_source_centers; ++i)
+      grad += gradient_impl(p, i);
+    return grad;
   }
 
   virtual double
   laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
   {
-    double       lapl  = 0;
-    const double pi    = dealii::numbers::PI;
-    const double width = SolutionBase<dim>::width;
-    for(unsigned int i = 0; i < SolutionBase<dim>::n_source_centers; ++i)
-    {
-      const auto x_minus_xi = p - SolutionBase<dim>::source_centers[i];
-      lapl += (2. / (width * width) * (x_minus_xi * x_minus_xi) - static_cast<double>(dim)) *
-              std::exp(-x_minus_xi.norm_square() / (width * width));
-    }
-    lapl *= 2. / (width * width) / dealii::Utilities::fixed_power<dim>(std::sqrt(2 * pi) * width);
+    double lapl = 0;
+    for(unsigned int i = 0; i < n_source_centers; ++i)
+      lapl += laplacian_impl(p, i);
     return lapl;
   }
+
+  // double
+  // bilaplacian(const dealii::Point<dim> & p, const unsigned int = 0) const
+  // {
+  //   double bilapl = 0;
+
+  //   for(unsigned int i = 0; i < n_source_centers; ++i)
+  //   {
+  //     const auto x_minus_xi = p - SolutionBase<dim>::source_centers[i];
+  //     bilapl += bell(p, i) * (static_cast<double>(dim) + 2. * v0() * x_minus_xi.norm_square());
+  //   }
+  //   bilapl *= u0() * 2. * 2. * v0() * v0();
+
+  //   bilapl += 2.*v0()*static_cast<double>(dim)*laplacian(p);
+
+  //   return bilapl;
+  // }
 };
 
 
