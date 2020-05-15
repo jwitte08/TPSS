@@ -18,7 +18,16 @@ using namespace dealii;
 
 
 
-// ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/**
+ *
+ * PDE data and reference solutions:
+ *
+ * 1) EquationData
+ * 2) Solution & RightHandSide (multivariate Gaussian bell curves)
+ * 3) ZeroDirichletUnitCube & ManufacturedLoad (trigonometric)
+ * 4) RandomLoad
+ *
+ */
 namespace Laplace
 {
 struct EquationData
@@ -63,10 +72,52 @@ public:
   using SolutionBase<dim>::width;
   using SolutionBase<dim>::n_source_centers;
 
-  Solution() : Function<dim>(), SolutionBase<dim>()
+  virtual double
+  value(const Point<dim> & p, const unsigned int = 0) const override final
   {
+    double val = 0;
+    for(unsigned int i = 0; i < n_source_centers; ++i)
+      val += value_impl(p, i);
+    return val;
   }
 
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int = 0) const override final
+  {
+    dealii::Tensor<1, dim> grad;
+    for(unsigned int i = 0; i < n_source_centers; ++i)
+      grad += gradient_impl(p, i);
+    return grad;
+  }
+
+  virtual double
+  laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
+  {
+    double lapl = 0;
+    for(unsigned int i = 0; i < n_source_centers; ++i)
+      lapl += laplacian_impl(p, i);
+    return lapl;
+  }
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int /*component*/ = 0) const override final
+  {
+    SymmetricTensor<2, dim> hess;
+    for(unsigned int i = 0; i < n_source_centers; ++i)
+      hess += hessian_impl(p, i);
+    return hess;
+  }
+
+  double
+  bilaplacian(const dealii::Point<dim> & p, const unsigned int = 0) const
+  {
+    double bilapl = 0;
+    for(unsigned int i = 0; i < n_source_centers; ++i)
+      bilapl += bilaplacian_impl(p, i);
+    return bilapl;
+  }
+
+private:
   constexpr double
   u0() const
   {
@@ -110,60 +161,33 @@ public:
     return lapl;
   }
 
-  // double
-  // bilaplacian_impl(const dealii::Point<dim> & p, const unsigned int i) const
-  // {
-  //   double lapl = 0;
-  //   const auto x_minus_xi = p - SolutionBase<dim>::source_centers[i];
-  //   lapl += bell(p, i) * (static_cast<double>(dim) + 2. * v0() * x_minus_xi.norm_square());
-  //   lapl *= u0() * 2. * v0();
-  //   return lapl;
-  // }
-
-  virtual double
-  value(const Point<dim> & p, const unsigned int = 0) const override final
+  SymmetricTensor<2, dim>
+  hessian_impl(const Point<dim> & p, const unsigned int i) const
   {
-    double val = 0;
-    for(unsigned int i = 0; i < n_source_centers; ++i)
-      val += value_impl(p, i);
-    return val;
+    const auto              x_minus_xi = p - SolutionBase<dim>::source_centers[i];
+    SymmetricTensor<2, dim> hess;
+    for(auto d = 0U; d < dim; ++d)
+      hess[d][d] = 2. * u0() * v0() * bell(p, i) * (1. + 2. * v0() * x_minus_xi[d] * x_minus_xi[d]);
+    for(auto d1 = 0U; d1 < dim; ++d1)
+      for(auto d2 = d1 + 1; d2 < dim; ++d2)
+        hess[d1][d2] = 2. * 2. * u0() * v0() * v0() * bell(p, i) * x_minus_xi[d1] * x_minus_xi[d2];
+    return hess;
   }
 
-  virtual Tensor<1, dim>
-  gradient(const Point<dim> & p, const unsigned int = 0) const override final
+  double
+  bilaplacian_impl(const dealii::Point<dim> & p, const unsigned int i) const
   {
-    dealii::Tensor<1, dim> grad;
-    for(unsigned int i = 0; i < n_source_centers; ++i)
-      grad += gradient_impl(p, i);
-    return grad;
+    double           bilapl     = 0;
+    constexpr double d          = dim;
+    const auto       x_minus_xi = p - SolutionBase<dim>::source_centers[i];
+    bilapl += d + 2. + v0() * x_minus_xi.norm_square();
+    bilapl *= 2. * 2. * v0() * x_minus_xi.norm_square();
+    bilapl += d * d + 2. * d;
+    bilapl *= 2. * 2. * v0() * v0() * u0() * bell(p, i);
+    return bilapl;
   }
-
-  virtual double
-  laplacian(const dealii::Point<dim> & p, const unsigned int = 0) const override final
-  {
-    double lapl = 0;
-    for(unsigned int i = 0; i < n_source_centers; ++i)
-      lapl += laplacian_impl(p, i);
-    return lapl;
-  }
-
-  // double
-  // bilaplacian(const dealii::Point<dim> & p, const unsigned int = 0) const
-  // {
-  //   double bilapl = 0;
-
-  //   for(unsigned int i = 0; i < n_source_centers; ++i)
-  //   {
-  //     const auto x_minus_xi = p - SolutionBase<dim>::source_centers[i];
-  //     bilapl += bell(p, i) * (static_cast<double>(dim) + 2. * v0() * x_minus_xi.norm_square());
-  //   }
-  //   bilapl *= u0() * 2. * 2. * v0() * v0();
-
-  //   bilapl += 2.*v0()*static_cast<double>(dim)*laplacian(p);
-
-  //   return bilapl;
-  // }
 };
+
 
 
 template<int dim>
@@ -185,6 +209,7 @@ public:
 private:
   Solution<dim> solution_function;
 };
+
 
 
 struct ZeroDirichletUnitCubeData
@@ -278,6 +303,7 @@ public:
 };
 
 
+
 template<int dim>
 class ManufacturedLoad : public Function<dim>
 {
@@ -298,6 +324,7 @@ private:
 };
 
 
+
 template<int dim>
 class RandomLoad : public Function<dim>
 {
@@ -308,14 +335,19 @@ public:
     return make_random_value<double>();
   }
 };
-
-
-
 } // end namespace Laplace
 
 
 
-// ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/**
+ *
+ * PDE data and reference solutions:
+ *
+ * 1) EquationData
+ * 2) AnalyticalSolution & VolumeForce (manufactured)
+ * 3) VolumeForceRandom
+ *
+ */
 namespace LinElasticity
 {
 struct EquationData
@@ -357,6 +389,7 @@ struct EquationData
 };
 
 
+
 template<int dim>
 class AnalyticalSolution : public TensorFunction<1, dim>
 {
@@ -387,6 +420,7 @@ public:
 private:
   const EquationData equation_data;
 };
+
 
 
 template<int dim>
@@ -440,6 +474,7 @@ private:
 };
 
 
+
 template<int dim>
 class VolumeForceRandom : public TensorFunction<1, dim>
 {
@@ -453,83 +488,76 @@ public:
     return val;
   }
 };
-
-
-
 } // end namespace LinElasticity
 
+
+
+/**
+ *
+ * PDE Data and manufactured solutions
+ *
+ * 1) EquationData
+ * 2) ZeroBoundary & Load (step-47)
+ * 3) GaussianBells & Load (namespace Laplace)
+ *
+ */
 namespace Biharmonic
 {
-// In the following namespace, let us define the exact solution against
-// which we will compare the numerically computed one. It has the form
-// $u(x,y) = \sin(\pi x) \sin(\pi y)$ (only the 2d case is implemented),
-// and the namespace also contains a class that corresponds to the right
-// hand side that produces this solution.
-namespace ExactSolution
+struct EquationData
 {
-using numbers::PI;
-
-template<int dim>
-class Solution : public Function<dim>
-{
-public:
-  static_assert(dim == 2, "Only dim==2 is implemented.");
-
-  virtual double
-  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  enum LocalSolverVariant
   {
-    return std::sin(PI * p[0]) * std::sin(PI * p[1]);
+    Exact,
+    Bilaplacian
+  };
+
+  static std::string
+  str_local_solver(const LocalSolverVariant variant);
+
+  std::string
+  str_local_solver() const
+  {
+    return str_local_solver(local_solver_variant);
   }
 
-  virtual Tensor<1, dim>
-  gradient(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  std::string
+  to_string() const
   {
-    Tensor<1, dim> r;
-    r[0] = PI * std::cos(PI * p[0]) * std::sin(PI * p[1]);
-    r[1] = PI * std::cos(PI * p[1]) * std::sin(PI * p[0]);
-    return r;
+    std::ostringstream oss;
+    oss << Util::parameter_to_fstring("Equation Data:", "");
+    oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
+    oss << Util::parameter_to_fstring("Local solver:", str_local_solver(local_solver_variant));
+    return oss.str();
   }
 
-  virtual void
-  hessian_list(const std::vector<Point<dim>> &        points,
-               std::vector<SymmetricTensor<2, dim>> & hessians,
-               const unsigned int /*component*/ = 0) const override
-  {
-    for(unsigned i = 0; i < points.size(); ++i)
-    {
-      const double x = points[i][0];
-      const double y = points[i][1];
-
-      hessians[i][0][0] = -PI * PI * std::sin(PI * x) * std::sin(PI * y);
-      hessians[i][0][1] = PI * PI * std::cos(PI * x) * std::cos(PI * y);
-      hessians[i][1][1] = -PI * PI * std::sin(PI * x) * std::sin(PI * y);
-    }
-  }
-
-  double
-  bilaplacian(const Point<dim> & p, const unsigned int /*component*/ = 0) const
-  {
-    const auto & x = p[0];
-    const auto & y = p[1];
-    return 4 * std::pow(PI, 4.0) * std::sin(PI * x) * std::sin(PI * y);
-  }
+  std::set<types::boundary_id> dirichlet_boundary_ids = {0};
+  double                       ip_factor              = 1.;
+  LocalSolverVariant           local_solver_variant   = LocalSolverVariant::Exact;
 };
 
 
-template<int dim>
-class RightHandSide : public Function<dim>
+std::string
+EquationData::str_local_solver(const LocalSolverVariant variant)
+{
+  const std::string str_variant[] = {"Exact", "Bilaplacian (no mixed derivatives)"};
+  return str_variant[(int)variant];
+}
+
+
+
+template<int dim, typename FunctionType>
+class ManufacturedLoad : public Function<dim>
 {
 public:
-  static_assert(dim == 2, "Only dim==2 is implemented");
-
   virtual double
-  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
-
+  value(const Point<dim> & p, const unsigned int = 0) const override final
   {
-    return 4 * std::pow(PI, 4.0) * std::sin(PI * p[0]) * std::sin(PI * p[1]);
+    return solution.bilaplacian(p);
   }
+
+private:
+  const FunctionType solution;
 };
-} // namespace ExactSolution
 
 
 
@@ -584,56 +612,24 @@ public:
 };
 
 
-template<int dim>
-class ManufacturedLoad : public Function<dim>
-{
-public:
-  virtual double
-  value(const Point<dim> & p, const unsigned int = 0) const override final
-  {
-    return solution.bilaplacian(p);
-  }
 
-private:
-  Solution<dim> solution;
-};
+template<int dim>
+using Load = ManufacturedLoad<dim, Solution<dim>>;
 } // namespace ZeroBoundary
 
 
 
-struct EquationData
+namespace GaussianBells
 {
-  enum LocalSolverVariant
-  {
-    Exact,
-    Bilaplacian
-  };
-
-  static std::string
-  str_local_solver(const LocalSolverVariant variant);
-
-  std::string
-  to_string() const
-  {
-    std::ostringstream oss;
-    oss << Util::parameter_to_fstring("Equation Data:", "");
-    oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
-    oss << Util::parameter_to_fstring("Local solver:", str_local_solver(local_solver_variant));
-    return oss.str();
-  }
-
-  std::set<types::boundary_id> dirichlet_boundary_ids = {0};
-  double                       ip_factor              = 1.;
-  LocalSolverVariant           local_solver_variant   = LocalSolverVariant::Exact;
-};
+template<int dim>
+using Solution = Laplace::Solution<dim>;
 
 
-std::string
-EquationData::str_local_solver(const LocalSolverVariant variant)
-{
-  const std::string str_variant[] = {"Exact", "Bilaplacian (no mixed derivatives)"};
-  return str_variant[(int)variant];
-}
+
+template<int dim>
+using Load = ManufacturedLoad<dim, Solution<dim>>;
+} // namespace GaussianBells
+
 } // namespace Biharmonic
 
 #endif /* EQUATION_DATA_H_ */
