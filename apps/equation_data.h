@@ -632,4 +632,243 @@ using Load = ManufacturedLoad<dim, Solution<dim>>;
 
 } // namespace Biharmonic
 
+/**
+ *
+ * PDE data and reference solutions:
+ *
+ * 1) EquationData
+ *
+ */
+namespace Stokes
+{
+struct EquationData
+{
+  enum class SolverVariant
+  {
+    FGMRES_ILU,
+    FGMRES_GMG,
+    UMFPACK
+  };
+
+  static std::string
+  str_solver_variant(const SolverVariant variant);
+
+  std::string
+  str_solver_variant() const
+  {
+    return str_solver_variant(solver_variant);
+  }
+
+  std::string
+  to_string() const
+  {
+    std::ostringstream oss;
+    oss << Util::parameter_to_fstring("Equation Data:", "");
+    oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
+    oss << Util::parameter_to_fstring("Local solver:", str_solver_variant(solver_variant));
+    return oss.str();
+  }
+
+  std::set<types::boundary_id> dirichlet_boundary_ids = {0};
+  double                       ip_factor              = 1.;
+  SolverVariant                solver_variant         = SolverVariant::UMFPACK;
+};
+
+std::string
+EquationData::str_solver_variant(const SolverVariant variant)
+{
+  const std::string str_variant[] = {"flexible GMRES + ILU", "flexible GMRES + GMG", "UMFPACK"};
+  return str_variant[(int)variant];
+}
+
+
+namespace ZeroBoundary
+{
+// Note that the first dim components are the velocity components
+// and the last is the pressure.
+template<int dim>
+class Solution : public Function<dim>
+{
+public:
+  Solution() : Function<dim>(dim + 1)
+  {
+  }
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override;
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override;
+};
+
+template<>
+double
+Solution<2>::value(const Point<2> & p, const unsigned int component) const
+{
+  Assert(component <= 2 + 1, ExcIndexRange(component, 0, 2 + 1));
+
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  if(component == 0)
+    return sin(PI * x);
+  if(component == 1)
+    return -PI * y * cos(PI * x);
+  if(component == 2)
+    return sin(PI * x) * cos(PI * y);
+
+  return 0;
+}
+
+template<>
+double
+Solution<3>::value(const Point<3> & p, const unsigned int component) const
+{
+  Assert(component <= 3 + 1, ExcIndexRange(component, 0, 3 + 1));
+
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+  const double z = p(2);
+
+  if(component == 0)
+    return 2.0 * sin(PI * x);
+  if(component == 1)
+    return -PI * y * cos(PI * x);
+  if(component == 2)
+    return -PI * z * cos(PI * x);
+  if(component == 3)
+    return sin(PI * x) * cos(PI * y) * sin(PI * z);
+
+  return 0;
+}
+
+// Note that for the gradient we need to return a Tensor<1,dim>
+template<>
+Tensor<1, 2>
+Solution<2>::gradient(const Point<2> & p, const unsigned int component) const
+{
+  Assert(component <= 2, ExcIndexRange(component, 0, 2 + 1));
+
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  Tensor<1, 2> return_value;
+  if(component == 0)
+  {
+    return_value[0] = PI * cos(PI * x);
+    return_value[1] = 0.0;
+  }
+  else if(component == 1)
+  {
+    return_value[0] = y * PI * PI * sin(PI * x);
+    return_value[1] = -PI * cos(PI * x);
+  }
+  else if(component == 2)
+  {
+    return_value[0] = PI * cos(PI * x) * cos(PI * y);
+    return_value[1] = -PI * sin(PI * x) * sin(PI * y);
+  }
+
+  return return_value;
+}
+
+template<>
+Tensor<1, 3>
+Solution<3>::gradient(const Point<3> & p, const unsigned int component) const
+{
+  Assert(component <= 3, ExcIndexRange(component, 0, 3 + 1));
+
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+  const double z = p(2);
+
+  Tensor<1, 3> return_value;
+  if(component == 0)
+  {
+    return_value[0] = 2 * PI * cos(PI * x);
+    return_value[1] = 0.0;
+    return_value[2] = 0.0;
+  }
+  else if(component == 1)
+  {
+    return_value[0] = y * PI * PI * sin(PI * x);
+    return_value[1] = -PI * cos(PI * x);
+    return_value[2] = 0.0;
+  }
+  else if(component == 2)
+  {
+    return_value[0] = z * PI * PI * sin(PI * x);
+    return_value[1] = 0.0;
+    return_value[2] = -PI * cos(PI * x);
+  }
+  else if(component == 3)
+  {
+    return_value[0] = PI * cos(PI * x) * cos(PI * y) * sin(PI * z);
+    return_value[1] = -PI * sin(PI * x) * sin(PI * y) * sin(PI * z);
+    return_value[2] = PI * sin(PI * x) * cos(PI * y) * cos(PI * z);
+  }
+
+  return return_value;
+}
+
+// Implementation of $f$. See the introduction for more information.
+template<int dim>
+class RightHandSide : public Function<dim>
+{
+public:
+  RightHandSide() : Function<dim>(dim + 1)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override;
+};
+
+template<>
+double
+RightHandSide<2>::value(const Point<2> & p, const unsigned int component) const
+{
+  Assert(component <= 2, ExcIndexRange(component, 0, 2 + 1));
+
+  using numbers::PI;
+  double x = p(0);
+  double y = p(1);
+  if(component == 0)
+    return PI * PI * sin(PI * x) + PI * cos(PI * x) * cos(PI * y);
+  if(component == 1)
+    return -PI * PI * PI * y * cos(PI * x) - PI * sin(PI * y) * sin(PI * x);
+  if(component == 2)
+    return 0;
+
+  return 0;
+}
+
+template<>
+double
+RightHandSide<3>::value(const Point<3> & p, const unsigned int component) const
+{
+  Assert(component <= 3, ExcIndexRange(component, 0, 3 + 1));
+
+  using numbers::PI;
+  double x = p(0);
+  double y = p(1);
+  double z = p(2);
+  if(component == 0)
+    return 2 * PI * PI * sin(PI * x) + PI * cos(PI * x) * cos(PI * y) * sin(PI * z);
+  if(component == 1)
+    return -PI * PI * PI * y * cos(PI * x) + PI * (-1) * sin(PI * y) * sin(PI * x) * sin(PI * z);
+  if(component == 2)
+    return -PI * PI * PI * z * cos(PI * x) + PI * cos(PI * z) * sin(PI * x) * cos(PI * y);
+  if(component == 3)
+    return 0;
+
+  return 0;
+}
+} // namespace ZeroBoundary
+
+
+} // namespace Stokes
+
 #endif /* EQUATION_DATA_H_ */

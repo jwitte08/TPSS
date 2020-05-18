@@ -19,6 +19,7 @@ set(sourcefiles
   poisson_mpiscaling.cc
   poisson_standard.cc
   biharmonic_c0ip.cc
+  stokes_taylorhood.cc
   )
 
 foreach(src ${sourcefiles})
