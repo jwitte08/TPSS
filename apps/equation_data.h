@@ -643,43 +643,19 @@ namespace Stokes
 {
 struct EquationData
 {
-  enum class SolverVariant
-  {
-    FGMRES_ILU,
-    FGMRES_GMG,
-    UMFPACK
-  };
-
-  static std::string
-  str_solver_variant(const SolverVariant variant);
-
-  std::string
-  str_solver_variant() const
-  {
-    return str_solver_variant(solver_variant);
-  }
-
   std::string
   to_string() const
   {
     std::ostringstream oss;
     oss << Util::parameter_to_fstring("Equation Data:", "");
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
-    oss << Util::parameter_to_fstring("Local solver:", str_solver_variant(solver_variant));
     return oss.str();
   }
 
   std::set<types::boundary_id> dirichlet_boundary_ids = {0};
   double                       ip_factor              = 1.;
-  SolverVariant                solver_variant         = SolverVariant::UMFPACK;
 };
 
-std::string
-EquationData::str_solver_variant(const SolverVariant variant)
-{
-  const std::string str_variant[] = {"flexible GMRES + ILU", "flexible GMRES + GMG", "UMFPACK"};
-  return str_variant[(int)variant];
-}
 
 
 namespace ZeroBoundary
@@ -866,8 +842,8 @@ RightHandSide<3>::value(const Point<3> & p, const unsigned int component) const
 
   return 0;
 }
-} // namespace ZeroBoundary
 
+} // namespace ZeroBoundary
 
 } // namespace Stokes
 

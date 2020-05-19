@@ -91,6 +91,7 @@
 #include "rt_parameter.h"
 
 
+
 namespace Stokes
 {
 using namespace dealii;
@@ -136,8 +137,6 @@ BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::BlockSchurPr
     do_solve_A(do_solve_A)
 {
 }
-
-
 
 template<class PreconditionerAType, class PreconditionerSType>
 void
@@ -198,22 +197,55 @@ public:
   void
   run();
 
-private:
+  bool
+  make_grid();
+
+  bool
+  make_grid(const unsigned int n_refinements);
+
   void
-  setup_dofs();
+  make_grid_impl(const MeshParameter & mesh_prms);
+
+  void
+  setup_system();
+
   void
   assemble_system();
+
   void
   assemble_multigrid();
+
   void
   solve();
+
   void
   compute_errors();
+
   void
   output_results(const unsigned int refinement_cycle) const;
 
-  RT::Parameter rt_parameters;
-  EquationData  equation_data;
+  template<typename T>
+  void
+  print_parameter(const std::string & description, const T & value) const
+  {
+    *pcout << Util::parameter_to_fstring(description, value);
+  }
+
+  void
+  print_informations() const
+  {
+    *pcout << equation_data.to_string();
+    *pcout << std::endl;
+    print_parameter("Finite element:", fe.get_name());
+    *pcout << rt_parameters.to_string();
+    *pcout << std::endl;
+  }
+
+  std::shared_ptr<ConditionalOStream> pcout;
+  RT::Parameter                       rt_parameters;
+  EquationData                        equation_data;
+  mutable PostProcessData             pp_data;
+  mutable PostProcessData             pp_data_pressure;
 
   Triangulation<dim> triangulation;
   FESystem<dim>      velocity_fe;
@@ -234,8 +266,6 @@ private:
   MGLevelObject<SparseMatrix<double>> mg_matrices;
   MGLevelObject<SparseMatrix<double>> mg_interface_matrices;
   MGConstrainedDoFs                   mg_constrained_dofs;
-
-  TimerOutput computing_timer;
 };
 
 
@@ -243,7 +273,10 @@ private:
 template<int dim, int fe_degree_p>
 ModelProblem<dim, fe_degree_p>::ModelProblem(const RT::Parameter & rt_parameters_in,
                                              const EquationData &  equation_data_in)
-  : rt_parameters(rt_parameters_in),
+  : pcout(
+      std::make_shared<ConditionalOStream>(std::cout,
+                                           Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
+    rt_parameters(rt_parameters_in),
     equation_data(equation_data_in),
     triangulation(Triangulation<dim>::maximum_smoothing),
     // Finite element for the velocity only:
@@ -251,34 +284,69 @@ ModelProblem<dim, fe_degree_p>::ModelProblem(const RT::Parameter & rt_parameters
     // Finite element for the whole system:
     fe(velocity_fe, 1, FE_Q<dim>(fe_degree_p), 1),
     dof_handler(triangulation),
-    velocity_dof_handler(triangulation),
-    computing_timer(std::cout, TimerOutput::never, TimerOutput::wall_times)
+    velocity_dof_handler(triangulation)
 {
 }
 
 
 
-// @sect4{ModelProblem::setup_dofs}
+template<int dim, int fe_degree_p>
+bool
+ModelProblem<dim, fe_degree_p>::make_grid()
+{
+  make_grid_impl(rt_parameters.mesh);
+  return true;
+}
 
-// This function sets up the DoFHandler, matrices, vectors, and Multigrid
-// structures (if needed).
+
+
+template<int dim, int fe_degree_p>
+bool
+ModelProblem<dim, fe_degree_p>::make_grid(const unsigned int n_refinements)
+{
+  MeshParameter mesh_prms = rt_parameters.mesh;
+  mesh_prms.n_refinements = n_refinements;
+
+  //: estimate number of dofs (velocity + pressure)
+  AssertDimension(fe.n_base_elements(), 2); // velocity + pressure
+  const auto & fe_v = fe.base_element(0);
+  AssertDimension(fe_v.n_components(), dim);          // velocity
+  AssertDimension(fe_v.element_multiplicity(0), dim); // dim times FE_Q
+  const auto   n_dofs_est_v = dim * estimate_n_dofs(fe_v.base_element(0), mesh_prms);
+  const auto & fe_p         = fe.base_element(1);
+  AssertDimension(fe_p.n_components(), 1); // pressure
+  const auto n_dofs_est_p = estimate_n_dofs(fe_p, mesh_prms);
+  const auto n_dofs_est   = n_dofs_est_v + n_dofs_est_p;
+  if(rt_parameters.exceeds_dof_limits(n_dofs_est))
+    return false;
+
+  make_grid_impl(mesh_prms);
+  return true;
+}
+
+
+
 template<int dim, int fe_degree_p>
 void
-ModelProblem<dim, fe_degree_p>::setup_dofs()
+ModelProblem<dim, fe_degree_p>::make_grid_impl(const MeshParameter & mesh_prms)
 {
-  TimerOutput::Scope scope(computing_timer, "Setup");
+  triangulation.clear();
+  *pcout << create_mesh(triangulation, mesh_prms) << std::endl;
+  pp_data.n_cells_global.push_back(triangulation.n_global_active_cells());
+  pp_data.n_dimensions = dim;
+}
 
+
+
+template<int dim, int fe_degree_p>
+void
+ModelProblem<dim, fe_degree_p>::setup_system()
+{
   system_matrix.clear();
   pressure_mass_matrix.clear();
 
-  // The main DoFHandler only needs active DoFs, so we are not calling
-  // distribute_mg_dofs() here
   dof_handler.distribute_dofs(fe);
 
-  // This block structure separates the dim velocity components from
-  // the pressure component (used for reordering). Note that we have
-  // 2 instead of dim+1 blocks like in step-22, because our FESystem
-  // is nested and the dim velocity components appear as one block.
   std::vector<unsigned int> block_component(2);
   block_component[0] = 0;
   block_component[1] = 1;
@@ -288,9 +356,8 @@ ModelProblem<dim, fe_degree_p>::setup_dofs()
 
   // ILU behaves better if we apply a reordering to reduce fillin. There
   // is no advantage in doing this for the other solvers.
-  if(equation_data.solver_variant == EquationData::SolverVariant::FGMRES_ILU)
+  if(rt_parameters.solver.variant == "FGMRES_ILU")
   {
-    TimerOutput::Scope ilu_specific(computing_timer, "(ILU specific)");
     DoFRenumbering::Cuthill_McKee(dof_handler);
   }
 
@@ -300,22 +367,11 @@ ModelProblem<dim, fe_degree_p>::setup_dofs()
   // dof_handler and velocity_dof_handler.
   DoFRenumbering::block_wise(dof_handler);
 
-  if(equation_data.solver_variant == EquationData::SolverVariant::FGMRES_GMG)
+  if(rt_parameters.solver.variant == "FGMRES_GMG")
   {
-    TimerOutput::Scope multigrid_specific(computing_timer, "(Multigrid specific)");
-    TimerOutput::Scope setup_multigrid(computing_timer, "Setup - Multigrid");
-
-    // This distributes the active dofs and multigrid dofs for the
-    // velocity space in a separate DoFHandler as described in the
-    // introduction.
     velocity_dof_handler.distribute_dofs(velocity_fe);
     velocity_dof_handler.distribute_mg_dofs();
 
-    // The following block of code initializes the MGConstrainedDofs
-    // (using the boundary conditions for the velocity), and the
-    // sparsity patterns and matrices for each level. The resize()
-    // function of MGLevelObject<T> will destroy all existing contained
-    // objects.
     std::set<types::boundary_id> zero_boundary_ids;
     zero_boundary_ids.insert(0);
 
@@ -347,9 +403,6 @@ ModelProblem<dim, fe_degree_p>::setup_dofs()
 
   {
     constraints.clear();
-    // The following makes use of a component mask for interpolation of the
-    // boundary values for the velocity only, which is further explained in
-    // the vector valued dealii step-20 tutorial.
     DoFTools::make_hanging_node_constraints(dof_handler, constraints);
     VectorTools::interpolate_boundary_values(
       dof_handler, 0, ZeroBoundary::Solution<dim>(), constraints, fe.component_mask(velocities));
@@ -358,15 +411,11 @@ ModelProblem<dim, fe_degree_p>::setup_dofs()
     // of the pressure variable to ensure solvability of the problem. We do
     // this here by marking the first pressure dof, which has index n_u as a
     // constrained dof.
-    if(equation_data.solver_variant == EquationData::SolverVariant::UMFPACK)
+    if(rt_parameters.solver.variant == "UMFPACK")
       constraints.add_line(n_u);
 
     constraints.close();
   }
-
-  std::cout << "\tNumber of active cells: " << triangulation.n_active_cells() << std::endl
-            << "\tNumber of degrees of freedom: " << dof_handler.n_dofs() << " (" << n_u << '+'
-            << n_p << ')' << std::endl;
 
   {
     BlockDynamicSparsityPattern csp(dofs_per_block, dofs_per_block);
@@ -377,25 +426,25 @@ ModelProblem<dim, fe_degree_p>::setup_dofs()
 
   solution.reinit(dofs_per_block);
   system_rhs.reinit(dofs_per_block);
+
+  print_parameter("Number of degrees of freedom (velocity):", n_u);
+  print_parameter("Number of degrees of freedom (pressure):", n_p);
+  print_parameter("Number of degrees of freedom (total):", n_u + n_p);
+  pp_data.n_dofs_global.push_back(system_matrix.m());
 }
 
 
-// @sect4{ModelProblem::assemble_system}
 
-// In this function, the system matrix is assembled. We assemble the pressure
-// mass matrix in the (1,1) block (if needed) and move it out of this location
-// at the end of this function.
 template<int dim, int fe_degree_p>
 void
 ModelProblem<dim, fe_degree_p>::assemble_system()
 {
-  TimerOutput::Scope assemble(computing_timer, "Assemble");
   system_matrix = 0;
   system_rhs    = 0;
 
   // If true, we will assemble the pressure mass matrix in the (1,1) block:
   const bool assemble_pressure_mass_matrix =
-    (equation_data.solver_variant == EquationData::SolverVariant::UMFPACK) ? false : true;
+    (rt_parameters.solver.variant == "UMFPACK") ? false : true;
 
   QGauss<dim> quadrature_formula(fe_degree_p + 2);
 
@@ -464,25 +513,23 @@ ModelProblem<dim, fe_degree_p>::assemble_system()
       local_matrix, local_rhs, local_dof_indices, system_matrix, system_rhs);
   }
 
-  if(equation_data.solver_variant != EquationData::SolverVariant::UMFPACK)
+  if(rt_parameters.solver.variant != "UMFPACK")
   {
     pressure_mass_matrix.reinit(sparsity_pattern.block(1, 1));
     pressure_mass_matrix.copy_from(system_matrix.block(1, 1));
     system_matrix.block(1, 1) = 0;
   }
+
+  if(rt_parameters.solver.variant == "FGMRES_GMG")
+    assemble_multigrid();
 }
 
-// @sect4{ModelProblem::assemble_multigrid}
 
-// Here, like in step-16, we have a function that assembles the level
-// and interface matrices necessary for the multigrid preconditioner.
+
 template<int dim, int fe_degree_p>
 void
 ModelProblem<dim, fe_degree_p>::assemble_multigrid()
 {
-  TimerOutput::Scope multigrid_specific(computing_timer, "(Multigrid specific)");
-  TimerOutput::Scope assemble_multigrid(computing_timer, "Assemble Multigrid");
-
   mg_matrices = 0.;
 
   QGauss<dim> quadrature_formula(fe_degree_p + 2);
@@ -557,37 +604,25 @@ ModelProblem<dim, fe_degree_p>::assemble_multigrid()
   }
 }
 
-// @sect4{ModelProblem::solve}
 
-// This function sets up things differently based on if you want to use ILU
-// or GMG as a preconditioner.  Both methods share the same solver (FGMRES)
-// but require a different preconditioner to be initialized. Here we time not
-// only the entire solve function, but we separately time the setup of the
-// preconditioner as well as the solve itself.
+
 template<int dim, int fe_degree_p>
 void
 ModelProblem<dim, fe_degree_p>::solve()
 {
-  TimerOutput::Scope solve(computing_timer, "Solve");
   constraints.set_zero(solution);
 
-  if(equation_data.solver_variant == EquationData::SolverVariant::UMFPACK)
+  if(rt_parameters.solver.variant == "UMFPACK")
   {
-    computing_timer.enter_subsection("(UMFPACK specific)");
-    computing_timer.enter_subsection("Solve - Initialize");
-
     SparseDirectUMFPACK A_direct;
     A_direct.initialize(system_matrix);
-
-    computing_timer.leave_subsection();
-    computing_timer.leave_subsection();
-
-    {
-      TimerOutput::Scope solve_backslash(computing_timer, "Solve - Backslash");
-      A_direct.vmult(solution, system_rhs);
-    }
-
+    A_direct.vmult(solution, system_rhs);
     constraints.distribute(solution);
+
+    pp_data.average_reduction_system.push_back(0.);
+    pp_data.n_iterations_system.push_back(0.);
+    print_parameter("Average reduction (solver):", "direct solver");
+    print_parameter("Number of iterations (solver):", "---");
     return;
   }
 
@@ -605,11 +640,8 @@ ModelProblem<dim, fe_degree_p>::solve()
 
   SolverFGMRES<BlockVector<double>> solver(solver_control);
 
-  if(equation_data.solver_variant == EquationData::SolverVariant::FGMRES_ILU)
+  if(rt_parameters.solver.variant == "FGMRES_ILU")
   {
-    computing_timer.enter_subsection("(ILU specific)");
-    computing_timer.enter_subsection("Solve - Set-up Preconditioner");
-
     std::cout << "   Computing preconditioner..." << std::endl << std::flush;
 
     SparseILU<double> A_preconditioner;
@@ -621,12 +653,7 @@ ModelProblem<dim, fe_degree_p>::solve()
     const BlockSchurPreconditioner<SparseILU<double>, SparseILU<double>> preconditioner(
       system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner, use_expensive);
 
-    computing_timer.leave_subsection();
-    computing_timer.leave_subsection();
-
     {
-      TimerOutput::Scope solve_fmgres(computing_timer, "Solve - FGMRES");
-
       solver.solve(system_matrix, solution, system_rhs, preconditioner);
       n_iterations_A = preconditioner.n_iterations_A;
       n_iterations_S = preconditioner.n_iterations_S;
@@ -634,9 +661,6 @@ ModelProblem<dim, fe_degree_p>::solve()
   }
   else
   {
-    computing_timer.enter_subsection("(Multigrid specific)");
-    computing_timer.enter_subsection("Solve - Set-up Preconditioner");
-
     // Transfer operators between levels
     MGTransferPrebuilt<Vector<double>> mg_transfer(mg_constrained_dofs);
     mg_transfer.build(velocity_dof_handler);
@@ -678,11 +702,8 @@ ModelProblem<dim, fe_degree_p>::solve()
       preconditioner(
         system_matrix, pressure_mass_matrix, A_Multigrid, S_preconditioner, use_expensive);
 
-    computing_timer.leave_subsection();
-    computing_timer.leave_subsection();
 
     {
-      TimerOutput::Scope solve_fmgres(computing_timer, "Solve - FGMRES");
       solver.solve(system_matrix, solution, system_rhs, preconditioner);
       n_iterations_A = preconditioner.n_iterations_A;
       n_iterations_S = preconditioner.n_iterations_S;
@@ -698,27 +719,18 @@ ModelProblem<dim, fe_degree_p>::solve()
             << "\tTotal number of iterations used for approximation of S inverse: "
             << n_iterations_S << std::endl
             << std::endl;
+
+  const double mean_pressure =
+    VectorTools::compute_mean_value(dof_handler, QGauss<dim>(fe_degree_p + 2), solution, dim);
+  solution.block(1).add(-mean_pressure);
 }
 
 
-// @sect4{ModelProblem::process_solution}
 
-// This function computes the L2 and H1 errors of the solution. For this,
-// we need to make sure the pressure has mean zero.
 template<int dim, int fe_degree_p>
 void
 ModelProblem<dim, fe_degree_p>::compute_errors()
 {
-  // Compute the mean pressure $\frac{1}{\Omega} \int_{\Omega} p(x) dx $
-  // and then subtract it from each pressure coefficient. This will result
-  // in a pressure with mean value zero. Here we make use of the fact that
-  // the pressure is component $dim$ and that the finite element space
-  // is nodal.
-  const double mean_pressure =
-    VectorTools::compute_mean_value(dof_handler, QGauss<dim>(fe_degree_p + 2), solution, dim);
-  solution.block(1).add(-mean_pressure);
-  std::cout << "   Note: The mean value was adjusted by " << -mean_pressure << std::endl;
-
   const ComponentSelectFunction<dim> pressure_mask(dim, dim + 1);
   const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
 
@@ -730,9 +742,10 @@ ModelProblem<dim, fe_degree_p>::compute_errors()
                                     QGauss<dim>(fe_degree_p + 2),
                                     VectorTools::L2_norm,
                                     &velocity_mask);
-
   const double Velocity_L2_error =
     VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::L2_norm);
+  print_parameter("Velocity error in the L2 norm:", Velocity_L2_error);
+  pp_data.L2_error.push_back(Velocity_L2_error);
 
   VectorTools::integrate_difference(dof_handler,
                                     solution,
@@ -741,9 +754,10 @@ ModelProblem<dim, fe_degree_p>::compute_errors()
                                     QGauss<dim>(fe_degree_p + 2),
                                     VectorTools::L2_norm,
                                     &pressure_mask);
-
   const double Pressure_L2_error =
     VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::L2_norm);
+  print_parameter("Pressure error in the L2 norm:", Pressure_L2_error);
+  pp_data_pressure.L2_error.push_back(Pressure_L2_error);
 
   VectorTools::integrate_difference(dof_handler,
                                     solution,
@@ -752,14 +766,10 @@ ModelProblem<dim, fe_degree_p>::compute_errors()
                                     QGauss<dim>(fe_degree_p + 2),
                                     VectorTools::H1_norm,
                                     &velocity_mask);
-
   const double Velocity_H1_error =
     VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::H1_norm);
-
-  std::cout << std::endl
-            << "   Velocity L2 Error: " << Velocity_L2_error << std::endl
-            << "   Pressure L2 Error: " << Pressure_L2_error << std::endl
-            << "   Velocity H1 Error: " << Velocity_H1_error << std::endl;
+  print_parameter("Velocity error in the H1 seminorm:", Velocity_H1_error);
+  pp_data.H1semi_error.push_back(Velocity_H1_error);
 }
 
 
@@ -791,59 +801,39 @@ ModelProblem<dim, fe_degree_p>::output_results(const unsigned int refinement_cyc
 
 
 
-// @sect4{ModelProblem::run}
-
-// The last step in the Stokes class is, as usual, the function that
-// generates the initial grid and calls the other functions in the
-// respective order.
 template<int dim, int fe_degree_p>
 void
 ModelProblem<dim, fe_degree_p>::run()
 {
-  GridGenerator::hyper_cube(triangulation);
-  triangulation.refine_global(4 - dim);
+  print_informations();
 
-  if(equation_data.solver_variant == EquationData::SolverVariant::FGMRES_ILU)
-    std::cout << "Now running with ILU" << std::endl;
-  else if(equation_data.solver_variant == EquationData::SolverVariant::FGMRES_GMG)
-    std::cout << "Now running with Multigrid" << std::endl;
-  else
-    std::cout << "Now running with UMFPACK" << std::endl;
-
-
-  for(unsigned int refinement_cycle = 0; refinement_cycle < 3; ++refinement_cycle)
+  const unsigned int n_cycles = rt_parameters.n_cycles;
+  for(unsigned int cycle = 0; cycle < n_cycles; ++cycle)
   {
-    std::cout << "Refinement cycle " << refinement_cycle << std::endl;
+    *pcout << "Cycle: " << cycle + 1 << " of " << n_cycles << std::endl;
 
-    if(refinement_cycle > 0)
-      triangulation.refine_global(1);
-
-    std::cout << "   Set-up..." << std::endl;
-    setup_dofs();
-
-    std::cout << "   Assembling..." << std::endl;
-    assemble_system();
-
-    if(equation_data.solver_variant == EquationData::SolverVariant::FGMRES_GMG)
+    const unsigned int n_refinements = rt_parameters.mesh.n_refinements + cycle;
+    if(!make_grid(n_refinements))
     {
-      std::cout << "   Assembling Multigrid..." << std::endl;
-
-      assemble_multigrid();
+      *pcout << "NO MESH CREATED AT CYCLE " << cycle << " !!!\n\n";
+      continue;
     }
 
-    std::cout << "   Solving..." << std::flush;
+    setup_system();
+
+    assemble_system();
+
     solve();
 
     compute_errors();
 
-    output_results(refinement_cycle);
+    output_results(cycle);
 
     Utilities::System::MemoryStats mem;
     Utilities::System::get_memory_stats(mem);
-    std::cout << "   VM Peak: " << mem.VmPeak << std::endl;
+    print_parameter("Memory used (VM Peak)", mem.VmPeak);
 
-    computing_timer.print_summary();
-    computing_timer.reset();
+    *pcout << std::endl;
   }
 }
 } // namespace Stokes
