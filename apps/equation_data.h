@@ -658,7 +658,7 @@ struct EquationData
 
 
 
-namespace ZeroBoundary
+namespace DivergenceFree
 {
 // Note that the first dim components are the velocity components
 // and the last is the pressure.
@@ -669,8 +669,10 @@ public:
   Solution() : Function<dim>(dim + 1)
   {
   }
+
   virtual double
   value(const Point<dim> & p, const unsigned int component = 0) const override;
+
   virtual Tensor<1, dim>
   gradient(const Point<dim> & p, const unsigned int component = 0) const override;
 };
@@ -718,7 +720,6 @@ Solution<3>::value(const Point<3> & p, const unsigned int component) const
   return 0;
 }
 
-// Note that for the gradient we need to return a Tensor<1,dim>
 template<>
 Tensor<1, 2>
 Solution<2>::gradient(const Point<2> & p, const unsigned int component) const
@@ -789,12 +790,13 @@ Solution<3>::gradient(const Point<3> & p, const unsigned int component) const
   return return_value;
 }
 
-// Implementation of $f$. See the introduction for more information.
+
+
 template<int dim>
-class RightHandSide : public Function<dim>
+class Load : public Function<dim>
 {
 public:
-  RightHandSide() : Function<dim>(dim + 1)
+  Load() : Function<dim>(dim + 1)
   {
   }
 
@@ -804,7 +806,7 @@ public:
 
 template<>
 double
-RightHandSide<2>::value(const Point<2> & p, const unsigned int component) const
+Load<2>::value(const Point<2> & p, const unsigned int component) const
 {
   Assert(component <= 2, ExcIndexRange(component, 0, 2 + 1));
 
@@ -823,7 +825,7 @@ RightHandSide<2>::value(const Point<2> & p, const unsigned int component) const
 
 template<>
 double
-RightHandSide<3>::value(const Point<3> & p, const unsigned int component) const
+Load<3>::value(const Point<3> & p, const unsigned int component) const
 {
   Assert(component <= 3, ExcIndexRange(component, 0, 3 + 1));
 
@@ -843,7 +845,7 @@ RightHandSide<3>::value(const Point<3> & p, const unsigned int component) const
   return 0;
 }
 
-} // namespace ZeroBoundary
+} // namespace DivergenceFree
 
 } // namespace Stokes
 

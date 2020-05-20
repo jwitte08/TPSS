@@ -56,9 +56,13 @@
 #include <deal.II/dofs/dof_renumbering.h>
 #include <deal.II/dofs/dof_tools.h>
 
+#include <deal.II/fe/fe_interface_values.h>
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_system.h>
 #include <deal.II/fe/fe_values.h>
+#include <deal.II/fe/mapping_q.h>
+
+#include <deal.II/meshworker/mesh_loop.h>
 
 #include <deal.II/numerics/data_out.h>
 #include <deal.II/numerics/error_estimator.h>
@@ -95,6 +99,109 @@
 namespace Stokes
 {
 using namespace dealii;
+
+template<int dim, int fe_degree_p = 2, typename Number = double>
+class BlockSparseMatrixAugmented : public BlockSparseMatrix<Number>
+{
+public:
+  using value_type  = Number;
+  using matrix_type = BlockSparseMatrix<Number>;
+  // using local_integrator_type = C0IP::FD::MatrixIntegrator<dim, fe_degree_p, Number>;
+
+  // void
+  // initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
+  //            const EquationData                             equation_data_in)
+  // {
+  //   mf_storage = mf_storage_in;
+  //   local_integrator_type::initialize(equation_data_in);
+  // }
+
+  // std::shared_ptr<const MatrixFree<dim, Number>>
+  // get_matrix_free() const
+  // {
+  //   AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
+  //   return mf_storage;
+  // }
+
+  // using matrix_type::vmult;
+
+  // void
+  // vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const
+  // {
+  //   AssertDimension(dst.size(), matrix_type::m());
+  //   AssertDimension(src.size(), matrix_type::n());
+  //   Vector<Number> v(matrix_type::n()); // src
+  //   std::copy(src.cbegin(), src.cend(), v.begin());
+  //   Vector<Number> w(matrix_type::m()); // dst
+  //   matrix_type::vmult(w, v);           // w = A v
+  //   std::copy(w.begin(), w.end(), dst.begin());
+  // }
+
+  // std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
+};
+
+template<int dim>
+struct ScratchData
+{
+  ScratchData(const Mapping<dim> &       mapping,
+              const FiniteElement<dim> & fe,
+              const unsigned int         quadrature_degree,
+              const UpdateFlags          update_flags,
+              const UpdateFlags          interface_update_flags)
+    : fe_values(mapping, fe, QGauss<dim>(quadrature_degree), update_flags),
+      fe_interface_values(mapping, fe, QGauss<dim - 1>(quadrature_degree), interface_update_flags)
+  {
+  }
+
+
+  ScratchData(const ScratchData<dim> & scratch_data)
+    : fe_values(scratch_data.fe_values.get_mapping(),
+                scratch_data.fe_values.get_fe(),
+                scratch_data.fe_values.get_quadrature(),
+                scratch_data.fe_values.get_update_flags()),
+      fe_interface_values(scratch_data.fe_values.get_mapping(),
+                          scratch_data.fe_values.get_fe(),
+                          scratch_data.fe_interface_values.get_quadrature(),
+                          scratch_data.fe_interface_values.get_update_flags())
+  {
+  }
+
+  FEValues<dim>          fe_values;
+  FEInterfaceValues<dim> fe_interface_values;
+};
+
+
+
+struct CopyData
+{
+  CopyData(const unsigned int dofs_per_cell,
+           const unsigned int level_in = numbers::invalid_unsigned_int)
+    : level(level_in),
+      cell_matrix(dofs_per_cell, dofs_per_cell),
+      cell_rhs(dofs_per_cell),
+      local_dof_indices(dofs_per_cell)
+  {
+  }
+
+
+  CopyData(const CopyData &) = default;
+
+
+  struct FaceData
+  {
+    FullMatrix<double>                   cell_matrix;
+    std::vector<types::global_dof_index> joint_dof_indices;
+    Vector<double>                       cell_rhs;
+  };
+
+  unsigned int                         level;
+  FullMatrix<double>                   cell_matrix;
+  Vector<double>                       cell_rhs;
+  std::vector<types::global_dof_index> local_dof_indices;
+  std::vector<FaceData>                face_data;
+};
+
+
 
 template<class PreconditionerAType, class PreconditionerSType>
 class BlockSchurPreconditioner : public Subscriptor
@@ -204,9 +311,6 @@ public:
   make_grid(const unsigned int n_refinements);
 
   void
-  make_grid_impl(const MeshParameter & mesh_prms);
-
-  void
   setup_system();
 
   void
@@ -244,10 +348,13 @@ public:
   std::shared_ptr<ConditionalOStream> pcout;
   RT::Parameter                       rt_parameters;
   EquationData                        equation_data;
+  std::shared_ptr<Function<dim>>      analytical_solution;
+  std::shared_ptr<Function<dim>>      load_function;
   mutable PostProcessData             pp_data;
   mutable PostProcessData             pp_data_pressure;
 
   Triangulation<dim> triangulation;
+  MappingQ<dim>      mapping;
   FESystem<dim>      velocity_fe;
   FESystem<dim>      fe;
   DoFHandler<dim>    dof_handler;
@@ -255,17 +362,27 @@ public:
 
   AffineConstraints<double> constraints;
 
-  BlockSparsityPattern      sparsity_pattern;
-  BlockSparseMatrix<double> system_matrix;
-  SparseMatrix<double>      pressure_mass_matrix;
+  BlockSparsityPattern                         sparsity_pattern;
+  BlockSparseMatrixAugmented<dim, fe_degree_p> system_matrix;
+  SparseMatrix<double>                         pressure_mass_matrix;
 
-  BlockVector<double> solution;
+  BlockVector<double> system_solution;
   BlockVector<double> system_rhs;
 
   MGLevelObject<SparsityPattern>      mg_sparsity_patterns;
   MGLevelObject<SparseMatrix<double>> mg_matrices;
   MGLevelObject<SparseMatrix<double>> mg_interface_matrices;
   MGConstrainedDoFs                   mg_constrained_dofs;
+
+private:
+  template<typename IteratorType, bool is_multigrid = false>
+  void
+  cell_worker_impl(const IteratorType & cell,
+                   ScratchData<dim> &   scratch_data,
+                   CopyData &           copy_data) const;
+
+  void
+  make_grid_impl(const MeshParameter & mesh_prms);
 };
 
 
@@ -278,7 +395,10 @@ ModelProblem<dim, fe_degree_p>::ModelProblem(const RT::Parameter & rt_parameters
                                            Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
     rt_parameters(rt_parameters_in),
     equation_data(equation_data_in),
+    analytical_solution(std::make_shared<DivergenceFree::Solution<dim>>()),
+    load_function(std::make_shared<DivergenceFree::Load<dim>>()),
     triangulation(Triangulation<dim>::maximum_smoothing),
+    mapping(1),
     // Finite element for the velocity only:
     velocity_fe(FE_Q<dim>(fe_degree_p + 1), dim),
     // Finite element for the whole system:
@@ -405,7 +525,7 @@ ModelProblem<dim, fe_degree_p>::setup_system()
     constraints.clear();
     DoFTools::make_hanging_node_constraints(dof_handler, constraints);
     VectorTools::interpolate_boundary_values(
-      dof_handler, 0, ZeroBoundary::Solution<dim>(), constraints, fe.component_mask(velocities));
+      dof_handler, 0, *analytical_solution, constraints, fe.component_mask(velocities));
 
     // As discussed in the introduction, we need to fix one degree of freedom
     // of the pressure variable to ensure solvability of the problem. We do
@@ -424,7 +544,7 @@ ModelProblem<dim, fe_degree_p>::setup_system()
   }
   system_matrix.reinit(sparsity_pattern);
 
-  solution.reinit(dofs_per_block);
+  system_solution.reinit(dofs_per_block);
   system_rhs.reinit(dofs_per_block);
 
   print_parameter("Number of degrees of freedom (velocity):", n_u);
@@ -436,34 +556,26 @@ ModelProblem<dim, fe_degree_p>::setup_system()
 
 
 template<int dim, int fe_degree_p>
+template<typename IteratorType, bool is_multigrid>
 void
-ModelProblem<dim, fe_degree_p>::assemble_system()
+ModelProblem<dim, fe_degree_p>::cell_worker_impl(const IteratorType & cell,
+                                                 ScratchData<dim> &   scratch_data,
+                                                 CopyData &           copy_data) const
 {
-  system_matrix = 0;
-  system_rhs    = 0;
-
   // If true, we will assemble the pressure mass matrix in the (1,1) block:
   const bool assemble_pressure_mass_matrix =
     (rt_parameters.solver.variant == "UMFPACK") ? false : true;
 
-  QGauss<dim> quadrature_formula(fe_degree_p + 2);
+  copy_data.cell_matrix = 0.;
+  copy_data.cell_rhs    = 0.;
 
-  FEValues<dim> fe_values(fe,
-                          quadrature_formula,
-                          update_values | update_quadrature_points | update_JxW_values |
-                            update_gradients);
+  FEValues<dim> & fe_values = scratch_data.fe_values;
+  fe_values.reinit(cell);
+  cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
+  const unsigned int dofs_per_cell = fe_values.get_fe().dofs_per_cell;
+  const unsigned int n_q_points    = fe_values.n_quadrature_points;
 
-  const unsigned int dofs_per_cell = fe.dofs_per_cell;
-
-  const unsigned int n_q_points = quadrature_formula.size();
-
-  FullMatrix<double> local_matrix(dofs_per_cell, dofs_per_cell);
-  Vector<double>     local_rhs(dofs_per_cell);
-
-  std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
-
-  const ZeroBoundary::RightHandSide<dim> right_hand_side;
-  std::vector<Vector<double>>            rhs_values(n_q_points, Vector<double>(dim + 1));
+  std::vector<Vector<double>> rhs_values(n_q_points, Vector<double>(dim + 1));
 
   const FEValuesExtractors::Vector velocities(0);
   const FEValuesExtractors::Scalar pressure(dim);
@@ -472,46 +584,73 @@ ModelProblem<dim, fe_degree_p>::assemble_system()
   std::vector<double>                  div_phi_u(dofs_per_cell);
   std::vector<double>                  phi_p(dofs_per_cell);
 
-  for(const auto & cell : dof_handler.active_cell_iterators())
+  load_function->vector_value_list(fe_values.get_quadrature_points(), rhs_values);
+
+  for(unsigned int q = 0; q < n_q_points; ++q)
   {
-    fe_values.reinit(cell);
-    local_matrix = 0;
-    local_rhs    = 0;
-
-    right_hand_side.vector_value_list(fe_values.get_quadrature_points(), rhs_values);
-
-    for(unsigned int q = 0; q < n_q_points; ++q)
+    for(unsigned int k = 0; k < dofs_per_cell; ++k)
     {
-      for(unsigned int k = 0; k < dofs_per_cell; ++k)
-      {
-        symgrad_phi_u[k] = fe_values[velocities].symmetric_gradient(k, q);
-        div_phi_u[k]     = fe_values[velocities].divergence(k, q);
-        phi_p[k]         = fe_values[pressure].value(k, q);
-      }
-
-      for(unsigned int i = 0; i < dofs_per_cell; ++i)
-      {
-        for(unsigned int j = 0; j <= i; ++j)
-        {
-          local_matrix(i, j) +=
-            (2 * (symgrad_phi_u[i] * symgrad_phi_u[j]) - div_phi_u[i] * phi_p[j] -
-             phi_p[i] * div_phi_u[j] + (assemble_pressure_mass_matrix ? phi_p[i] * phi_p[j] : 0)) *
-            fe_values.JxW(q);
-        }
-
-        const unsigned int component_i = fe.system_to_component_index(i).first;
-        local_rhs(i) += fe_values.shape_value(i, q) * rhs_values[q](component_i) * fe_values.JxW(q);
-      }
+      symgrad_phi_u[k] = fe_values[velocities].symmetric_gradient(k, q);
+      div_phi_u[k]     = fe_values[velocities].divergence(k, q);
+      phi_p[k]         = fe_values[pressure].value(k, q);
     }
 
     for(unsigned int i = 0; i < dofs_per_cell; ++i)
-      for(unsigned int j = i + 1; j < dofs_per_cell; ++j)
-        local_matrix(i, j) = local_matrix(j, i);
+    {
+      for(unsigned int j = 0; j <= i; ++j)
+      {
+        copy_data.cell_matrix(i, j) +=
+          (2 * (symgrad_phi_u[i] * symgrad_phi_u[j]) - div_phi_u[i] * phi_p[j] -
+           phi_p[i] * div_phi_u[j] + (assemble_pressure_mass_matrix ? phi_p[i] * phi_p[j] : 0)) *
+          fe_values.JxW(q);
+      }
 
-    cell->get_dof_indices(local_dof_indices);
-    constraints.distribute_local_to_global(
-      local_matrix, local_rhs, local_dof_indices, system_matrix, system_rhs);
+      const unsigned int component_i = fe.system_to_component_index(i).first;
+      copy_data.cell_rhs(i) +=
+        fe_values.shape_value(i, q) * rhs_values[q](component_i) * fe_values.JxW(q);
+    }
   }
+
+  for(unsigned int i = 0; i < dofs_per_cell; ++i)
+    for(unsigned int j = i + 1; j < dofs_per_cell; ++j)
+      copy_data.cell_matrix(i, j) = copy_data.cell_matrix(j, i);
+}
+
+
+
+template<int dim, int fe_degree_p>
+void
+ModelProblem<dim, fe_degree_p>::assemble_system()
+{
+  auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+    cell_worker_impl(cell, scratch_data, copy_data);
+  };
+
+  const auto copier = [&](const CopyData & copy_data) {
+    constraints.template distribute_local_to_global<BlockSparseMatrix<double>, BlockVector<double>>(
+      copy_data.cell_matrix,
+      copy_data.cell_rhs,
+      copy_data.local_dof_indices,
+      system_matrix,
+      system_rhs);
+  };
+
+  const unsigned int n_gauss_points = fe_degree_p + 2;
+  ScratchData<dim>   scratch_data(mapping,
+                                fe,
+                                n_gauss_points,
+                                update_values | update_gradients | update_quadrature_points |
+                                  update_JxW_values,
+                                update_values | update_gradients | update_quadrature_points |
+                                  update_JxW_values | update_normal_vectors);
+  CopyData           copy_data(dof_handler.get_fe().dofs_per_cell);
+  MeshWorker::mesh_loop(dof_handler.begin_active(),
+                        dof_handler.end(),
+                        cell_worker,
+                        copier,
+                        scratch_data,
+                        copy_data,
+                        MeshWorker::assemble_own_cells);
 
   if(rt_parameters.solver.variant != "UMFPACK")
   {
@@ -610,14 +749,14 @@ template<int dim, int fe_degree_p>
 void
 ModelProblem<dim, fe_degree_p>::solve()
 {
-  constraints.set_zero(solution);
+  constraints.set_zero(system_solution);
 
   if(rt_parameters.solver.variant == "UMFPACK")
   {
     SparseDirectUMFPACK A_direct;
-    A_direct.initialize(system_matrix);
-    A_direct.vmult(solution, system_rhs);
-    constraints.distribute(solution);
+    A_direct.template initialize<BlockSparseMatrix<double>>(system_matrix);
+    A_direct.vmult(system_solution, system_rhs);
+    constraints.distribute(system_solution);
 
     pp_data.average_reduction_system.push_back(0.);
     pp_data.n_iterations_system.push_back(0.);
@@ -654,7 +793,7 @@ ModelProblem<dim, fe_degree_p>::solve()
       system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner, use_expensive);
 
     {
-      solver.solve(system_matrix, solution, system_rhs, preconditioner);
+      solver.solve(system_matrix, system_solution, system_rhs, preconditioner);
       n_iterations_A = preconditioner.n_iterations_A;
       n_iterations_S = preconditioner.n_iterations_S;
     }
@@ -704,13 +843,13 @@ ModelProblem<dim, fe_degree_p>::solve()
 
 
     {
-      solver.solve(system_matrix, solution, system_rhs, preconditioner);
+      solver.solve(system_matrix, system_solution, system_rhs, preconditioner);
       n_iterations_A = preconditioner.n_iterations_A;
       n_iterations_S = preconditioner.n_iterations_S;
     }
   }
 
-  constraints.distribute(solution);
+  constraints.distribute(system_solution);
 
   std::cout << std::endl
             << "\tNumber of FGMRES iterations: " << solver_control.last_step() << std::endl
@@ -720,9 +859,11 @@ ModelProblem<dim, fe_degree_p>::solve()
             << n_iterations_S << std::endl
             << std::endl;
 
-  const double mean_pressure =
-    VectorTools::compute_mean_value(dof_handler, QGauss<dim>(fe_degree_p + 2), solution, dim);
-  solution.block(1).add(-mean_pressure);
+  const double mean_pressure = VectorTools::compute_mean_value(dof_handler,
+                                                               QGauss<dim>(fe_degree_p + 2),
+                                                               system_solution,
+                                                               dim);
+  system_solution.block(1).add(-mean_pressure);
 }
 
 
@@ -736,8 +877,8 @@ ModelProblem<dim, fe_degree_p>::compute_errors()
 
   Vector<float> difference_per_cell(triangulation.n_active_cells());
   VectorTools::integrate_difference(dof_handler,
-                                    solution,
-                                    ZeroBoundary::Solution<dim>(),
+                                    system_solution,
+                                    *analytical_solution,
                                     difference_per_cell,
                                     QGauss<dim>(fe_degree_p + 2),
                                     VectorTools::L2_norm,
@@ -748,8 +889,8 @@ ModelProblem<dim, fe_degree_p>::compute_errors()
   pp_data.L2_error.push_back(Velocity_L2_error);
 
   VectorTools::integrate_difference(dof_handler,
-                                    solution,
-                                    ZeroBoundary::Solution<dim>(),
+                                    system_solution,
+                                    *analytical_solution,
                                     difference_per_cell,
                                     QGauss<dim>(fe_degree_p + 2),
                                     VectorTools::L2_norm,
@@ -760,8 +901,8 @@ ModelProblem<dim, fe_degree_p>::compute_errors()
   pp_data_pressure.L2_error.push_back(Pressure_L2_error);
 
   VectorTools::integrate_difference(dof_handler,
-                                    solution,
-                                    ZeroBoundary::Solution<dim>(),
+                                    system_solution,
+                                    *analytical_solution,
                                     difference_per_cell,
                                     QGauss<dim>(fe_degree_p + 2),
                                     VectorTools::H1_norm,
@@ -789,7 +930,7 @@ ModelProblem<dim, fe_degree_p>::output_results(const unsigned int refinement_cyc
 
   DataOut<dim> data_out;
   data_out.attach_dof_handler(dof_handler);
-  data_out.add_data_vector(solution,
+  data_out.add_data_vector(system_solution,
                            solution_names,
                            DataOut<dim>::type_dof_data,
                            data_component_interpretation);
