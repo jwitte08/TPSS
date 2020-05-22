@@ -98,7 +98,7 @@ PatchTransferBlock<dim, Number, fe_degree>::gather(const BlockVectorType & src) 
   AlignedVector<VectorizedArray<Number>> dst;
   reinit_local_vector(dst);
   auto begin = dst.begin();
-  for(std::size_t b = 0; b < n_components; ++b)
+  for(std::size_t b = 0; b < n_blocks; ++b)
   {
     const auto                         transfer = transfers[b];
     const auto                         size     = transfer->n_dofs_per_patch();
@@ -133,7 +133,7 @@ PatchTransferBlock<dim, Number, fe_degree>::scatter_add(
   const AlignedVector<VectorizedArray<Number>> & src) const
 {
   auto begin = src.begin();
-  for(std::size_t b = 0; b < n_components; ++b)
+  for(std::size_t b = 0; b < n_blocks; ++b)
   {
     const auto                               transfer = transfers[b];
     const auto                               size     = transfer->n_dofs_per_patch();

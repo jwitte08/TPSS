@@ -63,8 +63,25 @@ public:
   unsigned int
   n_physical_subdomains() const;
 
+  /**
+   * Returns the number of DoFHandlers (not necessarily unique).
+   */
   unsigned int
-  n_components() const;
+  n_dof_handlers() const;
+
+  /**
+   * Accumulates the shape function components over all DoFHandlers, that is
+   * accumulating @p n_components for all indices @p dofh_index.
+   */
+  unsigned int
+  n_total_components() const;
+
+  /**
+   * Returns the shape function components of the DoFHandler with index @p
+   * dofh_index.
+   */
+  unsigned int
+  n_components(const unsigned int dofh_index = 0) const;
 
   const AdditionalData &
   get_additional_data() const;
@@ -160,11 +177,14 @@ private:
 
   const dealii::MatrixFree<dim, number> *                mf_storage;
   std::shared_ptr<const dealii::MatrixFree<dim, number>> mf_storage_owned;
-  std::vector<unsigned int>                              dofh_indices;
-  std::vector<const dealii::DoFHandler<dim> *>           dof_handlers;
+  /**
+   * Stores the unique DoFHandler index @p unique_dofh_indices[dofh_index] for
+   * each DoFHandler index @p dofh_index.
+   */
+  std::vector<unsigned int>                              unique_dofh_indices;
 
   TPSS::PatchInfo<dim>                    patch_info;
-  std::vector<TPSS::DoFInfo<dim, number>> dof_infos;
+  std::vector<TPSS::DoFInfo<dim, number>> unique_dof_infos;
   TPSS::MatrixFreeConnect<dim, number>    mf_connect;
   TPSS::MappingInfo<dim, number>          mapping_info;
 
@@ -213,11 +233,11 @@ SubdomainHandler<dim, number>::clear()
 {
   mf_storage = nullptr;
   mf_storage_owned.reset();
-  dofh_indices.clear();
-  dof_handlers.clear();
-
+  unique_dofh_indices.clear();
+  unique_dof_infos.clear();
+  
   patch_info.clear();
-  dof_infos.clear();
+  unique_dof_infos.clear();
   mf_connect = TPSS::MatrixFreeConnect<dim, number>{};
   mapping_info.clear();
 
@@ -237,11 +257,27 @@ SubdomainHandler<dim, number>::n_physical_subdomains() const
 
 template<int dim, typename number>
 inline unsigned int
-SubdomainHandler<dim, number>::n_components() const
+SubdomainHandler<dim, number>::n_dof_handlers() const
 {
-  // TODO MatrixFree with DoFHandler with more than one base_element
-  AssertThrow(mf_storage != nullptr, ExcNotInitialized());
-  return mf_storage->n_components();
+  return unique_dofh_indices.size();
+}
+
+template<int dim, typename number>
+inline unsigned int
+SubdomainHandler<dim, number>::n_total_components() const
+{
+  const unsigned int n_components = 0;
+  for (auto dofh_index = 0U; dofh_index < n_dof_handlers(); ++dofh_index)
+    n_components += this->n_components(dofh_index);
+  return n_components;
+}
+
+template<int dim, typename number>
+inline unsigned int
+SubdomainHandler<dim, number>::n_components(const unsigned int dofh_index) const
+{
+  const auto & dof_handler = get_dof_handler(dofh_index);
+  return dof_handler.get_fe().n_components();
 }
 
 template<int dim, typename number>
@@ -255,8 +291,8 @@ template<int dim, typename number>
 unsigned int
 SubdomainHandler<dim, number>::get_unique_dofh_index(const unsigned int dofh_index) const
 {
-  AssertIndexRange(dofh_index, dofh_indices.size());
-  return dofh_indices[dofh_index];
+  AssertIndexRange(dofh_index, unique_dofh_indices.size());
+  return unique_dofh_indices[dofh_index];
 }
 
 template<int dim, typename number>
@@ -264,7 +300,8 @@ inline const dealii::DoFHandler<dim> &
 SubdomainHandler<dim, number>::get_dof_handler(const unsigned int dofh_index) const
 {
   const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
-  return *(dof_handlers[unique_dofh_index]);
+  Assert(unique_dof_infos[unique_dofh_index].dof_handler, ExcMessage("DoFHandler is not set."));
+  return *(unique_dof_infos[unique_dofh_index].dof_handler);
 }
 
 template<int dim, typename number>
@@ -272,14 +309,14 @@ inline const TPSS::DoFInfo<dim, number> &
 SubdomainHandler<dim, number>::get_dof_info(const unsigned int dofh_index) const
 {
   const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
-  return dof_infos[unique_dofh_index];
+  return unique_dof_infos[unique_dofh_index];
 }
 
 template<int dim, typename number>
 inline ArrayView<const TPSS::DoFInfo<dim, number>>
 SubdomainHandler<dim, number>::get_dof_infos() const
 {
-  return ArrayView<const TPSS::DoFInfo<dim, number>>(dof_infos);
+  return ArrayView<const TPSS::DoFInfo<dim, number>>(unique_dof_infos);
 }
 
 template<int dim, typename number>
@@ -330,7 +367,7 @@ template<int dim, typename number>
 inline const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>> &
 SubdomainHandler<dim, number>::get_shape_info(const unsigned int dofh_index) const
 {
-  AssertIndexRange(dofh_index, n_components());
+  AssertIndexRange(dofh_index, n_dof_handlers());
   if(!additional_data.shape_infos.empty())
   {
     Assert(additional_data.shape_infos.size(1) == 1, ExcMessage("Only one column allowed."));
@@ -354,6 +391,7 @@ template<int dim, typename number>
 inline std::shared_ptr<const Utilities::MPI::Partitioner>
 SubdomainHandler<dim, number>::get_vector_partitioner(const unsigned int dofh_index) const
 {
+  AssertIndexRange(dofh_index, n_dof_handlers());
   const auto & dof_info = get_dof_info(dofh_index);
   return dof_info.vector_partitioner;
 }
@@ -364,7 +402,7 @@ inline std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>>
 SubdomainHandler<dim, number>::get_vector_partitioners() const
 {
   std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners;
-  for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
+  for(auto dofh_index = 0U; dofh_index < n_dof_handlers(); ++dofh_index)
     partitioners.push_back(get_vector_partitioner(dofh_index));
   return partitioners;
 }

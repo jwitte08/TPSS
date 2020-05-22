@@ -299,7 +299,7 @@ public:
 private:
   using transfer_type = PatchTransfer<dim, Number, fe_degree>;
 
-  const unsigned int                          n_components;
+  const unsigned int                          n_blocks;
   std::vector<std::shared_ptr<transfer_type>> transfers;
   unsigned int                                patch_id;
 };
@@ -517,11 +517,10 @@ PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned in
 template<int dim, typename Number, int fe_degree>
 inline PatchTransferBlock<dim, Number, fe_degree>::PatchTransferBlock(
   const SubdomainHandler<dim, Number> & subdomain_handler_in)
-  : n_components(subdomain_handler_in.n_components()), patch_id(numbers::invalid_unsigned_int)
+  : n_blocks(subdomain_handler_in.n_dof_handlers()), patch_id(numbers::invalid_unsigned_int)
 {
-  const unsigned n_components = subdomain_handler_in.n_components();
-  transfers.resize(n_components);
-  for(unsigned int dofh_index = 0; dofh_index < n_components; ++dofh_index)
+  transfers.resize(n_blocks);
+  for(unsigned int dofh_index = 0; dofh_index < n_blocks; ++dofh_index)
     transfers[dofh_index] = std::make_shared<transfer_type>(subdomain_handler_in, dofh_index);
 }
 
