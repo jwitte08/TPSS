@@ -1,7 +1,7 @@
 /*
- * laplace_integrator.h
+ * biharmonic_integrator.h
  *
- *  Created on: Aug 11, 2018
+ *  Created on: Jan 01, 2020
  *      Author: witte
  */
 

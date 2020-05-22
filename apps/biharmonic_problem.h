@@ -457,8 +457,8 @@ ModelProblem<dim, fe_degree>::cell_worker_impl(const IteratorType & cell,
                                                ScratchData<dim> &   scratch_data,
                                                CopyData &           copy_data) const
 {
-  copy_data.cell_matrix = 0;
-  copy_data.cell_rhs    = 0;
+  copy_data.cell_matrix = 0.;
+  copy_data.cell_rhs    = 0.;
 
   FEValues<dim> & fe_values = scratch_data.fe_values;
   fe_values.reinit(cell);
@@ -1020,6 +1020,8 @@ ModelProblem<dim, fe_degree>::solve()
     A_direct.template initialize<SparseMatrix<double>>(system_matrix);
     A_direct.vmult(system_delta_u, system_rhs);
     system_u += system_delta_u;
+    pp_data.average_reduction_system.push_back(0.);
+    pp_data.n_iterations_system.push_back(0.);
     print_parameter("Average reduction (solver):", "direct solver");
     print_parameter("Number of iterations (solver):", "---");
     return;
@@ -1158,7 +1160,7 @@ ModelProblem<dim, fe_degree>::run()
   const unsigned int n_cycles = rt_parameters.n_cycles;
   for(unsigned int cycle = 0; cycle < n_cycles; ++cycle)
   {
-    *pcout << "Cycle: " << cycle << " of " << n_cycles << std::endl;
+    *pcout << "Cycle: " << cycle + 1 << " of " << n_cycles << std::endl;
 
     const unsigned int n_refinements = rt_parameters.mesh.n_refinements + cycle;
     if(!make_grid(n_refinements))
