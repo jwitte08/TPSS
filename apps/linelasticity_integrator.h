@@ -437,7 +437,7 @@ public:
       auto & matrices  = tensors[comp];
       auto & eval_test = *(eval_tests[comp]);
       eval_test.reinit(patch_id);
-      eval_test.evaluate(true);
+      eval_test.evaluate(true,false);
 
       matrices = eval_test.patch_action(cell_mass_operations[comp]);
     }
@@ -460,7 +460,7 @@ public:
       auto & matrices  = tensors[comp];
       auto & eval_test = *(eval_tests[comp]);
       eval_test.reinit(patch_id);
-      eval_test.evaluate(true);
+      eval_test.evaluate(true,false);
 
       matrices = eval_test.patch_action(cell_strain_operations[comp],
                                         nitsche_strain_operations[comp],
@@ -502,9 +502,9 @@ public:
       auto & eval_test   = *(eval_tests[component_v]);
       auto & eval_ansatz = *(eval_tests[component_u]);
       eval_ansatz.reinit(patch_id);
-      eval_ansatz.evaluate(true);
+      eval_ansatz.evaluate(true,false);
       eval_test.reinit(patch_id);
-      eval_test.evaluate(true);
+      eval_test.evaluate(true,false);
 
       const auto & tensor_derivative = eval_test.patch_action(eval_ansatz, derivative_op);
       const auto & tensor_nitsche =
@@ -536,9 +536,9 @@ public:
       auto & eval_test   = *(eval_tests[component_v]);
       auto & eval_ansatz = *(eval_tests[component_u]);
       eval_ansatz.reinit(patch_id);
-      eval_ansatz.evaluate(true);
+      eval_ansatz.evaluate(true,false);
       eval_test.reinit(patch_id);
-      eval_test.evaluate(true);
+      eval_test.evaluate(true,false);
 
       const auto & tensor_derivative = eval_test.patch_action(eval_ansatz, derivative_op);
       const auto & tensor_nitsche =
@@ -579,7 +579,7 @@ public:
     {
       auto & eval_test = *(eval_tests[comp]);
       eval_test.reinit(patch_id);
-      eval_test.evaluate(true);
+      eval_test.evaluate(true,false);
 
       const auto & matrices = eval_test.patch_action(cell_graddiv_operations[comp],
                                                      nitsche_graddiv_operations[comp],
