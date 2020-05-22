@@ -45,13 +45,15 @@ SubdomainHandler<dim, number>::internal_reinit()
     const auto check_dof_handler = [&](const auto dof_handler) {
       AssertThrow(mf_storage->is_supported(dof_handler->get_fe()),
                   ExcMessage("Finite element not supported."));
-      AssertDimension(Utilities::fixed_power<dim>(dof_handler->get_fe().tensor_degree() + 1),
-                      dof_handler->get_fe().n_dofs_per_cell());
       AssertIndexRange(additional_data.level, dof_handler->get_triangulation().n_global_levels());
-      Assert(dof_handler->get_fe().n_blocks() == 1, ExcMessage("Currently, nested block structures are not supported."));
+      Assert(dof_handler->get_fe().is_primitive(),
+             ExcMessage("Currently, only primitive finite elements are supported"));
+      Assert(dof_handler->get_fe().n_blocks() == 1,
+             ExcMessage("Currently, nested block structures are not supported."));
+      // TODO !!! how to check for tensor product finite elements ?!
     };
-    const auto                                   first_dofh_index = 0U;
-    const auto & first_dofh = mf_storage->get_dof_handler(first_dofh_index);
+    const auto   first_dofh_index = 0U;
+    const auto & first_dofh       = mf_storage->get_dof_handler(first_dofh_index);
     check_dof_handler(&first_dofh);
     unique_dof_handlers.push_back(&first_dofh);
     unique_dofh_indices.push_back(first_dofh_index);

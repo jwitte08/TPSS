@@ -253,7 +253,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::is_globally_co
   const LinearAlgebra::distributed::BlockVector<value_type> & vec) const
 {
   bool         is_compatible = true;
-  const auto & partitioners = subdomain_handler->get_vector_partitioners();
+  const auto & partitioners  = subdomain_handler->get_vector_partitioners();
   AssertDimension(partitioners.size(), vec.n_blocks());
   for(unsigned int b = 0; b < partitioners.size(); ++b)
   {

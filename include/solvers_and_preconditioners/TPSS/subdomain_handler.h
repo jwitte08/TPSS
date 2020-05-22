@@ -181,7 +181,7 @@ private:
    * Stores the unique DoFHandler index @p unique_dofh_indices[dofh_index] for
    * each DoFHandler index @p dofh_index.
    */
-  std::vector<unsigned int>                              unique_dofh_indices;
+  std::vector<unsigned int> unique_dofh_indices;
 
   TPSS::PatchInfo<dim>                    patch_info;
   std::vector<TPSS::DoFInfo<dim, number>> unique_dof_infos;
@@ -235,7 +235,7 @@ SubdomainHandler<dim, number>::clear()
   mf_storage_owned.reset();
   unique_dofh_indices.clear();
   unique_dof_infos.clear();
-  
+
   patch_info.clear();
   unique_dof_infos.clear();
   mf_connect = TPSS::MatrixFreeConnect<dim, number>{};
@@ -267,7 +267,7 @@ inline unsigned int
 SubdomainHandler<dim, number>::n_total_components() const
 {
   const unsigned int n_components = 0;
-  for (auto dofh_index = 0U; dofh_index < n_dof_handlers(); ++dofh_index)
+  for(auto dofh_index = 0U; dofh_index < n_dof_handlers(); ++dofh_index)
     n_components += this->n_components(dofh_index);
   return n_components;
 }
