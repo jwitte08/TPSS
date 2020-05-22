@@ -276,7 +276,7 @@ struct ModelProblem : public Subscriptor
       return false;
 
     /// create the triangulation and store few informations
-    pcout << create_mesh(triangulation, mesh_prms);
+    pcout << create_mesh(triangulation, mesh_prms) << std::endl;
     this->level = triangulation.n_global_levels() - 1;
     pp_data.n_cells_global.push_back(triangulation.n_global_active_cells());
 
@@ -567,9 +567,9 @@ struct ModelProblem : public Subscriptor
   print_informations() const
   {
     AssertThrow(fe, ExcMessage("Finite element is not initialized."));
-    print_parameter("Finite element:", fe->get_name());
     pcout << equation_data.to_string();
     pcout << std::endl;
+    print_parameter("Finite element (per component):", fe->get_name());
     pcout << rt_parameters.to_string();
     pcout << std::endl;
   }
