@@ -33,7 +33,8 @@ class MatrixIntegrator : public dealii::MeshWorker::LocalIntegrator<dim>
 {
 public:
   MatrixIntegrator(const EquationData & equation_data_in)
-    : mu(equation_data_in.mu),
+    : equation_data(equation_data_in),
+      mu(equation_data_in.mu),
       lambda(equation_data_in.lambda),
       ip_factor(equation_data_in.ip_factor)
   {
@@ -52,9 +53,10 @@ public:
        typename dealii::MeshWorker::IntegrationInfo<dim> & info2) const;
 
 private:
-  double mu;
-  double lambda;
-  double ip_factor;
+  EquationData equation_data;
+  double       mu;
+  double       lambda;
+  double       ip_factor;
 };
 
 template<int dim>
@@ -62,12 +64,14 @@ inline void
 MatrixIntegrator<dim>::cell(dealii::MeshWorker::DoFInfo<dim> &                  dinfo,
                             typename dealii::MeshWorker::IntegrationInfo<dim> & info) const
 {
-  dealii::LocalIntegrators::Elasticity::cell_matrix(dinfo.matrix(0, false).matrix,
-                                                    info.fe_values(0),
-                                                    2. * mu);
-  dealii::LocalIntegrators::GradDiv::cell_matrix(dinfo.matrix(0, false).matrix,
-                                                 info.fe_values(0),
-                                                 lambda);
+  if(equation_data.integrator_variant != EquationData::IntegratorVariant::graddiv)
+    dealii::LocalIntegrators::Elasticity::cell_matrix(dinfo.matrix(0, false).matrix,
+                                                      info.fe_values(0),
+                                                      2. * mu);
+  if(equation_data.integrator_variant != EquationData::IntegratorVariant::strain)
+    dealii::LocalIntegrators::GradDiv::cell_matrix(dinfo.matrix(0, false).matrix,
+                                                   info.fe_values(0),
+                                                   lambda);
 }
 
 template<int dim>
@@ -76,16 +80,18 @@ MatrixIntegrator<dim>::boundary(dealii::MeshWorker::DoFInfo<dim> &              
                                 typename dealii::MeshWorker::IntegrationInfo<dim> & info) const
 {
   const unsigned int deg = info.fe_values(0).get_fe().tensor_degree();
-  dealii::LocalIntegrators::Elasticity::nitsche_matrix(
-    dinfo.matrix(0, false).matrix,
-    info.fe_values(0),
-    ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo, dinfo, deg, deg),
-    2. * mu);
-  dealii::LocalIntegrators::GradDiv::nitsche_matrix(
-    dinfo.matrix(0, false).matrix,
-    info.fe_values(0),
-    ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo, dinfo, deg, deg),
-    lambda);
+  if(equation_data.integrator_variant != EquationData::IntegratorVariant::graddiv)
+    dealii::LocalIntegrators::Elasticity::nitsche_matrix(
+      dinfo.matrix(0, false).matrix,
+      info.fe_values(0),
+      ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo, dinfo, deg, deg),
+      2. * mu);
+  if(equation_data.integrator_variant != EquationData::IntegratorVariant::strain)
+    dealii::LocalIntegrators::GradDiv::nitsche_matrix(
+      dinfo.matrix(0, false).matrix,
+      info.fe_values(0),
+      ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo, dinfo, deg, deg),
+      lambda);
 }
 
 template<int dim>
@@ -96,24 +102,26 @@ MatrixIntegrator<dim>::face(dealii::MeshWorker::DoFInfo<dim> &                  
                             typename dealii::MeshWorker::IntegrationInfo<dim> & info2) const
 {
   const unsigned int deg = info1.fe_values(0).get_fe().tensor_degree();
-  dealii::LocalIntegrators::Elasticity::ip_matrix(
-    dinfo1.matrix(0, false).matrix,
-    dinfo1.matrix(0, true).matrix,
-    dinfo2.matrix(0, true).matrix,
-    dinfo2.matrix(0, false).matrix,
-    info1.fe_values(0),
-    info2.fe_values(0),
-    ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo1, dinfo2, deg, deg),
-    2. * mu);
-  dealii::LocalIntegrators::GradDiv::ip_matrix(
-    dinfo1.matrix(0, false).matrix,
-    dinfo1.matrix(0, true).matrix,
-    dinfo2.matrix(0, true).matrix,
-    dinfo2.matrix(0, false).matrix,
-    info1.fe_values(0),
-    info2.fe_values(0),
-    ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo1, dinfo2, deg, deg),
-    lambda);
+  if(equation_data.integrator_variant != EquationData::IntegratorVariant::graddiv)
+    dealii::LocalIntegrators::Elasticity::ip_matrix(
+      dinfo1.matrix(0, false).matrix,
+      dinfo1.matrix(0, true).matrix,
+      dinfo2.matrix(0, true).matrix,
+      dinfo2.matrix(0, false).matrix,
+      info1.fe_values(0),
+      info2.fe_values(0),
+      ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo1, dinfo2, deg, deg),
+      2. * mu);
+  if(equation_data.integrator_variant != EquationData::IntegratorVariant::strain)
+    dealii::LocalIntegrators::GradDiv::ip_matrix(
+      dinfo1.matrix(0, false).matrix,
+      dinfo1.matrix(0, true).matrix,
+      dinfo2.matrix(0, true).matrix,
+      dinfo2.matrix(0, false).matrix,
+      info1.fe_values(0),
+      info2.fe_values(0),
+      ip_factor * dealii::LocalIntegrators::Laplace::compute_penalty(dinfo1, dinfo2, deg, deg),
+      lambda);
 }
 
 } // end namespace MW

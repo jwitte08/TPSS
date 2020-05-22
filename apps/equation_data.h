@@ -364,19 +364,35 @@ struct EquationData
     return str[static_cast<int>(variant)];
   }
 
-  double         mu             = 1.;
-  double         lambda         = 1.;
-  PenaltyVariant ip_variant     = PenaltyVariant::basic;
-  double         ip_factor      = 10.; // required to stabilize discretization !!
-  int            lambda_rank    = -1.;
-  int            kronecker_rank = 2.;
-  double         factor         = 1.;
+  enum class IntegratorVariant
+  {
+    both,
+    strain,
+    graddiv
+  };
+  static std::string
+  str_integrator_variant(const IntegratorVariant variant)
+  {
+    std::string str[] = {"strain + grad-div", "strain", "grad-div"};
+    return str[static_cast<int>(variant)];
+  }
+
+  double            mu                 = 1.;
+  double            lambda             = 1.;
+  PenaltyVariant    ip_variant         = PenaltyVariant::basic;
+  double            ip_factor          = 10.; // required to stabilize discretization !!
+  int               lambda_rank        = -1.;
+  int               kronecker_rank     = 2.;
+  double            factor             = 1.;
+  IntegratorVariant integrator_variant = IntegratorVariant::both;
 
   std::string
   to_string() const
   {
     std::ostringstream oss;
     oss << Util::parameter_to_fstring("Equation Data:", "");
+    oss << Util::parameter_to_fstring("Choice of integrators (tests only):",
+                                      str_integrator_variant(integrator_variant));
     oss << Util::parameter_to_fstring("Lame coefficient (mu):", mu);
     oss << Util::parameter_to_fstring("Lame coefficient (lambda):", lambda);
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
@@ -663,10 +679,10 @@ namespace DivergenceFree
 // Note that the first dim components are the velocity components
 // and the last is the pressure.
 template<int dim>
-class Solution : public Function<dim>
+class SolutionVelocity : public Function<dim>
 {
 public:
-  Solution() : Function<dim>(dim + 1)
+  SolutionVelocity() : Function<dim>(dim)
   {
   }
 
@@ -679,10 +695,8 @@ public:
 
 template<>
 double
-Solution<2>::value(const Point<2> & p, const unsigned int component) const
+SolutionVelocity<2>::value(const Point<2> & p, const unsigned int component) const
 {
-  Assert(component <= 2 + 1, ExcIndexRange(component, 0, 2 + 1));
-
   using numbers::PI;
   const double x = p(0);
   const double y = p(1);
@@ -691,18 +705,15 @@ Solution<2>::value(const Point<2> & p, const unsigned int component) const
     return sin(PI * x);
   if(component == 1)
     return -PI * y * cos(PI * x);
-  if(component == 2)
-    return sin(PI * x) * cos(PI * y);
 
+  AssertThrow(false, ExcMessage("Invalid component."));
   return 0;
 }
 
 template<>
 double
-Solution<3>::value(const Point<3> & p, const unsigned int component) const
+SolutionVelocity<3>::value(const Point<3> & p, const unsigned int component) const
 {
-  Assert(component <= 3 + 1, ExcIndexRange(component, 0, 3 + 1));
-
   using numbers::PI;
   const double x = p(0);
   const double y = p(1);
@@ -714,18 +725,15 @@ Solution<3>::value(const Point<3> & p, const unsigned int component) const
     return -PI * y * cos(PI * x);
   if(component == 2)
     return -PI * z * cos(PI * x);
-  if(component == 3)
-    return sin(PI * x) * cos(PI * y) * sin(PI * z);
 
+  AssertThrow(false, ExcMessage("Invalid component."));
   return 0;
 }
 
 template<>
 Tensor<1, 2>
-Solution<2>::gradient(const Point<2> & p, const unsigned int component) const
+SolutionVelocity<2>::gradient(const Point<2> & p, const unsigned int component) const
 {
-  Assert(component <= 2, ExcIndexRange(component, 0, 2 + 1));
-
   using numbers::PI;
   const double x = p(0);
   const double y = p(1);
@@ -741,21 +749,16 @@ Solution<2>::gradient(const Point<2> & p, const unsigned int component) const
     return_value[0] = y * PI * PI * sin(PI * x);
     return_value[1] = -PI * cos(PI * x);
   }
-  else if(component == 2)
-  {
-    return_value[0] = PI * cos(PI * x) * cos(PI * y);
-    return_value[1] = -PI * sin(PI * x) * sin(PI * y);
-  }
+  else
+    AssertThrow(false, ExcMessage("Invalid component."));
 
   return return_value;
 }
 
 template<>
 Tensor<1, 3>
-Solution<3>::gradient(const Point<3> & p, const unsigned int component) const
+SolutionVelocity<3>::gradient(const Point<3> & p, const unsigned int component) const
 {
-  Assert(component <= 3, ExcIndexRange(component, 0, 3 + 1));
-
   using numbers::PI;
   const double x = p(0);
   const double y = p(1);
@@ -780,7 +783,79 @@ Solution<3>::gradient(const Point<3> & p, const unsigned int component) const
     return_value[1] = 0.0;
     return_value[2] = -PI * cos(PI * x);
   }
-  else if(component == 3)
+  else
+    AssertThrow(false, ExcMessage("Invalid component."));
+
+  return return_value;
+}
+
+
+
+template<int dim>
+class SolutionPressure : public Function<dim>
+{
+public:
+  SolutionPressure() : Function<dim>(1)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override;
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override;
+};
+
+template<>
+double
+SolutionPressure<2>::value(const Point<2> & p, const unsigned int) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  return sin(PI * x) * cos(PI * y);
+}
+
+template<>
+double
+SolutionPressure<3>::value(const Point<3> & p, const unsigned int) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+  const double z = p(2);
+
+  return sin(PI * x) * cos(PI * y) * sin(PI * z);
+}
+
+template<>
+Tensor<1, 2>
+SolutionPressure<2>::gradient(const Point<2> & p, const unsigned int) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  Tensor<1, 2> return_value;
+  {
+    return_value[0] = PI * cos(PI * x) * cos(PI * y);
+    return_value[1] = -PI * sin(PI * x) * sin(PI * y);
+  }
+
+  return return_value;
+}
+
+template<>
+Tensor<1, 3>
+SolutionPressure<3>::gradient(const Point<3> & p, const unsigned int) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+  const double z = p(2);
+
+  Tensor<1, 3> return_value;
   {
     return_value[0] = PI * cos(PI * x) * cos(PI * y) * sin(PI * z);
     return_value[1] = -PI * sin(PI * x) * sin(PI * y) * sin(PI * z);
@@ -789,6 +864,45 @@ Solution<3>::gradient(const Point<3> & p, const unsigned int component) const
 
   return return_value;
 }
+
+
+
+template<int dim>
+class Solution : public Function<dim>
+{
+public:
+  Solution() : Function<dim>(dim + 1)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    if(component < dim)
+      return solution_velocity.value(p, component);
+    else if(component == dim)
+      return solution_pressure.value(p);
+
+    AssertThrow(false, ExcMessage("Invalid component."));
+    return 0.;
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    if(component < dim)
+      return solution_velocity.gradient(p, component);
+    else if(component == dim)
+      return solution_pressure.gradient(p);
+
+    AssertThrow(false, ExcMessage("Invalid component."));
+    return Tensor<1, dim>{};
+  }
+
+private:
+  SolutionVelocity<dim> solution_velocity;
+  SolutionPressure<dim> solution_pressure;
+};
 
 
 
