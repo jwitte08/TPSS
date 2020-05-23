@@ -1,10 +1,14 @@
 /*
  * Tests for patch_transfer.h:
  *
- *    (1) DG cell patch (scalar)
- *    (2) DG vertex patch (scalar)
- *    (3) DG cell patch (block)
- *    (4) DG vertex patch (block)
+ *    (1a) DGQ cell patch (scalar)
+ *    (1b) DGQ vertex patch (scalar)
+ *    (1c) Q vertex patch (scalar)
+ *    (2a) DGQ^dim cell patch (block)
+ *    (2b) DGQ^dim vertex patch (block)
+ *    (3a) DGQ^dim cell patch (vector-valued)
+ *    (3b) DGQ^dim vertex patch (vector-valued)
+ *    (3c) Q^dim vertex patch (vector-valued)
  *
  *  Created on: Feb 06, 2020
  *      Author: witte
@@ -23,21 +27,11 @@
 using namespace dealii;
 
 template<typename T>
-class TestPatchTransferDG : public testing::Test
+class TestPatchTransfer : public testing::Test
 {
 protected:
-  static constexpr int  dim        = T::template value<0>();
-  static constexpr int  fe_degree  = T::template value<1>();
-  static constexpr auto dof_layout = TPSS::DoFLayout::DGQ;
-  using PoissonProblem             = typename Poisson::ModelProblem<dim, fe_degree, dof_layout>;
-  using PatchTransfer              = typename PoissonProblem::LEVEL_MATRIX::transfer_type;
-
-
-  struct Params
-  {
-    unsigned int       n_refinements = 0;
-    TPSS::PatchVariant patch_variant = TPSS::PatchVariant::cell;
-  };
+  static constexpr int dim       = T::template value<0>();
+  static constexpr int fe_degree = T::template value<1>();
 
 
   void
@@ -59,14 +53,12 @@ protected:
   }
 
 
+  template<TPSS::DoFLayout dof_layout>
   void
   test()
   {
-    rt_parameters.mesh.n_refinements = params.n_refinements;
-
-    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = params.patch_variant;
-    rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
-    rt_parameters.multigrid.post_smoother.schwarz = rt_parameters.multigrid.pre_smoother.schwarz;
+    using PoissonProblem = typename Poisson::ModelProblem<dim, fe_degree, dof_layout>;
+    using PatchTransfer  = typename PoissonProblem::LEVEL_MATRIX::transfer_type;
 
     const auto poisson_problem = std::make_shared<PoissonProblem>(rt_parameters);
     poisson_problem->pcout     = pcout;
@@ -81,13 +73,34 @@ protected:
     const auto   patch_transfer = std::make_shared<PatchTransfer>(*fdss_storage);
     const auto & dof_handler    = poisson_problem->dof_handler;
 
-    LinearAlgebra::distributed::Vector<double> dof_vector(dof_handler.n_dofs(global_level));
+    LinearAlgebra::distributed::Vector<double> dof_vector;
+    mf_storage_global->initialize_dof_vector(dof_vector);
     fill_with_random_values(dof_vector);
 
     const auto &                               partition_data = fdss_storage->get_partition_data();
     const auto                                 n_subdomains   = partition_data.n_subdomains();
-    LinearAlgebra::distributed::Vector<double> dst(dof_handler.n_dofs(global_level));
+    LinearAlgebra::distributed::Vector<double> dst;
+    mf_storage_global->initialize_dof_vector(dst);
     dst *= 0.;
+
+    /// DEBUG: this might be useful at a later point...
+    // LinearAlgebra::distributed::Vector<double> weights;
+    // {
+    // mf_storage_global->initialize_dof_vector(weights);
+    // weights *= 0;
+    // const auto locally_owned_range_mg =
+    //   filter_iterators(dof_handler.mg_cell_iterators_on_level(global_level),
+    // 		       IteratorFilters::LocallyOwnedLevelCell());
+    // const auto partitioner = weights.get_partitioner();
+    // std::vector<types::global_dof_index> dof_indices(poisson_problem->fe->n_dofs_per_cell());
+    // for(const auto & cell : locally_owned_range_mg)
+    //   {
+    // 	cell->get_active_or_mg_dof_indices(dof_indices);
+    // 	for (auto i = 0U; i < dof_indices.size(); ++i)
+    // 	  if(partitioner->in_local_range(dof_indices[i]))
+    // 	    weights(dof_indices[i]) += 1;
+    //   }
+    // }
 
     *pcout << "Restrict & Prolongate = Identity ...  \n\n";
     for(unsigned patch_id = 0; patch_id < n_subdomains; ++patch_id)
@@ -97,51 +110,97 @@ protected:
       auto local_vector = patch_transfer->gather(dof_vector);
       patch_transfer->scatter_add(dst, local_vector);
     }
+
+    /// DEBUG: this might be useful at a later point...
+    // std::transform(dst.begin(), dst.end(), weights.begin(), dst.begin(), [](const auto value,
+    // const auto weight){return value/weight;});
+
+    if constexpr(dof_layout == TPSS::DoFLayout::Q)
+    {
+      AffineConstraints<double> level_constraints;
+      IndexSet                  relevant_dofs;
+      DoFTools::extract_locally_relevant_level_dofs(dof_handler, global_level, relevant_dofs);
+      level_constraints.reinit(relevant_dofs);
+      level_constraints.add_lines(
+        poisson_problem->mg_constrained_dofs->get_boundary_indices(global_level));
+      level_constraints.close();
+      level_constraints.set_zero(dst);
+      level_constraints.set_zero(dof_vector);
+    }
+
     Util::compare_vector(dst, dof_vector, *pcout);
   }
 
   std::ofstream                       ofs;
   std::shared_ptr<ConditionalOStream> pcout;
-  Params                              params;
   RT::Parameter                       rt_parameters;
 };
 
-TYPED_TEST_SUITE_P(TestPatchTransferDG);
+TYPED_TEST_SUITE_P(TestPatchTransfer);
 
-TYPED_TEST_P(TestPatchTransferDG, CellPatch)
+TYPED_TEST_P(TestPatchTransfer, CellPatchDG)
 {
-  using Fixture = TestPatchTransferDG<TypeParam>;
+  using Fixture = TestPatchTransfer<TypeParam>;
 
-  Fixture::params.n_refinements = 2U;
-  Fixture::test();
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant = TPSS::PatchVariant::cell;
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  Fixture::rt_parameters.multigrid.post_smoother.schwarz =
+    Fixture::rt_parameters.multigrid.pre_smoother.schwarz;
+
+  Fixture::rt_parameters.mesh.n_refinements = 2U;
+  Fixture::template test<TPSS::DoFLayout::DGQ>();
 }
 
-TYPED_TEST_P(TestPatchTransferDG, VertexPatch)
+TYPED_TEST_P(TestPatchTransfer, VertexPatchDG)
 {
-  using Fixture = TestPatchTransferDG<TypeParam>;
+  using Fixture = TestPatchTransfer<TypeParam>;
+
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant = TPSS::PatchVariant::vertex;
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  Fixture::rt_parameters.multigrid.post_smoother.schwarz =
+    Fixture::rt_parameters.multigrid.pre_smoother.schwarz;
 
   // There is only one vertex patch possible such that each degree of freedom
   // uniquely belongs to one patch
   Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  Fixture::params.n_refinements                = 0U;
-  Fixture::params.patch_variant                = TPSS::PatchVariant::vertex;
-  Fixture::test();
+  Fixture::rt_parameters.mesh.n_refinements    = 0U;
+  Fixture::template test<TPSS::DoFLayout::DGQ>();
 }
 
-REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferDG, CellPatch, VertexPatch);
+TYPED_TEST_P(TestPatchTransfer, VertexPatchQ)
+{
+  using Fixture = TestPatchTransfer<TypeParam>;
+
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant = TPSS::PatchVariant::vertex;
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  Fixture::rt_parameters.multigrid.post_smoother.schwarz =
+    Fixture::rt_parameters.multigrid.pre_smoother.schwarz;
+
+  // There is only one vertex patch possible such that each degree of freedom
+  // uniquely belongs to one patch
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::rt_parameters.mesh.n_refinements    = 0U;
+  Fixture::template test<TPSS::DoFLayout::Q>();
+}
+
+REGISTER_TYPED_TEST_SUITE_P(TestPatchTransfer, CellPatchDG, VertexPatchDG, VertexPatchQ);
 
 using TestParamsLinear2D = testing::Types<Util::NonTypeParams<2, 1>>;
 using TestParamsHigherOrder2D =
   testing::Types<Util::NonTypeParams<2, 3>, Util::NonTypeParams<2, 4>>;
-INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferDG, TestParamsLinear2D);
-INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferDG, TestParamsHigherOrder2D);
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransfer, TestParamsLinear2D);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransfer, TestParamsHigherOrder2D);
 
 using TestParamsLinear3D = testing::Types<Util::NonTypeParams<3, 1>>;
 using TestParamsHigherOrder3D =
   testing::Types<Util::NonTypeParams<3, 3>, Util::NonTypeParams<3, 4>>;
-INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransferDG, TestParamsLinear3D);
-INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestPatchTransferDG, TestParamsHigherOrder3D);
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransfer, TestParamsLinear3D);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestPatchTransfer, TestParamsHigherOrder3D);
 
 
 
@@ -320,29 +379,37 @@ protected:
   }
 
 
+  template<TPSS::DoFLayout dof_layout>
   void
-  check_dg()
+  check_impl()
   {
     *pcout << create_mesh(triangulation, rt_parameters.mesh) << std::endl;
     const unsigned int level = triangulation.n_global_levels() - 1;
-    fe                       = std::make_shared<FESystem<dim>>(FE_DGQ<dim>(fe_degree), dim);
+
+    if(dof_layout == TPSS::DoFLayout::Q)
+      fe = std::make_shared<FESystem<dim>>(FE_Q<dim>(fe_degree), dim);
+    else if(dof_layout == TPSS::DoFLayout::DGQ)
+      fe = std::make_shared<FESystem<dim>>(FE_DGQ<dim>(fe_degree), dim);
+    ASSERT_TRUE(fe) << "No valid finite element set.";
     *pcout << fe->get_name() << std::endl;
+
     dof_handler.initialize(triangulation, *fe);
     dof_handler.distribute_mg_dofs();
+
+    if(dof_layout == TPSS::DoFLayout::Q)
+    {
+      IndexSet locally_relevant_dofs;
+      DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
+      constraints.reinit(locally_relevant_dofs);
+      DoFTools::make_zero_boundary_constraints(dof_handler, 0, constraints);
+    }
+    constraints.close();
 
     const auto mf_storage = std::make_shared<MatrixFree<dim, double>>();
     {
       typename MatrixFree<dim, double>::AdditionalData additional_data;
       additional_data.tasks_parallel_scheme = MatrixFree<dim, double>::AdditionalData::none;
       additional_data.mg_level              = level;
-      // additional_data.mapping_update_flags =
-      // 	(update_gradients | update_JxW_values | update_quadrature_points);
-      // additional_data.mapping_update_flags =
-      // 	(update_gradients | update_JxW_values | update_quadrature_points);
-      // additional_data.mapping_update_flags_inner_faces =
-      //   (update_gradients | update_JxW_values | update_normal_vectors);
-      // additional_data.mapping_update_flags_boundary_faces =
-      //   (update_gradients | update_JxW_values | update_normal_vectors | update_quadrature_points);
       QGauss<1> quadrature(fe_degree + 1);
       mf_storage->reinit(mapping, dof_handler, constraints, quadrature, additional_data);
     }
@@ -358,47 +425,46 @@ protected:
 
     const auto patch_transfer = std::make_shared<PatchTransfer>(*patch_storage);
 
-    // // *** check if we have the same number of DoFs in each component
-    // const auto & dof_handlers = elasticity_problem->dof_handlers;
-    // const bool   same_number_of_dofs_per_level =
-    //   std::adjacent_find(dof_handlers.cbegin(),
-    //                      dof_handlers.cend(),
-    //                      [level](const auto & dh1, const auto & dh2) {
-    //                        return dh1->n_dofs(level) != dh2->n_dofs(level);
-    //                      });
-    // ASSERT_TRUE(same_number_of_dofs_per_level)
-    //   << "Not implemented for components with different numbers of degree of freedoms.";
+    //: generate random input
+    LinearAlgebra::distributed::Vector<double> dst;
+    mf_storage->initialize_dof_vector(dst);
+    // std::iota(dst.begin(), dst.end(), 0.);
+    fill_with_random_values(dst); // first time !
+    if(dof_layout == TPSS::DoFLayout::Q)
+      constraints.set_zero(dst);
+    const LinearAlgebra::distributed::Vector<double> src(dst);
+    // dst *= 0.;
 
-    // // *** generate random input
-    // const unsigned int n_components = mf_storage->n_components();
-    // ASSERT_EQ(n_components, n_static_components);
-    // LinearAlgebra::distributed::BlockVector<double> random_input(n_components);
-    // for(unsigned int b = 0; b < n_components; ++b)
-    // {
-    //   auto & bvector = random_input.block(b);
-    //   mf_storage->initialize_dof_vector(bvector, b);
-    //   random_input.collect_sizes();
-    //   const ArrayView<double> bview = make_array_view(bvector.begin(), bvector.end());
-    //   fill_with_random_values(bview);
-    // }
+    //: restrict to and prolongate from each patch
+    *pcout << "Restrict & Prolongate = Identity ...  \n\n";
+    const auto & partition_data = patch_storage->get_partition_data();
+    const auto   n_subdomains   = partition_data.n_subdomains();
+    for(unsigned patch_id = 0; patch_id < n_subdomains; ++patch_id)
+    {
+      patch_transfer->reinit(patch_id);
+      const auto local_vector = patch_transfer->gather(src);
+      patch_transfer->scatter_add(dst, local_vector); // second time !
+    }
 
-    // // *** check if restrict + prolongate equals the identity
-    // *pcout << "TEST: restriction and prolongation\n";
-    // auto                                   dst{random_input}; // first time !!!
-    // AlignedVector<VectorizedArray<double>> tmp_local;
-    // const auto &                           partition_data = patch_storage->get_partition_data();
-    // const auto                             n_subdomains   = partition_data.n_subdomains();
-    // for(unsigned patch_id = 0; patch_id < n_subdomains; ++patch_id)
-    // {
-    //   patch_transfer->reinit(patch_id);
-    //   patch_transfer->reinit_local_vector(tmp_local);
-    //   tmp_local.fill(make_vectorized_array<double>(0.));
-    //   patch_transfer->gather_add(tmp_local, random_input); // restrict
-    //   patch_transfer->scatter_add(dst, tmp_local);         // prolongate
-    // }                                                      // second time !!!
-    // dst *= 0.5;                                            // added 2 times random_input to dst
-    // !!! Util::compare_vector(dst, random_input, *pcout);
+    //: compare vectors (we added 2 times src !)
+    dst *= 0.5;
+    Util::compare_vector(dst, src, *pcout);
   }
+
+
+  void
+  check_dg()
+  {
+    check_impl<TPSS::DoFLayout::DGQ>();
+  }
+
+
+  void
+  check_q()
+  {
+    check_impl<TPSS::DoFLayout::Q>();
+  }
+
 
   std::ofstream                       ofs;
   std::shared_ptr<ConditionalOStream> pcout;
@@ -413,7 +479,7 @@ protected:
 
 TYPED_TEST_SUITE_P(TestPatchTransferVectorValued);
 
-TYPED_TEST_P(TestPatchTransferVectorValued, CellPatch)
+TYPED_TEST_P(TestPatchTransferVectorValued, CellPatchDG)
 {
   using Fixture = TestPatchTransferVectorValued<TypeParam>;
 
@@ -422,24 +488,51 @@ TYPED_TEST_P(TestPatchTransferVectorValued, CellPatch)
     TPSS::SmootherVariant::additive;
   Fixture::rt_parameters.multigrid.post_smoother.schwarz =
     Fixture::rt_parameters.multigrid.pre_smoother.schwarz;
+
   Fixture::rt_parameters.mesh.n_refinements = 2U;
   Fixture::check_dg();
 }
 
-TYPED_TEST_P(TestPatchTransferVectorValued, VertexPatch)
+TYPED_TEST_P(TestPatchTransferVectorValued, VertexPatchDG)
 {
-  // using Fixture = TestPatchTransferVectorValued<TypeParam>;
+  using Fixture = TestPatchTransferVectorValued<TypeParam>;
 
-  // // There is only one vertex patch possible such that each degree of freedom
-  // // uniquely belongs to one patch
-  // Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  // Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  // Fixture::params.n_refinements                = 0U;
-  // Fixture::params.patch_variant                = TPSS::PatchVariant::vertex;
-  // Fixture::test();
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant = TPSS::PatchVariant::vertex;
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  Fixture::rt_parameters.multigrid.post_smoother.schwarz =
+    Fixture::rt_parameters.multigrid.pre_smoother.schwarz;
+
+  // There is only one vertex patch possible such that each degree of freedom
+  // uniquely belongs to one patch
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::rt_parameters.mesh.n_refinements    = 0U;
+  Fixture::check_dg();
 }
 
-REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferVectorValued, CellPatch, VertexPatch);
+TYPED_TEST_P(TestPatchTransferVectorValued, VertexPatchQ)
+{
+  using Fixture = TestPatchTransferVectorValued<TypeParam>;
+
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant = TPSS::PatchVariant::vertex;
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  Fixture::rt_parameters.multigrid.post_smoother.schwarz =
+    Fixture::rt_parameters.multigrid.pre_smoother.schwarz;
+
+  // There is only one vertex patch possible such that each degree of freedom
+  // uniquely belongs to one patch
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::rt_parameters.mesh.n_refinements    = 0U;
+  Fixture::check_q();
+}
+
+REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferVectorValued,
+                            CellPatchDG,
+                            VertexPatchDG,
+                            VertexPatchQ);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferVectorValued, TestParamsLinear2D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D,
