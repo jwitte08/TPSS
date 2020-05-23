@@ -48,7 +48,12 @@ SubdomainHandler<dim, number>::internal_reinit()
       AssertIndexRange(additional_data.level, dof_handler->get_triangulation().n_global_levels());
       Assert(dof_handler->get_fe().is_primitive(),
              ExcMessage("Currently, only primitive finite elements are supported"));
-      Assert(dof_handler->get_fe().n_blocks() == 1,
+      Assert(dof_handler->get_fe().n_components() == 1 ||
+               dof_handler->get_fe().n_components() == dim,
+             ExcMessage(
+               "Currently, scalar- or vector-valued with dim vector components are supported."));
+      Assert(dof_handler->get_fe().n_blocks() == 1 ||
+               dof_handler->get_fe().n_blocks() == dof_handler->get_fe().n_components(),
              ExcMessage("Currently, nested block structures are not supported."));
       // TODO !!! how to check for tensor product finite elements ?!
     };

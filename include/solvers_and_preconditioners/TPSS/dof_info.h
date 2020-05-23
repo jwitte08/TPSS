@@ -287,6 +287,8 @@ struct DoFInfo
   AdditionalData additional_data;
 
   std::vector<unsigned int> l2h;
+
+  std::vector<unsigned int> n_dofs_on_cell_per_comp;
 };
 
 
@@ -597,6 +599,7 @@ DoFInfo<dim, Number>::clear()
   dof_handler     = nullptr;
   additional_data = AdditionalData{};
   l2h.clear();
+  n_dofs_on_cell_per_comp.clear();
 }
 
 
@@ -669,19 +672,15 @@ DoFInfo<dim, Number>::fill_level_dof_indices_impl(
   std::vector<types::global_dof_index> level_dof_indices(n_dofs_per_cell);
   cell.get_mg_dof_indices(cell.level(), level_dof_indices);
 
-  /// reorder level dof indices lexicographically
-  if(DoFLayout::Q == get_dof_layout())
-  {
-    AssertDimension(level_dof_indices.size(), l2h.size());
-    std::vector<types::global_dof_index> level_dof_indices_lxco;
-    std::transform(l2h.cbegin(),
-                   l2h.cend(),
-                   std::back_inserter(level_dof_indices_lxco),
-                   [&](const auto & h) { return level_dof_indices[h]; });
-    return level_dof_indices_lxco;
-  }
-
-  return level_dof_indices;
+  /// Reorder level dof indices lexicographically within each component and
+  /// concatenate dof indices per component.
+  AssertDimension(level_dof_indices.size(), l2h.size());
+  std::vector<types::global_dof_index> level_dof_indices_lxco;
+  std::transform(l2h.cbegin(),
+                 l2h.cend(),
+                 std::back_inserter(level_dof_indices_lxco),
+                 [&](const auto & h) { return level_dof_indices[h]; });
+  return level_dof_indices_lxco;
 }
 
 
