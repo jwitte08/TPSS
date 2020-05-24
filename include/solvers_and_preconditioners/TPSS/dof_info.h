@@ -252,25 +252,19 @@ struct DoFInfo
    * This flat array uniquely caches global dof indices subject to
    * lexicographical for each cell stored in @p patch_info. Global dof indices
    * are stored as proc-local index granting local data access. Actual indices
-   * of type types::global_dof_index are obtained by means of vector
-   * partitioner.
+   * of type types::global_dof_index are obtained by means of the underlying
+   * vector partitioner.
    */
   std::vector<unsigned> dof_indices_cellwise;
 
   /**
    * Stores the starting position of cached dof indices in @p
-   * global_dof_indices_patchwise for each patch stored by @p patch_info. Each
+   * dof_indices_patchwise for each patch stored by @p patch_info. Each
    * element of this array is uniquely associated to patch identified by macro
    * patch index and the vectorization lane. The lane index runs faster than the
    * macro patch index.
    */
   std::vector<unsigned int> start_of_dof_indices_patchwise;
-
-  /**
-   * The array caches global dof indices for each macro patch stored in @p
-   * patch_info in flat format.
-   */
-  std::vector<types::global_dof_index> global_dof_indices_patchwise;
 
   /**
    * The array caches the proc-local global dof indices for each macro patch stored in @p
@@ -594,7 +588,6 @@ DoFInfo<dim, Number>::clear()
   global_dof_indices_cellwise.clear();
   dof_indices_cellwise.clear();
   start_of_dof_indices_patchwise.clear();
-  global_dof_indices_patchwise.clear();
   dof_indices_patchwise.clear();
   dof_handler     = nullptr;
   additional_data = AdditionalData{};
@@ -609,10 +602,9 @@ DoFInfo<dim, Number>::compress()
 {
   if(additional_data.caching_strategy == TPSS::CachingStrategy::Cached)
   {
-    // start_and_number_of_dof_indices_cellwise.clear();
-    // dof_indices_cellwise.clear();
+    start_and_number_of_dof_indices_cellwise.clear();
     global_dof_indices_cellwise.clear();
-    global_dof_indices_patchwise.clear();
+    dof_indices_cellwise.clear();
   }
 }
 

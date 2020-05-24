@@ -166,9 +166,10 @@ DoFInfo<dim, Number>::initialize_impl()
   /// Completely cache all global dof indices for each macro patch.
   if(additional_data.caching_strategy == TPSS::CachingStrategy::Cached)
   {
-    /// At this point we are able to use a reduced but sufficient set of
+    /// At this point, we are able to use a reduced but sufficient set of
     /// PatchDoFWorker's functionality to cache the global dof indices
-    /// patch-wise
+    /// patch-wise (to be precise, we use the process local dof index to save
+    /// memory).
     PatchDoFWorker<dim, Number> patch_dof_worker(*this);
     const auto &                partition_data = patch_dof_worker.get_partition_data();
     const auto                  n_subdomains   = partition_data.n_subdomains();
@@ -188,10 +189,9 @@ DoFInfo<dim, Number>::initialize_impl()
       }
     }
     start_of_dof_indices_patchwise.emplace_back(dof_indices_patchwise.size());
-
-    // // TODO !!! check compression
-    // compress();
   }
+
+  // compress(); // TODO !!!
 }
 
 
