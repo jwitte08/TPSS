@@ -68,6 +68,7 @@ struct MatrixFreeConnect<dim, Number>::DoFInfoLocal
 {
   std::vector<unsigned int>                          dof_starts;
   std::vector<std::pair<unsigned int, unsigned int>> cell_and_patch_dof_indices;
+  bool                                               is_intentionally_uninitialized = false;
 
   void
   clear()

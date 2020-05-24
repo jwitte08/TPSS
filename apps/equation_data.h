@@ -41,9 +41,9 @@ template<int dim>
 class SolutionBase
 {
 protected:
-  static const std::size_t n_source_centers = 3;
-  static const Point<dim>  source_centers[n_source_centers];
-  static const double      width;
+  static constexpr std::size_t n_source_centers = 3;
+  static const Point<dim>      source_centers[n_source_centers];
+  static const double          width;
 };
 
 template<>

@@ -254,9 +254,8 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::is_globally_co
 {
   bool         is_compatible = true;
   const auto & partitioners  = subdomain_handler->get_vector_partitioners();
-  AssertThrow(partitioners.size() == subdomain_handler->n_components(),
-              ExcMessage("There are no partitioners."));
-  for(unsigned int b = 0; b < subdomain_handler->n_components(); ++b)
+  AssertDimension(partitioners.size(), vec.n_blocks());
+  for(unsigned int b = 0; b < partitioners.size(); ++b)
   {
     is_compatible =
       is_compatible && vec.block(b).partitioners_are_globally_compatible(*(partitioners[b]));
@@ -296,7 +295,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
     LinearAlgebra::distributed::BlockVector<value_type> & vec) const
 {
   const auto & partitioners = subdomain_handler->get_vector_partitioners();
-  if(vec.n_blocks() == subdomain_handler->n_components())
+  if(vec.n_blocks() == partitioners.size())
   {
     bool is_compatible = true;
     for(unsigned int b = 0; b < vec.n_blocks(); ++b)
@@ -306,7 +305,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
   }
 
   //: initialize ghosted vector
-  const unsigned int n_components = subdomain_handler->n_components();
+  const unsigned int n_components = partitioners.size();
   vec.reinit(n_components, /*block_size*/ 0, /*omit_zeroing_entries*/ false);
   for(unsigned int b = 0; b < n_components; ++b)
     vec.block(b).reinit(partitioners[b]);

@@ -23,6 +23,15 @@ DoFInfo<dim, Number>::initialize(
   shape_info      = shape_info_in;
   additional_data = additional_data_in;
 
+  //: fill the lexicographic-to-hierarchic-numbering map
+  l2h = shape_info->lexicographic_numbering;
+
+  //: fill the cell-wise number of dofs per component (assume isotropy)
+  n_dofs_on_cell_per_comp.resize(shape_info_in->n_components);
+  std::fill(n_dofs_on_cell_per_comp.begin(),
+            n_dofs_on_cell_per_comp.end(),
+            shape_info_in->dofs_per_component_on_cell);
+
   initialize_impl();
 }
 
@@ -57,11 +66,6 @@ template<int dim, typename Number>
 void
 DoFInfo<dim, Number>::initialize_impl()
 {
-  /// fill the lexicographic-to-hierarchic-numbering map
-  if(DoFLayout::Q == get_dof_layout())
-    l2h =
-      FETools::lexicographic_to_hierarchic_numbering<dim>(dof_handler->get_fe().tensor_degree());
-
   /// cache global dof indices once for each cell owned by this processor
   /// (including ghost cells)
   {
@@ -112,20 +116,23 @@ DoFInfo<dim, Number>::initialize_impl()
     for(auto cell_index = 0U; cell_index < cell_index_to_cell_position.size(); ++cell_index)
       if(!cell_index_to_cell_position[cell_index].empty())
       {
-        const auto   dof_start = global_dof_indices_cellwise.size();
-        const auto & cell      = get_level_dof_accessor_impl(cell_index, additional_data.level);
+        const auto & cell = get_level_dof_accessor_impl(cell_index, additional_data.level);
         const auto   level_dof_indices = fill_level_dof_indices_impl(cell);
-        const auto   n_dofs            = level_dof_indices.size(); // compress?
 
+        //: set dof start and quantity
+        const auto   dof_start      = global_dof_indices_cellwise.size();
+        const auto   n_dofs         = level_dof_indices.size(); // compress?
         const auto & cell_positions = cell_index_to_cell_position[cell_index];
         for(auto cell_position : cell_positions)
           start_and_number_of_dof_indices_cellwise[cell_position] =
             std::make_pair(dof_start, n_dofs);
 
+        //: submit global dof indices
         std::copy(level_dof_indices.cbegin(),
                   level_dof_indices.cend(),
                   std::back_inserter(global_dof_indices_cellwise));
 
+        //: update index set of ghost dof indices
         if(is_ghost_on_level(cell))
           for(const auto dof_index : level_dof_indices)
             if(!owned_dof_indices.is_element(dof_index))
@@ -159,11 +166,12 @@ DoFInfo<dim, Number>::initialize_impl()
   /// Completely cache all global dof indices for each macro patch.
   if(additional_data.caching_strategy == TPSS::CachingStrategy::Cached)
   {
-    /// At this point we are able to use a reduced but sufficient set of
+    /// At this point, we are able to use a reduced but sufficient set of
     /// PatchDoFWorker's functionality to cache the global dof indices
-    /// patch-wise
-    PatchDoFWorker<dim, Number> patch_worker(*this);
-    const auto &                partition_data = patch_worker.get_partition_data();
+    /// patch-wise (to be precise, we use the process local dof index to save
+    /// memory).
+    PatchDoFWorker<dim, Number> patch_dof_worker(*this);
+    const auto &                partition_data = patch_dof_worker.get_partition_data();
     const auto                  n_subdomains   = partition_data.n_subdomains();
 
     start_of_dof_indices_patchwise.clear();
@@ -171,19 +179,19 @@ DoFInfo<dim, Number>::initialize_impl()
     for(auto patch_id = 0U; patch_id < n_subdomains; ++patch_id)
     {
       start_of_dof_indices_patchwise.emplace_back(dof_indices_patchwise.size());
-      for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch_id); ++lane)
+      for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
       {
-        const auto & dof_indices_on_patch = patch_worker.fill_dof_indices_on_patch(patch_id, lane);
+        const auto & dof_indices_on_patch =
+          patch_dof_worker.fill_dof_indices_on_patch(patch_id, lane);
         std::copy(dof_indices_on_patch.cbegin(),
                   dof_indices_on_patch.cend(),
                   std::back_inserter(dof_indices_patchwise));
       }
     }
     start_of_dof_indices_patchwise.emplace_back(dof_indices_patchwise.size());
-
-    // // TODO !!! check compression
-    // compress();
   }
+
+  // compress(); // TODO !!!
 }
 
 

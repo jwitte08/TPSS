@@ -665,7 +665,7 @@ ModelProblem<dim, fe_degree>::boundary_worker_impl(const IteratorType & cell,
   if(!is_multigrid)
   {
     AssertDimension(n_dofs, copy_data.cell_rhs.size());
-    AssertDimension(n_dofs, copy_data.cell_dof_indices.size());
+    AssertDimension(n_dofs, copy_data.local_dof_indices.size());
     Vector<double> u0(n_dofs);
     for(auto i = 0U; i < n_dofs; ++i)
       u0(i) = system_u(copy_data.local_dof_indices[i]);

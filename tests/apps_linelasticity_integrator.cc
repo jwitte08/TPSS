@@ -154,13 +154,8 @@ protected:
       Vector<double> dst_sparse(src_copy.size());
       sparse_matrix.vmult(dst_sparse, src_copy);
 
-      Vector<double> diff(dst.begin(), dst.end());
-      diff -= dst_sparse;
-      EXPECT_PRED_FORMAT2(::testing::DoubleLE,
-                          diff.l2_norm(),
-                          std::numeric_limits<double>::epsilon() *
-                            std::max(1.e+4, dst_sparse.l2_norm()));
-    } // end TEST
+      Util::compare_vector(dst, dst_sparse, pcout);
+    }
   }
 
   Params                                      params;

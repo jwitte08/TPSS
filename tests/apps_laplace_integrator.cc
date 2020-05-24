@@ -136,9 +136,9 @@ protected:
     const auto schwarz_preconditioner =
       poisson_problem->mg_schwarz_smoother_pre->get_preconditioner();
     const auto patch_storage_level = schwarz_preconditioner->get_subdomain_handler();
-    TPSS::PatchTransfer<dim, double, fe_degree> patch_transfer(*patch_storage_level);
-    const auto & patch_worker   = patch_transfer.get_patch_dof_worker();
-    const auto & partition_data = patch_worker.get_partition_data();
+    TPSS::PatchTransfer<dim, double> patch_transfer(*patch_storage_level);
+    const auto &                     patch_worker   = patch_transfer.get_patch_dof_worker();
+    const auto &                     partition_data = patch_worker.get_partition_data();
 
     vector_type tmp_vector;
     mf_storage_level->initialize_dof_vector(tmp_vector);
@@ -191,9 +191,9 @@ protected:
     mf_level_matrix.get_matrix_free()->initialize_dof_vector(tmp_vector);
     const auto & level_matrix = assemble_level_matrix(global_level);
 
-    TPSS::PatchTransfer<dim, double, fe_degree> patch_transfer(*patch_storage_level);
-    const auto & patch_worker   = patch_transfer.get_patch_dof_worker();
-    const auto & partition_data = patch_worker.get_partition_data();
+    TPSS::PatchTransfer<dim, double> patch_transfer(*patch_storage_level);
+    const auto &                     patch_worker   = patch_transfer.get_patch_dof_worker();
+    const auto &                     partition_data = patch_worker.get_partition_data();
     for(auto patch = 0U; patch < partition_data.n_subdomains(); ++patch)
     {
       PatchMatrix<LevelMatrix> patch_matrix;

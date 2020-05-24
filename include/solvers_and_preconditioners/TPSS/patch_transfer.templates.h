@@ -1,12 +1,12 @@
 namespace TPSS
 {
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 template<typename VectorType>
 AlignedVector<VectorizedArray<Number>>
-PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
+PatchTransfer<dim, Number>::gather(const VectorType & src) const
 {
-  AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
-  AssertDimension(src.size(), subdomain_handler.get_dof_handler().n_dofs(level));
+  AssertIndexRange(patch_id, n_subdomains);
+  AssertDimension(src.size(), patch_dof_worker.get_dof_info().dof_handler->n_dofs(level));
 
   AlignedVector<VectorizedArray<Number>> dst(n_dofs_per_patch());
   for(unsigned int lane = 0; lane < macro_size; ++lane)
@@ -23,11 +23,11 @@ PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 template<typename VectorType>
 void
-PatchTransfer<dim, Number, fe_degree>::gather_add(const ArrayView<VectorizedArray<Number>> dst,
-                                                  const VectorType & src) const
+PatchTransfer<dim, Number>::gather_add(const ArrayView<VectorizedArray<Number>> dst,
+                                       const VectorType &                       src) const
 {
   AssertDimension(dst.size(), n_dofs_per_patch());
   const auto & src_local = gather(src);
@@ -39,11 +39,11 @@ PatchTransfer<dim, Number, fe_degree>::gather_add(const ArrayView<VectorizedArra
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 template<typename VectorType>
 void
-PatchTransfer<dim, Number, fe_degree>::gather_add(AlignedVector<VectorizedArray<Number>> & dst,
-                                                  const VectorType & src) const
+PatchTransfer<dim, Number>::gather_add(AlignedVector<VectorizedArray<Number>> & dst,
+                                       const VectorType &                       src) const
 {
   AssertDimension(dst.size(), n_dofs_per_patch());
   const auto dst_view = make_array_view<VectorizedArray<Number>>(dst.begin(), dst.end());
@@ -51,15 +51,14 @@ PatchTransfer<dim, Number, fe_degree>::gather_add(AlignedVector<VectorizedArray<
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 template<typename VectorType>
 void
-PatchTransfer<dim, Number, fe_degree>::scatter_add(
-  VectorType &                                   dst,
-  const ArrayView<const VectorizedArray<Number>> src) const
+PatchTransfer<dim, Number>::scatter_add(VectorType &                                   dst,
+                                        const ArrayView<const VectorizedArray<Number>> src) const
 {
-  AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
-  AssertDimension(dst.size(), subdomain_handler.get_dof_handler().n_dofs(level));
+  AssertIndexRange(patch_id, n_subdomains);
+  AssertDimension(dst.size(), patch_dof_worker.get_dof_info().dof_handler->n_dofs(level));
   AssertDimension(src.size(), n_dofs_per_patch());
 
   for(unsigned int lane = 0; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
@@ -73,12 +72,11 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 template<typename VectorType>
 void
-PatchTransfer<dim, Number, fe_degree>::scatter_add(
-  VectorType &                                   dst,
-  const AlignedVector<VectorizedArray<Number>> & src) const
+PatchTransfer<dim, Number>::scatter_add(VectorType &                                   dst,
+                                        const AlignedVector<VectorizedArray<Number>> & src) const
 {
   const auto src_view = make_array_view<const VectorizedArray<Number>>(src.begin(), src.end());
   scatter_add(dst, src_view);
@@ -90,15 +88,15 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
 
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
+template<typename BlockVectorType>
 AlignedVector<VectorizedArray<Number>>
-
-PatchTransferBlock<dim, Number, fe_degree>::gather(const BlockVectorType & src) const
+PatchTransferBlock<dim, Number>::gather(const BlockVectorType & src) const
 {
   AlignedVector<VectorizedArray<Number>> dst;
   reinit_local_vector(dst);
   auto begin = dst.begin();
-  for(std::size_t b = 0; b < n_components; ++b)
+  for(std::size_t b = 0; b < n_blocks; ++b)
   {
     const auto                         transfer = transfers[b];
     const auto                         size     = transfer->n_dofs_per_patch();
@@ -111,10 +109,11 @@ PatchTransferBlock<dim, Number, fe_degree>::gather(const BlockVectorType & src) 
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
+template<typename BlockVectorType>
 void
-PatchTransferBlock<dim, Number, fe_degree>::gather_add(AlignedVector<VectorizedArray<Number>> & dst,
-                                                       const BlockVectorType & src) const
+PatchTransferBlock<dim, Number>::gather_add(AlignedVector<VectorizedArray<Number>> & dst,
+                                            const BlockVectorType &                  src) const
 {
   AssertDimension(dst.size(), n_dofs_per_patch());
   const auto & src_local = gather(src);
@@ -126,14 +125,15 @@ PatchTransferBlock<dim, Number, fe_degree>::gather_add(AlignedVector<VectorizedA
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
+template<typename BlockVectorType>
 void
-PatchTransferBlock<dim, Number, fe_degree>::scatter_add(
+PatchTransferBlock<dim, Number>::scatter_add(
   BlockVectorType &                              dst,
   const AlignedVector<VectorizedArray<Number>> & src) const
 {
   auto begin = src.begin();
-  for(std::size_t b = 0; b < n_components; ++b)
+  for(std::size_t b = 0; b < n_blocks; ++b)
   {
     const auto                               transfer = transfers[b];
     const auto                               size     = transfer->n_dofs_per_patch();

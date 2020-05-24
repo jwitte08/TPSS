@@ -24,9 +24,10 @@ template<typename T>
 class TestBiharmonicIntegrator : public testing::Test
 {
 protected:
-  static constexpr int dim                 = T::template value<0>();
-  static constexpr int fe_degree           = T::template value<1>();
-  using BiharmonicProblem                  = ModelProblem<dim, fe_degree>;
+  static constexpr int dim       = T::template value<0>();
+  static constexpr int fe_degree = T::template value<1>();
+  using BiharmonicProblem        = ModelProblem<dim, fe_degree>;
+  using PatchTransfer = typename C0IP::FD::MatrixIntegrator<dim, fe_degree>::transfer_type;
   static constexpr unsigned int macro_size = VectorizedArray<double>::size();
 
 
@@ -97,9 +98,9 @@ protected:
   {
     initialize();
 
-    TPSS::PatchTransfer<dim, double, fe_degree> patch_transfer(*subdomain_handler);
-    const auto & patch_worker = patch_transfer.get_patch_dof_worker();
-    const auto   n_subdomains = patch_worker.get_partition_data().n_subdomains();
+    PatchTransfer patch_transfer(*subdomain_handler);
+    const auto &  patch_worker = patch_transfer.get_patch_dof_worker();
+    const auto    n_subdomains = patch_worker.get_partition_data().n_subdomains();
 
     /// assemble local matrices (as Kronecker tensor)
     using FDIntegrator = C0IP::FD::MatrixIntegrator<dim, fe_degree, double>;

@@ -85,74 +85,80 @@ MatrixFreeConnect<dim, Number>::initialize(
     auto &       dof_info_local             = dof_infos_local[dofh_index];
     auto &       cell_and_patch_dof_indices = dof_info_local.cell_and_patch_dof_indices;
     auto &       dof_starts                 = dof_info_local.dof_starts;
-    // auto &       patch_starts               = dof_info_local.patch_starts;
 
-    TPSS::PatchDoFWorker<dim, Number> patch_dof_worker(dof_info);
-    const auto                        fe_order = dof_info.dof_handler->get_fe().tensor_degree() + 1;
-    PatchLocalHelperQ<dim>            local_helper(fe_order);
-    const auto n_subdomains          = patch_dof_worker.get_partition_data().n_subdomains();
-    const auto n_physical_subdomains = patch_dof_worker.n_physical_subdomains();
-    const auto regular_patch_size    = patch_dof_worker.n_cells_per_subdomain();
+    const auto         dof_layout          = TPSS::get_dof_layout(dof_info.dof_handler->get_fe());
+    const unsigned int n_components        = dof_info.dof_handler->get_fe().n_components();
+    const bool         is_scalar_Q_element = dof_layout == TPSS::DoFLayout::Q && n_components == 1U;
+    if(is_scalar_Q_element)
+    {
+      TPSS::PatchDoFWorker<dim, Number> patch_dof_worker(dof_info);
+      const auto             fe_order = dof_info.dof_handler->get_fe().tensor_degree() + 1;
+      PatchLocalHelperQ<dim> local_helper(fe_order);
+      const auto             n_subdomains = patch_dof_worker.get_partition_data().n_subdomains();
+      const auto             n_physical_subdomains = patch_dof_worker.n_physical_subdomains();
+      const auto             regular_patch_size    = patch_dof_worker.n_cells_per_subdomain();
 
-    cell_and_patch_dof_indices.clear();
-    dof_starts.clear();
-    // patch_starts.clear();
-    // patch_starts.reserve(n_physical_subdomains);
-    // TODO
-    // cell_and_patch_dof_indices.reserve();
-    dof_starts.reserve(n_physical_subdomains * regular_patch_size);
+      cell_and_patch_dof_indices.clear();
+      dof_starts.clear();
+      dof_starts.reserve(n_physical_subdomains * regular_patch_size);
 
-    for(auto patch_id = 0U; patch_id < n_subdomains; ++patch_id)
-      for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
-      {
-        local_helper.reinit(patch_dof_worker.fill_face_infos(patch_id, lane));
-
-        /// fill global_dof_index -> patch_dof_index map
-        std::map<types::global_dof_index, unsigned int> global_to_patch_dof_index;
-        const auto & global_dof_indices = patch_dof_worker.get_dof_indices_on_patch(patch_id, lane);
-        for(auto patch_dof_index = 0U; patch_dof_index < global_dof_indices.size();
-            ++patch_dof_index)
+      for(auto patch_id = 0U; patch_id < n_subdomains; ++patch_id)
+        for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
         {
-          const auto global_dof_index = global_dof_indices[patch_dof_index];
-          const auto [it, is_inserted] =
-            global_to_patch_dof_index.emplace(global_dof_index, patch_dof_index);
-          (void)it;
-          (void)is_inserted;
-          Assert(
-            is_inserted,
-            ExcMessage(
-              "Tried to insert a global dof index again. Check uniqueness of global_dof_indices."));
-        }
+          local_helper.reinit(patch_dof_worker.fill_face_infos(patch_id, lane));
 
-        /// For each local cell @p cell_no store global dof indices that belong
-        /// to patch @patch_id and at vectorization lane @p lane. The local cell
-        /// dof numbering is lexicographical.
-        // patch_starts.emplace_back(dof_starts.size());
-        for(auto cell_no = 0U; cell_no < local_helper.n_cells(); ++cell_no)
-        {
-          /// Note this field returns all global dof indices on the cell even
-          /// those not being part of the patch.
-          const auto & global_dof_indices_on_cell =
-            patch_dof_worker.get_dof_indices_on_cell(patch_id, cell_no, lane);
-          AssertDimension(global_dof_indices_on_cell.size(), local_helper.n_dofs_per_cell(cell_no));
-          const auto   n_dofs_per_cell_on_patch = local_helper.n_dofs_per_cell_on_patch(cell_no);
-          const auto & cell_dof_indices         = local_helper.get_cell_dof_indices(cell_no);
-
-          dof_starts.emplace_back(cell_and_patch_dof_indices.size());
-          for(auto cell_dof_no = 0U; cell_dof_no < n_dofs_per_cell_on_patch; ++cell_dof_no)
+          /// fill global_dof_index -> patch_dof_index map
+          std::map<types::global_dof_index, unsigned int> global_to_patch_dof_index;
+          const auto &                                    global_dof_indices =
+            patch_dof_worker.get_dof_indices_on_patch(patch_id, lane);
+          for(auto patch_dof_index = 0U; patch_dof_index < global_dof_indices.size();
+              ++patch_dof_index)
           {
-            const auto cell_dof_index   = cell_dof_indices[cell_dof_no];
-            const auto global_dof_index = global_dof_indices_on_cell[cell_dof_index];
-            const auto patch_dof_index  = global_to_patch_dof_index[global_dof_index];
-            cell_and_patch_dof_indices.emplace_back(cell_dof_index, patch_dof_index);
+            const auto global_dof_index = global_dof_indices[patch_dof_index];
+            const auto [it, is_inserted] =
+              global_to_patch_dof_index.emplace(global_dof_index, patch_dof_index);
+            (void)it;
+            (void)is_inserted;
+            Assert(
+              is_inserted,
+              ExcMessage(
+                "Tried to insert a global dof index again. Check uniqueness of global_dof_indices."));
+          }
+
+          /// For each local cell @p cell_no store global dof indices that belong
+          /// to patch @patch_id and at vectorization lane @p lane. The local cell
+          /// dof numbering is lexicographical.
+          for(auto cell_no = 0U; cell_no < local_helper.n_cells(); ++cell_no)
+          {
+            /// Note this field returns all global dof indices on the cell even
+            /// those not being part of the patch.
+            AssertThrow(dof_info.n_dofs_on_cell_per_comp.size() == 1,
+                        ExcMessage(
+                          "TODO not implemented for vector-valued shape functions.")); // !!!
+            const auto & global_dof_indices_on_cell = patch_dof_worker.get_dof_indices_on_cell(
+              patch_id, cell_no, lane, /*!!! component*/ 0);
+            AssertDimension(global_dof_indices_on_cell.size(),
+                            local_helper.n_dofs_per_cell(cell_no));
+            const auto   n_dofs_per_cell_on_patch = local_helper.n_dofs_per_cell_on_patch(cell_no);
+            const auto & cell_dof_indices         = local_helper.get_cell_dof_indices(cell_no);
+
+            dof_starts.emplace_back(cell_and_patch_dof_indices.size());
+            for(auto cell_dof_no = 0U; cell_dof_no < n_dofs_per_cell_on_patch; ++cell_dof_no)
+            {
+              const auto cell_dof_index   = cell_dof_indices[cell_dof_no];
+              const auto global_dof_index = global_dof_indices_on_cell[cell_dof_index];
+              const auto patch_dof_index  = global_to_patch_dof_index[global_dof_index];
+              cell_and_patch_dof_indices.emplace_back(cell_dof_index, patch_dof_index);
+            }
           }
         }
-      }
-    dof_starts.emplace_back(cell_and_patch_dof_indices.size());
-    // patch_starts.emplace_back(dof_starts.size());
-    dof_starts.shrink_to_fit();
-    // patch_starts.shrink_to_fit();
-    cell_and_patch_dof_indices.shrink_to_fit();
+      dof_starts.emplace_back(cell_and_patch_dof_indices.size());
+      dof_starts.shrink_to_fit();
+      cell_and_patch_dof_indices.shrink_to_fit();
+    }
+    else
+      for(auto & dof_info : dof_infos_local)
+        dof_info.is_intentionally_uninitialized = true; // TODO !!!
   }
 }
 

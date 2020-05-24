@@ -447,7 +447,7 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
     AssertThrow(patch_variant == TPSS::PatchVariant::vertex,
                 ExcMessage("Other patch variants aren't implemented."));
 
-  AssertIndexRange(dofh_index, sd_handler.n_components());
+  AssertIndexRange(dofh_index, sd_handler.n_dof_handlers());
   for(auto d = 0U; d < dim; ++d)
   {
     /// static variables fe_order and n_q_points_1d_static have to define the maximum

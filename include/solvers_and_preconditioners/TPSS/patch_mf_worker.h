@@ -83,7 +83,8 @@ inline PatchMFWorker<dim, Number>::PatchMFWorker(
   AssertThrow(mf_connect->patch_info, ExcMessage("mf_connect is not initialized."));
   /// Check wether we can stride through @p dof_starts and @p batch_and_lane_index_pairs by means of
   /// PatchWorker::get_cell_position()
-  AssertDimension(this->patch_info->n_cells_plain() + 1, dof_info_local->dof_starts.size());
+  if(!dof_info_local->is_intentionally_uninitialized) // TODO !!!
+    AssertDimension(this->patch_info->n_cells_plain() + 1, dof_info_local->dof_starts.size());
   AssertDimension(this->patch_info->n_cells_plain(), mf_connect->batch_and_lane_index_pairs.size());
 }
 

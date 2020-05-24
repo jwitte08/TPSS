@@ -209,7 +209,7 @@ class MatrixIntegrator
 public:
   using This          = MatrixIntegrator<dim, fe_degree, Number>;
   using value_type    = Number;
-  using transfer_type = typename TPSS::PatchTransfer<dim, Number, fe_degree>;
+  using transfer_type = typename TPSS::PatchTransfer<dim, Number>;
 
   // static constexpr int fe_order   = fe_degree + 1;
   // static constexpr int macro_size = VectorizedArray<Number>::size();
@@ -1072,7 +1072,7 @@ class MatrixIntegrator
 public:
   using This          = MatrixIntegrator<dim, fe_degree, Number>;
   using value_type    = Number;
-  using transfer_type = typename TPSS::PatchTransfer<dim, Number, fe_degree>;
+  using transfer_type = typename TPSS::PatchTransfer<dim, Number>;
 
   // static constexpr int fe_order   = fe_degree + 1;
   static constexpr int macro_size = VectorizedArray<Number>::size();

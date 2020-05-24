@@ -40,22 +40,30 @@ SubdomainHandler<dim, number>::internal_reinit()
 
 
   // *** compress dof handlers
+  std::vector<const dealii::DoFHandler<dim> *> unique_dof_handlers;
   {
     const auto check_dof_handler = [&](const auto dof_handler) {
       AssertThrow(mf_storage->is_supported(dof_handler->get_fe()),
                   ExcMessage("Finite element not supported."));
-      AssertDimension(Utilities::fixed_power<dim>(dof_handler->get_fe().tensor_degree() + 1),
-                      dof_handler->get_fe().n_dofs_per_cell());
       AssertIndexRange(additional_data.level, dof_handler->get_triangulation().n_global_levels());
-      AssertDimension(dof_handler->get_fe().n_base_elements(), 1);
+      Assert(dof_handler->get_fe().is_primitive(),
+             ExcMessage("Currently, only primitive finite elements are supported"));
+      Assert(dof_handler->get_fe().n_components() == 1 ||
+               dof_handler->get_fe().n_components() == dim,
+             ExcMessage(
+               "Currently, scalar- or vector-valued with dim vector components are supported."));
+      Assert(dof_handler->get_fe().n_blocks() == 1 ||
+               dof_handler->get_fe().n_blocks() == dof_handler->get_fe().n_components(),
+             ExcMessage("Currently, nested block structures are not supported."));
+      // TODO !!! how to check for tensor product finite elements ?!
     };
-    std::vector<const dealii::DoFHandler<dim> *> unique_dof_handlers;
-    const auto                                   first_dofh_index = 0U;
-    const auto & first_dofh = mf_storage->get_dof_handler(first_dofh_index);
+    const auto   first_dofh_index = 0U;
+    const auto & first_dofh       = mf_storage->get_dof_handler(first_dofh_index);
     check_dof_handler(&first_dofh);
     unique_dof_handlers.push_back(&first_dofh);
-    dofh_indices.push_back(first_dofh_index);
-    for(auto dofh_index = 1U; dofh_index < mf_storage->n_components(); ++dofh_index)
+    unique_dofh_indices.push_back(first_dofh_index);
+    const unsigned int n_dof_handlers = mf_storage->n_components();
+    for(auto dofh_index = 1U; dofh_index < n_dof_handlers; ++dofh_index)
     {
       const auto & dofh = mf_storage->get_dof_handler(dofh_index);
       check_dof_handler(&dofh);
@@ -67,10 +75,9 @@ SubdomainHandler<dim, number>::internal_reinit()
       const unsigned int unique_dofh_index = std::distance(unique_dof_handlers.begin(), it);
       if(unique_dofh_index == unique_dof_handlers.size()) // dofh is unique
         unique_dof_handlers.push_back(&dofh);
-      dofh_indices.push_back(unique_dofh_index);
+      unique_dofh_indices.push_back(unique_dofh_index);
     }
-    AssertDimension(mf_storage->n_components(), dofh_indices.size());
-    this->dof_handlers = unique_dof_handlers;
+    AssertDimension(n_dof_handlers, unique_dofh_indices.size());
   }
 
 
@@ -82,19 +89,19 @@ SubdomainHandler<dim, number>::internal_reinit()
   patch_info_data.coloring_func         = additional_data.coloring_func;
   patch_info_data.manual_gathering_func = additional_data.manual_gathering_func;
   patch_info_data.print_details         = additional_data.print_details;
-  patch_info.initialize(dof_handlers.front(), patch_info_data);
+  patch_info.initialize(unique_dof_handlers.front(), patch_info_data);
   for(const auto & info : patch_info.time_data)
     time_data.emplace_back(info.time, info.description, info.unit);
-  // *** constructor partitions patches with respect to vectorization
+  // *** Calling the constructor, partitions patches with respect to vectorization.
   TPSS::PatchWorker<dim, number> patch_worker{patch_info};
 
 
   { // *** (partially) store dof indices and patch-local dof information
-    dof_infos.resize(dof_handlers.size());
+    unique_dof_infos.resize(unique_dof_handlers.size());
     typename TPSS::DoFInfo<dim, number>::AdditionalData dof_info_data;
     dof_info_data.level = additional_data.level;
     std::set<unsigned int> initialized_indices;
-    for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
+    for(auto dofh_index = 0U; dofh_index < n_dof_handlers(); ++dofh_index)
     {
       const auto unique_dofh_index = get_unique_dofh_index(dofh_index);
       if(!additional_data.dirichlet_ids.empty())
@@ -102,11 +109,11 @@ SubdomainHandler<dim, number>::internal_reinit()
         AssertIndexRange(unique_dofh_index, additional_data.dirichlet_ids.size());
         dof_info_data.dirichlet_ids = additional_data.dirichlet_ids.at(unique_dofh_index);
       }
-      auto & dof_info                     = dof_infos[unique_dofh_index];
+      auto & dof_info                     = unique_dof_infos[unique_dofh_index];
       const auto [dummy, not_initialized] = initialized_indices.insert(unique_dofh_index);
       (void)dummy;
       if(not_initialized)
-        dof_info.initialize(dof_handlers.at(unique_dofh_index),
+        dof_info.initialize(unique_dof_handlers.at(unique_dofh_index),
                             &patch_info,
                             &(get_shape_info(dofh_index)),
                             dof_info_data);
@@ -117,9 +124,9 @@ SubdomainHandler<dim, number>::internal_reinit()
   // *** map the patch batches to MatrixFree's cell batches
   {
     std::map<unsigned int, unsigned int> dofh_index_map;
-    for(auto dofh_index = 0U; dofh_index < n_components(); ++dofh_index)
+    for(auto dofh_index = 0U; dofh_index < n_dof_handlers(); ++dofh_index)
       dofh_index_map.emplace(dofh_index, get_unique_dofh_index(dofh_index));
-    AssertDimension(dofh_index_map.size(), n_components());
+    AssertDimension(dofh_index_map.size(), n_dof_handlers());
     mf_connect.initialize(mf_storage, get_dof_infos(), dofh_index_map);
   }
 
