@@ -5,8 +5,8 @@ template<typename VectorType>
 AlignedVector<VectorizedArray<Number>>
 PatchTransfer<dim, Number, fe_degree>::gather(const VectorType & src) const
 {
-  AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
-  AssertDimension(src.size(), subdomain_handler.get_dof_handler().n_dofs(level));
+  AssertIndexRange(patch_id, n_subdomains);
+  AssertDimension(src.size(), patch_dof_worker.get_dof_info().dof_handler->n_dofs(level));
 
   AlignedVector<VectorizedArray<Number>> dst(n_dofs_per_patch());
   for(unsigned int lane = 0; lane < macro_size; ++lane)
@@ -58,8 +58,8 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
   VectorType &                                   dst,
   const ArrayView<const VectorizedArray<Number>> src) const
 {
-  AssertIndexRange(patch_id, subdomain_handler.get_partition_data().n_subdomains());
-  AssertDimension(dst.size(), subdomain_handler.get_dof_handler().n_dofs(level));
+  AssertIndexRange(patch_id, n_subdomains);
+  AssertDimension(dst.size(), patch_dof_worker.get_dof_info().dof_handler->n_dofs(level));
   AssertDimension(src.size(), n_dofs_per_patch());
 
   for(unsigned int lane = 0; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
@@ -91,8 +91,8 @@ PatchTransfer<dim, Number, fe_degree>::scatter_add(
 
 
 template<int dim, typename Number, int fe_degree>
+template<typename BlockVectorType>
 AlignedVector<VectorizedArray<Number>>
-
 PatchTransferBlock<dim, Number, fe_degree>::gather(const BlockVectorType & src) const
 {
   AlignedVector<VectorizedArray<Number>> dst;
@@ -112,6 +112,7 @@ PatchTransferBlock<dim, Number, fe_degree>::gather(const BlockVectorType & src) 
 
 
 template<int dim, typename Number, int fe_degree>
+template<typename BlockVectorType>
 void
 PatchTransferBlock<dim, Number, fe_degree>::gather_add(AlignedVector<VectorizedArray<Number>> & dst,
                                                        const BlockVectorType & src) const
@@ -127,6 +128,7 @@ PatchTransferBlock<dim, Number, fe_degree>::gather_add(AlignedVector<VectorizedA
 
 
 template<int dim, typename Number, int fe_degree>
+template<typename BlockVectorType>
 void
 PatchTransferBlock<dim, Number, fe_degree>::scatter_add(
   BlockVectorType &                              dst,
