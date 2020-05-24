@@ -35,13 +35,13 @@ def parse_args():
                         default=DEFAULT_OUTFILE_
     )
     parser.add_argument('-DIM','--dimension',
-                        default=3,
+                        default=2,
                         type=int,
                         choices=[2,3],
                         help="spatial dimension of the domain"
     )
     parser.add_argument('-DEG','--fe-degree',
-                        default=3,
+                        default=2,
                         type=int,
                         choices=range(1,31),
                         help="spatial dimension of the domain"
@@ -57,7 +57,7 @@ def parse_args():
                         help="directory of the log file"
     )
     parser.add_argument('-SMO','--smoother',
-                        default='ACP',
+                        default='AVP',
                         choices=['ACP','AVP','MCP','MVP'],
                         help="variant of the Schwarz smoother"
     )
