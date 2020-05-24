@@ -96,21 +96,13 @@ local_element(LinearAlgebra::distributed::Vector<Number> & vec, const unsigned i
  * from DoFInfo objects (identified by @p dofh_index) stored in the @p
  * subdomain_handler. To be precise, access to global dof indices is provided by
  * PatchDoFWorker.
- *
- * TODO remove template fe_degree ?!
  */
-template<int dim, typename Number, int fe_degree = -1>
+template<int dim, typename Number>
 class PatchTransfer
 {
 public:
-  using CellIterator                     = typename PatchInfo<dim>::CellIterator;
-  static constexpr unsigned int fe_order = fe_degree == -1 ? -1 : fe_degree + 1;
-  static constexpr unsigned int n_dofs_per_cell_static =
-    fe_degree == -1 ? -1 : Utilities::pow(fe_order, dim);
+  using CellIterator                       = typename PatchInfo<dim>::CellIterator;
   static constexpr unsigned int macro_size = VectorizedArray<Number>::size();
-
-  // // TODO construct indices at compile time ?
-  // struct GetIndexing;
 
   PatchTransfer(const SubdomainHandler<dim, Number> & subdomain_handler,
                 const unsigned int                    dofh_index = 0);
@@ -252,10 +244,8 @@ private:
  *
  * TODO class has not been tested on blocks associated to different
  * scalar-valued finite elements.
- *
- * TODO remove template fe_degree ?!
  */
-template<int dim, typename Number, int fe_degree = -1>
+template<int dim, typename Number>
 class PatchTransferBlock
 {
 public:
@@ -305,7 +295,7 @@ public:
   scatter_add(BlockVectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const;
 
 private:
-  using transfer_type = PatchTransfer<dim, Number, fe_degree>;
+  using transfer_type = PatchTransfer<dim, Number>;
 
   const unsigned int n_blocks;
 
@@ -421,8 +411,8 @@ private:
 
 
 
-template<int dim, typename Number, int fe_degree>
-inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
+template<int dim, typename Number>
+inline PatchTransfer<dim, Number>::PatchTransfer(
   const SubdomainHandler<dim, Number> & subdomain_handler_in,
   const unsigned int                    dofh_index_in)
   : level(subdomain_handler_in.get_additional_data().level),
@@ -440,14 +430,12 @@ inline PatchTransfer<dim, Number, fe_degree>::PatchTransfer(
     caching_strategy(patch_dof_worker.get_dof_info().get_additional_data().caching_strategy)
 {
   AssertThrow(dof_layout != DoFLayout::invalid, ExcMessage("The finite element is not supported."));
-  AssertThrow(fe_degree == -1 || n_dofs_per_cell_static == cell_dof_tensor.n_flat(),
-              ExcMessage("Only isotropic elements supported."));
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 inline void
-PatchTransfer<dim, Number, fe_degree>::reinit(const unsigned int patch)
+PatchTransfer<dim, Number>::reinit(const unsigned int patch)
 {
   AssertIndexRange(patch, n_subdomains);
   patch_id = patch;
@@ -460,27 +448,26 @@ PatchTransfer<dim, Number, fe_degree>::reinit(const unsigned int patch)
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 inline void
-PatchTransfer<dim, Number, fe_degree>::reinit_local_vector(
-  AlignedVector<VectorizedArray<Number>> & vec) const
+PatchTransfer<dim, Number>::reinit_local_vector(AlignedVector<VectorizedArray<Number>> & vec) const
 {
   Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
   vec.resize(n_dofs_per_patch());
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 const PatchDoFWorker<dim, Number> &
-PatchTransfer<dim, Number, fe_degree>::get_patch_dof_worker() const
+PatchTransfer<dim, Number>::get_patch_dof_worker() const
 {
   return patch_dof_worker;
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 ArrayView<const unsigned int>
-PatchTransfer<dim, Number, fe_degree>::get_dof_indices(const unsigned int lane) const
+PatchTransfer<dim, Number>::get_dof_indices(const unsigned int lane) const
 {
   Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
   if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
@@ -495,17 +482,17 @@ PatchTransfer<dim, Number, fe_degree>::get_dof_indices(const unsigned int lane) 
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 inline unsigned int
-PatchTransfer<dim, Number, fe_degree>::n_dofs_per_patch() const
+PatchTransfer<dim, Number>::n_dofs_per_patch() const
 {
   return patch_dof_worker.n_dofs();
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 inline void
-PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned int patch_id)
+PatchTransfer<dim, Number>::fill_global_dof_indices(const unsigned int patch_id)
 {
   AssertIndexRange(patch_id, n_subdomains);
   for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
@@ -522,8 +509,8 @@ PatchTransfer<dim, Number, fe_degree>::fill_global_dof_indices(const unsigned in
 
 
 
-template<int dim, typename Number, int fe_degree>
-inline PatchTransferBlock<dim, Number, fe_degree>::PatchTransferBlock(
+template<int dim, typename Number>
+inline PatchTransferBlock<dim, Number>::PatchTransferBlock(
   const SubdomainHandler<dim, Number> & subdomain_handler_in)
   : n_blocks(subdomain_handler_in.n_dof_handlers()),
     transfers(std::move([this](const auto & subdomain_handler) {
@@ -547,9 +534,9 @@ inline PatchTransferBlock<dim, Number, fe_degree>::PatchTransferBlock(
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 inline void
-PatchTransferBlock<dim, Number, fe_degree>::reinit(const unsigned int patch_id)
+PatchTransferBlock<dim, Number>::reinit(const unsigned int patch_id)
 {
   this->patch_id = patch_id;
   for(auto transfer : transfers)
@@ -557,9 +544,9 @@ PatchTransferBlock<dim, Number, fe_degree>::reinit(const unsigned int patch_id)
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 inline unsigned int
-PatchTransferBlock<dim, Number, fe_degree>::n_dofs_per_patch() const
+PatchTransferBlock<dim, Number>::n_dofs_per_patch() const
 {
   // const unsigned int n_dofs_total = std::accumulate(transfers.begin(),
   //                                                   transfers.end(),
@@ -571,9 +558,9 @@ PatchTransferBlock<dim, Number, fe_degree>::n_dofs_per_patch() const
 }
 
 
-template<int dim, typename Number, int fe_degree>
+template<int dim, typename Number>
 inline void
-PatchTransferBlock<dim, Number, fe_degree>::reinit_local_vector(
+PatchTransferBlock<dim, Number>::reinit_local_vector(
   AlignedVector<VectorizedArray<Number>> & vec) const
 {
   Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());

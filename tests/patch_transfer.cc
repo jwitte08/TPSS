@@ -348,7 +348,7 @@ protected:
   static constexpr int          dim                 = T::template value<0>();
   static constexpr int          fe_degree           = T::template value<1>();
   static constexpr unsigned int n_static_components = dim;
-  using PatchTransfer                               = TPSS::PatchTransfer<dim, double, fe_degree>;
+  using PatchTransfer                               = TPSS::PatchTransfer<dim, double>;
 
 
   TestPatchTransferVectorValued()
@@ -553,7 +553,7 @@ protected:
   static constexpr int dim         = T::template value<0>();
   static constexpr int fe_degree   = T::template value<1>();
   static constexpr int fe_degree_p = fe_degree - 1;
-  using PatchTransferBlock         = TPSS::PatchTransferBlock<dim, double, -1>;
+  using PatchTransferBlock         = TPSS::PatchTransferBlock<dim, double>;
 
 
   TestPatchTransferBlockWithVector()

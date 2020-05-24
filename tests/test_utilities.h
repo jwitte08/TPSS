@@ -147,7 +147,8 @@ compare_vector(const Vector<Number> &     vector,
     const auto value       = vector[i];
     const auto other_value = other[i];
     const auto diff        = std::abs(value - other_value);
-    EXPECT_PRED_FORMAT2(testing::FloatLE, diff, numeric_eps<Number> * other_value) << oss.str();
+    EXPECT_PRED_FORMAT2(testing::FloatLE, diff, numeric_eps<Number> * std::abs(other_value))
+      << oss.str();
   }
   pcout << oss.str();
 }

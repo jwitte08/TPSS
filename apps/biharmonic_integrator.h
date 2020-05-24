@@ -54,13 +54,13 @@ compute_penalty_impl(const int degree, const Number h_left, const Number h_right
 
 namespace FD
 {
-template<int dim, int fe_degree, typename Number>
+template<int dim, int fe_degree, typename Number = double>
 class MatrixIntegrator
 {
 public:
   using This                    = MatrixIntegrator<dim, fe_degree, Number>;
   using value_type              = Number;
-  using transfer_type           = typename TPSS::PatchTransfer<dim, Number, fe_degree>;
+  using transfer_type           = typename TPSS::PatchTransfer<dim, Number>;
   using matrix_type             = Tensors::TensorProductMatrix<dim, VectorizedArray<Number>>;
   using evaluator_type          = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
   static constexpr int fe_order = fe_degree + 1;
