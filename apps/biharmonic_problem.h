@@ -117,66 +117,12 @@ public:
   std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
 };
 
+
+
 template<int dim>
-struct ScratchData
-{
-  ScratchData(const Mapping<dim> &       mapping,
-              const FiniteElement<dim> & fe,
-              const unsigned int         quadrature_degree,
-              const UpdateFlags          update_flags,
-              const UpdateFlags          interface_update_flags)
-    : fe_values(mapping, fe, QGauss<dim>(quadrature_degree), update_flags),
-      fe_interface_values(mapping, fe, QGauss<dim - 1>(quadrature_degree), interface_update_flags)
-  {
-  }
+using ScratchData = C0IP::MW::ScratchData<dim>;
 
-
-  ScratchData(const ScratchData<dim> & scratch_data)
-    : fe_values(scratch_data.fe_values.get_mapping(),
-                scratch_data.fe_values.get_fe(),
-                scratch_data.fe_values.get_quadrature(),
-                scratch_data.fe_values.get_update_flags()),
-      fe_interface_values(scratch_data.fe_values.get_mapping(),
-                          scratch_data.fe_values.get_fe(),
-                          scratch_data.fe_interface_values.get_quadrature(),
-                          scratch_data.fe_interface_values.get_update_flags())
-  {
-  }
-
-  FEValues<dim>          fe_values;
-  FEInterfaceValues<dim> fe_interface_values;
-};
-
-
-
-struct CopyData
-{
-  CopyData(const unsigned int dofs_per_cell,
-           const unsigned int level_in = numbers::invalid_unsigned_int)
-    : level(level_in),
-      cell_matrix(dofs_per_cell, dofs_per_cell),
-      cell_rhs(dofs_per_cell),
-      local_dof_indices(dofs_per_cell)
-  {
-  }
-
-
-  CopyData(const CopyData &) = default;
-
-
-  struct FaceData
-  {
-    FullMatrix<double>                   cell_matrix;
-    std::vector<types::global_dof_index> joint_dof_indices;
-    Vector<double>                       cell_rhs;
-  };
-
-  unsigned int                         level;
-  FullMatrix<double>                   cell_matrix;
-  Vector<double>                       cell_rhs;
-  std::vector<types::global_dof_index> local_dof_indices;
-  std::vector<FaceData>                face_data;
-};
+using CopyData = C0IP::MW::CopyData;
 
 
 
@@ -212,30 +158,6 @@ public:
 
   void
   setup_system();
-
-  template<typename IteratorType, bool is_multigrid = false>
-  void
-  cell_worker_impl(const IteratorType & cell,
-                   ScratchData<dim> &   scratch_data,
-                   CopyData &           copy_data) const;
-
-  template<typename IteratorType, bool is_multigrid = false>
-  void
-  face_worker_impl(const IteratorType & cell,
-                   const unsigned int & f,
-                   const unsigned int & sf,
-                   const IteratorType & ncell,
-                   const unsigned int & nf,
-                   const unsigned int & nsf,
-                   ScratchData<dim> &   scratch_data,
-                   CopyData &           copy_data) const;
-
-  template<typename IteratorType, bool is_multigrid = false>
-  void
-  boundary_worker_impl(const IteratorType & cell,
-                       const unsigned int & face_no,
-                       ScratchData<dim> &   scratch_data,
-                       CopyData &           copy_data) const;
 
   void
   assemble_system();
@@ -451,239 +373,18 @@ ModelProblem<dim, fe_degree>::setup_system()
 
 
 template<int dim, int fe_degree>
-template<typename IteratorType, bool is_multigrid>
-void
-ModelProblem<dim, fe_degree>::cell_worker_impl(const IteratorType & cell,
-                                               ScratchData<dim> &   scratch_data,
-                                               CopyData &           copy_data) const
-{
-  copy_data.cell_matrix = 0.;
-  copy_data.cell_rhs    = 0.;
-
-  FEValues<dim> & fe_values = scratch_data.fe_values;
-  fe_values.reinit(cell);
-
-  cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
-
-  const unsigned int dofs_per_cell = scratch_data.fe_values.get_fe().dofs_per_cell;
-
-  for(unsigned int qpoint = 0; qpoint < fe_values.n_quadrature_points; ++qpoint)
-  {
-    for(unsigned int i = 0; i < dofs_per_cell; ++i)
-    {
-      const Tensor<2, dim> hessian_i = fe_values.shape_hessian(i, qpoint);
-
-      for(unsigned int j = 0; j < dofs_per_cell; ++j)
-      {
-        const Tensor<2, dim> hessian_j = fe_values.shape_hessian(j, qpoint);
-
-        copy_data.cell_matrix(i, j) += scalar_product(hessian_i,   // nabla^2 phi_i(x)
-                                                      hessian_j) * // nabla^2 phi_j(x)
-                                       fe_values.JxW(qpoint);      // dx
-      }
-
-      if(!is_multigrid)
-        copy_data.cell_rhs(i) += fe_values.shape_value(i, qpoint) * // phi_i(x)
-                                 load_function->value(fe_values.quadrature_point(qpoint)) * // f(x)
-                                 fe_values.JxW(qpoint);                                     // dx
-    }
-  }
-
-  /// For non-zero boundary conditions we compute the negative residual, namely
-  /// -(A u0 - b) with u0 being a particular solution that satisfies (strong)
-  /// boundary conditions, and store it as right hand side vector. Then, we are
-  /// left with finding a homogeneous solution u based on this right hand side.
-  if(!is_multigrid)
-  {
-    Vector<double> u0(copy_data.local_dof_indices.size());
-    for(auto i = 0U; i < u0.size(); ++i)
-      u0(i) = system_u(copy_data.local_dof_indices[i]);
-    Vector<double> w0(copy_data.local_dof_indices.size());
-    copy_data.cell_matrix.vmult(w0, u0);
-    copy_data.cell_rhs -= w0;
-  }
-}
-
-
-template<int dim, int fe_degree>
-template<typename IteratorType, bool is_multigrid>
-void
-ModelProblem<dim, fe_degree>::face_worker_impl(const IteratorType & cell,
-                                               const unsigned int & f,
-                                               const unsigned int & sf,
-                                               const IteratorType & ncell,
-                                               const unsigned int & nf,
-                                               const unsigned int & nsf,
-                                               ScratchData<dim> &   scratch_data,
-                                               CopyData &           copy_data) const
-{
-  FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
-  fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
-
-  copy_data.face_data.emplace_back();
-  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
-
-  copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
-
-  const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
-  copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
-
-  const auto   h  = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
-  const auto   nh = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
-  const double gamma_over_h = 0.5 * C0IP::compute_penalty_impl(fe_degree, h, nh);
-
-  for(unsigned int qpoint = 0; qpoint < fe_interface_values.n_quadrature_points; ++qpoint)
-  {
-    const auto & n = fe_interface_values.normal(qpoint);
-
-    for(unsigned int i = 0; i < n_interface_dofs; ++i)
-    {
-      const double av_hessian_i_dot_n_dot_n =
-        (fe_interface_values.average_hessian(i, qpoint) * n * n);
-      const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
-
-      for(unsigned int j = 0; j < n_interface_dofs; ++j)
-      {
-        const double av_hessian_j_dot_n_dot_n =
-          (fe_interface_values.average_hessian(j, qpoint) * n * n);
-        const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
-
-        copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n       // - {grad^2 v n n
-                                                                             //
-                                               * jump_grad_j_dot_n           // [grad u n]
-                                             - av_hessian_j_dot_n_dot_n      // - {grad^2 u n n
-                                                                             //
-                                                 * jump_grad_i_dot_n         // [grad v n]
-                                             +                               // +
-                                             gamma_over_h *                  // gamma/h
-                                               jump_grad_i_dot_n *           // [grad v n]
-                                               jump_grad_j_dot_n) *          // [grad u n]
-                                            fe_interface_values.JxW(qpoint); // dx
-      }
-    }
-  }
-
-  /// For non-zero boundary conditions we compute the negative residual, namely
-  /// -(A u0 - b) with u0 being a particular solution that satisfies (strong)
-  /// boundary conditions, and store it as right hand side vector. Then, we are
-  /// left with finding a homogeneous solution u based on this right hand side.
-  if(!is_multigrid)
-  {
-    const bool cell_is_at_boundary     = cell->at_boundary();
-    const bool neighbor_is_at_boundary = ncell->at_boundary();
-    /// Particular solution u0 is only non-zero at the physical boundary.
-    if(cell_is_at_boundary | neighbor_is_at_boundary)
-    {
-      AssertDimension(n_interface_dofs, copy_data_face.joint_dof_indices.size());
-      Vector<double> u0(copy_data_face.joint_dof_indices.size());
-      for(auto i = 0U; i < u0.size(); ++i)
-        u0(i) = system_u(copy_data_face.joint_dof_indices[i]);
-      copy_data_face.cell_rhs.reinit(u0.size());
-      copy_data_face.cell_matrix.vmult(copy_data_face.cell_rhs, u0);
-      copy_data_face.cell_rhs *= -1.;
-    }
-  }
-}
-
-
-
-template<int dim, int fe_degree>
-template<typename IteratorType, bool is_multigrid>
-void
-ModelProblem<dim, fe_degree>::boundary_worker_impl(const IteratorType & cell,
-                                                   const unsigned int & face_no,
-                                                   ScratchData<dim> &   scratch_data,
-                                                   CopyData &           copy_data) const
-{
-  FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
-  fe_interface_values.reinit(cell, face_no);
-  const auto & q_points = fe_interface_values.get_quadrature_points();
-
-  copy_data.face_data.emplace_back();
-  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
-
-  const unsigned int n_dofs        = fe_interface_values.n_current_interface_dofs();
-  copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
-
-  copy_data_face.cell_matrix.reinit(n_dofs, n_dofs);
-
-  const std::vector<double> &         JxW     = fe_interface_values.get_JxW_values();
-  const std::vector<Tensor<1, dim>> & normals = fe_interface_values.get_normal_vectors();
-
-  std::vector<Tensor<1, dim>> exact_gradients(q_points.size());
-  analytical_solution->gradient_list(q_points, exact_gradients);
-
-  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
-  /// gamma_over_h is interior penalty, thus, weighted by 0.5
-  const double gamma_over_h = 0.5 * C0IP::compute_penalty_impl(fe_degree, h, h);
-
-  for(unsigned int qpoint = 0; qpoint < q_points.size(); ++qpoint)
-  {
-    const auto & n = normals[qpoint];
-
-    for(unsigned int i = 0; i < n_dofs; ++i)
-    {
-      const double av_hessian_i_dot_n_dot_n =
-        (fe_interface_values.average_hessian(i, qpoint) * n * n);
-      const double jump_grad_i_dot_n = (fe_interface_values.jump_gradient(i, qpoint) * n);
-
-      for(unsigned int j = 0; j < n_dofs; ++j)
-      {
-        const double av_hessian_j_dot_n_dot_n =
-          (fe_interface_values.average_hessian(j, qpoint) * n * n);
-        const double jump_grad_j_dot_n = (fe_interface_values.jump_gradient(j, qpoint) * n);
-
-        copy_data_face.cell_matrix(i, j) += (-av_hessian_i_dot_n_dot_n  // - {grad^2 v n n}
-                                               * jump_grad_j_dot_n      //   [grad u n]
-                                                                        //
-                                             - av_hessian_j_dot_n_dot_n // - {grad^2 u n n}
-                                                 * jump_grad_i_dot_n    //   [grad v n]
-                                                                        //
-                                             + (2. * gamma_over_h)      //  gamma/h
-                                                 * jump_grad_i_dot_n    // [grad v n]
-                                                 * jump_grad_j_dot_n    // [grad u n]
-                                             ) *
-                                            JxW[qpoint]; // dx
-      }
-
-      if(!is_multigrid)
-        copy_data.cell_rhs(i) += (-av_hessian_i_dot_n_dot_n *       // - {grad^2 v n n }
-                                    (exact_gradients[qpoint] * n)   //   (grad u_exact . n)
-                                  +                                 // +
-                                  (2. * gamma_over_h)               //  gamma/h
-                                    * jump_grad_i_dot_n             // [grad v n]
-                                    * (exact_gradients[qpoint] * n) // (grad u_exact . n)
-                                  ) *
-                                 JxW[qpoint]; // dx
-    }
-  }
-
-  /// For non-zero boundary conditions we compute the negative residual, namely
-  /// -(A u0 - b) with u0 being a particular solution that satisfies (strong)
-  /// boundary conditions, and store it as right hand side vector. Then, we are
-  /// left with finding a homogeneous solution u based on this right hand side.
-  if(!is_multigrid)
-  {
-    AssertDimension(n_dofs, copy_data.cell_rhs.size());
-    AssertDimension(n_dofs, copy_data.local_dof_indices.size());
-    Vector<double> u0(n_dofs);
-    for(auto i = 0U; i < n_dofs; ++i)
-      u0(i) = system_u(copy_data.local_dof_indices[i]);
-    Vector<double> w0(u0.size());
-    copy_data_face.cell_matrix.vmult(w0, u0);
-    copy_data.cell_rhs -= w0;
-  }
-}
-
-
-
-template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::assemble_system()
 {
-  auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-    cell_worker_impl(cell, scratch_data, copy_data);
-  };
+  C0IP::MW::MatrixIntegrator matrix_integrator(load_function.get(),
+                                               analytical_solution.get(),
+                                               &system_u,
+                                               equation_data);
+
+  auto cell_worker =
+    [&](const auto & cell, C0IP::MW::ScratchData<dim> & scratch_data, CopyData & copy_data) {
+      matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+    };
 
   auto face_worker = [&](const auto &         cell,
                          const unsigned int & f,
@@ -693,14 +394,14 @@ ModelProblem<dim, fe_degree>::assemble_system()
                          const unsigned int & nsf,
                          ScratchData<dim> &   scratch_data,
                          CopyData &           copy_data) {
-    face_worker_impl(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+    matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
   };
 
   auto boundary_worker = [&](const auto &         cell,
                              const unsigned int & face_no,
                              ScratchData<dim> &   scratch_data,
                              CopyData &           copy_data) {
-    boundary_worker_impl(cell, face_no, scratch_data, copy_data);
+    matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
   };
 
   /// The copier has to use homogeneous boundary constraints for dof transfer
@@ -709,7 +410,7 @@ ModelProblem<dim, fe_degree>::assemble_system()
   /// heterogeneous boundary values is incorporated in the right hand side. This
   /// is like using Newton's method on a linear system, thus, resulting in one
   /// Newton step with @p system_delta_u being the Newton update and @p system_u
-  /// the initial value (with boundary values set).
+  /// the initial value.
   const auto copier = [&](const CopyData & copy_data) {
     zero_constraints.template distribute_local_to_global<SparseMatrix<double>, VECTOR>(
       copy_data.cell_matrix,
@@ -835,11 +536,13 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
     level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
     level_constraints.close();
 
-    using LevelCellIterator = typename DoFHandler<dim>::level_cell_iterator;
+    using MatrixIntegrator = C0IP::MW::MatrixIntegrator<dim, /*is_multigrid*/ true>;
+    MatrixIntegrator matrix_integrator(nullptr, analytical_solution.get(), nullptr, equation_data);
+    using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
     auto cell_worker =
       [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        cell_worker_impl<LevelCellIterator, /*is_multigrid?*/ true>(cell, scratch_data, copy_data);
+        matrix_integrator.cell_worker(cell, scratch_data, copy_data);
       };
 
     auto face_worker = [&](const LevelCellIterator & cell,
@@ -850,15 +553,14 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
                            const unsigned int &      nsf,
                            ScratchData<dim> &        scratch_data,
                            CopyData &                copy_data) {
-      face_worker_impl<LevelCellIterator, true>(
-        cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+      matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
     };
 
     auto boundary_worker = [&](const LevelCellIterator & cell,
                                const unsigned int &      face_no,
                                ScratchData<dim> &        scratch_data,
                                CopyData &                copy_data) {
-      boundary_worker_impl<LevelCellIterator, true>(cell, face_no, scratch_data, copy_data);
+      matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
     };
 
     const auto copier = [&](const CopyData & copy_data) {
