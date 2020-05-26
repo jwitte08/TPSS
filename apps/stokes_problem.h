@@ -326,7 +326,21 @@ public:
   assemble_multigrid_velocity();
 
   void
+  prepare_schwarz_smoothers();
+
+  void
   prepare_multigrid_velocity();
+
+  const GMG_PRECONDITIONER &
+  prepare_preconditioner_mg()
+  {
+    prepare_multigrid_velocity();
+    AssertThrow(multigrid, ExcNotInitialized());
+
+    preconditioner_mg =
+      std::make_shared<GMG_PRECONDITIONER>(dof_handler_velocity, *multigrid, mg_transfer);
+    return *preconditioner_mg;
+  }
 
   void
   solve();
@@ -341,6 +355,14 @@ public:
   max_level() const
   {
     return triangulation.n_global_levels() - 1;
+  }
+
+  unsigned int
+  n_colors_system()
+  {
+    if(mg_schwarz_smoother_pre)
+      return mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
+    return numbers::invalid_unsigned_int;
   }
 
   template<typename T>
@@ -398,7 +420,7 @@ public:
   MG_TRANSFER                        mg_transfer;
   MGLevelObject<SparsityPattern>     mg_sparsity_patterns;
   MGLevelObject<MATRIX>              mg_matrices;
-  // mutable std::shared_ptr<ColoringBase<dim>>        user_coloring;
+  // mutable std::shared_ptr<ColoringBase<dim>>        user_coloring; // !!! TODO
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_pre;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_post;
   std::shared_ptr<const MGSmootherIdentity<VECTOR>> mg_smoother_identity;
@@ -769,6 +791,41 @@ ModelProblem<dim, fe_degree_p>::assemble_system_velocity()
 
 
 
+template<int dim, int fe_degree>
+void
+ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
+{
+  Assert(rt_parameters.multigrid.pre_smoother.variant ==
+           SmootherParameter::SmootherVariant::Schwarz,
+         ExcMessage("Invalid smoothing variant."));
+  AssertDimension(mg_matrices.max_level(), max_level());
+  for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
+    AssertThrow(mg_matrices[level].mf_storage, ExcMessage("mf_storage is not initialized."));
+
+  //: pre-smoother
+  {
+    const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+    typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
+    // additional_data.coloring_func = std::ref(*user_coloring); // !!! TODO
+    additional_data.parameters = rt_parameters.multigrid.pre_smoother;
+    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
+    mgss->initialize(mg_matrices, additional_data);
+    mg_schwarz_smoother_pre = mgss;
+  }
+
+  //: post-smoother (so far only shallow copy!)
+  {
+    const auto mgss_post = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+    typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
+    // additional_data.coloring_func = std::ref(*user_coloring); !!! TODO
+    additional_data.parameters = rt_parameters.multigrid.post_smoother;
+    mgss_post->initialize(*mg_schwarz_smoother_pre, additional_data);
+    mg_schwarz_smoother_post = mgss_post;
+  }
+}
+
+
+
 template<int dim, int fe_degree_p>
 void
 ModelProblem<dim, fe_degree_p>::prepare_multigrid_velocity()
@@ -814,64 +871,64 @@ ModelProblem<dim, fe_degree_p>::prepare_multigrid_velocity()
   mg_transfer.initialize_constraints(*mg_constrained_dofs);
   mg_transfer.build(dof_handler_velocity);
 
-  // // *** initialize Schwarz smoother S_l
-  // switch(rt_parameters.multigrid.pre_smoother.variant)
-  // {
-  //   case SmootherParameter::SmootherVariant::None:
-  //     mg_smoother_identity = std::make_shared<const MGSmootherIdentity<VECTOR>>();
-  //     AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
-  //     mg_smoother_pre = mg_smoother_identity.get();
-  //     break;
-  //   case SmootherParameter::SmootherVariant::GaussSeidel:
-  //   {
-  //     auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, VECTOR>>();
-  //     tmp->initialize(mg_matrices);
-  //     tmp->set_steps(rt_parameters.multigrid.pre_smoother.n_smoothing_steps);
-  //     tmp->set_symmetric(true);
-  //     mg_smoother_gauss_seidel = tmp;
-  //     mg_smoother_pre          = mg_smoother_gauss_seidel.get();
-  //   }
-  //   break;
-  //   case SmootherParameter::SmootherVariant::Schwarz:
-  //     prepare_schwarz_smoothers();
-  //     AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
-  //     mg_smoother_pre = mg_schwarz_smoother_pre.get();
-  //     break;
-  //   default:
-  //     AssertThrow(false, ExcMessage("Invalid smoothing variant."));
-  // }
-  // switch(rt_parameters.multigrid.post_smoother.variant)
-  // {
-  //   case SmootherParameter::SmootherVariant::None:
-  //     AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
-  //     mg_smoother_post = mg_smoother_identity.get();
-  //     break;
-  //   case SmootherParameter::SmootherVariant::GaussSeidel:
-  //     AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
-  //     mg_smoother_post = mg_smoother_gauss_seidel.get();
-  //     break;
-  //   case SmootherParameter::SmootherVariant::Schwarz:
-  //     AssertThrow(mg_schwarz_smoother_post, ExcMessage("Not initialized"));
-  //     mg_smoother_post = mg_schwarz_smoother_post.get();
-  //     break;
-  //   default:
-  //     AssertThrow(false, ExcMessage("Invalid smoothing variant."));
-  // }
+  // *** initialize Schwarz smoother S_l
+  switch(rt_parameters.multigrid.pre_smoother.variant)
+  {
+    case SmootherParameter::SmootherVariant::None:
+      mg_smoother_identity = std::make_shared<const MGSmootherIdentity<Vector<double>>>();
+      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+      mg_smoother_pre = mg_smoother_identity.get();
+      break;
+    case SmootherParameter::SmootherVariant::GaussSeidel:
+    {
+      auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, Vector<double>>>();
+      tmp->initialize(mg_matrices);
+      tmp->set_steps(rt_parameters.multigrid.pre_smoother.n_smoothing_steps);
+      tmp->set_symmetric(true);
+      mg_smoother_gauss_seidel = tmp;
+      mg_smoother_pre          = mg_smoother_gauss_seidel.get();
+    }
+    break;
+    case SmootherParameter::SmootherVariant::Schwarz:
+      prepare_schwarz_smoothers();
+      AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
+      mg_smoother_pre = mg_schwarz_smoother_pre.get();
+      break;
+    default:
+      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  }
+  switch(rt_parameters.multigrid.post_smoother.variant)
+  {
+    case SmootherParameter::SmootherVariant::None:
+      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+      mg_smoother_post = mg_smoother_identity.get();
+      break;
+    case SmootherParameter::SmootherVariant::GaussSeidel:
+      AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
+      mg_smoother_post = mg_smoother_gauss_seidel.get();
+      break;
+    case SmootherParameter::SmootherVariant::Schwarz:
+      AssertThrow(mg_schwarz_smoother_post, ExcMessage("Not initialized"));
+      mg_smoother_post = mg_schwarz_smoother_post.get();
+      break;
+    default:
+      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  }
+  pp_data.n_colors_system.push_back(n_colors_system());
 
-  // pp_data.n_colors_system.push_back(n_colors_system());
+  // *** initialize coarse grid solver
+  coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
+  mg_coarse_grid = &coarse_grid_solver;
 
-  // // *** initialize coarse grid solver
-  // coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
-  // mg_coarse_grid = &coarse_grid_solver;
-
-  // mg_matrix_wrapper.initialize(mg_matrices);
-  // multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
-  //                                                 *mg_coarse_grid,
-  //                                                 mg_transfer,
-  //                                                 *mg_smoother_pre,
-  //                                                 *mg_smoother_post,
-  //                                                 mg_level_min,
-  //                                                 mg_level_max);
+  // *** initialize geometric multigrid method
+  mg_matrix_wrapper.initialize(mg_matrices);
+  multigrid = std::make_shared<Multigrid<Vector<double>>>(mg_matrix_wrapper,
+                                                          *mg_coarse_grid,
+                                                          mg_transfer,
+                                                          *mg_smoother_pre,
+                                                          *mg_smoother_post,
+                                                          mg_level_min,
+                                                          mg_level_max);
 }
 
 
@@ -990,22 +1047,6 @@ ModelProblem<dim, fe_degree_p>::solve()
     return;
   }
 
-  // ReductionControl solver_control;
-  // solver_control.set_max_steps(rt_parameters.solver.n_iterations_max);
-  // solver_control.set_reduction(rt_parameters.solver.rel_tolerance);
-  // solver_control.set_tolerance(rt_parameters.solver.abs_tolerance);
-  // solver_control.log_history(true);
-  // solver_control.log_result(true);
-  // solver_control.enable_history_data();
-  // // // Here we must make sure to solve for the residual with "good enough"
-  // // // accuracy
-  // // SolverControl solver_control(system_matrix.m(), 1e-10 * system_rhs.l2_norm());
-  // unsigned int n_iterations_A;
-  // unsigned int n_iterations_S;
-
-
-  // SolverFGMRES<BlockVector<double>> solver(solver_control);
-
   // This is used to pass whether or not we want to solve for A inside
   // the preconditioner.  One could change this to false to see if
   // there is still convergence and if so does the program then run
@@ -1029,43 +1070,17 @@ ModelProblem<dim, fe_degree_p>::solve()
 
   else if(rt_parameters.solver.variant == "FGMRES_GMG")
   {
-    // Transfer operators between levels
-    MGTransferPrebuilt<Vector<double>> mg_transfer(*mg_constrained_dofs);
-    mg_transfer.build(dof_handler_velocity);
-
-    // Setup coarse grid solver
-    FullMatrix<double> coarse_matrix;
-    coarse_matrix.copy_from(mg_matrices[0]);
-    MGCoarseGridHouseholder<double, Vector<double>> coarse_grid_solver;
-    coarse_grid_solver.initialize(coarse_matrix);
-
-    using Smoother = PreconditionSOR<SparseMatrix<double>>;
-    mg::SmootherRelaxation<Smoother, Vector<double>> mg_smoother;
-    mg_smoother.initialize(mg_matrices);
-    mg_smoother.set_steps(2);
-
-    // Multigrid, when used as a preconditioner for CG, needs to be a
-    // symmetric operator, so the smoother must be symmetric
-    mg_smoother.set_symmetric(true);
-
-    mg::Matrix<Vector<double>> mg_matrix(mg_matrices);
-
-    // Now, we are ready to set up the V-cycle operator and the multilevel
-    // preconditioner.
-    Multigrid<Vector<double>> mg(
-      mg_matrix, coarse_grid_solver, mg_transfer, mg_smoother, mg_smoother);
-
-    PreconditionMG<dim, Vector<double>, MGTransferPrebuilt<Vector<double>>> A_Multigrid(
-      dof_handler_velocity, mg, mg_transfer);
+    auto & A_preconditioner = prepare_preconditioner_mg();
 
     SparseILU<double> S_preconditioner;
     S_preconditioner.initialize(pressure_mass_matrix, SparseILU<double>::AdditionalData());
 
     const BlockSchurPreconditioner<
-      PreconditionMG<dim, Vector<double>, MGTransferPrebuilt<Vector<double>>>,
+      /*PreconditionMG<dim, Vector<double>, MGTransferPrebuilt<Vector<double>>>*/
+      GMG_PRECONDITIONER,
       SparseILU<double>>
       preconditioner(
-        system_matrix, pressure_mass_matrix, A_Multigrid, S_preconditioner, use_expensive);
+        system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner, use_expensive);
 
     iterative_solve_impl(preconditioner, "fgmres");
     *pcout << preconditioner.get_summary() << std::endl;
@@ -1132,9 +1147,7 @@ ModelProblem<dim, fe_degree_p>::compute_errors()
 }
 
 
-// @sect4{ModelProblem::output_results}
 
-// This function generates graphical output like it is done in step-22.
 template<int dim, int fe_degree_p>
 void
 ModelProblem<dim, fe_degree_p>::output_results(const unsigned int refinement_cycle) const
