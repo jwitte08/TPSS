@@ -161,5 +161,85 @@ struct CellOperation : public CellOperationBase<dim, fe_degree, n_q_points_1d, N
 } // namespace L2
 } // namespace FD
 
+namespace MW
+{
+template<int dim, bool is_multigrid>
+struct IteratorSelector
+{
+  // static_assert(false, "No specialization has been found.");
+};
+
+template<int dim>
+struct IteratorSelector<dim, false>
+{
+  using type = typename DoFHandler<dim>::active_cell_iterator;
+};
+
+template<int dim>
+struct IteratorSelector<dim, true>
+{
+  using type = typename DoFHandler<dim>::level_cell_iterator;
+};
+
+
+
+template<int dim>
+struct ScratchData
+{
+  ScratchData(const Mapping<dim> &       mapping,
+              const FiniteElement<dim> & fe,
+              const unsigned int         quadrature_degree,
+              const UpdateFlags          update_flags,
+              const UpdateFlags          interface_update_flags)
+    : fe_values(mapping, fe, QGauss<dim>(quadrature_degree), update_flags),
+      fe_interface_values(mapping, fe, QGauss<dim - 1>(quadrature_degree), interface_update_flags)
+  {
+  }
+
+  ScratchData(const ScratchData<dim> & scratch_data)
+    : fe_values(scratch_data.fe_values.get_mapping(),
+                scratch_data.fe_values.get_fe(),
+                scratch_data.fe_values.get_quadrature(),
+                scratch_data.fe_values.get_update_flags()),
+      fe_interface_values(scratch_data.fe_values.get_mapping(),
+                          scratch_data.fe_values.get_fe(),
+                          scratch_data.fe_interface_values.get_quadrature(),
+                          scratch_data.fe_interface_values.get_update_flags())
+  {
+  }
+
+  FEValues<dim>          fe_values;
+  FEInterfaceValues<dim> fe_interface_values;
+};
+
+
+
+struct CopyData
+{
+  struct FaceData
+  {
+    FullMatrix<double>                   cell_matrix;
+    std::vector<types::global_dof_index> joint_dof_indices;
+    Vector<double>                       cell_rhs;
+  };
+
+  CopyData(const unsigned int dofs_per_cell,
+           const unsigned int level_in = numbers::invalid_unsigned_int)
+    : level(level_in),
+      cell_matrix(dofs_per_cell, dofs_per_cell),
+      cell_rhs(dofs_per_cell),
+      local_dof_indices(dofs_per_cell)
+  {
+  }
+
+  CopyData(const CopyData &) = default;
+
+  unsigned int                         level;
+  FullMatrix<double>                   cell_matrix;
+  Vector<double>                       cell_rhs;
+  std::vector<types::global_dof_index> local_dof_indices;
+  std::vector<FaceData>                face_data;
+};
+} // namespace MW
 
 #endif /* APPS_COMMONINTEGRATOR_H_ */
