@@ -58,72 +58,14 @@ compute_penalty_impl(const int degree, const Number h_left, const Number h_right
 
 namespace MW
 {
-template<int dim>
-struct ScratchData
-{
-  ScratchData(const Mapping<dim> &       mapping,
-              const FiniteElement<dim> & fe,
-              const unsigned int         quadrature_degree,
-              const UpdateFlags          update_flags,
-              const UpdateFlags          interface_update_flags)
-    : fe_values(mapping, fe, QGauss<dim>(quadrature_degree), update_flags),
-      fe_interface_values(mapping, fe, QGauss<dim - 1>(quadrature_degree), interface_update_flags)
-  {
-  }
+using ::MW::ScratchData;
 
-  ScratchData(const ScratchData<dim> & scratch_data)
-    : fe_values(scratch_data.fe_values.get_mapping(),
-                scratch_data.fe_values.get_fe(),
-                scratch_data.fe_values.get_quadrature(),
-                scratch_data.fe_values.get_update_flags()),
-      fe_interface_values(scratch_data.fe_values.get_mapping(),
-                          scratch_data.fe_values.get_fe(),
-                          scratch_data.fe_interface_values.get_quadrature(),
-                          scratch_data.fe_interface_values.get_update_flags())
-  {
-  }
-
-  FEValues<dim>          fe_values;
-  FEInterfaceValues<dim> fe_interface_values;
-};
-
-
-
-struct CopyData
-{
-  struct FaceData
-  {
-    FullMatrix<double>                   cell_matrix;
-    std::vector<types::global_dof_index> joint_dof_indices;
-    Vector<double>                       cell_rhs;
-  };
-
-  CopyData(const unsigned int dofs_per_cell,
-           const unsigned int level_in = numbers::invalid_unsigned_int)
-    : level(level_in),
-      cell_matrix(dofs_per_cell, dofs_per_cell),
-      cell_rhs(dofs_per_cell),
-      local_dof_indices(dofs_per_cell)
-  {
-  }
-
-  CopyData(const CopyData &) = default;
-
-  unsigned int                         level;
-  FullMatrix<double>                   cell_matrix;
-  Vector<double>                       cell_rhs;
-  std::vector<types::global_dof_index> local_dof_indices;
-  std::vector<FaceData>                face_data;
-};
-
-
-
-using Biharmonic::C0IP::MW::IteratorSelector;
+using ::MW::CopyData;
 
 template<int dim, bool is_multigrid = false>
 struct MatrixIntegrator
 {
-  using IteratorType = typename IteratorSelector<dim, is_multigrid>::type;
+  using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
 
   MatrixIntegrator(const Function<dim> *  load_function_in,
                    const Function<dim> *  analytical_solution_in,
@@ -520,6 +462,108 @@ public:
 } // end namespace SIPG
 
 } // namespace Velocity
+
+
+
+namespace VelocityPressure
+{
+namespace MW
+{
+using ::MW::ScratchData;
+
+using ::MW::CopyData;
+
+template<int dim, bool is_multigrid = false>
+struct MatrixIntegrator
+{
+  using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
+
+  MatrixIntegrator(const Function<dim> *       load_function_in,
+                   const Function<dim> *       analytical_solution_in,
+                   const BlockVector<double> * particular_solution,
+                   const EquationData &        equation_data_in)
+    : load_function(load_function_in),
+      analytical_solution(analytical_solution_in),
+      discrete_solution(particular_solution),
+      equation_data(equation_data_in)
+  {
+  }
+
+  void
+  cell_worker(const IteratorType & cell,
+              ScratchData<dim> &   scratch_data,
+              CopyData &           copy_data) const
+  {
+    copy_data.cell_matrix = 0.;
+    copy_data.cell_rhs    = 0.;
+
+    FEValues<dim> & fe_values = scratch_data.fe_values;
+    fe_values.reinit(cell);
+    cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
+    const auto &       fe            = fe_values.get_fe();
+    const unsigned int dofs_per_cell = fe.dofs_per_cell;
+    const unsigned int n_q_points    = fe_values.n_quadrature_points;
+
+    std::vector<Vector<double>> rhs_values(n_q_points, Vector<double>(dim + 1));
+
+    const FEValuesExtractors::Vector velocities(0);
+    const FEValuesExtractors::Scalar pressure(dim);
+
+    std::vector<SymmetricTensor<2, dim>> symgrad_phi_u(dofs_per_cell);
+    std::vector<double>                  div_phi_u(dofs_per_cell);
+    std::vector<double>                  phi_p(dofs_per_cell);
+
+    load_function->vector_value_list(fe_values.get_quadrature_points(), rhs_values);
+
+    for(unsigned int q = 0; q < n_q_points; ++q)
+    {
+      for(unsigned int k = 0; k < dofs_per_cell; ++k)
+      {
+        symgrad_phi_u[k] = fe_values[velocities].symmetric_gradient(k, q);
+        div_phi_u[k]     = fe_values[velocities].divergence(k, q);
+        phi_p[k]         = fe_values[pressure].value(k, q);
+      }
+
+      for(unsigned int i = 0; i < dofs_per_cell; ++i)
+      {
+        for(unsigned int j = 0; j <= i; ++j)
+        {
+          copy_data.cell_matrix(i, j) +=
+            (2 * (symgrad_phi_u[i] * symgrad_phi_u[j]) - div_phi_u[i] * phi_p[j] -
+             phi_p[i] * div_phi_u[j] +
+             (equation_data.assemble_pressure_mass_matrix ? phi_p[i] * phi_p[j] : 0)) *
+            fe_values.JxW(q);
+        }
+
+        const unsigned int component_i = fe.system_to_component_index(i).first;
+        copy_data.cell_rhs(i) +=
+          fe_values.shape_value(i, q) * rhs_values[q](component_i) * fe_values.JxW(q);
+      }
+    }
+
+    for(unsigned int i = 0; i < dofs_per_cell; ++i)
+      for(unsigned int j = i + 1; j < dofs_per_cell; ++j)
+        copy_data.cell_matrix(i, j) = copy_data.cell_matrix(j, i);
+
+    if(discrete_solution)
+    {
+      Vector<double> u0(copy_data.local_dof_indices.size());
+      for(auto i = 0U; i < u0.size(); ++i)
+        u0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
+      Vector<double> w0(copy_data.local_dof_indices.size());
+      copy_data.cell_matrix.vmult(w0, u0);
+      copy_data.cell_rhs -= w0;
+    }
+  }
+
+  const Function<dim> *       load_function;
+  const Function<dim> *       analytical_solution;
+  const BlockVector<double> * discrete_solution;
+  const EquationData          equation_data;
+};
+} // namespace MW
+
+} // namespace VelocityPressure
 
 } // namespace Stokes
 

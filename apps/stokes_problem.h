@@ -276,13 +276,7 @@ BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
 
 
 
-using Velocity::SIPG::MW::ScratchData;
-
-using Velocity::SIPG::MW::CopyData;
-
-
-
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout = TPSS::DoFLayout::Q>
 class ModelProblem
 {
   static_assert(dim == 2, "only 2D");
@@ -377,10 +371,17 @@ public:
   {
     *pcout << equation_data.to_string();
     *pcout << std::endl;
-    print_parameter("Finite element:", fe.get_name());
+    print_parameter("Finite element:", fe->get_name());
     print_parameter("Finite element (velocity):", fe_velocity->get_name());
     *pcout << rt_parameters.to_string();
     *pcout << std::endl;
+  }
+
+  void
+  set_finite_elements(const std::shared_ptr<FiniteElement<dim>> fe_velocity_in)
+  {
+    fe_velocity = fe_velocity_in;
+    generate_fe(*fe_velocity_in);
   }
 
   std::shared_ptr<ConditionalOStream> pcout;
@@ -394,11 +395,11 @@ public:
   Triangulation<dim>                  triangulation;
   MappingQ<dim>                       mapping;
   std::shared_ptr<FiniteElement<dim>> fe_velocity;
-  FESystem<dim>                       fe;
+  std::shared_ptr<FiniteElement<dim>> fe;
   DoFHandler<dim>                     dof_handler;
   DoFHandler<dim>                     dof_handler_velocity;
 
-  AffineConstraints<double> constraints;
+  AffineConstraints<double> zero_constraints;
   AffineConstraints<double> constraints_velocity;
 
   BlockSparsityPattern                         sparsity_pattern;
@@ -408,14 +409,10 @@ public:
   SparseMatrix<double>                         system_matrix_velocity;
 
   BlockVector<double> system_solution;
+  BlockVector<double> system_delta_x;
   BlockVector<double> system_rhs;
 
-  //: multigrid (old)
-  // MGLevelObject<SparsityPattern>      mg_sparsity_patterns;
-  // MGLevelObject<SparseMatrix<double>> mg_matrices;
-  // MGConstrainedDoFs                   mg_constrained_dofs;
-
-  //: multigrid (TODO)
+  //: multigrid
   std::shared_ptr<MGConstrainedDoFs> mg_constrained_dofs;
   MG_TRANSFER                        mg_transfer;
   MGLevelObject<SparsityPattern>     mg_sparsity_patterns;
@@ -436,11 +433,36 @@ public:
   std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
 
 private:
-  template<typename IteratorType, bool is_multigrid = false>
-  void
-  cell_worker_impl(const IteratorType & cell,
-                   ScratchData<dim> &   scratch_data,
-                   CopyData &           copy_data) const;
+  std::shared_ptr<FiniteElement<dim>>
+  generate_fe(const FiniteElement<dim> & fe_velocity)
+  {
+    return std::make_shared<FESystem<dim>>(
+      fe_velocity,
+      1,
+      fe_degree_p == 0 ? static_cast<const FiniteElement<dim> &>(FE_DGQ<dim>(0)) :
+                         static_cast<const FiniteElement<dim> &>(FE_Q<dim>(fe_degree_p)),
+      1);
+  }
+
+  bool
+  check_finite_elements() const
+  {
+    //: check fe
+    AssertDimension(fe->n_base_elements(), 2); // velocity + pressure
+    const auto & fe_v = fe->base_element(0);
+    AssertDimension(fe_v.n_components(), dim);          // velocity
+    AssertDimension(fe_v.element_multiplicity(0), dim); // dim times FE_Q
+    AssertThrow(TPSS::get_dof_layout(fe_v.base_element(0)) == dof_layout,
+                ExcMessage("velocity part of fe and dof_layout are incompatible."));
+    const auto & fe_p = fe->base_element(1);
+    AssertDimension(fe_p.n_components(), 1); // pressure
+
+    //: check fe_velocity
+    AssertThrow(TPSS::get_dof_layout(fe_velocity->base_element(0)) == dof_layout,
+                ExcMessage("fe_velocity and dof_layout are incompatible."));
+
+    return true;
+  }
 
   template<typename PreconditionerType>
   void
@@ -452,9 +474,9 @@ private:
 
 
 
-template<int dim, int fe_degree_p>
-ModelProblem<dim, fe_degree_p>::ModelProblem(const RT::Parameter & rt_parameters_in,
-                                             const EquationData &  equation_data_in)
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+ModelProblem<dim, fe_degree_p, dof_layout>::ModelProblem(const RT::Parameter & rt_parameters_in,
+                                                         const EquationData &  equation_data_in)
   : pcout(
       std::make_shared<ConditionalOStream>(std::cout,
                                            Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
@@ -465,23 +487,24 @@ ModelProblem<dim, fe_degree_p>::ModelProblem(const RT::Parameter & rt_parameters
     triangulation(Triangulation<dim>::maximum_smoothing),
     mapping(1),
     // Finite element for the velocity only:
-    fe_velocity(std::make_shared<FESystem<dim>>(FE_Q<dim>(fe_degree_p + 1), dim)),
+    fe_velocity(dof_layout == TPSS::DoFLayout::DGQ ?
+                  std::make_shared<FESystem<dim>>(FE_DGQ<dim>(fe_degree_p + 1), dim) :
+                  std::make_shared<FESystem<dim>>(FE_Q<dim>(fe_degree_p + 1), dim)),
     // Finite element for the whole system:
-    fe(*fe_velocity,
-       1,
-       fe_degree_p == 0 ? static_cast<const FiniteElement<dim> &>(FE_DGQ<dim>(0)) :
-                          static_cast<const FiniteElement<dim> &>(FE_Q<dim>(fe_degree_p)),
-       1),
+    fe(generate_fe(*fe_velocity)),
     dof_handler(triangulation),
     dof_handler_velocity(triangulation)
 {
+  Assert(check_finite_elements(), ExcMessage("Check default finite elements and dof_layout."));
+  equation_data.assemble_pressure_mass_matrix =
+    (rt_parameters.solver.variant == "UMFPACK") ? false : true;
 }
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 bool
-ModelProblem<dim, fe_degree_p>::make_grid()
+ModelProblem<dim, fe_degree_p, dof_layout>::make_grid()
 {
   make_grid_impl(rt_parameters.mesh);
   return true;
@@ -489,20 +512,20 @@ ModelProblem<dim, fe_degree_p>::make_grid()
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 bool
-ModelProblem<dim, fe_degree_p>::make_grid(const unsigned int n_refinements)
+ModelProblem<dim, fe_degree_p, dof_layout>::make_grid(const unsigned int n_refinements)
 {
   MeshParameter mesh_prms = rt_parameters.mesh;
   mesh_prms.n_refinements = n_refinements;
 
   //: estimate number of dofs (velocity + pressure)
-  AssertDimension(fe.n_base_elements(), 2); // velocity + pressure
-  const auto & fe_v = fe.base_element(0);
+  AssertDimension(fe->n_base_elements(), 2); // velocity + pressure
+  const auto & fe_v = fe->base_element(0);
   AssertDimension(fe_v.n_components(), dim);          // velocity
   AssertDimension(fe_v.element_multiplicity(0), dim); // dim times FE_Q
   const auto   n_dofs_est_v = dim * estimate_n_dofs(fe_v.base_element(0), mesh_prms);
-  const auto & fe_p         = fe.base_element(1);
+  const auto & fe_p         = fe->base_element(1);
   AssertDimension(fe_p.n_components(), 1); // pressure
   const auto n_dofs_est_p = estimate_n_dofs(fe_p, mesh_prms);
   const auto n_dofs_est   = n_dofs_est_v + n_dofs_est_p;
@@ -515,9 +538,9 @@ ModelProblem<dim, fe_degree_p>::make_grid(const unsigned int n_refinements)
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree_p>::make_grid_impl(const MeshParameter & mesh_prms)
+ModelProblem<dim, fe_degree_p, dof_layout>::make_grid_impl(const MeshParameter & mesh_prms)
 {
   triangulation.clear();
   *pcout << create_mesh(triangulation, mesh_prms) << std::endl;
@@ -527,10 +550,13 @@ ModelProblem<dim, fe_degree_p>::make_grid_impl(const MeshParameter & mesh_prms)
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree_p>::setup_system_velocity()
+ModelProblem<dim, fe_degree_p, dof_layout>::setup_system_velocity()
 {
+  Assert(check_finite_elements(),
+         ExcMessage("Does the choice of finite elements suit the dof_layout?"));
+
   system_matrix_velocity.clear();
   dof_handler_velocity.initialize(triangulation, *fe_velocity);
   dof_handler_velocity.distribute_mg_dofs();
@@ -555,14 +581,17 @@ ModelProblem<dim, fe_degree_p>::setup_system_velocity()
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree_p>::setup_system()
+ModelProblem<dim, fe_degree_p, dof_layout>::setup_system()
 {
+  Assert(check_finite_elements(),
+         ExcMessage("Does the choice of finite elements suit the dof_layout?"));
+
   system_matrix.clear();
   pressure_mass_matrix.clear();
 
-  dof_handler.distribute_dofs(fe);
+  dof_handler.initialize(triangulation, *fe);
 
   // ILU behaves better if we apply a reordering to reduce fillin. There
   // is no advantage in doing this for the other solvers.
@@ -577,7 +606,6 @@ ModelProblem<dim, fe_degree_p>::setup_system()
   // dof_handler and dof_handler_velocity.
   DoFRenumbering::block_wise(dof_handler);
 
-  // if(rt_parameters.solver.variant == "FGMRES_GMG") // TODO !!!
   setup_system_velocity();
 
   std::vector<unsigned int>                  block_component{0U, 1U};
@@ -587,28 +615,38 @@ ModelProblem<dim, fe_degree_p>::setup_system()
   const unsigned int n_p = dofs_per_block[1];
 
   {
-    constraints.clear();
-    DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+    zero_constraints.clear();
+    DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
     const FEValuesExtractors::Vector velocities(0);
     for(const auto boundary_id : equation_data.dirichlet_boundary_ids)
-      VectorTools::interpolate_boundary_values(
-        dof_handler, boundary_id, *analytical_solution, constraints, fe.component_mask(velocities));
+      DoFTools::make_zero_boundary_constraints(dof_handler,
+                                               boundary_id,
+                                               zero_constraints,
+                                               fe->component_mask(velocities));
+    // for(const auto boundary_id : equation_data.dirichlet_boundary_ids)
+    //       VectorTools::interpolate_boundary_values(dof_handler,
+    //                                                boundary_id,
+    //                                                *analytical_solution,
+    //                                                constraints,
+    //                                               fe->component_mask(velocities));
 
     // As discussed in the introduction, we need to fix one degree of freedom
     // of the pressure variable to ensure solvability of the problem. We do
     // this here by marking the first pressure dof, which has index n_u as a
     // constrained dof.
     if(rt_parameters.solver.variant == "UMFPACK")
-      constraints.add_line(n_u);
+      zero_constraints.add_line(n_u);
 
-    constraints.close();
+    zero_constraints.close();
   }
 
-  BlockDynamicSparsityPattern csp(dofs_per_block, dofs_per_block);
-  DoFTools::make_sparsity_pattern(dof_handler, csp, constraints, false);
-  sparsity_pattern.copy_from(csp);
+  BlockDynamicSparsityPattern dsp(dofs_per_block, dofs_per_block);
+  DoFTools::make_sparsity_pattern(dof_handler, dsp, zero_constraints, false);
+  sparsity_pattern.copy_from(dsp);
   system_matrix.reinit(sparsity_pattern);
   system_solution.reinit(dofs_per_block);
+  constraints_velocity.distribute(system_solution.block(0)); // particular velocity solution!
+  system_delta_x.reinit(dofs_per_block);
   system_rhs.reinit(dofs_per_block);
 
   print_parameter("Number of degrees of freedom (velocity):", n_u);
@@ -620,89 +658,35 @@ ModelProblem<dim, fe_degree_p>::setup_system()
 
 
 
-template<int dim, int fe_degree_p>
-template<typename IteratorType, bool is_multigrid>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree_p>::cell_worker_impl(const IteratorType & cell,
-                                                 ScratchData<dim> &   scratch_data,
-                                                 CopyData &           copy_data) const
+ModelProblem<dim, fe_degree_p, dof_layout>::assemble_system()
 {
-  // If true, we will assemble the pressure mass matrix in the (1,1) block:
-  const bool assemble_pressure_mass_matrix =
-    (rt_parameters.solver.variant == "UMFPACK") ? false : true;
+  using VelocityPressure::MW::CopyData;
+  using VelocityPressure::MW::ScratchData;
+  using MatrixIntegrator = VelocityPressure::MW::MatrixIntegrator<dim, /*is_multigrid*/ false>;
+  MatrixIntegrator matrix_integrator(load_function.get(),
+                                     analytical_solution.get(),
+                                     &system_solution,
+                                     equation_data);
 
-  copy_data.cell_matrix = 0.;
-  copy_data.cell_rhs    = 0.;
-
-  FEValues<dim> & fe_values = scratch_data.fe_values;
-  fe_values.reinit(cell);
-  cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
-  const unsigned int dofs_per_cell = fe_values.get_fe().dofs_per_cell;
-  const unsigned int n_q_points    = fe_values.n_quadrature_points;
-
-  std::vector<Vector<double>> rhs_values(n_q_points, Vector<double>(dim + 1));
-
-  const FEValuesExtractors::Vector velocities(0);
-  const FEValuesExtractors::Scalar pressure(dim);
-
-  std::vector<SymmetricTensor<2, dim>> symgrad_phi_u(dofs_per_cell);
-  std::vector<double>                  div_phi_u(dofs_per_cell);
-  std::vector<double>                  phi_p(dofs_per_cell);
-
-  load_function->vector_value_list(fe_values.get_quadrature_points(), rhs_values);
-
-  for(unsigned int q = 0; q < n_q_points; ++q)
-  {
-    for(unsigned int k = 0; k < dofs_per_cell; ++k)
-    {
-      symgrad_phi_u[k] = fe_values[velocities].symmetric_gradient(k, q);
-      div_phi_u[k]     = fe_values[velocities].divergence(k, q);
-      phi_p[k]         = fe_values[pressure].value(k, q);
-    }
-
-    for(unsigned int i = 0; i < dofs_per_cell; ++i)
-    {
-      for(unsigned int j = 0; j <= i; ++j)
-      {
-        copy_data.cell_matrix(i, j) +=
-          (2 * (symgrad_phi_u[i] * symgrad_phi_u[j]) - div_phi_u[i] * phi_p[j] -
-           phi_p[i] * div_phi_u[j] + (assemble_pressure_mass_matrix ? phi_p[i] * phi_p[j] : 0)) *
-          fe_values.JxW(q);
-      }
-
-      const unsigned int component_i = fe.system_to_component_index(i).first;
-      copy_data.cell_rhs(i) +=
-        fe_values.shape_value(i, q) * rhs_values[q](component_i) * fe_values.JxW(q);
-    }
-  }
-
-  for(unsigned int i = 0; i < dofs_per_cell; ++i)
-    for(unsigned int j = i + 1; j < dofs_per_cell; ++j)
-      copy_data.cell_matrix(i, j) = copy_data.cell_matrix(j, i);
-}
-
-
-
-template<int dim, int fe_degree_p>
-void
-ModelProblem<dim, fe_degree_p>::assemble_system()
-{
   auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-    cell_worker_impl(cell, scratch_data, copy_data);
+    matrix_integrator.cell_worker(cell, scratch_data, copy_data);
   };
 
   const auto copier = [&](const CopyData & copy_data) {
-    constraints.template distribute_local_to_global<BlockSparseMatrix<double>, BlockVector<double>>(
-      copy_data.cell_matrix,
-      copy_data.cell_rhs,
-      copy_data.local_dof_indices,
-      system_matrix,
-      system_rhs);
+    zero_constraints
+      .template distribute_local_to_global<BlockSparseMatrix<double>, BlockVector<double>>(
+        copy_data.cell_matrix,
+        copy_data.cell_rhs,
+        copy_data.local_dof_indices,
+        system_matrix,
+        system_rhs);
   };
 
   const unsigned int n_gauss_points = fe_degree_p + 2;
   ScratchData<dim>   scratch_data(mapping,
-                                fe,
+                                *fe,
                                 n_gauss_points,
                                 update_values | update_gradients | update_quadrature_points |
                                   update_JxW_values,
@@ -730,14 +714,14 @@ ModelProblem<dim, fe_degree_p>::assemble_system()
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree_p>::assemble_system_velocity()
+ModelProblem<dim, fe_degree_p, dof_layout>::assemble_system_velocity()
 {
-  Velocity::SIPG::MW::MatrixIntegrator<dim, false> matrix_integrator(nullptr,
-                                                                     nullptr,
-                                                                     nullptr,
-                                                                     equation_data);
+  using Velocity::SIPG::MW::CopyData;
+  using Velocity::SIPG::MW::ScratchData;
+  using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, false>;
+  MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
 
   auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
     matrix_integrator.cell_worker(cell, scratch_data, copy_data);
@@ -795,9 +779,9 @@ ModelProblem<dim, fe_degree_p>::assemble_system_velocity()
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
+ModelProblem<dim, fe_degree_p, dof_layout>::prepare_schwarz_smoothers()
 {
   Assert(rt_parameters.multigrid.pre_smoother.variant ==
            SmootherParameter::SmootherVariant::Schwarz,
@@ -830,9 +814,9 @@ ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree_p>::prepare_multigrid_velocity()
+ModelProblem<dim, fe_degree_p, dof_layout>::prepare_multigrid_velocity()
 {
   // *** clear multigrid infrastructure
   multigrid.reset();
@@ -937,14 +921,16 @@ ModelProblem<dim, fe_degree_p>::prepare_multigrid_velocity()
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree_p>::assemble_multigrid_velocity()
+ModelProblem<dim, fe_degree_p, dof_layout>::assemble_multigrid_velocity()
 {
   AssertDimension(mg_matrices.max_level(), max_level());
   AssertDimension(mg_matrices.min_level(), rt_parameters.multigrid.coarse_level);
   Assert(mg_constrained_dofs, ExcMessage("mg_constrained_dofs is uninitialized."));
 
+  using Velocity::SIPG::MW::CopyData;
+  using Velocity::SIPG::MW::ScratchData;
   using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
   using LevelCellIterator = typename MatrixIntegrator::IteratorType;
   MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
@@ -999,11 +985,12 @@ ModelProblem<dim, fe_degree_p>::assemble_multigrid_velocity()
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 template<typename PreconditionerType>
 void
-ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & preconditioner,
-                                                   const std::string          solver_variant)
+ModelProblem<dim, fe_degree_p, dof_layout>::iterative_solve_impl(
+  const PreconditionerType & preconditioner,
+  const std::string          solver_variant)
 {
   ReductionControl solver_control;
   solver_control.set_max_steps(rt_parameters.solver.n_iterations_max);
@@ -1017,10 +1004,10 @@ ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & pr
   iterative_solver.set_control(solver_control);
   iterative_solver.select(solver_variant);
   iterative_solver.solve<BlockSparseMatrix<double>, PreconditionerType>(system_matrix,
-                                                                        system_solution,
+                                                                        system_delta_x,
                                                                         system_rhs,
                                                                         preconditioner);
-  // system_u += system_delta_u;
+  system_solution += system_delta_x;
 
   const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
   pp_data.average_reduction_system.push_back(reduction_rate);
@@ -1031,18 +1018,18 @@ ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & pr
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree_p>::solve()
+ModelProblem<dim, fe_degree_p, dof_layout>::solve()
 {
-  constraints.set_zero(system_solution);
+  // constraints.set_zero(system_solution);
 
   if(rt_parameters.solver.variant == "UMFPACK")
   {
     SparseDirectUMFPACK A_direct;
     A_direct.template initialize<BlockSparseMatrix<double>>(system_matrix);
-    A_direct.vmult(system_solution, system_rhs);
-    constraints.distribute(system_solution);
+    A_direct.vmult(system_delta_x, system_rhs);
+    system_solution += system_delta_x;
 
     pp_data.average_reduction_system.push_back(0.);
     pp_data.n_iterations_system.push_back(0.);
@@ -1059,6 +1046,8 @@ ModelProblem<dim, fe_degree_p>::solve()
 
   if(rt_parameters.solver.variant == "FGMRES_ILU")
   {
+    AssertThrow(false, ExcMessage("This method seems to be broken..."));
+
     SparseILU<double> A_preconditioner;
     A_preconditioner.initialize(system_matrix.block(0, 0));
 
@@ -1087,27 +1076,27 @@ ModelProblem<dim, fe_degree_p>::solve()
         system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner, use_expensive);
 
     iterative_solve_impl(preconditioner, "fgmres");
-    *pcout << preconditioner.get_summary() << std::endl;
+    *pcout << preconditioner.get_summary();
   }
 
   else
     AssertThrow(false, ExcMessage("Please, choose a valid solver variant."));
 
   // *** Post processing
-  constraints.distribute(system_solution);
-
   const double mean_pressure = VectorTools::compute_mean_value(dof_handler,
                                                                QGauss<dim>(fe_degree_p + 2),
                                                                system_solution,
                                                                dim);
   system_solution.block(1).add(-mean_pressure);
+  print_parameter("Mean of pressure corrected by:", -mean_pressure);
+  *pcout << std::endl;
 }
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree_p>::compute_errors()
+ModelProblem<dim, fe_degree_p, dof_layout>::compute_errors()
 {
   const ComponentSelectFunction<dim> pressure_mask(dim, dim + 1);
   const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
@@ -1152,9 +1141,10 @@ ModelProblem<dim, fe_degree_p>::compute_errors()
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree_p>::output_results(const unsigned int refinement_cycle) const
+ModelProblem<dim, fe_degree_p, dof_layout>::output_results(
+  const unsigned int refinement_cycle) const
 {
   std::vector<std::string> solution_names(dim, "velocity");
   solution_names.emplace_back("pressure");
@@ -1177,9 +1167,9 @@ ModelProblem<dim, fe_degree_p>::output_results(const unsigned int refinement_cyc
 
 
 
-template<int dim, int fe_degree_p>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
-ModelProblem<dim, fe_degree_p>::run()
+ModelProblem<dim, fe_degree_p, dof_layout>::run()
 {
   print_informations();
 

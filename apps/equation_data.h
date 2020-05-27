@@ -665,11 +665,14 @@ struct EquationData
     std::ostringstream oss;
     oss << Util::parameter_to_fstring("Equation Data:", "");
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
+    oss << Util::parameter_to_fstring("Assemble pressure mass matrix?:",
+                                      assemble_pressure_mass_matrix);
     return oss.str();
   }
 
-  std::set<types::boundary_id> dirichlet_boundary_ids = {0};
-  double                       ip_factor              = 1.;
+  std::set<types::boundary_id> dirichlet_boundary_ids        = {0};
+  double                       ip_factor                     = 1.;
+  bool                         assemble_pressure_mass_matrix = false;
 };
 
 

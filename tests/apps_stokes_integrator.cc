@@ -25,11 +25,10 @@ template<typename T>
 class TestStokesIntegrator : public testing::Test
 {
 protected:
-  static constexpr int dim                 = T::template value<0>();
-  static constexpr int fe_degree_p         = T::template value<1>();
-  static constexpr int fe_degree_v         = fe_degree_p + 1;
-  using StokesProblem                      = ModelProblem<dim, fe_degree_p>;
-  static constexpr unsigned int macro_size = VectorizedArray<double>::size();
+  static constexpr int          dim         = T::template value<0>();
+  static constexpr int          fe_degree_p = T::template value<1>();
+  static constexpr int          fe_degree_v = fe_degree_p + 1;
+  static constexpr unsigned int macro_size  = VectorizedArray<double>::size();
 
 
   void
@@ -61,9 +60,10 @@ protected:
   {
     *pcout_owned << "//////////   STOKES PROBLEM" << std::endl;
     EquationData equation_data;
-    auto         new_problem = std::make_shared<StokesProblem>(rt_parameters, equation_data);
-    new_problem->fe_velocity = std::make_shared<FESystem<dim>>(FE_DGQ<dim>(fe_degree_p + 1), dim);
-    new_problem->pcout       = pcout_owned;
+    using StokesProblem = ModelProblem<dim, fe_degree_p, TPSS::DoFLayout::DGQ>;
+    std::shared_ptr<const StokesProblem> stokes_problem;
+    auto new_problem   = std::make_shared<StokesProblem>(rt_parameters, equation_data);
+    new_problem->pcout = pcout_owned;
     new_problem->make_grid();
     new_problem->setup_system_velocity();
     new_problem->assemble_system_velocity();
@@ -96,8 +96,10 @@ protected:
   {
     EquationData equation_data;
     rt_parameters.solver.variant = "FGMRES_GMG";
-    auto new_problem             = std::make_shared<StokesProblem>(rt_parameters, equation_data);
-    new_problem->pcout           = pcout_owned;
+    using StokesProblem          = ModelProblem<dim, fe_degree_p, TPSS::DoFLayout::Q>;
+    std::shared_ptr<const StokesProblem> stokes_problem;
+    auto new_problem   = std::make_shared<StokesProblem>(rt_parameters, equation_data);
+    new_problem->pcout = pcout_owned;
     new_problem->make_grid();
     new_problem->setup_system_velocity();
     new_problem->prepare_multigrid_velocity();
@@ -167,7 +169,6 @@ protected:
   std::shared_ptr<ConditionalOStream> pcout_owned;
 
   RT::Parameter                                  rt_parameters;
-  std::shared_ptr<const StokesProblem>           stokes_problem;
   std::shared_ptr<const MatrixFree<dim, double>> mf_storage;
   std::shared_ptr<SubdomainHandler<dim, double>> subdomain_handler;
 };
