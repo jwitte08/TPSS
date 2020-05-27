@@ -623,12 +623,17 @@ ModelProblem<dim, fe_degree_p, dof_layout>::setup_system()
                                                boundary_id,
                                                zero_constraints,
                                                fe->component_mask(velocities));
-    // for(const auto boundary_id : equation_data.dirichlet_boundary_ids)
-    //       VectorTools::interpolate_boundary_values(dof_handler,
-    //                                                boundary_id,
-    //                                                *analytical_solution,
-    //                                                constraints,
-    //                                               fe->component_mask(velocities));
+    if(rt_parameters.solver.variant == "FGMRES_ILU") // inhomog. constraints !
+    {
+      zero_constraints.close();
+      zero_constraints.clear();
+      for(const auto boundary_id : equation_data.dirichlet_boundary_ids)
+        VectorTools::interpolate_boundary_values(dof_handler,
+                                                 boundary_id,
+                                                 *analytical_solution,
+                                                 zero_constraints,
+                                                 fe->component_mask(velocities));
+    }
 
     // As discussed in the introduction, we need to fix one degree of freedom
     // of the pressure variable to ensure solvability of the problem. We do
@@ -645,8 +650,10 @@ ModelProblem<dim, fe_degree_p, dof_layout>::setup_system()
   sparsity_pattern.copy_from(dsp);
   system_matrix.reinit(sparsity_pattern);
   system_solution.reinit(dofs_per_block);
+  zero_constraints.set_zero(system_solution);
   constraints_velocity.distribute(system_solution.block(0)); // particular velocity solution!
   system_delta_x.reinit(dofs_per_block);
+  zero_constraints.set_zero(system_delta_x);
   system_rhs.reinit(dofs_per_block);
 
   print_parameter("Number of degrees of freedom (velocity):", n_u);
@@ -667,7 +674,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::assemble_system()
   using MatrixIntegrator = VelocityPressure::MW::MatrixIntegrator<dim, /*is_multigrid*/ false>;
   MatrixIntegrator matrix_integrator(load_function.get(),
                                      analytical_solution.get(),
-                                     &system_solution,
+                                     rt_parameters.solver.variant == "FGMRES_ILU" ?
+                                       nullptr :
+                                       &system_solution,
                                      equation_data);
 
   auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
@@ -1007,6 +1016,11 @@ ModelProblem<dim, fe_degree_p, dof_layout>::iterative_solve_impl(
                                                                         system_delta_x,
                                                                         system_rhs,
                                                                         preconditioner);
+  if(rt_parameters.solver.variant == "FGMRES_ILU") // inhomog. constraints !
+  {
+    zero_constraints.distribute(system_delta_x);
+    system_solution = 0.;
+  }
   system_solution += system_delta_x;
 
   const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
@@ -1022,8 +1036,6 @@ template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
 void
 ModelProblem<dim, fe_degree_p, dof_layout>::solve()
 {
-  // constraints.set_zero(system_solution);
-
   if(rt_parameters.solver.variant == "UMFPACK")
   {
     SparseDirectUMFPACK A_direct;
@@ -1044,10 +1056,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::solve()
   // faster or slower
   const bool use_expensive = true;
 
+  /// Currently, this method only converges with inhomog. constraints !!!
   if(rt_parameters.solver.variant == "FGMRES_ILU")
   {
-    AssertThrow(false, ExcMessage("This method seems to be broken..."));
-
     SparseILU<double> A_preconditioner;
     A_preconditioner.initialize(system_matrix.block(0, 0));
 
