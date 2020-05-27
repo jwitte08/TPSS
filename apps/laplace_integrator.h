@@ -29,6 +29,8 @@
 #include "solvers_and_preconditioners/preconditioner/schwarz_preconditioner.h"
 #include "solvers_and_preconditioners/smoother/schwarz_smoother.h"
 
+#include "common_integrator.h"
+
 using namespace dealii;
 
 
@@ -210,12 +212,13 @@ public:
   using This          = MatrixIntegrator<dim, fe_degree, Number>;
   using value_type    = Number;
   using transfer_type = typename TPSS::PatchTransfer<dim, Number>;
+  using matrix_type   = TensorProductMatrixSymmetricSum<dim, VectorizedArray<Number>>;
 
   // static constexpr int fe_order   = fe_degree + 1;
   // static constexpr int macro_size = VectorizedArray<Number>::size();
 
   void
-  initialize(const EquationData & equation_data_in)
+  initialize(const Laplace::EquationData & equation_data_in)
   {
     equation_data = equation_data_in;
   }
@@ -229,10 +232,12 @@ public:
   {
     using Evaluator = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
 
-    Evaluator              eval(subdomain_handler);
-    CellMass<Evaluator>    cell_mass_operation;
-    CellLaplace<Evaluator> cell_laplace_operation;
-    FaceLaplace<Evaluator> nitsche_operation(equation_data);
+    Evaluator                                                           eval(subdomain_handler);
+    ::FD::L2::CellOperation<dim, fe_degree, fe_degree + 1, Number>      cell_mass_operation;
+    ::FD::Laplace::CellOperation<dim, fe_degree, fe_degree + 1, Number> cell_laplace_operation;
+    ::FD::Laplace::SIPG::FaceOperation<dim, fe_degree, fe_degree + 1, Number> nitsche_operation;
+    nitsche_operation.penalty_factor          = equation_data.ip_factor;
+    nitsche_operation.interior_penalty_factor = equation_data.ip_factor;
 
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
     {
@@ -456,9 +461,18 @@ public:
          const LinearAlgebra::distributed::Vector<Number> & src) const;
 
   void
-  vmult(const ArrayView<Number>, const ArrayView<const Number>) const
+  vmult(const ArrayView<Number> dst_view, const ArrayView<const Number> src_view) const
   {
-    AssertThrow(false, ExcMessage("Dummy satisfying interface of MGCoarseSolver."));
+    // AssertThrow(false, ExcMessage("Dummy satisfying interface of MGCoarseSolver."));
+    AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
+                ExcMessage("No MPI possible."));
+    LinearAlgebra::distributed::Vector<Number> dst;
+    initialize_dof_vector(dst);
+    LinearAlgebra::distributed::Vector<Number> src;
+    initialize_dof_vector(src);
+    std::copy(src_view.begin(), src_view.end(), src.begin());
+    vmult(dst, src);
+    std::copy(dst.begin(), dst.end(), dst_view.begin());
   }
 
   Number

@@ -169,6 +169,12 @@ struct ModelProblem : public Subscriptor
   ~ModelProblem() = default;
 
   unsigned int
+  max_level() const
+  {
+    return triangulation.n_global_levels() - 1;
+  }
+
+  unsigned int
   n_colors_system()
   {
     if(!mg_schwarz_smoother_pre)

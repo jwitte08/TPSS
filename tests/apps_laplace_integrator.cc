@@ -16,6 +16,155 @@
 #include "test_utilities.h"
 
 using namespace dealii;
+using namespace Poisson;
+
+
+template<typename T>
+class TestLaplaceIntegratorDGQ : public testing::Test
+{
+protected:
+  static constexpr int          dim        = T::template value<0>();
+  static constexpr int          fe_degree  = T::template value<1>();
+  static constexpr unsigned int macro_size = VectorizedArray<double>::size();
+
+
+  void
+  SetUp() override
+  {
+    ofs.open("apps_laplace_integrator.log", std::ios_base::app);
+    const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
+    const bool is_linear     = fe_degree == 1;
+    pcout_owned = std::make_shared<ConditionalOStream>(ofs, is_linear && is_first_proc);
+
+    {
+      auto & pre_smoother                   = rt_parameters.multigrid.pre_smoother;
+      pre_smoother.variant                  = SmootherParameter::SmootherVariant::Schwarz;
+      pre_smoother.schwarz.patch_variant    = TPSS::PatchVariant::vertex;
+      pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
+      rt_parameters.multigrid.post_smoother = pre_smoother;
+    }
+  }
+
+
+  void
+  TearDown() override
+  {
+    ofs.close();
+  }
+
+
+  void
+  check_local_solvers()
+  {
+    Laplace::EquationData equation_data;
+    equation_data.ip_factor = 12.34;
+    using PoissonProblem    = ModelProblem<dim, fe_degree, TPSS::DoFLayout::DGQ>;
+    std::shared_ptr<const PoissonProblem> laplace_problem;
+    auto new_problem   = std::make_shared<PoissonProblem>(rt_parameters, equation_data);
+    new_problem->pcout = pcout_owned;
+    new_problem->create_triangulation();
+    new_problem->distribute_dofs();
+    new_problem->prepare_linear_system(/*compute_rhs?*/ true);
+    new_problem->prepare_multigrid(); // do not clear MGConstrainedDoFs
+    laplace_problem = new_problem;
+    laplace_problem->print_informations();
+    const auto max_level = laplace_problem->max_level();
+
+    using MatrixIntegrator = Laplace::DG::FD::MatrixIntegrator<dim, fe_degree, double>;
+    using LocalMatrix      = typename MatrixIntegrator::matrix_type;
+    using PatchTransfer    = TPSS::PatchTransfer<dim, double>;
+
+    const auto mg_smoother = laplace_problem->mg_schwarz_smoother_pre;
+    ASSERT_TRUE(mg_smoother) << "mg_smoother is not initialized.";
+    const auto    subdomain_handler = mg_smoother->get_subdomain_handler();
+    PatchTransfer patch_transfer(*subdomain_handler);
+    const auto &  patch_worker = patch_transfer.get_patch_dof_worker();
+    const auto    n_subdomains = patch_worker.get_partition_data().n_subdomains();
+
+    std::vector<LocalMatrix> local_matrices(n_subdomains);
+    MatrixIntegrator         integrator;
+    integrator.initialize(equation_data);
+    integrator.template assemble_subspace_inverses(
+      *subdomain_handler,
+      local_matrices,
+      /*dummy*/ false,
+      patch_worker.get_partition_data().get_patch_range());
+
+    const auto system_matrix =
+      table_to_fullmatrix(Tensors::matrix_to_table(laplace_problem->mg_matrices[max_level]), 0);
+
+    /// compare local matrices
+    for(auto patch = 0U; patch < n_subdomains; ++patch)
+    {
+      patch_transfer.reinit(patch);
+      for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch); ++lane)
+      {
+        std::vector<types::global_dof_index> dof_indices_on_patch;
+        {
+          const auto view = patch_transfer.get_dof_indices(lane);
+          std::copy(view.cbegin(), view.cend(), std::back_inserter(dof_indices_on_patch));
+        }
+        FullMatrix<double> local_matrix(dof_indices_on_patch.size());
+        local_matrix.extract_submatrix_from(system_matrix,
+                                            dof_indices_on_patch,
+                                            dof_indices_on_patch);
+        const auto local_matrix_tp =
+          table_to_fullmatrix(Tensors::matrix_to_table(local_matrices[patch]), lane);
+        compare_matrix(local_matrix_tp, local_matrix);
+      }
+    }
+  }
+
+
+  void
+  compare_matrix(const FullMatrix<double> & patch_matrix_full,
+                 const FullMatrix<double> & other) const
+  {
+    Util::compare_matrix(patch_matrix_full, other, *pcout_owned);
+  }
+
+
+  void
+  compare_inverse_matrix(const FullMatrix<double> & inverse_patch_matrix,
+                         const FullMatrix<double> & other) const
+  {
+    Util::compare_inverse_matrix(inverse_patch_matrix, other, *pcout_owned);
+  }
+
+
+  std::ofstream                       ofs;
+  std::shared_ptr<ConditionalOStream> pcout_owned;
+
+  RT::Parameter                                  rt_parameters;
+  std::shared_ptr<const MatrixFree<dim, double>> mf_storage;
+  std::shared_ptr<SubdomainHandler<dim, double>> subdomain_handler;
+};
+
+TYPED_TEST_SUITE_P(TestLaplaceIntegratorDGQ);
+
+TYPED_TEST_P(TestLaplaceIntegratorDGQ, CheckLocalSolvers)
+{
+  using Fixture                                = TestLaplaceIntegratorDGQ<TypeParam>;
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::rt_parameters.mesh.n_refinements    = 0;
+  Fixture::check_local_solvers();
+  Fixture::rt_parameters.mesh.n_refinements = 1;
+  Fixture::check_local_solvers();
+}
+
+REGISTER_TYPED_TEST_SUITE_P(TestLaplaceIntegratorDGQ, CheckLocalSolvers);
+
+namespace ABC
+{
+using TestParamsLinear    = testing::Types<Util::NonTypeParams<2, 1>, Util::NonTypeParams<3, 1>>;
+using TestParamsQuadratic = testing::Types<Util::NonTypeParams<2, 2>, Util::NonTypeParams<3, 2>>;
+using TestParamsHighOrder = testing::Types<Util::NonTypeParams<2, 5>, Util::NonTypeParams<3, 5>>;
+} // namespace ABC
+
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear, TestLaplaceIntegratorDGQ, ABC::TestParamsLinear);
+INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic, TestLaplaceIntegratorDGQ, ABC::TestParamsQuadratic);
+INSTANTIATE_TYPED_TEST_SUITE_P(HighOrder, TestLaplaceIntegratorDGQ, ABC::TestParamsHighOrder);
 
 
 
