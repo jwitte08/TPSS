@@ -13,6 +13,7 @@
 #include <deal.II/lac/tensor_product_matrix.h>
 
 #include "TPSS.h"
+#include "alignedlinalg.h"
 #include "generic_functionalities.h"
 
 #include <sstream>
@@ -586,7 +587,7 @@ scale(const Number & factor, const std::vector<std::array<Table<2, Number>, orde
   {
     auto &       scaled_tensor = scaled_tensors[i];
     const auto & tensor        = tensors[i];
-    scaled_tensor.front()      = matrix_scaling(tensor.front(), factor);
+    scaled_tensor.front()      = factor * tensor.front();
     for(auto d = 1U; d < order; ++d)
       scaled_tensor[d] = tensor[d];
   }
