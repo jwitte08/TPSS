@@ -31,6 +31,7 @@ matrix_addition(const Table<2, Number> & in1, const Table<2, Number> & in2)
       ret(i, j) = in1(i, j) + in2(i, j);
   return ret;
 }
+
 // Add two AlignedVectors
 template<typename Number>
 AlignedVector<Number>
@@ -55,6 +56,33 @@ matrix_scaling(const Table<2, Number> & in, const Number & scalar)
       ret(i, j) = in(i, j) * scalar;
   return ret;
 }
+
+template<typename Number>
+Table<2, Number> operator*(const Table<2, Number> & matrix, const Number & factor)
+{
+  return matrix_scaling(matrix, factor);
+}
+
+template<typename Number>
+Table<2, Number> operator*(const Number & factor, const Table<2, Number> & matrix)
+{
+  return matrix * factor;
+}
+
+template<typename Number>
+Table<2, VectorizedArray<Number>> operator*(const Table<2, VectorizedArray<Number>> & matrix,
+                                            const Number &                            factor)
+{
+  return matrix * make_vectorized_array<Number>(factor);
+}
+
+template<typename Number>
+Table<2, VectorizedArray<Number>> operator*(const Number &                            factor,
+                                            const Table<2, VectorizedArray<Number>> & matrix)
+{
+  return matrix * make_vectorized_array<Number>(factor);
+}
+
 // Multiply AlignedVector with scalar
 template<typename Number>
 AlignedVector<Number>
