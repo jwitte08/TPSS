@@ -28,7 +28,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate_gradients()
   /// scale univariate reference gradients with h_d^{-1}
   for(unsigned int d = 0; d < dim; ++d)
   {
-    const auto & shape_data         = get_shape_data(d);
+    const auto & shape_data         = get_shape_data(d, component);
     const auto   n_q_points_1d      = this->n_q_points_1d(d);
     const auto   n_dofs_per_cell_1d = this->n_dofs_per_cell_1d(d);
     const auto * unit_grads_begin   = shape_data.shape_gradients.begin();
@@ -68,7 +68,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::evaluate_hessians()
   /// scale univariate reference hessians with h_d^{-2}
   for(unsigned int d = 0; d < dim; ++d)
   {
-    const auto & shape_data          = get_shape_data(d);
+    const auto & shape_data          = get_shape_data(d, component);
     const auto   n_q_points_1d       = this->n_q_points_1d(d);
     const auto   n_dofs_per_cell_1d  = this->n_dofs_per_cell_1d(d);
     const auto * unit_hessians_begin = shape_data.shape_hessians.begin();

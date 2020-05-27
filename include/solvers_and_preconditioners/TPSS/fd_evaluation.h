@@ -44,7 +44,8 @@ public:
   static constexpr unsigned int n_dofs_per_cell_static = Utilities::pow(fe_order, dim);
 
   FDEvaluation(const SubdomainHandler<dim, Number> & sd_handler_in,
-               const unsigned int                    dofh_index = 0);
+               const unsigned int                    dofh_index = 0,
+               const unsigned int                    component  = 0);
 
   ~FDEvaluation();
 
@@ -90,7 +91,7 @@ public:
   get_normal_vector(const int face_no, const int direction) const;
 
   const internal::MatrixFreeFunctions::UnivariateShapeData<VectorizedArray<Number>> &
-  get_shape_data(const unsigned int dimension) const;
+  get_shape_data(const unsigned int dimension, const unsigned int component) const;
 
   const SubdomainHandler<dim, Number> &
   get_subdomain_handler() const;
@@ -300,13 +301,23 @@ private:
 
   const MatrixFree<dim, Number> & mf_storage;
 
-  const unsigned int       component;
-  const unsigned int       level;
-  const unsigned int       n_subdomains;
-  const unsigned int       n_colors;
+  const unsigned int dofh_index;
+
+  const unsigned int n_components;
+
+  const unsigned int component;
+
+  const unsigned int level;
+
+  const unsigned int n_subdomains;
+
+  const unsigned int n_colors;
+
   const TPSS::PatchVariant patch_variant;
-  const unsigned int       n_cells_per_direction;
-  unsigned int             patch_id = numbers::invalid_unsigned_int;
+
+  const unsigned int n_cells_per_direction;
+
+  unsigned int patch_id = numbers::invalid_unsigned_int;
 
   /**
    * Indicates which face of the macro patch is at the physical boundary. Local
@@ -430,12 +441,15 @@ private:
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
   const SubdomainHandler<dim, Number> & sd_handler_in,
-  const unsigned int                    dofh_index)
+  const unsigned int                    dofh_index_in,
+  const unsigned int                    component_in)
   : sd_handler(sd_handler_in),
-    patch_worker(sd_handler_in.get_dof_info(dofh_index)),
+    patch_worker(sd_handler_in.get_dof_info(dofh_index_in)),
     mapping_info(sd_handler_in.get_mapping_info()),
     mf_storage(sd_handler_in.get_matrix_free()),
-    component(dofh_index),
+    dofh_index(dofh_index_in),
+    n_components(sd_handler_in.n_components(dofh_index_in)),
+    component(component_in),
     level(sd_handler_in.get_additional_data().level),
     n_subdomains(sd_handler_in.get_patch_info().subdomain_partition_data.n_subdomains()),
     n_colors(sd_handler_in.get_patch_info().subdomain_partition_data.n_colors()),
@@ -443,19 +457,26 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
     n_cells_per_direction(TPSS::UniversalInfo<dim>::n_cells_per_direction(patch_variant)),
     scratch_fedata(mf_storage.acquire_scratch_data())
 {
+  AssertIndexRange(dofh_index_in, sd_handler_in.n_dof_handlers());
+  AssertIndexRange(component_in, sd_handler_in.n_components(dofh_index_in));
+
   if(TPSS::DoFLayout::Q == get_dof_layout())
     AssertThrow(patch_variant == TPSS::PatchVariant::vertex,
                 ExcMessage("Other patch variants aren't implemented."));
 
-  AssertIndexRange(dofh_index, sd_handler.n_dof_handlers());
   for(auto d = 0U; d < dim; ++d)
   {
+    /// Check if n_dofs_per_cell_1d (based on the underlying
+    /// PatchLocalTensorHelper in patch_worker) suits the univariate shape
+    /// function data stored in the underlying ShapeInfo.
+    AssertDimension(n_dofs_per_cell_1d(d), get_shape_data(d, component).fe_degree + 1);
     /// static variables fe_order and n_q_points_1d_static have to define the maximum
     /// number for any dimension
-    AssertIndexRange(patch_worker.get_dof_tensor().n_dofs_per_cell_1d(d), fe_order + 1);
-    AssertIndexRange(get_shape_data(d).quadrature.size(), n_q_points_1d_static + 1);
+    AssertIndexRange(n_dofs_per_cell_1d(d), fe_order + 1);
+    AssertIndexRange(get_shape_data(d, component).quadrature.size(), n_q_points_1d_static + 1);
+    AssertIndexRange(get_shape_data(d, component).fe_degree + 1, fe_order + 1);
     /// currently assume isotropy ... TODO
-    AssertDimension(n_dofs_per_cell_1d(d), fe_order);
+    AssertDimension(n_dofs_per_cell_1d(d), fe_order); // ???
     AssertDimension(n_q_points_1d(d), n_q_points_1d_static);
     AssertDimension(n_cells_1d(d), n_cells_per_direction);
   }
@@ -470,7 +491,7 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
   /// Extract one-dimensional quadrature weights of reference interval
   for(auto d = 0U; d < dim; ++d)
   {
-    const auto & shape_data = get_shape_data(d);
+    const auto & shape_data = get_shape_data(d, component);
     const auto & quadrature = shape_data.quadrature;
     AssertIndexRange(static_cast<int>(quadrature.size()), n_q_points_1d_static + 1);
     const auto & unit_weights = quadrature.get_weights();
@@ -779,10 +800,11 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_constrained_dof_indice
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const internal::MatrixFreeFunctions::UnivariateShapeData<VectorizedArray<Number>> &
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_shape_data(
-  const unsigned int dimension) const
+  const unsigned int dimension,
+  const unsigned int component) const
 {
   AssertIndexRange(dimension, dim);
-  return patch_worker.get_shape_info().get_shape_data(dimension);
+  return patch_worker.get_shape_info().get_shape_data(dimension, component);
 }
 
 
@@ -829,7 +851,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_q_points_1d(
   const unsigned int dimension) const
 {
   AssertIndexRange(dimension, dim);
-  return get_shape_data(dimension).quadrature.size();
+  return get_shape_data(dimension, component).quadrature.size();
 }
 
 
