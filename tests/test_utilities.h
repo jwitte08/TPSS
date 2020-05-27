@@ -46,22 +46,28 @@ compare_matrix(const FullMatrix<Number> & matrix,
                const ConditionalOStream & pcout = ConditionalOStream(std::cout, true))
 {
   std::ostringstream oss;
-  oss << "Matrix:\n";
-  matrix.print_formatted(oss,
-                         PrintFormat::precision,
-                         PrintFormat::scientific,
-                         PrintFormat::width,
-                         PrintFormat::zero_string,
-                         PrintFormat::denominator,
-                         PrintFormat::threshold);
-  oss << "Reference matrix:\n";
-  other.print_formatted(oss,
-                        PrintFormat::precision,
-                        PrintFormat::scientific,
-                        PrintFormat::width,
-                        PrintFormat::zero_string,
-                        PrintFormat::denominator,
-                        PrintFormat::threshold);
+  if(pcout.is_active())
+  {
+    oss << "Matrix:\n";
+    matrix.print_formatted(oss,
+                           PrintFormat::precision,
+                           PrintFormat::scientific,
+                           PrintFormat::width,
+                           PrintFormat::zero_string,
+                           PrintFormat::denominator,
+                           PrintFormat::threshold);
+    oss << "Reference matrix:\n";
+    other.print_formatted(oss,
+                          PrintFormat::precision,
+                          PrintFormat::scientific,
+                          PrintFormat::width,
+                          PrintFormat::zero_string,
+                          PrintFormat::denominator,
+                          PrintFormat::threshold);
+  }
+  else
+    oss << "...printing is suppressed!\n";
+
   auto diff(matrix);
   diff.add(-1., other);
   EXPECT_PRED_FORMAT2(testing::FloatLE,
@@ -87,34 +93,42 @@ compare_inverse_matrix(const FullMatrix<Number> & inverse_matrix,
   const auto   inverse_other         = table_to_fullmatrix(lapack_other_as_table);
 
   std::ostringstream oss;
-  oss << "Inverse matrix:\n";
-  inverse_matrix.print_formatted(oss,
-                                 PrintFormat::precision,
-                                 PrintFormat::scientific,
-                                 PrintFormat::width,
-                                 PrintFormat::zero_string,
-                                 PrintFormat::denominator,
-                                 PrintFormat::threshold);
-  oss << "Reference inverse matrix (LAPACK):\n";
-  inverse_other.print_formatted(oss,
-                                PrintFormat::precision,
-                                PrintFormat::scientific,
-                                PrintFormat::width,
-                                PrintFormat::zero_string,
-                                PrintFormat::denominator,
-                                PrintFormat::threshold);
+  if(pcout.is_active())
+  {
+    oss << "Inverse matrix:\n";
+    inverse_matrix.print_formatted(oss,
+                                   PrintFormat::precision,
+                                   PrintFormat::scientific,
+                                   PrintFormat::width,
+                                   PrintFormat::zero_string,
+                                   PrintFormat::denominator,
+                                   PrintFormat::threshold);
+    oss << "Reference inverse matrix (LAPACK):\n";
+    inverse_other.print_formatted(oss,
+                                  PrintFormat::precision,
+                                  PrintFormat::scientific,
+                                  PrintFormat::width,
+                                  PrintFormat::zero_string,
+                                  PrintFormat::denominator,
+                                  PrintFormat::threshold);
+  }
+  else
+    oss << "...printing is suppressed!\n";
 
   FullMatrix<Number> id(inverse_matrix.m(), inverse_matrix.n());
   inverse_matrix.mmult(id, other);
-  oss << "A^{-1} A:\n";
-  id.print_formatted(oss,
-                     PrintFormat::precision,
-                     PrintFormat::scientific,
-                     PrintFormat::width,
-                     PrintFormat::zero_string,
-                     PrintFormat::denominator,
-                     PrintFormat::threshold);
-  // const double n_entries = id.m() * id.n();
+  if(pcout.is_active())
+  {
+    oss << "A^{-1} A:\n";
+    id.print_formatted(oss,
+                       PrintFormat::precision,
+                       PrintFormat::scientific,
+                       PrintFormat::width,
+                       PrintFormat::zero_string,
+                       PrintFormat::denominator,
+                       PrintFormat::threshold);
+  }
+
   for(auto i = 0U; i < id.m(); ++i)
   {
     EXPECT_NEAR(id(i, i), 1., numeric_eps<Number> /* n_entries*/);
@@ -138,10 +152,16 @@ compare_vector(const Vector<Number> &     vector,
 {
   AssertDimension(vector.size(), other.size());
   std::ostringstream oss;
-  oss << "Vector:\n";
-  vector.print(oss, PrintFormat::precision, PrintFormat::scientific);
-  oss << "Reference vector:\n";
-  other.print(oss, PrintFormat::precision, PrintFormat::scientific);
+  if(pcout.is_active())
+  {
+    oss << "Vector:\n";
+    vector.print(oss, PrintFormat::precision, PrintFormat::scientific);
+    oss << "Reference vector:\n";
+    other.print(oss, PrintFormat::precision, PrintFormat::scientific);
+  }
+  else
+    oss << "...printing is suppressed!\n";
+
   for(auto i = 0U; i < vector.size(); ++i)
   {
     const auto value       = vector[i];
@@ -163,10 +183,16 @@ compare_vector(const VectorType &         vector,
 {
   AssertDimension(vector.size(), other.size());
   std::ostringstream oss;
-  oss << "Vector:\n";
-  vector.print(oss, PrintFormat::precision, PrintFormat::scientific);
-  oss << "Reference vector:\n";
-  other.print(oss, PrintFormat::precision, PrintFormat::scientific);
+  if(pcout.is_active())
+  {
+    oss << "Vector:\n";
+    vector.print(oss, PrintFormat::precision, PrintFormat::scientific);
+    oss << "Reference vector:\n";
+    other.print(oss, PrintFormat::precision, PrintFormat::scientific);
+  }
+  else
+    oss << "...printing is suppressed!\n";
+
   for(auto i = 0U; i < vector.size(); ++i)
   {
     const auto value       = vector[i];
