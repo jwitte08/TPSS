@@ -21,9 +21,9 @@
 
 
 #include "biharmonic_integrator.h"
+#include "common_integrator.h"
 #include "equation_data.h"
 #include "laplace_integrator.h"
-
 
 namespace Stokes
 {
@@ -365,12 +365,15 @@ template<int dim, int fe_degree, typename Number>
 class MatrixIntegrator
 {
 public:
-  using This                    = MatrixIntegrator<dim, fe_degree, Number>;
-  using value_type              = Number;
-  using transfer_type           = typename TPSS::PatchTransfer<dim, Number>;
-  using matrix_type             = Tensors::TensorProductMatrix<dim, VectorizedArray<Number>>;
-  using evaluator_type          = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
+  using This = MatrixIntegrator<dim, fe_degree, Number>;
+
   static constexpr int fe_order = fe_degree + 1;
+
+  using value_type     = Number;
+  using transfer_type  = typename TPSS::PatchTransfer<dim, Number>;
+  using matrix_type_1d = Table<2, VectorizedArray<Number>>;
+  using matrix_type    = Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, -1>;
+  using evaluator_type = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
 
   void
   initialize(const EquationData & equation_data_in)
@@ -387,192 +390,120 @@ public:
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
 
-    // evaluator_type eval(subdomain_handler); // common evaluator for test + ansatz
-    for(auto d_test = 0U; d_test < dim; ++d_test)
+    for(auto comp_test = 0U; comp_test < dim; ++comp_test)
     {
-      evaluator_type eval_test(subdomain_handler, /*dofh_index*/ 0, /*component*/ d_test);
-      for(auto d_ansatz = 0U; d_ansatz < dim; ++d_ansatz)
+      evaluator_type eval_test(subdomain_handler, /*dofh_index*/ 0, comp_test);
+      for(auto comp_ansatz = comp_test; comp_ansatz < dim; ++comp_ansatz) // assuming isotropy !
       {
-        evaluator_type eval_ansatz(subdomain_handler, /*dofh_index*/ 0, /*component*/ d_ansatz);
+        evaluator_type eval_ansatz(subdomain_handler, /*dofh_index*/ 0, comp_ansatz);
         for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
         {
-          /// compute 1D matrices
+          auto & Aloc = local_matrices[patch];
+          if(Aloc.n_block_rows() == 0 && Aloc.n_block_cols() == 0)
+            Aloc.resize(dim, dim);
+
           eval_test.reinit(patch);
           eval_ansatz.reinit(patch);
-          //   const auto mass_matrices      = assemble_mass_tensor(eval);
-          //   const auto bilaplace_matrices = assemble_bilaplace_tensor(eval);
-          //   const auto laplace_matrices   = assemble_laplace_tensor(eval);
 
-          //   /// store rank1 tensors of separable Kronecker representation
-          //   /// BxMxM + MxBxM + MxMxB
-          //   const auto & BxMxM = [&](const int direction) {
-          //     std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
-          //     for(auto d = 0; d < dim; ++d)
-          //       kronecker_tensor[d] = d == direction ? bilaplace_matrices[direction] :
-          //       mass_matrices[d];
-          //     return kronecker_tensor;
-          //   };
-          //   std::vector<std::array<Table<2, VectorizedArray<Number>>, dim>> rank1_tensors;
-          //   for(auto direction = 0; direction < dim; ++direction)
-          //     rank1_tensors.emplace_back(BxMxM(direction));
+          const auto mass_matrices = assemble_mass_tensor(eval_test, eval_ansatz);
 
-          //   /// store rank1 tensors of mixed derivatives
-          //   /// 2(LxLxM + LxMxL + MxLxL)
-          //   if(equation_data.local_solver_variant == EquationData::LocalSolverVariant::Exact)
-          //   {
-          //     const auto & LxLxM = [&](const int direction1, const int direction2) {
-          //       std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
-          //       for(auto d = 0; d < dim; ++d)
-          //         kronecker_tensor[d] =
-          //           (d == direction1 || d == direction2) ? laplace_matrices[d] :
-          //           mass_matrices[d];
-          //       return kronecker_tensor;
-          //     };
-          //     for(auto direction1 = 0; direction1 < dim; ++direction1)
-          //       for(auto direction2 = 0; direction2 < dim; ++direction2)
-          //         if(direction1 != direction2)
-          //           rank1_tensors.emplace_back(LxLxM(direction1, direction2));
-          //   }
+          if(comp_test == comp_ansatz)
+          {
+            const auto laplace_matrices = assemble_laplace_tensor(eval_test, eval_ansatz);
 
-          //   /// submit vector of rank1 Kronecker tensors
-          //   local_matrices[patch].reinit(rank1_tensors);
+            const auto & MxMxL = [&](const unsigned int direction_of_L) {
+              /// for example, we obtain MxMxL for direction_of_L = 0 (dimension
+              /// 0 is rightmost!)
+              std::array<matrix_type_1d, dim> kronecker_tensor;
+              /// if direction_of_L equals the velocity component we scale by two
+              AssertDimension(comp_test, comp_ansatz);
+              const auto factor = direction_of_L == comp_ansatz ? 2. : 1.;
+              for(auto d = 0U; d < dim; ++d)
+                kronecker_tensor[d] = d == direction_of_L ?
+                                        factor * laplace_matrices[direction_of_L] :
+                                        mass_matrices[d];
+              return kronecker_tensor;
+            };
+
+            /// (0,0)-block: LxMxM + MxLxM + MxMx2L
+            std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
+            for(auto direction_of_L = 0; direction_of_L < dim; ++direction_of_L)
+              rank1_tensors.emplace_back(MxMxL(direction_of_L));
+            Aloc.get_block(comp_test, comp_ansatz).reinit(rank1_tensors);
+          }
+
+          else
+          {
+            const auto gradient_matrices = assemble_gradient_tensor(eval_test, eval_ansatz);
+
+            const auto & MxGxGT = [&](const int deriv_index_ansatz, const int deriv_index_test) {
+              /// for example, we obtain MxGxGT for deriv_index_ansatz = 1 and
+              /// deriv_index_test = 0 (dimension 0 is rightmost!)
+              Assert(deriv_index_ansatz != deriv_index_test,
+                     ExcMessage("This case is not well-defined."));
+              std::array<matrix_type_1d, dim> kronecker_tensor;
+              for(auto d = 0; d < dim; ++d)
+                kronecker_tensor[d] = d == deriv_index_ansatz ?
+                                        gradient_matrices[deriv_index_ansatz] :
+                                        (d == deriv_index_test ?
+                                           Tensors::transpose(gradient_matrices[deriv_index_test]) :
+                                           mass_matrices[d]);
+              return kronecker_tensor;
+            };
+
+            /// (0,1)-block: MxGxGT
+            {
+              const auto                                   derivative_index_ansatz = comp_test;
+              const auto                                   derivative_index_test   = comp_ansatz;
+              std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
+              rank1_tensors.emplace_back(
+                MxGxGT(/*G*/ derivative_index_ansatz, /*GT*/ derivative_index_test));
+              Aloc.get_block(comp_test, comp_ansatz).reinit(rank1_tensors);
+            }
+
+            /// (1,0)-block: MxGTxG
+            {
+              const auto comp_ansatz_flipped     = comp_test;   // assuming isotropy !
+              const auto comp_test_flipped       = comp_ansatz; // assuming isotropy !
+              const auto derivative_index_ansatz = comp_test_flipped;
+              const auto derivative_index_test   = comp_ansatz_flipped;
+              std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
+              rank1_tensors.emplace_back(
+                MxGxGT(/*G*/ derivative_index_ansatz, /*GT*/ derivative_index_test));
+              Aloc.get_block(comp_test_flipped, comp_ansatz_flipped).reinit(rank1_tensors);
+            }
+          }
         }
       }
     }
   }
 
-  // template<bool c0ip = true>
-  // std::array<Table<2, VectorizedArray<Number>>, dim>
-  // assemble_bilaplace_tensor(evaluator_type & eval) const
-  // {
-  //   const auto cell_bilaplace = [](const evaluator_type &              eval_u,
-  //                                  const evaluator_type &              eval_v,
-  //                                  Table<2, VectorizedArray<Number>> & cell_matrix,
-  //                                  const int                           direction,
-  //                                  const int                           cell_no) {
-  //     auto integral = make_vectorized_array<Number>(0.);
-  //     for(int j = 0; j < fe_order; ++j)
-  //       for(int i = 0; i < fe_order; ++i)
-  //       {
-  //         integral = 0.;
-  //         for(unsigned int q = 0; q < evaluator_type::n_q_points_1d_static; ++q)
-  //         {
-  //           const auto & hess_ui = eval_u.shape_hessian(j, q, direction, cell_no);
-  //           const auto & hess_vj = eval_v.shape_hessian(i, q, direction, cell_no);
-  //           const auto & dx      = eval_v.get_JxW(q, direction, cell_no);
-  //           integral += hess_ui * hess_vj * dx;
-  //         }
-  //         cell_matrix(i, j) += integral;
-  //       }
-  //   };
-
-  //   const auto compute_penalty =
-  //     [&](const evaluator_type & eval, const int direction, const int cell_no, const int
-  //     ncell_no) {
-  //       const auto h  = eval.get_h(direction, cell_no);
-  //       const auto nh = eval.get_h(direction, ncell_no);
-  //       return compute_penalty_impl(fe_degree, h, nh);
-  //     };
-
-  //   const auto face_nitsche = [&](const evaluator_type &              eval_u,
-  //                                 const evaluator_type &              eval_v,
-  //                                 Table<2, VectorizedArray<Number>> & cell_matrix,
-  //                                 const int                           direction,
-  //                                 const int                           cell_no,
-  //                                 const int                           face_no) {
-  //     const auto normal         = eval_v.get_normal(face_no);
-  //     const auto sqnormal       = normal * normal;
-  //     const auto average_factor = eval_v.get_average_factor(direction, cell_no, face_no);
-  //     const auto penalty = average_factor * compute_penalty(eval_v, direction, cell_no, cell_no);
-
-  //     auto value_on_face = make_vectorized_array<Number>(0.);
-  //     for(int i = 0; i < fe_degree + 1; ++i)
-  //     {
-  //       const auto & grad_vi = eval_v.shape_gradient_face(i, face_no, direction, cell_no);
-  //       const auto & hess_vi = eval_v.shape_hessian_face(i, face_no, direction, cell_no);
-  //       for(int j = 0; j < fe_degree + 1; ++j)
-  //       {
-  //         const auto & grad_uj = eval_u.shape_gradient_face(j, face_no, direction, cell_no);
-  //         const auto & hess_uj = eval_u.shape_hessian_face(j, face_no, direction, cell_no);
-
-  //         value_on_face = penalty * grad_vi * normal * grad_uj * normal;
-  //         value_on_face -= (grad_vi * normal) * (average_factor * hess_uj * sqnormal);
-  //         value_on_face -= (grad_uj * normal) * (average_factor * hess_vi * sqnormal);
-
-  //         cell_matrix(i, j) += value_on_face;
-  //       }
-  //     }
-  //   };
-
-  //   const auto interface_nitsche = [&](const evaluator_type &              eval_u,
-  //                                      const evaluator_type &              eval_v,
-  //                                      Table<2, VectorizedArray<Number>> & cell_matrix01,
-  //                                      Table<2, VectorizedArray<Number>> & cell_matrix10,
-  //                                      const int                           cell_no0, // left cell
-  //                                      const int                           direction) {
-  //     const auto cell_no1 = cell_no0 + 1;                 // right cell
-  //     const auto face_no0 = 1;                            // interface seen from left cell
-  //     const auto face_no1 = 0;                            // interface seen from right cell
-  //     AssertDimension(cell_no0, 0);                       // vertex patch has one interface
-  //     const auto normal0   = eval_v.get_normal(face_no0); // on cell 0
-  //     const auto normal1   = eval_v.get_normal(face_no1); // on cell 1
-  //     const auto sqnormal0 = normal0 * normal0;
-  //     const auto sqnormal1 = normal1 * normal1;
-  //     const auto penalty   = 0.5 * compute_penalty(eval_v, direction, cell_no0, cell_no1);
-
-  //     auto value_on_interface01{make_vectorized_array<Number>(0.)};
-  //     auto value_on_interface10{make_vectorized_array<Number>(0.)};
-  //     for(int i = 0; i < fe_degree + 1; ++i)
-  //     {
-  //       const auto & hess_v0i = eval_v.shape_hessian_face(i, face_no0, direction, cell_no0);
-  //       const auto & grad_v0i = eval_v.shape_gradient_face(i, face_no0, direction, cell_no0);
-  //       const auto & hess_v1i = eval_v.shape_hessian_face(i, face_no1, direction, cell_no1);
-  //       const auto & grad_v1i = eval_v.shape_gradient_face(i, face_no1, direction, cell_no1);
-  //       for(int j = 0; j < fe_degree + 1; ++j)
-  //       {
-  //         const auto & hess_u0j = eval_u.shape_hessian_face(j, face_no0, direction, cell_no0);
-  //         const auto & grad_u0j = eval_u.shape_gradient_face(j, face_no0, direction, cell_no0);
-  //         const auto & hess_u1j = eval_u.shape_hessian_face(j, face_no1, direction, cell_no1);
-  //         const auto & grad_u1j = eval_u.shape_gradient_face(j, face_no1, direction, cell_no1);
-
-  //         /// consistency + symmetry
-  //         value_on_interface01 = penalty * grad_v0i * normal0 * grad_u1j * normal1;
-  //         value_on_interface01 -= (grad_v0i * normal0) * (0.5 * hess_u1j * sqnormal1);
-  //         value_on_interface01 -= (grad_u1j * normal1) * (0.5 * hess_v0i * sqnormal0);
-
-  //         value_on_interface10 = penalty * grad_v1i * normal1 * grad_u0j * normal0;
-  //         value_on_interface10 -= (grad_v1i * normal1) * (0.5 * hess_u0j * sqnormal0);
-  //         value_on_interface10 -= (grad_u0j * normal0) * (0.5 * hess_v1i * sqnormal1);
-
-  //         cell_matrix01(i, j) += value_on_interface01;
-  //         cell_matrix10(i, j) += value_on_interface10;
-  //       }
-  //     }
-  //   };
-
-  //   if constexpr(c0ip)
-  //     return eval.patch_action(cell_bilaplace, face_nitsche, interface_nitsche);
-  //   (void)face_nitsche, (void)interface_nitsche;
-  //   return eval.patch_action(cell_bilaplace);
-  // }
-
   template<bool is_sipg = false>
-  std::array<Table<2, VectorizedArray<Number>>, dim>
-  assemble_laplace_tensor(evaluator_type & eval) const
+  std::array<matrix_type_1d, dim>
+  assemble_laplace_tensor(evaluator_type & eval_test, evaluator_type & eval_ansatz) const
   {
     if constexpr(is_sipg)
     {
       Laplace::DG::FD::CellLaplace<evaluator_type> cell_laplace;
       Laplace::DG::FD::FaceLaplace<evaluator_type> nitsche(Laplace::EquationData{});
-      return eval.patch_action(cell_laplace, nitsche, nitsche);
+      return eval_test.patch_action(eval_ansatz, cell_laplace, nitsche, nitsche);
     }
-    return eval.patch_action(Laplace::DG::FD::CellLaplace<evaluator_type>{});
+    using CellLaplace = ::FD::Laplace::CellOperation<dim, fe_degree, fe_degree + 1, Number>;
+    return eval_test.patch_action(eval_ansatz, CellLaplace{});
   }
 
-  std::array<Table<2, VectorizedArray<Number>>, dim>
-  assemble_mass_tensor(evaluator_type & eval) const
+  std::array<matrix_type_1d, dim>
+  assemble_mass_tensor(evaluator_type & eval_test, evaluator_type & eval_ansatz) const
   {
-    return eval.patch_action(Laplace::DG::FD::CellMass<evaluator_type>{});
+    using CellMass = ::FD::L2::CellOperation<dim, fe_degree, fe_degree + 1, Number>;
+    return eval_test.patch_action(eval_ansatz, CellMass{});
+  }
+
+  std::array<matrix_type_1d, dim>
+  assemble_gradient_tensor(evaluator_type & eval_test, evaluator_type & eval_ansatz) const
+  {
+    using CellGradient = ::FD::Gradient::CellOperation<dim, fe_degree, fe_degree + 1, Number>;
+    return eval_test.patch_action(eval_ansatz, CellGradient{});
   }
 
   std::shared_ptr<transfer_type>

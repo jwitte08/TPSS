@@ -295,7 +295,7 @@ public:
 
   using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
   using GAUSS_SEIDEL_SMOOTHER = PreconditionSOR<MATRIX>;
-  using PATCH_MATRIX          = Tensors::TensorProductMatrix<dim, VectorizedArray<double>>;
+  using PATCH_MATRIX          = typename MATRIX::local_integrator_type::matrix_type;
   using MG_SMOOTHER_SCHWARZ   = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
   using GMG_PRECONDITIONER    = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 
@@ -467,7 +467,11 @@ ModelProblem<dim, fe_degree_p>::ModelProblem(const RT::Parameter & rt_parameters
     // Finite element for the velocity only:
     fe_velocity(std::make_shared<FESystem<dim>>(FE_Q<dim>(fe_degree_p + 1), dim)),
     // Finite element for the whole system:
-    fe(*fe_velocity, 1, FE_Q<dim>(fe_degree_p), 1),
+    fe(*fe_velocity,
+       1,
+       fe_degree_p == 0 ? static_cast<const FiniteElement<dim> &>(FE_DGQ<dim>(0)) :
+                          static_cast<const FiniteElement<dim> &>(FE_Q<dim>(fe_degree_p)),
+       1),
     dof_handler(triangulation),
     dof_handler_velocity(triangulation)
 {
