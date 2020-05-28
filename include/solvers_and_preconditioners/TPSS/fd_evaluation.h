@@ -108,6 +108,9 @@ public:
   unsigned int
   n_q_points_1d(const unsigned int dimension) const;
 
+  unsigned int
+  vector_component() const;
+
   const VectorizedArray<Number> &
   shape_value(const int dof, const int q_point_no, const int direction, const int cell_no) const;
 
@@ -852,6 +855,14 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_q_points_1d(
 {
   AssertIndexRange(dimension, dim);
   return get_shape_data(dimension, component).quadrature.size();
+}
+
+
+template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
+inline unsigned int
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::vector_component() const
+{
+  return component;
 }
 
 
