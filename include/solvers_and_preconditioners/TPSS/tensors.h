@@ -712,6 +712,14 @@ transpose(MatrixTypeIn1 && matrix_in)
   return matrix_out;
 }
 
+template<int order, typename Number>
+// std::array<Table<2, VectorizedArray<Number>>, order>
+void transpose_tensor(std::array<Table<2, VectorizedArray<Number>>, order> & tensor)
+{
+  for(auto & matrix : tensor)
+    matrix = transpose(matrix);
+}
+
 // template<int order, typename Number>
 // std::vector<std::array<Table<2, Number>, order>> elementary_tensors;
 // assemble_elementary_tensors(const Table<2, Number> * mass, const Table<2, Number> * driv)
