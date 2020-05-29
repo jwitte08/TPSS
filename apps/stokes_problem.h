@@ -976,16 +976,16 @@ ModelProblem<dim, fe_degree_p, dof_layout>::assemble_multigrid_velocity()
                            const unsigned int & nsf,
                            ScratchData<dim> &   scratch_data,
                            CopyData &           copy_data) {
-      if(dof_layout == TPSS::DoFLayout::DGQ)
-        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+      // if(dof_layout == TPSS::DoFLayout::DGQ)
+      //   matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
     };
 
     auto boundary_worker = [&](const auto &         cell,
                                const unsigned int & face_no,
                                ScratchData<dim> &   scratch_data,
                                CopyData &           copy_data) {
-      if(dof_layout == TPSS::DoFLayout::DGQ)
-        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+      // if(dof_layout == TPSS::DoFLayout::DGQ)
+      //   matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
     };
 
     const auto copier = [&](const CopyData & copy_data) {

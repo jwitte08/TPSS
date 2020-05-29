@@ -303,6 +303,7 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversDGVelocity)
   Fixture::rt_parameters.mesh.n_repetitions    = 2;
   Fixture::rt_parameters.mesh.n_refinements    = 0;
   Fixture::template check_local_solvers_velocity<TPSS::DoFLayout::DGQ>(true);
+  Fixture::template check_local_solvers_velocity<TPSS::DoFLayout::DGQ>(false);
   // Fixture::rt_parameters.mesh.n_refinements = 1;
   // Fixture::check_local_solvers_velocity_dgq();
 }
