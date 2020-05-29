@@ -190,10 +190,6 @@ protected:
       patch_worker.get_partition_data().get_patch_range());
 
     const SparseMatrix<double> * system_matrix;
-    // if(dof_layout == TPSS::DoFLayout::Q)
-    //   system_matrix = &(stokes_problem->mg_matrices[max_level]);
-    // else if(dof_layout == TPSS::DoFLayout::DGQ)
-    //   system_matrix = &(stokes_problem->system_matrix_velocity);
     system_matrix = &(stokes_problem->mg_matrices[max_level]);
 
     /// compare local matrices
@@ -304,8 +300,9 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversDGVelocity)
   Fixture::rt_parameters.mesh.n_refinements    = 0;
   Fixture::template check_local_solvers_velocity<TPSS::DoFLayout::DGQ>(true);
   Fixture::template check_local_solvers_velocity<TPSS::DoFLayout::DGQ>(false);
-  // Fixture::rt_parameters.mesh.n_refinements = 1;
-  // Fixture::check_local_solvers_velocity_dgq();
+  Fixture::rt_parameters.mesh.n_refinements = 1;
+  Fixture::template check_local_solvers_velocity<TPSS::DoFLayout::DGQ>(true);
+  Fixture::template check_local_solvers_velocity<TPSS::DoFLayout::DGQ>(false);
 }
 
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
