@@ -138,8 +138,8 @@ struct CellOperation : public CellOperationBase<dim, fe_degree, n_q_points_1d, N
         integral = 0.;
         for(int q = 0; q < n_q_points; ++q)
         {
-          const auto & grad_u_j = eval_ansatz.shape_gradient(i, q, direction, cell_no);
-          const auto & v_i      = eval_test.shape_value(j, q, direction, cell_no);
+          const auto & grad_u_j = eval_ansatz.shape_gradient(j, q, direction, cell_no);
+          const auto & v_i      = eval_test.shape_value(i, q, direction, cell_no);
           const auto & dx       = eval_test.get_JxW(q, direction, cell_no);
           integral += grad_u_j * v_i * dx;
         }
