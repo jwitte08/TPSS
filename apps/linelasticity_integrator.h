@@ -504,7 +504,7 @@ public:
       const CellDerivative<EvaluatorType> derivative_op{partial_derivative_index_u,
                                                         partial_derivative_index_v};
       /// compute the complementing matrices subject to the nitsche-strain
-      /// contributions (point eval_testuations)
+      /// contributions (point evaluations)
       const NitscheStrainMixed<EvaluatorType> nitsche_op(this, component_u, component_v);
 
       auto & eval_test   = *(eval_tests[component_v]);

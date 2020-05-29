@@ -36,7 +36,8 @@ protected:
   {
     ofs.open("apps_biharmonic_integrator.log", std::ios_base::app);
     const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
-    pcout_owned              = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
+    const bool is_quadratic  = fe_degree == 2;
+    pcout_owned = std::make_shared<ConditionalOStream>(ofs, is_quadratic && is_first_proc);
 
     rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = TPSS::PatchVariant::vertex;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
