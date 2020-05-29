@@ -326,8 +326,146 @@ struct CellOperation : public CellOperationBase<dim, fe_degree, n_q_points_1d, N
       }
   }
 };
+
+template<int dim,
+         int fe_degree,
+         int n_q_points_1d,
+         typename Number,
+         int fe_degree_ansatz = fe_degree>
+struct FaceOperation
+  : public FaceOperationBase<dim, fe_degree, n_q_points_1d, Number, fe_degree_ansatz>
+{
+  using Base = FaceOperationBase<dim, fe_degree, n_q_points_1d, Number, fe_degree_ansatz>;
+
+  void
+  operator()(const typename Base::ansatz_evaluator_type & eval_ansatz,
+             const typename Base::evaluator_type &        eval_test,
+             typename Base::matrix_type &                 cell_matrix,
+             const int                                    direction,
+             const int                                    cell_no,
+             const int                                    face_no) const
+  {
+    const int n_dofs_test   = eval_test.n_dofs_per_cell_1d(direction);
+    const int n_dofs_ansatz = eval_ansatz.n_dofs_per_cell_1d(direction);
+
+    const auto average_factor = use_average_of_gradient ?
+                                  eval_test.get_average_factor(direction, cell_no, face_no) :
+                                  make_vectorized_array(1.);
+
+    auto value_on_face = make_vectorized_array<Number>(0.);
+    for(int i = 0; i < n_dofs_test; ++i)
+    {
+      const auto & v_i = eval_test.shape_value_face(i, face_no, direction, cell_no);
+      for(int j = 0; j < n_dofs_ansatz; ++j)
+      {
+        const auto & u_j = eval_ansatz.shape_value_face(j, face_no, direction, cell_no);
+
+        value_on_face = v_i * u_j;
+
+        cell_matrix(i, j) += average_factor * value_on_face;
+      }
+    }
+  }
+
+  void
+  operator()(const typename Base::ansatz_evaluator_type & eval_ansatz,
+             const typename Base::evaluator_type &        eval_test,
+             typename Base::matrix_type &                 cell_matrix01,
+             typename Base::matrix_type &                 cell_matrix10,
+             const int                                    cell_no0,
+             const int                                    direction) const
+  {
+    AssertDimension(cell_no0, 0);
+
+    const int n_dofs_test   = eval_test.n_dofs_per_cell_1d(direction);
+    const int n_dofs_ansatz = eval_ansatz.n_dofs_per_cell_1d(direction);
+
+    const auto average_factor = use_average_of_gradient ? 0.5 : 1.;
+
+    auto value_on_interface01 = make_vectorized_array<Number>(0.);
+    auto value_on_interface10 = make_vectorized_array<Number>(0.);
+    for(int i = 0; i < n_dofs_test; ++i) // u is ansatz & v is test shape function
+    {
+      const auto & v0_i = eval_test.shape_value_face(i, 1, direction, 0);
+      const auto & v1_i = eval_test.shape_value_face(i, 0, direction, 1);
+      for(int j = 0; j < n_dofs_ansatz; ++j)
+      {
+        const auto & u0_j = eval_ansatz.shape_value_face(j, 1, direction, 0);
+        const auto & u1_j = eval_ansatz.shape_value_face(j, 0, direction, 1);
+
+        value_on_interface01 = average_factor * v0_i * u1_j;
+        value_on_interface10 = average_factor * v1_i * u0_j;
+
+        cell_matrix01(i, j) += value_on_interface01;
+        cell_matrix10(i, j) += value_on_interface10;
+      }
+    }
+  }
+
+  /**
+   * If true we use the averaged gradient {{grad u}} instead of grad u. This
+   * option is typically used for DG methods.
+   */
+  bool use_average_of_gradient = false;
+};
+
 } // namespace L2
+
+
+
+namespace Void
+{
+template<int dim, int fe_degree, int n_q_points_1d, typename Number>
+struct CellOperation : public CellOperationBase<dim, fe_degree, n_q_points_1d, Number>
+{
+  using Base = CellOperationBase<dim, fe_degree, n_q_points_1d, Number>;
+
+  void
+  operator()(const typename Base::ansatz_evaluator_type &,
+             const typename Base::evaluator_type &,
+             typename Base::matrix_type &,
+             const int,
+             const int) const
+  {
+  }
+};
+
+template<int dim,
+         int fe_degree,
+         int n_q_points_1d,
+         typename Number,
+         int fe_degree_ansatz = fe_degree>
+struct FaceOperation
+  : public FaceOperationBase<dim, fe_degree, n_q_points_1d, Number, fe_degree_ansatz>
+{
+  using Base = FaceOperationBase<dim, fe_degree, n_q_points_1d, Number, fe_degree_ansatz>;
+
+  void
+  operator()(const typename Base::ansatz_evaluator_type &,
+             const typename Base::evaluator_type &,
+             typename Base::matrix_type &,
+             const int,
+             const int,
+             const int) const
+  {
+  }
+
+  void
+  operator()(const typename Base::ansatz_evaluator_type & eval_ansatz,
+             const typename Base::evaluator_type &        eval_test,
+             typename Base::matrix_type &                 cell_matrix01,
+             typename Base::matrix_type &                 cell_matrix10,
+             const int                                    cell_no0,
+             const int                                    direction) const
+  {
+  }
+};
+
+} // namespace Void
+
 } // namespace FD
+
+
 
 namespace MW
 {

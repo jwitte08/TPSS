@@ -303,7 +303,10 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
 
 namespace FD
 {
-template<int dim, int fe_degree, typename Number>
+template<int dim,
+         int fe_degree,
+         typename Number            = double,
+         TPSS::DoFLayout dof_layout = TPSS::DoFLayout::Q>
 class MatrixIntegrator
 {
 public:
@@ -330,7 +333,19 @@ public:
                              const OperatorType &,
                              const std::pair<unsigned int, unsigned int> subdomain_range) const
   {
+    // AssertThrow(TPSS::get_dof_layout(subdomain_handler.get_dof_handler(0).get_fe()) ==
+    // dof_layout,
+    //             ExcMessage("dof_layout and finite element are incompatible."));
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+    constexpr bool is_sipg = TPSS::DoFLayout::DGQ == dof_layout;
+
+    const auto zero_out = [](std::vector<std::array<matrix_type_1d, dim>> & rank1_tensors) {
+      for(auto & tensor : rank1_tensors)
+      {
+        tensor.front() = 0. * tensor.front();
+      }
+    };
+
 
     for(auto comp_test = 0U; comp_test < dim; ++comp_test)
     {
@@ -351,7 +366,7 @@ public:
 
           if(comp_test == comp_ansatz)
           {
-            const auto laplace_matrices = assemble_laplace_tensor(eval_test, eval_ansatz);
+            const auto laplace_matrices = assemble_laplace_tensor<is_sipg>(eval_test, eval_ansatz);
 
             const auto & MxMxL = [&](const unsigned int direction_of_L) {
               /// for example, we obtain MxMxL for direction_of_L = 0 (dimension
@@ -376,6 +391,10 @@ public:
 
           else
           {
+            /// the factor 2 arising from 2 * e(u) : e(v) is implicitly
+            /// equalized by the factor 1/2 arising from average operator
+            /// {{e(u)}}, and what about 1/2 from linear strain ??? (note that
+            /// for off-diagonal blocks there are no penalty contributions)
             const auto gradient_matrices = assemble_gradient_tensor(eval_test, eval_ansatz);
 
             const auto & MxGxGT = [&](const int deriv_index_ansatz, const int deriv_index_test) {
@@ -393,13 +412,149 @@ public:
               return kronecker_tensor;
             };
 
+            using FaceMass = ::FD::L2::FaceOperation<dim, fe_degree, fe_degree + 1, Number>;
+            FaceMass point_mass;
+            using CellVoid = ::FD::Void::CellOperation<dim, fe_degree, fe_degree + 1, Number>;
+            point_mass.use_average_of_gradient = true;
+            // const auto point_mass_matrices =
+            //   eval_test.patch_action(eval_ansatz, CellVoid{}, point_mass, point_mass);
+
+            // const auto average_of_gradient_matrices =
+            //   assemble_gradient_tensor(eval_test, eval_ansatz);
+
+            const auto face_point_mass = [&](const evaluator_type &              eval_ansatz,
+                                             const evaluator_type &              eval_test,
+                                             Table<2, VectorizedArray<Number>> & cell_matrix,
+                                             const int                           direction,
+                                             const int                           cell_no,
+                                             const int                           face_no) {
+              const auto normal_vector  = eval_ansatz.get_normal_vector(face_no, direction);
+              const auto average_factor = eval_test.get_average_factor(direction, cell_no, face_no);
+              const Number symgrad_factor = 0.5;
+
+              for(int dof_v = 0; dof_v < fe_order;
+                  ++dof_v) // u is ansatz function & v is test function
+              {
+                const auto & v = eval_test.shape_value_face(dof_v, face_no, direction, cell_no);
+                for(int dof_u = 0; dof_u < fe_order; ++dof_u)
+                {
+                  const auto & u = eval_ansatz.shape_value_face(dof_u, face_no, direction, cell_no);
+                  const auto & value_on_face =
+                    -symgrad_factor * average_factor *
+                    (v * normal_vector[comp_ansatz] * u + v * u * normal_vector[comp_test]);
+                  cell_matrix(dof_v, dof_u) += 2. * value_on_face;
+                }
+              }
+            };
+
+            const auto interface_point_mass = [&](const evaluator_type &              eval_ansatz,
+                                                  const evaluator_type &              eval_test,
+                                                  Table<2, VectorizedArray<Number>> & cell_matrix01,
+                                                  Table<2, VectorizedArray<Number>> & cell_matrix10,
+                                                  const int                           cell_no_left,
+                                                  const int                           direction) {
+              (void)cell_no_left;
+              AssertDimension(cell_no_left, 0);
+              const auto   normal_vector0 = eval_test.get_normal_vector(1, direction); // on cell 0
+              const auto   normal_vector1 = eval_test.get_normal_vector(0, direction); // on cell 1
+              const auto   average_factor = eval_test.get_average_factor(direction, 0, 1);
+              const Number symgrad_factor = 0.5;
+
+              auto value_on_interface01{make_vectorized_array<Number>(0.)};
+              auto value_on_interface10{make_vectorized_array<Number>(0.)};
+              for(int dof_v = 0; dof_v < fe_order;
+                  ++dof_v) // u is ansatz function & v is test function
+              {
+                const auto & v0 =
+                  eval_test.shape_value_face(dof_v, /*face_no*/ 1, direction, /*cell_no*/ 0);
+                const auto & v1 = eval_test.shape_value_face(dof_v, 0, direction, 1);
+                for(int dof_u = 0; dof_u < fe_order; ++dof_u)
+                {
+                  const auto & u0 = eval_ansatz.shape_value_face(dof_u, 1, direction, 0);
+                  const auto & u1 = eval_ansatz.shape_value_face(dof_u, 0, direction, 1);
+
+                  /// consistency + symmetry
+                  value_on_interface01 =
+                    -average_factor * symgrad_factor *
+                    (v0 * normal_vector0[comp_ansatz] * u1 + v0 * u1 * normal_vector1[comp_test]);
+                  value_on_interface10 =
+                    -average_factor * symgrad_factor *
+                    (v1 * normal_vector1[comp_ansatz] * u0 + v1 * u0 * normal_vector0[comp_test]);
+                  cell_matrix01(dof_v, dof_u) += 2. * value_on_interface01;
+                  cell_matrix10(dof_v, dof_u) += 2. * value_on_interface10;
+                }
+              }
+            };
+
+            const auto point_mass_matrices = eval_test.patch_action(eval_ansatz,
+                                                                    CellVoid{},
+                                                                    face_point_mass,
+                                                                    interface_point_mass);
+
+            /// PM : abbr. of point mass
+            /// G  : abbr. of average of gradient !
+
+            const auto MxPMxG = [&](const int comp_test, const int comp_ansatz) {
+              /// for example, we obtain MxPMxG for comp_test = 0 and
+              /// comp_ansatz = 1
+              std::array<matrix_type_1d, dim> kronecker_tensor;
+              const auto                      derivative_index_ansatz = comp_test;
+              const auto                      normal_component_test   = comp_ansatz;
+              for(auto d = 0; d < dim; ++d)
+              {
+                if(d == derivative_index_ansatz)
+                  kronecker_tensor[d] = gradient_matrices[derivative_index_ansatz];
+                else if(d == normal_component_test)
+                  kronecker_tensor[d] = point_mass_matrices[normal_component_test];
+                else
+                  kronecker_tensor[d] = mass_matrices[d];
+              }
+              return kronecker_tensor;
+            };
+
+            const auto MxGTxPM = [&](const int comp_test, const int comp_ansatz) {
+              /// for example, we obtain MxGTxPM for comp_test = 0 and
+              /// comp_ansatz = 1
+              std::array<matrix_type_1d, dim> kronecker_tensor;
+              const auto                      derivative_index_test   = comp_ansatz;
+              const auto                      normal_component_ansatz = comp_test;
+              for(auto d = 0; d < dim; ++d)
+              {
+                if(d == derivative_index_test)
+                  kronecker_tensor[d] =
+                    Tensors::transpose(gradient_matrices[derivative_index_test]);
+                else if(d == normal_component_ansatz)
+                  kronecker_tensor[d] = point_mass_matrices[normal_component_ansatz];
+                else
+                  kronecker_tensor[d] = mass_matrices[d];
+              }
+              return kronecker_tensor;
+            };
+
             /// (0,1)-block: MxGxGT
             {
               const auto                                   derivative_index_ansatz = comp_test;
               const auto                                   derivative_index_test   = comp_ansatz;
               std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
+
+              // rank1_tensors.emplace_back(
+              //   MxGxGT(/*G*/ derivative_index_ansatz, /*GT*/ derivative_index_test));
+              // rank1_tensors.emplace_back(MxPMxG(comp_test, comp_ansatz));
+              // rank1_tensors.emplace_back(MxGTxPM(comp_test, comp_ansatz));
+
+              /// (mu *  G(1)^T + N(1)) x G(0)   NOTE: mu is included in Nitsche N(1)
               rank1_tensors.emplace_back(
-                MxGxGT(/*G*/ derivative_index_ansatz, /*GT*/ derivative_index_test));
+                std::array<matrix_type_1d, dim>{gradient_matrices[0],
+                                                Tensors::transpose(gradient_matrices[1])});
+              // rank1_tensors.emplace_back(
+              //   std::array<matrix_type_1d, dim>{gradient_matrices[0], point_mass_matrices[1]});
+
+              // /// G(1)^T x N(0)                  NOTE: mu is included in Nitsche N(0)
+              // rank1_tensors.emplace_back(
+              //   std::array<matrix_type_1d, dim>{point_mass_matrices[0], gradient_matrices[1]});
+
+              // zero_out(rank1_tensors); // !!!
+
               Aloc.get_block(comp_test, comp_ansatz).reinit(rank1_tensors);
             }
 
@@ -412,6 +567,12 @@ public:
               std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
               rank1_tensors.emplace_back(
                 MxGxGT(/*G*/ derivative_index_ansatz, /*GT*/ derivative_index_test));
+              // rank1_tensors.emplace_back(MxPMxG(comp_test_flipped, comp_ansatz_flipped));
+              // rank1_tensors.emplace_back(MxGTxPM(comp_test_flipped, comp_ansatz_flipped));
+
+              // zero_out(rank1_tensors); // !!!
+
+
               Aloc.get_block(comp_test_flipped, comp_ansatz_flipped).reinit(rank1_tensors);
             }
           }
@@ -420,17 +581,198 @@ public:
     }
   }
 
+  // template<typename OperatorType>
+  // void
+  // assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
+  //                            std::vector<matrix_type> &            local_matrices,
+  //                            const OperatorType &,
+  //                            const std::pair<unsigned int, unsigned int> subdomain_range) const
+  // {
+  //   AssertDimension(subdomain_handler.get_partition_data().n_subdomains(),
+  //   local_matrices.size());
+
+  //   for(auto comp_test = 0U; comp_test < dim; ++comp_test)
+  //   {
+  //     evaluator_type eval_test(subdomain_handler, /*dofh_index*/ 0, comp_test);
+  //     for(auto comp_ansatz = comp_test; comp_ansatz < dim; ++comp_ansatz) // assuming isotropy !
+  //     {
+  //       evaluator_type eval_ansatz(subdomain_handler, /*dofh_index*/ 0, comp_ansatz);
+  //       for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
+  //       {
+  //         auto & Aloc = local_matrices[patch];
+  //         if(Aloc.n_block_rows() == 0 && Aloc.n_block_cols() == 0)
+  //           Aloc.resize(dim, dim);
+
+  //         eval_test.reinit(patch);
+  //         eval_ansatz.reinit(patch);
+
+  //         const auto mass_matrices = assemble_mass_tensor(eval_test, eval_ansatz);
+
+  //         if(comp_test == comp_ansatz)
+  //         {
+  //           const auto laplace_matrices = assemble_laplace_tensor(eval_test, eval_ansatz);
+
+  //           const auto & MxMxL = [&](const unsigned int direction_of_L) {
+  //             /// for example, we obtain MxMxL for direction_of_L = 0 (dimension
+  //             /// 0 is rightmost!)
+  //             std::array<matrix_type_1d, dim> kronecker_tensor;
+  //             /// if direction_of_L equals the velocity component we scale by two
+  //             AssertDimension(comp_test, comp_ansatz);
+  //             const auto factor = direction_of_L == comp_ansatz ? 2. : 1.;
+  //             for(auto d = 0U; d < dim; ++d)
+  //               kronecker_tensor[d] = d == direction_of_L ?
+  //                                       factor * laplace_matrices[direction_of_L] :
+  //                                       mass_matrices[d];
+  //             return kronecker_tensor;
+  //           };
+
+  //           /// (0,0)-block: LxMxM + MxLxM + MxMx2L
+  //           std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
+  //           for(auto direction_of_L = 0; direction_of_L < dim; ++direction_of_L)
+  //             rank1_tensors.emplace_back(MxMxL(direction_of_L));
+  //           Aloc.get_block(comp_test, comp_ansatz).reinit(rank1_tensors);
+  //         }
+
+  //         else
+  //         {
+  //           const auto gradient_matrices = assemble_gradient_tensor(eval_test, eval_ansatz);
+
+  //           const auto & MxGxGT = [&](const int deriv_index_ansatz, const int deriv_index_test) {
+  //             /// for example, we obtain MxGxGT for deriv_index_ansatz = 1 and
+  //             /// deriv_index_test = 0 (dimension 0 is rightmost!)
+  //             Assert(deriv_index_ansatz != deriv_index_test,
+  //                    ExcMessage("This case is not well-defined."));
+  //             std::array<matrix_type_1d, dim> kronecker_tensor;
+  //             for(auto d = 0; d < dim; ++d)
+  //               kronecker_tensor[d] = d == deriv_index_ansatz ?
+  //                                       gradient_matrices[deriv_index_ansatz] :
+  //                                       (d == deriv_index_test ?
+  //                                          Tensors::transpose(gradient_matrices[deriv_index_test])
+  //                                          : mass_matrices[d]);
+  //             return kronecker_tensor;
+  //           };
+
+  //           /// (0,1)-block: MxGxGT
+  //           {
+  //             const auto                                   derivative_index_ansatz = comp_test;
+  //             const auto                                   derivative_index_test   = comp_ansatz;
+  //             std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
+  //             rank1_tensors.emplace_back(
+  //               MxGxGT(/*G*/ derivative_index_ansatz, /*GT*/ derivative_index_test));
+  //             Aloc.get_block(comp_test, comp_ansatz).reinit(rank1_tensors);
+  //           }
+
+  //           /// (1,0)-block: MxGTxG
+  //           {
+  //             const auto comp_ansatz_flipped     = comp_test;   // assuming isotropy !
+  //             const auto comp_test_flipped       = comp_ansatz; // assuming isotropy !
+  //             const auto derivative_index_ansatz = comp_test_flipped;
+  //             const auto derivative_index_test   = comp_ansatz_flipped;
+  //             std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
+  //             rank1_tensors.emplace_back(
+  //               MxGxGT(/*G*/ derivative_index_ansatz, /*GT*/ derivative_index_test));
+  //             Aloc.get_block(comp_test_flipped, comp_ansatz_flipped).reinit(rank1_tensors);
+  //           }
+  //         }
+  //       }
+  //     }
+  //   }
+  // }
+
   template<bool is_sipg = false>
   std::array<matrix_type_1d, dim>
   assemble_laplace_tensor(evaluator_type & eval_test, evaluator_type & eval_ansatz) const
   {
+    using CellLaplace = ::FD::Laplace::CellOperation<dim, fe_degree, fe_degree + 1, Number>;
     if constexpr(is_sipg)
     {
-      Laplace::DG::FD::CellLaplace<evaluator_type> cell_laplace;
-      Laplace::DG::FD::FaceLaplace<evaluator_type> nitsche(Laplace::EquationData{});
-      return eval_test.patch_action(eval_ansatz, cell_laplace, nitsche, nitsche);
+      CellLaplace laplace;
+      using FaceLaplace = ::FD::Laplace::SIPG::FaceOperation<dim, fe_degree, fe_degree + 1, Number>;
+      FaceLaplace nitsche;
+
+      const auto face_nitsche_plus_penalty = [&](const evaluator_type & eval_ansatz,
+                                                 const evaluator_type & eval_test,
+                                                 matrix_type_1d &       cell_matrix,
+                                                 const int              direction,
+                                                 const int              cell_no,
+                                                 const int              face_no) {
+        nitsche(eval_ansatz, eval_test, cell_matrix, direction, cell_no, face_no);
+
+        const int vector_component = eval_test.vector_component();
+        AssertDimension(vector_component, static_cast<int>(eval_ansatz.vector_component()));
+
+        if(vector_component != direction)
+        {
+          const int  n_dofs_test    = eval_test.n_dofs_per_cell_1d(direction);
+          const int  n_dofs_ansatz  = eval_ansatz.n_dofs_per_cell_1d(direction);
+          const auto average_factor = eval_test.get_average_factor(direction, cell_no, face_no);
+          const auto normal         = eval_test.get_normal(face_no);
+
+          const auto h       = eval_test.get_h(direction, cell_no);
+          const auto penalty = nitsche.penalty_factor * average_factor *
+                               ::Nitsche::compute_penalty_impl(fe_degree, h, h);
+
+          auto value_on_face = make_vectorized_array<Number>(0.);
+          for(int i = 0; i < n_dofs_test; ++i)
+          {
+            const auto & v_i = eval_test.shape_value_face(i, face_no, direction, cell_no);
+            for(int j = 0; j < n_dofs_ansatz; ++j)
+            {
+              const auto & u_j = eval_ansatz.shape_value_face(j, face_no, direction, cell_no);
+              value_on_face    = penalty * v_i * u_j * normal * normal;
+              cell_matrix(i, j) += value_on_face;
+            }
+          }
+        }
+      };
+
+      const auto interface_nitsche_plus_penalty = [&](const evaluator_type & eval_ansatz,
+                                                      const evaluator_type & eval_test,
+                                                      matrix_type_1d &       cell_matrix01,
+                                                      matrix_type_1d &       cell_matrix10,
+                                                      const int              cell_no0,
+                                                      const int              direction) {
+        nitsche(eval_ansatz, eval_test, cell_matrix01, cell_matrix10, cell_no0, direction);
+
+        const int vector_component = eval_test.vector_component();
+        AssertDimension(vector_component, static_cast<int>(eval_ansatz.vector_component()));
+
+        if(vector_component != direction)
+        {
+          const int  n_dofs_test   = eval_test.n_dofs_per_cell_1d(direction);
+          const int  n_dofs_ansatz = eval_ansatz.n_dofs_per_cell_1d(direction);
+          const auto normal0       = eval_test.get_normal(1); // on cell 0
+          const auto normal1       = eval_test.get_normal(0); // on cell 1 !!!
+
+          const auto h0      = eval_test.get_h(direction, cell_no0);
+          const auto h1      = eval_test.get_h(direction, cell_no0 + 1);
+          const auto penalty = nitsche.interior_penalty_factor * 0.5 *
+                               ::Nitsche::compute_penalty_impl(fe_degree, h0, h1);
+
+          auto value_on_interface01 = make_vectorized_array<Number>(0.);
+          auto value_on_interface10 = make_vectorized_array<Number>(0.);
+          for(int i = 0; i < n_dofs_test; ++i)
+          {
+            const auto & v0_i = eval_test.shape_value_face(i, 1, direction, 0);
+            const auto & v1_i = eval_test.shape_value_face(i, 0, direction, 1);
+            for(int j = 0; j < n_dofs_ansatz; ++j)
+            {
+              const auto & u0_j    = eval_ansatz.shape_value_face(j, 1, direction, 0);
+              const auto & u1_j    = eval_ansatz.shape_value_face(j, 0, direction, 1);
+              value_on_interface01 = penalty * v0_i * u1_j * normal0 * normal1;
+              value_on_interface10 = penalty * v1_i * u0_j * normal1 * normal0;
+              cell_matrix01(i, j) += value_on_interface01;
+              cell_matrix10(i, j) += value_on_interface10;
+            }
+          }
+        }
+      };
+
+      return eval_test.patch_action(eval_ansatz,
+                                    laplace,
+                                    face_nitsche_plus_penalty,
+                                    interface_nitsche_plus_penalty);
     }
-    using CellLaplace = ::FD::Laplace::CellOperation<dim, fe_degree, fe_degree + 1, Number>;
     return eval_test.patch_action(eval_ansatz, CellLaplace{});
   }
 
@@ -445,7 +787,8 @@ public:
   assemble_gradient_tensor(evaluator_type & eval_test, evaluator_type & eval_ansatz) const
   {
     using CellGradient = ::FD::Gradient::CellOperation<dim, fe_degree, fe_degree + 1, Number>;
-    return eval_test.patch_action(eval_ansatz, CellGradient{});
+    CellGradient cell_gradient;
+    return eval_test.patch_action(eval_ansatz, cell_gradient);
   }
 
   std::shared_ptr<transfer_type>

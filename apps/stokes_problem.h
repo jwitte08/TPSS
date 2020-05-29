@@ -968,16 +968,44 @@ ModelProblem<dim, fe_degree_p, dof_layout>::assemble_multigrid_velocity()
         matrix_integrator.cell_worker(cell, scratch_data, copy_data);
       };
 
+    auto face_worker = [&](const auto &         cell,
+                           const unsigned int & f,
+                           const unsigned int & sf,
+                           const auto &         ncell,
+                           const unsigned int & nf,
+                           const unsigned int & nsf,
+                           ScratchData<dim> &   scratch_data,
+                           CopyData &           copy_data) {
+      if(dof_layout == TPSS::DoFLayout::DGQ)
+        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+    };
+
+    auto boundary_worker = [&](const auto &         cell,
+                               const unsigned int & face_no,
+                               ScratchData<dim> &   scratch_data,
+                               CopyData &           copy_data) {
+      if(dof_layout == TPSS::DoFLayout::DGQ)
+        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+    };
+
     const auto copier = [&](const CopyData & copy_data) {
       level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
         copy_data.cell_matrix, copy_data.local_dof_indices, mg_matrices[level]);
+
+      for(auto & cdf : copy_data.face_data)
+      {
+        level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+          cdf.cell_matrix, cdf.joint_dof_indices, mg_matrices[level]);
+      }
     };
 
     const unsigned int n_gauss_points = fe_degree_p + 2;
     const UpdateFlags  update_flags =
       update_values | update_gradients | update_quadrature_points | update_JxW_values;
-    const UpdateFlags interface_update_flags = update_default;
-    ScratchData<dim>  scratch_data(
+    const UpdateFlags interface_update_flags = update_values | update_gradients |
+                                               update_quadrature_points | update_JxW_values |
+                                               update_normal_vectors;
+    ScratchData<dim> scratch_data(
       mapping, *fe_velocity, n_gauss_points, update_flags, interface_update_flags);
 
     CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
@@ -988,7 +1016,10 @@ ModelProblem<dim, fe_degree_p, dof_layout>::assemble_multigrid_velocity()
                           copier,
                           scratch_data,
                           copy_data,
-                          MeshWorker::assemble_own_cells);
+                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                            MeshWorker::assemble_own_interior_faces_once,
+                          boundary_worker,
+                          face_worker);
   }
 }
 
