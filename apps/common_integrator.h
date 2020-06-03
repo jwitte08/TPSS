@@ -327,7 +327,7 @@ struct CellOperation : public CellOperationBase<dim, fe_degree, n_q_points_1d, N
   }
 };
 
-  // TODO !!! FaceOperation has not been tested
+// TODO !!! FaceOperation has not been tested
 // template<int dim,
 //          int fe_degree,
 //          int n_q_points_1d,

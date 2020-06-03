@@ -232,8 +232,6 @@ protected:
               }
         }
 
-
-
         compare_matrix(local_matrix_tp, local_matrix);
       }
     }
