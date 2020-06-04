@@ -18,8 +18,6 @@
 #include <deal.II/lac/la_parallel_vector.h>
 #include <deal.II/lac/vector.h>
 
-#include <deal.II/matrix_free/matrix_free.h>
-
 #include <deal.II/multigrid/mg_constrained_dofs.h>
 
 #include "TPSS.h"

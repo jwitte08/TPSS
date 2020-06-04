@@ -1,17 +1,19 @@
 #ifndef MATRIXFREECONNECT_H
 #define MATRIXFREECONNECT_H
 
+#include <deal.II/matrix_free/matrix_free.h>
+
 #include "dof_info.h"
 #include "patch_info.h"
 #include "patch_worker.h"
-
-using namespace dealii;
 
 
 
 namespace TPSS
 {
-template<int dim, typename Number>
+using namespace dealii;
+
+  template<int dim, typename Number>
 struct MatrixFreeConnect
 {
   /**

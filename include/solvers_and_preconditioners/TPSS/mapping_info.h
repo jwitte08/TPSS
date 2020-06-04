@@ -22,10 +22,10 @@
 #include "patch_mf_worker.h"
 #include "tensors.h"
 
-using namespace dealii;
-
 namespace TPSS
 {
+using namespace dealii;
+
 template<int dim, typename number>
 class MappingInfo
 {
