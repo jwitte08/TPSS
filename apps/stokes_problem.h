@@ -279,13 +279,21 @@ BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout = TPSS::DoFLayout::Q>
-class ModelProblem
+enum class Method
 {
-  static_assert(dim == 2, "only 2D");
+  TaylorHood,
+  /*only for testing*/ TaylorHoodDGQ
+};
 
-public:
-  static constexpr int fe_degree_v = fe_degree_p + 1;
+template<Method method, int dim, int fe_degree_p>
+struct ModelProblemBase
+{
+};
+
+template<int dim, int fe_degree_p>
+struct ModelProblemBase<Method::TaylorHood, dim, fe_degree_p>
+{
+  static constexpr TPSS::DoFLayout dof_layout = TPSS::DoFLayout::Q;
 
   using VECTOR = Vector<double>;
   using MATRIX = SparseMatrixAugmented<dim, fe_degree_p + 1, double>;
@@ -295,6 +303,42 @@ public:
   using PATCH_MATRIX          = typename MATRIX::local_integrator_type::matrix_type;
   using MG_SMOOTHER_SCHWARZ   = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
   using GMG_PRECONDITIONER    = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
+};
+
+template<int dim, int fe_degree_p>
+struct ModelProblemBase<Method::TaylorHoodDGQ, dim, fe_degree_p>
+{
+  static constexpr TPSS::DoFLayout dof_layout = TPSS::DoFLayout::DGQ;
+
+  using VECTOR = Vector<double>;
+  using MATRIX = SparseMatrixAugmented<dim, fe_degree_p + 1, double>;
+
+  using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
+  using GAUSS_SEIDEL_SMOOTHER = PreconditionSOR<MATRIX>;
+  using PATCH_MATRIX          = typename MATRIX::local_integrator_type::matrix_type;
+  using MG_SMOOTHER_SCHWARZ   = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
+  using GMG_PRECONDITIONER    = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
+};
+
+template<int dim, int fe_degree_p, Method method = Method::TaylorHood>
+class ModelProblem : public ModelProblemBase<method, dim, fe_degree_p>
+{
+  static_assert(dim == 2, "only 2D");
+
+  using Base = ModelProblemBase<method, dim, fe_degree_p>;
+
+public:
+  static constexpr int fe_degree_v = fe_degree_p + 1;
+  using Base::dof_layout;
+
+  using VECTOR = typename Base::VECTOR;
+  using MATRIX = typename Base::MATRIX;
+
+  using MG_TRANSFER           = typename Base::MG_TRANSFER;
+  using GAUSS_SEIDEL_SMOOTHER = typename Base::GAUSS_SEIDEL_SMOOTHER;
+  using PATCH_MATRIX          = typename Base::PATCH_MATRIX;
+  using MG_SMOOTHER_SCHWARZ   = typename Base::MG_SMOOTHER_SCHWARZ;
+  using GMG_PRECONDITIONER    = typename Base::GMG_PRECONDITIONER;
 
   ModelProblem(const RT::Parameter & rt_parameters_in, const EquationData & equation_data_in);
 
@@ -477,9 +521,9 @@ private:
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
-ModelProblem<dim, fe_degree_p, dof_layout>::ModelProblem(const RT::Parameter & rt_parameters_in,
-                                                         const EquationData &  equation_data_in)
+template<int dim, int fe_degree_p, Method method>
+ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_parameters_in,
+                                                     const EquationData &  equation_data_in)
   : pcout(
       std::make_shared<ConditionalOStream>(std::cout,
                                            Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
@@ -512,9 +556,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::ModelProblem(const RT::Parameter & r
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 bool
-ModelProblem<dim, fe_degree_p, dof_layout>::make_grid()
+ModelProblem<dim, fe_degree_p, method>::make_grid()
 {
   make_grid_impl(rt_parameters.mesh);
   return true;
@@ -522,9 +566,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::make_grid()
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 bool
-ModelProblem<dim, fe_degree_p, dof_layout>::make_grid(const unsigned int n_refinements)
+ModelProblem<dim, fe_degree_p, method>::make_grid(const unsigned int n_refinements)
 {
   MeshParameter mesh_prms = rt_parameters.mesh;
   mesh_prms.n_refinements = n_refinements;
@@ -548,9 +592,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::make_grid(const unsigned int n_refin
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::make_grid_impl(const MeshParameter & mesh_prms)
+ModelProblem<dim, fe_degree_p, method>::make_grid_impl(const MeshParameter & mesh_prms)
 {
   triangulation.clear();
   *pcout << create_mesh(triangulation, mesh_prms) << std::endl;
@@ -560,9 +604,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::make_grid_impl(const MeshParameter &
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::setup_system_velocity()
+ModelProblem<dim, fe_degree_p, method>::setup_system_velocity()
 {
   Assert(check_finite_elements(),
          ExcMessage("Does the choice of finite elements suit the dof_layout?"));
@@ -591,9 +635,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::setup_system_velocity()
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::setup_system()
+ModelProblem<dim, fe_degree_p, method>::setup_system()
 {
   Assert(check_finite_elements(),
          ExcMessage("Does the choice of finite elements suit the dof_layout?"));
@@ -675,9 +719,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::setup_system()
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::assemble_system()
+ModelProblem<dim, fe_degree_p, method>::assemble_system()
 {
   using VelocityPressure::MW::CopyData;
   using VelocityPressure::MW::ScratchData;
@@ -733,9 +777,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::assemble_system()
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::assemble_system_velocity()
+ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity()
 {
   using Velocity::SIPG::MW::CopyData;
   using Velocity::SIPG::MW::ScratchData;
@@ -798,9 +842,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::assemble_system_velocity()
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::prepare_schwarz_smoothers()
+ModelProblem<dim, fe_degree_p, method>::prepare_schwarz_smoothers()
 {
   Assert(rt_parameters.multigrid.pre_smoother.variant ==
            SmootherParameter::SmootherVariant::Schwarz,
@@ -833,9 +877,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::prepare_schwarz_smoothers()
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::prepare_multigrid_velocity()
+ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity()
 {
   // *** clear multigrid infrastructure
   multigrid.reset();
@@ -940,9 +984,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::prepare_multigrid_velocity()
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::assemble_multigrid_velocity()
+ModelProblem<dim, fe_degree_p, method>::assemble_multigrid_velocity()
 {
   AssertDimension(mg_matrices.max_level(), max_level());
   AssertDimension(mg_matrices.min_level(), rt_parameters.multigrid.coarse_level);
@@ -1035,10 +1079,10 @@ ModelProblem<dim, fe_degree_p, dof_layout>::assemble_multigrid_velocity()
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 template<typename PreconditionerType>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::iterative_solve_impl(
+ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
   const PreconditionerType & preconditioner,
   const std::string          solver_variant)
 {
@@ -1073,9 +1117,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::iterative_solve_impl(
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::solve()
+ModelProblem<dim, fe_degree_p, method>::solve()
 {
   if(rt_parameters.solver.variant == "UMFPACK")
   {
@@ -1146,9 +1190,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::solve()
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::compute_errors()
+ModelProblem<dim, fe_degree_p, method>::compute_errors()
 {
   const ComponentSelectFunction<dim> pressure_mask(dim, dim + 1);
   const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
@@ -1193,10 +1237,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::compute_errors()
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::output_results(
-  const unsigned int refinement_cycle) const
+ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refinement_cycle) const
 {
   std::vector<std::string> solution_names(dim, "velocity");
   solution_names.emplace_back("pressure");
@@ -1219,9 +1262,9 @@ ModelProblem<dim, fe_degree_p, dof_layout>::output_results(
 
 
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, dof_layout>::run()
+ModelProblem<dim, fe_degree_p, method>::run()
 {
   print_informations();
 

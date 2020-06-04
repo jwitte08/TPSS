@@ -61,13 +61,13 @@ protected:
   {
     *pcout_owned << "//////////   STOKES PROBLEM" << std::endl;
     EquationData equation_data;
-    using StokesProblem = ModelProblem<dim, fe_degree_p, TPSS::DoFLayout::DGQ>;
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::TaylorHoodDGQ>;
     std::shared_ptr<const StokesProblem> stokes_problem;
     auto new_problem   = std::make_shared<StokesProblem>(rt_parameters, equation_data);
     new_problem->pcout = pcout_owned;
     new_problem->make_grid();
-    new_problem->setup_system_velocity();
-    new_problem->assemble_system_velocity();
+    new_problem->setup_system();
+    new_problem->prepare_multigrid_velocity();
     stokes_problem = new_problem;
     stokes_problem->print_informations();
 
@@ -82,81 +82,25 @@ protected:
     elasticity_problem->create_triangulation();
     elasticity_problem->assemble_matrix();
     elasticity_problem->print_informations();
+    const auto max_level = stokes_problem->max_level();
 
-    FullMatrix<double> A(stokes_problem->system_matrix_velocity.m());
+    FullMatrix<double> A(stokes_problem->mg_matrices[max_level].m()); // system_matrix_velocity.m());
     FullMatrix<double> Aref(elasticity_problem->sparse_matrix.m());
     ASSERT_EQ(A.m(), Aref.m());
-    A.copy_from(stokes_problem->system_matrix_velocity);
+    A.copy_from(stokes_problem->mg_matrices[max_level]); // system_matrix_velocity);
     Aref.copy_from(elasticity_problem->sparse_matrix);
     compare_matrix(A, Aref);
   }
 
 
-  // void
-  // check_local_solvers_velocity()
-  // {
-  //   EquationData equation_data;
-  //   rt_parameters.solver.variant = "FGMRES_GMG";
-  //   using StokesProblem          = ModelProblem<dim, fe_degree_p, TPSS::DoFLayout::Q>;
-  //   std::shared_ptr<const StokesProblem> stokes_problem;
-  //   auto new_problem   = std::make_shared<StokesProblem>(rt_parameters, equation_data);
-  //   new_problem->pcout = pcout_owned;
-  //   new_problem->make_grid();
-  //   new_problem->setup_system_velocity();
-  //   new_problem->prepare_multigrid_velocity();
-  //   stokes_problem = new_problem;
-  //   stokes_problem->print_informations();
-  //   const auto max_level = stokes_problem->max_level();
-
-  //   using MatrixIntegrator = Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree_v, double>;
-  //   using LocalMatrix      = typename MatrixIntegrator::matrix_type;
-  //   using PatchTransfer    = TPSS::PatchTransfer<dim, double>;
-
-  //   const auto mg_smoother = stokes_problem->mg_schwarz_smoother_pre;
-  //   ASSERT_TRUE(mg_smoother) << "mg_smoother is not initialized.";
-  //   const auto    subdomain_handler = mg_smoother->get_subdomain_handler();
-  //   PatchTransfer patch_transfer(*subdomain_handler);
-  //   const auto &  patch_worker = patch_transfer.get_patch_dof_worker();
-  //   const auto    n_subdomains = patch_worker.get_partition_data().n_subdomains();
-
-  //   std::vector<LocalMatrix> local_matrices(n_subdomains);
-  //   MatrixIntegrator         integrator;
-  //   integrator.initialize(equation_data);
-  //   integrator.template assemble_subspace_inverses<bool>(
-  //     *subdomain_handler,
-  //     local_matrices,
-  //     /*dummy*/ false,
-  //     patch_worker.get_partition_data().get_patch_range());
-
-  //   /// compare local matrices
-  //   for(auto patch = 0U; patch < n_subdomains; ++patch)
-  //   {
-  //     patch_transfer.reinit(patch);
-  //     for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch); ++lane)
-  //     {
-  //       std::vector<types::global_dof_index> dof_indices_on_patch;
-  //       {
-  //         const auto view = patch_transfer.get_dof_indices(lane);
-  //         std::copy(view.cbegin(), view.cend(), std::back_inserter(dof_indices_on_patch));
-  //       }
-  //       FullMatrix<double> local_matrix(dof_indices_on_patch.size());
-  //       local_matrix.extract_submatrix_from(stokes_problem->mg_matrices[max_level],
-  //                                           dof_indices_on_patch,
-  //                                           dof_indices_on_patch);
-  //       const auto local_matrix_tp = table_to_fullmatrix(local_matrices[patch].as_table(), lane);
-  //       compare_matrix(local_matrix_tp, local_matrix);
-  //     }
-  //   }
-  // }
-
-
-  template<TPSS::DoFLayout dof_layout = TPSS::DoFLayout::Q>
+  template<Stokes::Method method = Method::TaylorHood>
   void
   check_local_solvers_velocity(const bool only_diagonal = false)
   {
     EquationData equation_data;
-    rt_parameters.solver.variant = "FGMRES_GMG";
-    using StokesProblem          = ModelProblem<dim, fe_degree_p, dof_layout>;
+    rt_parameters.solver.variant                    = "FGMRES_GMG";
+    using StokesProblem                             = ModelProblem<dim, fe_degree_p, method>;
+    constexpr auto                       dof_layout = StokesProblem::dof_layout;
     std::shared_ptr<const StokesProblem> stokes_problem;
     auto new_problem   = std::make_shared<StokesProblem>(rt_parameters, equation_data);
     new_problem->pcout = pcout_owned;
@@ -296,11 +240,11 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversDGVelocity)
   Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::rt_parameters.mesh.n_repetitions    = 2;
   Fixture::rt_parameters.mesh.n_refinements    = 0;
-  Fixture::template check_local_solvers_velocity<TPSS::DoFLayout::DGQ>(true);
-  Fixture::template check_local_solvers_velocity<TPSS::DoFLayout::DGQ>(false);
+  Fixture::template check_local_solvers_velocity<Method::TaylorHoodDGQ>(true);
+  Fixture::template check_local_solvers_velocity<Method::TaylorHoodDGQ>(false);
   Fixture::rt_parameters.mesh.n_refinements = 1;
-  Fixture::template check_local_solvers_velocity<TPSS::DoFLayout::DGQ>(true);
-  Fixture::template check_local_solvers_velocity<TPSS::DoFLayout::DGQ>(false);
+  Fixture::template check_local_solvers_velocity<Method::TaylorHoodDGQ>(true);
+  Fixture::template check_local_solvers_velocity<Method::TaylorHoodDGQ>(false);
 }
 
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
