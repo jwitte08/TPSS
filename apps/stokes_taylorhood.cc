@@ -68,8 +68,9 @@ main(int argc, char * argv[])
 
     // 0: direct solver (UMFPACK)
     // 1: flexible GMRES prec. by ILU (FGMRES_ILU)
-    // 2: flexible GMRES prec. by Schur approx., GMG for velocity (FGMRES_GMG)
-    constexpr unsigned int test_index_max = 2;
+    // 2: flexible GMRES prec. by Schur approx., GMG for velocity (Gauss-Seidel)
+    // 2: flexible GMRES prec. by Schur approx., GMG for velocity (Schwarz)
+    constexpr unsigned int test_index_max = 3;
     const unsigned int     test_index     = argc > 2 ? std::atoi(argv[2]) : 0;
     AssertThrow(test_index <= test_index_max, ExcMessage("test_index is not valid"));
 
@@ -85,6 +86,7 @@ main(int argc, char * argv[])
       //: solver
       const std::string str_solver_variant[test_index_max + 1] = {"UMFPACK",
                                                                   "FGMRES_ILU",
+                                                                  "FGMRES_GMG",
                                                                   "FGMRES_GMG"};
       prms.solver.variant                                      = str_solver_variant[test_index];
       prms.solver.rel_tolerance                                = 1.e-8;
@@ -95,8 +97,11 @@ main(int argc, char * argv[])
 
       //: multigrid
       const double damping_factor =
-        (argc > 1) ? std::atof(argv[1]) :
-                     TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim);
+        (argc > 1) ?
+          (std::atof(argv[1]) != 0. ?
+             std::atof(argv[1]) :
+             TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim)) :
+          TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim);
       prms.multigrid.coarse_level                 = 0;
       prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::FullSVD;
       prms.multigrid.coarse_grid.iterative_solver = "cg";
@@ -104,12 +109,13 @@ main(int argc, char * argv[])
       const SmootherParameter::SmootherVariant smoother_variant[test_index_max + 1] = {
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::None,
-        SmootherParameter::SmootherVariant::GaussSeidel};
+        SmootherParameter::SmootherVariant::GaussSeidel,
+        SmootherParameter::SmootherVariant::Schwarz};
       prms.multigrid.pre_smoother.variant                    = smoother_variant[test_index];
       prms.multigrid.pre_smoother.n_smoothing_steps          = 2;
       prms.multigrid.pre_smoother.schwarz.patch_variant      = CT::PATCH_VARIANT_;
       prms.multigrid.pre_smoother.schwarz.smoother_variant   = CT::SMOOTHER_VARIANT_;
-      prms.multigrid.pre_smoother.schwarz.manual_coloring    = false; // !!! TODO
+      prms.multigrid.pre_smoother.schwarz.manual_coloring    = true;
       prms.multigrid.pre_smoother.schwarz.damping_factor     = damping_factor;
       prms.multigrid.post_smoother                           = prms.multigrid.pre_smoother;
       prms.multigrid.post_smoother.schwarz.reverse_smoothing = true;

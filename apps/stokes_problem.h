@@ -63,6 +63,8 @@
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/fe/mapping_q.h>
 
+#include <deal.II/matrix_free/matrix_free.h>
+
 #include <deal.II/meshworker/mesh_loop.h>
 
 #include <deal.II/numerics/data_out.h>
@@ -80,6 +82,7 @@
 #include <iostream>
 
 
+#include "coloring.h"
 #include "equation_data.h"
 #include "multigrid.h"
 #include "postprocess.h"
@@ -413,11 +416,11 @@ public:
   BlockVector<double> system_rhs;
 
   //: multigrid
-  std::shared_ptr<MGConstrainedDoFs> mg_constrained_dofs;
-  MG_TRANSFER                        mg_transfer;
-  MGLevelObject<SparsityPattern>     mg_sparsity_patterns;
-  MGLevelObject<MATRIX>              mg_matrices;
-  // mutable std::shared_ptr<ColoringBase<dim>>        user_coloring; // !!! TODO
+  std::shared_ptr<MGConstrainedDoFs>                mg_constrained_dofs;
+  MG_TRANSFER                                       mg_transfer;
+  MGLevelObject<SparsityPattern>                    mg_sparsity_patterns;
+  MGLevelObject<MATRIX>                             mg_matrices;
+  mutable std::shared_ptr<ColoringBase<dim>>        user_coloring;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_pre;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_post;
   std::shared_ptr<const MGSmootherIdentity<VECTOR>> mg_smoother_identity;
@@ -493,7 +496,14 @@ ModelProblem<dim, fe_degree_p, dof_layout>::ModelProblem(const RT::Parameter & r
     // Finite element for the whole system:
     fe(generate_fe(*fe_velocity)),
     dof_handler(triangulation),
-    dof_handler_velocity(triangulation)
+    dof_handler_velocity(triangulation),
+    user_coloring([&]() -> std::shared_ptr<ColoringBase<dim>> {
+      if constexpr(dof_layout == TPSS::DoFLayout::Q)
+        return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
+      else if(dof_layout == TPSS::DoFLayout::DGQ)
+        return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
+      return std::shared_ptr<ColoringBase<dim>>();
+    }())
 {
   Assert(check_finite_elements(), ExcMessage("Check default finite elements and dof_layout."));
   equation_data.assemble_pressure_mass_matrix =

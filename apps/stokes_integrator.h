@@ -58,6 +58,67 @@ compute_penalty_impl(const int degree, const Number h_left, const Number h_right
 
 namespace MW
 {
+/**
+ * symgrad(phi)_{d,c} = 0.5 (\partial_d phi_{i;c} + \partial_c phi_{i;d})
+ */
+template<int dim>
+SymmetricTensor<2, dim>
+compute_symgrad(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  SymmetricTensor<2, dim> symgrad_of_phi;
+  for(auto d = 0U; d < dim; ++d)
+    for(auto c = d; c < dim; ++c)
+      symgrad_of_phi[d][c] =
+        0.5 * (phi.shape_grad_component(i, q, c)[d] + phi.shape_grad_component(i, q, d)[c]);
+  return symgrad_of_phi;
+}
+
+/**
+ * {{ symgrad(phi) }} = 0.5 ({{ \partial_d phi_{i;c} }} + {{ \partial_c phi_{i;d} }})
+ */
+template<int dim>
+SymmetricTensor<2, dim>
+compute_average_symgrad(const FEInterfaceValues<dim> & phi,
+                        const unsigned int             i,
+                        const unsigned int             q)
+{
+  SymmetricTensor<2, dim> av_symgrad_of_phi;
+  for(auto d = 0U; d < dim; ++d)
+    for(auto c = d; c < dim; ++c)
+      av_symgrad_of_phi[d][c] =
+        0.5 * (phi.average_gradient(i, q, c)[d] + phi.average_gradient(i, q, d)[c]);
+  return av_symgrad_of_phi;
+}
+
+/**
+ * [[ phi ]] = phi^+ - phi^-
+ */
+template<int dim>
+Tensor<1, dim>
+compute_jump(const FEInterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  Tensor<1, dim> jump_phi;
+  for(auto c = 0; c < dim; ++c)
+    jump_phi[c] = phi.jump(i, q, c);
+  return jump_phi;
+}
+
+/**
+ * jump_cross_normal(phi) = [[ phi ]] (x) n
+ */
+template<int dim>
+Tensor<2, dim>
+compute_jump_cross_normal(const FEInterfaceValues<dim> & phi,
+                          const unsigned int             i,
+                          const unsigned int             q)
+{
+  const Tensor<1, dim> & n          = phi.normal(q);
+  const Tensor<1, dim> & jump_value = compute_jump(phi, i, q);
+  return outer_product(jump_value, n);
+}
+
+
+
 using ::MW::ScratchData;
 
 using ::MW::CopyData;
@@ -120,22 +181,12 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
 
   const unsigned int               dofs_per_cell = phi.get_fe().dofs_per_cell;
   const FEValuesExtractors::Vector velocities(0);
-  /// symgrad_phi_{d,c} = 0.5 (\partial_d phi_{i;c} + \partial_c phi_{i;d})
-  const auto symgrad_phi = [&](const unsigned int i, const unsigned int q) {
-    SymmetricTensor<2, dim> symgrad_of_phi;
-    for(auto d = 0U; d < dim; ++d)
-      for(auto c = d; c < dim; ++c)
-        symgrad_of_phi[d][c] =
-          0.5 * (phi.shape_grad_component(i, q, c)[d] + phi.shape_grad_component(i, q, d)[c]);
-    return symgrad_of_phi;
-  };
 
   for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
   {
     for(unsigned int i = 0; i < dofs_per_cell; ++i)
     {
-      const SymmetricTensor<2, dim> symgrad_phi_i =
-        symgrad_phi(i, q); // phi[velocities].symmetric_gradient(i, q);
+      const SymmetricTensor<2, dim> symgrad_phi_i = compute_symgrad(phi, i, q);
       for(unsigned int j = 0; j < dofs_per_cell; ++j)
       {
         const SymmetricTensor<2, dim> symgrad_phi_j = phi[velocities].symmetric_gradient(j, q);
@@ -177,48 +228,24 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
   const double gamma_over_h = 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
-  /// average_symgrad(phi) = 0.5 ({{ \partial_d phi_{i;c} }} + {{ \partial_c phi_{i;d} }})
-  const auto average_symgrad_phi = [&](const unsigned int i, const unsigned int q) {
-    SymmetricTensor<2, dim> av_symgrad_of_phi;
-    for(auto d = 0U; d < dim; ++d)
-      for(auto c = d; c < dim; ++c)
-        av_symgrad_of_phi[d][c] = 0.5 * (fe_interface_values.average_gradient(i, q, c)[d] +
-                                         fe_interface_values.average_gradient(i, q, d)[c]);
-    return av_symgrad_of_phi;
-  };
-
-  /// jump(phi) = [[ phi ]] = phi^+ - phi^-
-  const auto jump_phi = [&](const unsigned int i, const unsigned int q) {
-    Tensor<1, dim> jump_phi;
-    for(auto c = 0; c < dim; ++c)
-      jump_phi[c] = fe_interface_values.jump(i, q, c);
-    return jump_phi;
-  };
-
-  /// jump_cross_normal(phi) = [[ phi ]] (x) n
-  const auto jump_phi_cross_normal = [&](const unsigned int i, const unsigned int q) {
-    const Tensor<1, dim> & n = fe_interface_values.normal(q);
-    return outer_product(jump_phi(i, q), n);
-  };
-
   double integral_ijq = 0.;
   for(unsigned int q = 0; q < fe_interface_values.n_quadrature_points; ++q)
   {
-    // const auto & n = fe_interface_values.normal(q);
-
     for(unsigned int i = 0; i < n_interface_dofs; ++i)
     {
-      const auto & av_symgrad_phi_i   = average_symgrad_phi(i, q);
-      const auto & jump_phi_i_cross_n = jump_phi_cross_normal(i, q);
+      const auto & av_symgrad_phi_i   = compute_average_symgrad(fe_interface_values, i, q);
+      const auto & jump_phi_i_cross_n = compute_jump_cross_normal(fe_interface_values, i, q);
+      const auto & jump_phi_i         = compute_jump(fe_interface_values, i, q);
 
       for(unsigned int j = 0; j < n_interface_dofs; ++j)
       {
-        const auto & av_symgrad_phi_j   = average_symgrad_phi(j, q);
-        const auto & jump_phi_j_cross_n = jump_phi_cross_normal(j, q);
+        const auto & av_symgrad_phi_j   = compute_average_symgrad(fe_interface_values, j, q);
+        const auto & jump_phi_j_cross_n = compute_jump_cross_normal(fe_interface_values, j, q);
+        const auto & jump_phi_j         = compute_jump(fe_interface_values, j, q);
 
         integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
         integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
-        integral_ijq += gamma_over_h * jump_phi(j, q) * jump_phi(i, q);
+        integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
         integral_ijq *= 2. * fe_interface_values.JxW(q);
 
         copy_data_face.cell_matrix(i, j) += integral_ijq;
@@ -249,48 +276,24 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
   const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
   const double gamma_over_h = compute_penalty_impl(fe_degree, h, h);
 
-  /// average_symgrad(phi) = 0.5 ({{ \partial_d phi_{i;c} }} + {{ \partial_c phi_{i;d} }})
-  const auto average_symgrad_phi = [&](const unsigned int i, const unsigned int q) {
-    SymmetricTensor<2, dim> av_symgrad_of_phi;
-    for(auto d = 0U; d < dim; ++d)
-      for(auto c = d; c < dim; ++c)
-        av_symgrad_of_phi[d][c] = 0.5 * (fe_interface_values.average_gradient(i, q, c)[d] +
-                                         fe_interface_values.average_gradient(i, q, d)[c]);
-    return av_symgrad_of_phi;
-  };
-
-  /// jump(phi) = [[ phi ]] = phi^+ - phi^-
-  const auto jump_phi = [&](const unsigned int i, const unsigned int q) {
-    Tensor<1, dim> jump_phi;
-    for(auto c = 0; c < dim; ++c)
-      jump_phi[c] = fe_interface_values.jump(i, q, c);
-    return jump_phi;
-  };
-
-  /// jump_cross_normal(phi) = [[ phi ]] (x) n
-  const auto jump_phi_cross_normal = [&](const unsigned int i, const unsigned int q) {
-    const Tensor<1, dim> & n = fe_interface_values.normal(q);
-    return outer_product(jump_phi(i, q), n);
-  };
-
   double integral_ijq = 0.;
   for(unsigned int q = 0; q < fe_interface_values.n_quadrature_points; ++q)
   {
-    // const auto & n = fe_interface_values.normal(q);
-
     for(unsigned int i = 0; i < n_interface_dofs; ++i)
     {
-      const auto & av_symgrad_phi_i   = average_symgrad_phi(i, q);
-      const auto & jump_phi_i_cross_n = jump_phi_cross_normal(i, q);
+      const auto & av_symgrad_phi_i   = compute_average_symgrad(fe_interface_values, i, q);
+      const auto & jump_phi_i_cross_n = compute_jump_cross_normal(fe_interface_values, i, q);
+      const auto & jump_phi_i         = compute_jump(fe_interface_values, i, q);
 
       for(unsigned int j = 0; j < n_interface_dofs; ++j)
       {
-        const auto & av_symgrad_phi_j   = average_symgrad_phi(j, q);
-        const auto & jump_phi_j_cross_n = jump_phi_cross_normal(j, q);
+        const auto & av_symgrad_phi_j   = compute_average_symgrad(fe_interface_values, j, q);
+        const auto & jump_phi_j_cross_n = compute_jump_cross_normal(fe_interface_values, j, q);
+        const auto & jump_phi_j         = compute_jump(fe_interface_values, j, q);
 
         integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
         integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
-        integral_ijq += gamma_over_h * jump_phi(j, q) * jump_phi(i, q);
+        integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
         integral_ijq *= 2. * fe_interface_values.JxW(q);
 
         copy_data_face.cell_matrix(i, j) += integral_ijq;
