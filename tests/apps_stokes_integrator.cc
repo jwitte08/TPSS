@@ -70,6 +70,7 @@ protected:
     new_problem->prepare_multigrid_velocity();
     stokes_problem = new_problem;
     stokes_problem->print_informations();
+    const auto & mgc = stokes_problem->mgc_velocity;
 
     *pcout_owned << "//////////   LINEAR ELASTICITY PROBLEM" << std::endl;
     LinElasticity::EquationData equation_data_elasticity;
@@ -84,10 +85,10 @@ protected:
     elasticity_problem->print_informations();
     const auto max_level = stokes_problem->max_level();
 
-    FullMatrix<double> A(stokes_problem->mg_matrices[max_level].m()); // system_matrix_velocity.m());
+    FullMatrix<double> A(mgc.mg_matrices[max_level].m());
     FullMatrix<double> Aref(elasticity_problem->sparse_matrix.m());
     ASSERT_EQ(A.m(), Aref.m());
-    A.copy_from(stokes_problem->mg_matrices[max_level]); // system_matrix_velocity);
+    A.copy_from(mgc.mg_matrices[max_level]); // system_matrix_velocity);
     Aref.copy_from(elasticity_problem->sparse_matrix);
     compare_matrix(A, Aref);
   }
@@ -117,7 +118,8 @@ protected:
     using LocalMatrix   = typename MatrixIntegrator::matrix_type;
     using PatchTransfer = TPSS::PatchTransfer<dim, double>;
 
-    const auto mg_smoother = stokes_problem->mg_schwarz_smoother_pre;
+    const auto & mgc         = stokes_problem->mgc_velocity;
+    const auto   mg_smoother = mgc.mg_schwarz_smoother_pre;
     ASSERT_TRUE(mg_smoother) << "mg_smoother is not initialized.";
     const auto    subdomain_handler = mg_smoother->get_subdomain_handler();
     PatchTransfer patch_transfer(*subdomain_handler);
@@ -134,7 +136,7 @@ protected:
       patch_worker.get_partition_data().get_patch_range());
 
     const SparseMatrix<double> * system_matrix;
-    system_matrix = &(stokes_problem->mg_matrices[max_level]);
+    system_matrix = &(mgc.mg_matrices[max_level]);
 
     /// compare local matrices
     for(auto patch = 0U; patch < n_subdomains; ++patch)
@@ -179,6 +181,96 @@ protected:
         compare_matrix(local_matrix_tp, local_matrix);
       }
     }
+  }
+
+
+  void
+  check_local_solvers_block(const bool only_diagonal = false)
+  {
+    // constexpr auto method = Method::TaylorHoodBlock;
+
+    // EquationData equation_data;
+    // rt_parameters.solver.variant                    = "FGMRES_GMG";
+    // using StokesProblem                             = ModelProblem<dim, fe_degree_p, method>;
+    // constexpr auto                       dof_layout = StokesProblem::dof_layout;
+    // std::shared_ptr<const StokesProblem> stokes_problem;
+    // auto new_problem   = std::make_shared<StokesProblem>(rt_parameters, equation_data);
+    // new_problem->pcout = pcout_owned;
+    // new_problem->make_grid();
+    // new_problem->setup_system();
+    // new_problem->assemble_system();
+    // // new_problem->prepare_multigrid_velocity();
+    // stokes_problem = new_problem;
+    // stokes_problem->print_informations();
+    // const auto max_level = stokes_problem->max_level();
+
+    // using MatrixIntegrator =
+    //   Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree_v, double, dof_layout>;
+    // using LocalMatrix   = typename MatrixIntegrator::matrix_type;
+    // using PatchTransfer = TPSS::PatchTransfer<dim, double>;
+
+    // const auto mg_smoother = stokes_problem->mg_schwarz_smoother_pre;
+    // ASSERT_TRUE(mg_smoother) << "mg_smoother is not initialized.";
+    // const auto    subdomain_handler = mg_smoother->get_subdomain_handler();
+    // PatchTransfer patch_transfer(*subdomain_handler);
+    // const auto &  patch_worker = patch_transfer.get_patch_dof_worker();
+    // const auto    n_subdomains = patch_worker.get_partition_data().n_subdomains();
+
+    // std::vector<LocalMatrix> local_matrices(n_subdomains);
+    // MatrixIntegrator         integrator;
+    // integrator.initialize(equation_data);
+    // integrator.template assemble_subspace_inverses<bool>(
+    //   *subdomain_handler,
+    //   local_matrices,
+    //   /*dummy*/ false,
+    //   patch_worker.get_partition_data().get_patch_range());
+
+    // const SparseMatrix<double> * system_matrix;
+    // system_matrix = &(stokes_problem->mg_matrices[max_level]);
+
+    // /// compare local matrices
+    // for(auto patch = 0U; patch < n_subdomains; ++patch)
+    // {
+    //   patch_transfer.reinit(patch);
+    //   for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch); ++lane)
+    //   {
+    //     std::vector<types::global_dof_index> dof_indices_on_patch;
+    //     {
+    //       const auto view = patch_transfer.get_dof_indices(lane);
+    //       std::copy(view.cbegin(), view.cend(), std::back_inserter(dof_indices_on_patch));
+    //     }
+    //     FullMatrix<double> local_matrix(dof_indices_on_patch.size());
+    //     local_matrix.extract_submatrix_from(*system_matrix,
+    //                                         dof_indices_on_patch,
+    //                                         dof_indices_on_patch);
+
+    //     auto local_matrix_tp = table_to_fullmatrix(local_matrices[patch].as_table(), lane);
+
+    //     if(only_diagonal)
+    //     {
+    //       const auto zero_out_block =
+    //         [&](auto & matrix, const unsigned int row, const unsigned int col) {
+    //           const unsigned int n_dofs = dof_indices_on_patch.size();
+    //           AssertDimension(n_dofs % dim, 0);
+    //           const unsigned int n_dofs_per_block = n_dofs / dim;
+    //           const unsigned     row_start        = row * n_dofs_per_block;
+    //           const unsigned     col_start        = col * n_dofs_per_block;
+    //           for(auto i = row_start; i < row_start + n_dofs_per_block; ++i)
+    //             for(auto j = col_start; j < col_start + n_dofs_per_block; ++j)
+    //               matrix(i, j) = 0.;
+    //         };
+    //       for(auto row = 0U; row < dim; ++row)
+    //         for(auto col = 0U; col < dim; ++col)
+    //           if(row != col)
+    //           {
+    //             zero_out_block(local_matrix, row, col);
+    //             zero_out_block(local_matrix_tp, row, col);
+    //           }
+    //     }
+
+    //     compare_matrix(local_matrix_tp, local_matrix);
+    //   }
+    // }
   }
 
 
@@ -247,10 +339,20 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversDGVelocity)
   Fixture::template check_local_solvers_velocity<Method::TaylorHoodDGQ>(false);
 }
 
+TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversBlock)
+{
+  // using Fixture                                = TestStokesIntegrator<TypeParam>;
+  // Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  // Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  // Fixture::rt_parameters.mesh.n_refinements    = 0;
+  // Fixture::template check_local_solvers_block(true);
+}
+
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckSystemMatrixVelocity,
                             CheckLocalSolversVelocity,
-                            CheckLocalSolversDGVelocity);
+                            CheckLocalSolversDGVelocity,
+                            CheckLocalSolversBlock);
 
 using TestParamsConstant  = testing::Types<Util::NonTypeParams<2, 0>>;
 using TestParamsLinear    = testing::Types<Util::NonTypeParams<2, 1>>;

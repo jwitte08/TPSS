@@ -773,6 +773,54 @@ struct MatrixIntegrator
 };
 } // namespace MW
 
+namespace FD
+{
+template<int dim,
+         int fe_degree_p,
+         typename Number            = double,
+         TPSS::DoFLayout dof_layout = TPSS::DoFLayout::Q>
+class MatrixIntegrator
+{
+public:
+  using This = MatrixIntegrator<dim, fe_degree_p, Number>;
+
+  static constexpr int fe_degree_v   = fe_degree_p;
+  static constexpr int n_q_points_1d = fe_degree_v + 1;
+
+  using value_type              = Number;
+  using transfer_type           = typename TPSS::PatchTransferBlock<dim, Number>;
+  using matrix_type_1d          = Table<2, VectorizedArray<Number>>;
+  using matrix_type             = Tensors::BlockMatrix<dim + 1, VectorizedArray<Number>, -1, -1>;
+  using velocity_evaluator_type = FDEvaluation<dim, fe_degree_v, n_q_points_1d, Number>;
+  using pressure_evaluator_type = FDEvaluation<dim, fe_degree_p, n_q_points_1d, Number>;
+
+  void
+  initialize(const EquationData & equation_data_in)
+  {
+    equation_data = equation_data_in;
+  }
+
+  template<typename OperatorType>
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
+                             std::vector<matrix_type> &            local_matrices,
+                             const OperatorType &,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertThrow(false, ExcMessage("Todo."));
+  }
+
+  std::shared_ptr<transfer_type>
+  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    return std::make_shared<transfer_type>(subdomain_handler);
+  }
+
+  EquationData equation_data;
+};
+
+} // end namespace FD
+
 } // namespace VelocityPressure
 
 } // namespace Stokes

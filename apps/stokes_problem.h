@@ -94,48 +94,55 @@ namespace Stokes
 {
 using namespace dealii;
 
+/**
+ * TODO...
+ */
 template<int dim, int fe_degree_p = 2, typename Number = double>
 class BlockSparseMatrixAugmented : public BlockSparseMatrix<Number>
 {
 public:
   using value_type  = Number;
   using matrix_type = BlockSparseMatrix<Number>;
-  // using local_integrator_type = C0IP::FD::MatrixIntegrator<dim, fe_degree_p, Number>;
+  using local_integrator_type =
+    VelocityPressure::FD::MatrixIntegrator<dim, fe_degree_p, Number>; // TODO !!!
 
-  // void
-  // initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
-  //            const EquationData                             equation_data_in)
-  // {
-  //   mf_storage = mf_storage_in;
-  //   local_integrator_type::initialize(equation_data_in);
-  // }
+  void
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
+             const EquationData                             equation_data_in)
+  {
+    mf_storage = mf_storage_in;
+    local_integrator_type::initialize(equation_data_in);
+  }
 
-  // std::shared_ptr<const MatrixFree<dim, Number>>
-  // get_matrix_free() const
-  // {
-  //   AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
-  //   return mf_storage;
-  // }
+  std::shared_ptr<const MatrixFree<dim, Number>>
+  get_matrix_free() const
+  {
+    AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
+    return mf_storage;
+  }
 
-  // using matrix_type::vmult;
+  using matrix_type::vmult;
 
-  // void
-  // vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const
-  // {
-  //   AssertDimension(dst.size(), matrix_type::m());
-  //   AssertDimension(src.size(), matrix_type::n());
-  //   Vector<Number> v(matrix_type::n()); // src
-  //   std::copy(src.cbegin(), src.cend(), v.begin());
-  //   Vector<Number> w(matrix_type::m()); // dst
-  //   matrix_type::vmult(w, v);           // w = A v
-  //   std::copy(w.begin(), w.end(), dst.begin());
-  // }
+  void
+  vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const
+  {
+    AssertDimension(dst.size(), matrix_type::m());
+    AssertDimension(src.size(), matrix_type::n());
+    Vector<Number> v(matrix_type::n()); // src
+    std::copy(src.cbegin(), src.cend(), v.begin());
+    Vector<Number> w(matrix_type::m()); // dst
+    matrix_type::vmult(w, v);           // w = A v
+    std::copy(w.begin(), w.end(), dst.begin());
+  }
 
-  // std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
+  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
 };
 
 
 
+/**
+ * TODO...
+ */
 template<int dim, int fe_degree, typename Number = double>
 class SparseMatrixAugmented : public SparseMatrix<Number>,
                               public Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree, Number>
@@ -179,6 +186,9 @@ public:
 
 
 
+/**
+ * TODO...
+ */
 template<class PreconditionerAType, class PreconditionerSType>
 class BlockSchurPreconditioner : public Subscriptor
 {
@@ -279,12 +289,348 @@ BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
 
 
 
+/**
+ * TODO...
+ */
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+struct MGCollectionVelocity
+{
+  static constexpr int n_q_points_1d = fe_degree + 1;
+
+  using VECTOR = Vector<double>;
+  using MATRIX = SparseMatrixAugmented<dim, fe_degree, double>;
+
+  using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
+  using GAUSS_SEIDEL_SMOOTHER = PreconditionSOR<MATRIX>;
+  using PATCH_MATRIX          = typename MATRIX::local_integrator_type::matrix_type;
+  using MG_SMOOTHER_SCHWARZ   = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
+
+  MGCollectionVelocity(const MGParameter & mg_prms_in, const EquationData & equation_data_in);
+
+  void
+  clear();
+
+  void
+  prepare_multigrid(const unsigned int                       mg_level_max,
+                    const std::shared_ptr<ColoringBase<dim>> user_coloring);
+
+  void
+  prepare_schwarz_smoothers(const std::shared_ptr<ColoringBase<dim>> user_coloring);
+
+  void
+  assemble_multigrid();
+
+  const PreconditionMG<dim, VECTOR, MG_TRANSFER> &
+  get_preconditioner() const;
+
+  MGParameter  parameters;
+  EquationData equation_data;
+
+  DoFHandler<dim> dof_handler;
+  Mapping<dim> *  mapping;
+  /// DEBUG
+  AffineConstraints<double> constraints;
+  SparsityPattern           sparsity_pattern;
+  SparseMatrix<double>      system_matrix;
+
+  std::shared_ptr<MGConstrainedDoFs>                mg_constrained_dofs;
+  MG_TRANSFER                                       mg_transfer;
+  MGLevelObject<SparsityPattern>                    mg_sparsity_patterns;
+  MGLevelObject<MATRIX>                             mg_matrices;
+  std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_pre;
+  std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_post;
+  std::shared_ptr<const MGSmootherIdentity<VECTOR>> mg_smoother_identity;
+  std::shared_ptr<const mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, VECTOR>>
+                                     mg_smoother_gauss_seidel;
+  const MGSmootherBase<VECTOR> *     mg_smoother_pre;
+  const MGSmootherBase<VECTOR> *     mg_smoother_post;
+  CoarseGridSolver<MATRIX, VECTOR>   coarse_grid_solver;
+  const MGCoarseGridBase<VECTOR> *   mg_coarse_grid;
+  mg::Matrix<VECTOR>                 mg_matrix_wrapper;
+  std::shared_ptr<Multigrid<VECTOR>> multigrid;
+
+  mutable std::shared_ptr<const PreconditionMG<dim, VECTOR, MG_TRANSFER>> preconditioner_mg;
+};
+
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+MGCollectionVelocity<dim, fe_degree, dof_layout>::MGCollectionVelocity(
+  const MGParameter &  mg_prms_in,
+  const EquationData & equation_data_in)
+  : parameters(mg_prms_in), equation_data(equation_data_in), mapping(nullptr)
+{
+}
+
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+void
+MGCollectionVelocity<dim, fe_degree, dof_layout>::clear()
+{
+  preconditioner_mg.reset();
+  multigrid.reset();
+  mg_matrix_wrapper.reset();
+  mg_coarse_grid = nullptr;
+  coarse_grid_solver.clear();
+  mg_smoother_post = nullptr;
+  mg_smoother_pre  = nullptr;
+  mg_smoother_gauss_seidel.reset();
+  mg_smoother_identity.reset();
+  mg_schwarz_smoother_post.reset();
+  mg_schwarz_smoother_pre.reset();
+  mg_matrices.clear_elements();
+  mg_transfer.clear();
+  mg_constrained_dofs.reset();
+}
+
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+void
+MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_multigrid(
+  const unsigned int                       mg_level_max,
+  const std::shared_ptr<ColoringBase<dim>> user_coloring)
+{
+  // *** clear multigrid infrastructure
+  clear();
+
+  // *** setup multigrid data
+  const unsigned mg_level_min = parameters.coarse_level;
+
+  // *** initialize multigrid constraints
+  mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
+  mg_constrained_dofs->initialize(dof_handler);
+  mg_constrained_dofs->make_zero_boundary_constraints(dof_handler,
+                                                      equation_data.dirichlet_boundary_ids);
+
+  // *** initialize level matrices A_l
+  mg_matrices.resize(mg_level_min, mg_level_max);
+  mg_sparsity_patterns.resize(mg_level_min, mg_level_max);
+  for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
+  {
+    DynamicSparsityPattern dsp(dof_handler.n_dofs(level), dof_handler.n_dofs(level));
+    MGTools::make_flux_sparsity_pattern(dof_handler, dsp, level);
+    mg_sparsity_patterns[level].copy_from(dsp);
+    mg_matrices[level].reinit(mg_sparsity_patterns[level]);
+  }
+  //: assemble the velocity system A_l on each level l.
+  assemble_multigrid();
+
+  // *** initialize multigrid transfer R_l
+  mg_transfer.initialize_constraints(*mg_constrained_dofs);
+  mg_transfer.build(dof_handler);
+
+  // *** initialize Schwarz smoother S_l
+  switch(parameters.pre_smoother.variant)
+  {
+    case SmootherParameter::SmootherVariant::None:
+      mg_smoother_identity = std::make_shared<const MGSmootherIdentity<Vector<double>>>();
+      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+      mg_smoother_pre = mg_smoother_identity.get();
+      break;
+    case SmootherParameter::SmootherVariant::GaussSeidel:
+    {
+      auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, Vector<double>>>();
+      tmp->initialize(mg_matrices);
+      tmp->set_steps(parameters.pre_smoother.n_smoothing_steps);
+      tmp->set_symmetric(true);
+      mg_smoother_gauss_seidel = tmp;
+      mg_smoother_pre          = mg_smoother_gauss_seidel.get();
+    }
+    break;
+    case SmootherParameter::SmootherVariant::Schwarz:
+      prepare_schwarz_smoothers(user_coloring);
+      AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
+      mg_smoother_pre = mg_schwarz_smoother_pre.get();
+      break;
+    default:
+      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  }
+  switch(parameters.post_smoother.variant)
+  {
+    case SmootherParameter::SmootherVariant::None:
+      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+      mg_smoother_post = mg_smoother_identity.get();
+      break;
+    case SmootherParameter::SmootherVariant::GaussSeidel:
+      AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
+      mg_smoother_post = mg_smoother_gauss_seidel.get();
+      break;
+    case SmootherParameter::SmootherVariant::Schwarz:
+      AssertThrow(mg_schwarz_smoother_post, ExcMessage("Not initialized"));
+      mg_smoother_post = mg_schwarz_smoother_post.get();
+      break;
+    default:
+      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  }
+
+  // *** initialize coarse grid solver
+  coarse_grid_solver.initialize(mg_matrices[mg_level_min], parameters.coarse_grid);
+  mg_coarse_grid = &coarse_grid_solver;
+
+  // *** initialize geometric multigrid method
+  mg_matrix_wrapper.initialize(mg_matrices);
+  multigrid = std::make_shared<Multigrid<Vector<double>>>(mg_matrix_wrapper,
+                                                          *mg_coarse_grid,
+                                                          mg_transfer,
+                                                          *mg_smoother_pre,
+                                                          *mg_smoother_post,
+                                                          mg_level_min,
+                                                          mg_level_max);
+}
+
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+void
+MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_schwarz_smoothers(
+  const std::shared_ptr<ColoringBase<dim>> user_coloring)
+{
+  Assert(parameters.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz,
+         ExcMessage("Invalid smoothing variant."));
+  for(auto level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
+    AssertThrow(mg_matrices[level].mf_storage, ExcMessage("mf_storage is not initialized."));
+
+  //: pre-smoother
+  {
+    const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+    typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
+    if(parameters.pre_smoother.schwarz.manual_coloring)
+    {
+      Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
+      additional_data.coloring_func = std::ref(*user_coloring);
+    }
+    additional_data.parameters = parameters.pre_smoother;
+    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
+    mgss->initialize(mg_matrices, additional_data);
+    mg_schwarz_smoother_pre = mgss;
+  }
+
+  //: post-smoother (so far only shallow copy!)
+  {
+    const auto mgss_post = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+    typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
+    if(parameters.pre_smoother.schwarz.manual_coloring)
+    {
+      Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
+      additional_data.coloring_func = std::ref(*user_coloring);
+    }
+    additional_data.parameters = parameters.post_smoother;
+    mgss_post->initialize(*mg_schwarz_smoother_pre, additional_data);
+    mg_schwarz_smoother_post = mgss_post;
+  }
+}
+
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+void
+MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid()
+{
+  AssertDimension(mg_matrices.min_level(), parameters.coarse_level);
+  Assert(mg_constrained_dofs, ExcMessage("mg_constrained_dofs is uninitialized."));
+
+  using Velocity::SIPG::MW::CopyData;
+  using Velocity::SIPG::MW::ScratchData;
+  using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
+  using LevelCellIterator = typename MatrixIntegrator::IteratorType;
+  MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+
+  for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
+  {
+    AffineConstraints<double> level_constraints;
+    level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
+    level_constraints.close();
+
+    {
+      //: initialize matrix-free storage (dummy, required to setup TPSS)
+      typename MatrixFree<dim, double>::AdditionalData additional_data;
+      additional_data.mg_level = level;
+      QGauss<1>  quadrature(n_q_points_1d);
+      const auto mf_storage = std::make_shared<MatrixFree<dim, double>>();
+      mf_storage->reinit(*mapping, dof_handler, level_constraints, quadrature, additional_data);
+
+      //: initialize FD::MatrixIntegrator (see SparseMatrixAugmented)
+      mg_matrices[level].initialize(mf_storage, equation_data);
+    }
+
+    auto cell_worker =
+      [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+        matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+      };
+
+    auto face_worker = [&](const auto &         cell,
+                           const unsigned int & f,
+                           const unsigned int & sf,
+                           const auto &         ncell,
+                           const unsigned int & nf,
+                           const unsigned int & nsf,
+                           ScratchData<dim> &   scratch_data,
+                           CopyData &           copy_data) {
+      if(dof_layout == TPSS::DoFLayout::DGQ)
+        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+    };
+
+    auto boundary_worker = [&](const auto &         cell,
+                               const unsigned int & face_no,
+                               ScratchData<dim> &   scratch_data,
+                               CopyData &           copy_data) {
+      if(dof_layout == TPSS::DoFLayout::DGQ)
+        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+    };
+
+    const auto copier = [&](const CopyData & copy_data) {
+      level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+        copy_data.cell_matrix, copy_data.local_dof_indices, mg_matrices[level]);
+
+      for(auto & cdf : copy_data.face_data)
+      {
+        level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+          cdf.cell_matrix, cdf.joint_dof_indices, mg_matrices[level]);
+      }
+    };
+
+    const UpdateFlags update_flags =
+      update_values | update_gradients | update_quadrature_points | update_JxW_values;
+    const UpdateFlags interface_update_flags = update_values | update_gradients |
+                                               update_quadrature_points | update_JxW_values |
+                                               update_normal_vectors;
+    ScratchData<dim> scratch_data(
+      *mapping, dof_handler.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
+
+    CopyData copy_data(dof_handler.get_fe().dofs_per_cell);
+
+    MeshWorker::mesh_loop(dof_handler.begin_mg(level),
+                          dof_handler.end_mg(level),
+                          cell_worker,
+                          copier,
+                          scratch_data,
+                          copy_data,
+                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                            MeshWorker::assemble_own_interior_faces_once,
+                          boundary_worker,
+                          face_worker);
+  }
+}
+
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+const PreconditionMG<dim,
+                     typename MGCollectionVelocity<dim, fe_degree, dof_layout>::VECTOR,
+                     typename MGCollectionVelocity<dim, fe_degree, dof_layout>::MG_TRANSFER> &
+MGCollectionVelocity<dim, fe_degree, dof_layout>::get_preconditioner() const
+{
+  AssertThrow(multigrid, ExcMessage("multigrid is uninitialized."));
+  preconditioner_mg = std::make_shared<PreconditionMG<dim, VECTOR, MG_TRANSFER>>(dof_handler,
+                                                                                 *multigrid,
+                                                                                 mg_transfer);
+  return *preconditioner_mg;
+}
+
+
+/**
+ * TODO...
+ */
 enum class Method
 {
   TaylorHood,
-  /*only for testing*/ TaylorHoodDGQ
+  /*only for testing*/ TaylorHoodDGQ,
+  TaylorHoodBlock
 };
 
+/**
+ * TODO...
+ */
 template<Method method, int dim, int fe_degree_p>
 struct ModelProblemBase
 {
@@ -294,32 +640,25 @@ template<int dim, int fe_degree_p>
 struct ModelProblemBase<Method::TaylorHood, dim, fe_degree_p>
 {
   static constexpr TPSS::DoFLayout dof_layout = TPSS::DoFLayout::Q;
-
-  using VECTOR = Vector<double>;
-  using MATRIX = SparseMatrixAugmented<dim, fe_degree_p + 1, double>;
-
-  using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
-  using GAUSS_SEIDEL_SMOOTHER = PreconditionSOR<MATRIX>;
-  using PATCH_MATRIX          = typename MATRIX::local_integrator_type::matrix_type;
-  using MG_SMOOTHER_SCHWARZ   = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
-  using GMG_PRECONDITIONER    = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 };
 
 template<int dim, int fe_degree_p>
 struct ModelProblemBase<Method::TaylorHoodDGQ, dim, fe_degree_p>
 {
   static constexpr TPSS::DoFLayout dof_layout = TPSS::DoFLayout::DGQ;
-
-  using VECTOR = Vector<double>;
-  using MATRIX = SparseMatrixAugmented<dim, fe_degree_p + 1, double>;
-
-  using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
-  using GAUSS_SEIDEL_SMOOTHER = PreconditionSOR<MATRIX>;
-  using PATCH_MATRIX          = typename MATRIX::local_integrator_type::matrix_type;
-  using MG_SMOOTHER_SCHWARZ   = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
-  using GMG_PRECONDITIONER    = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 };
 
+template<int dim, int fe_degree_p>
+struct ModelProblemBase<Method::TaylorHoodBlock, dim, fe_degree_p>
+{
+  static constexpr TPSS::DoFLayout dof_layout = TPSS::DoFLayout::Q;
+};
+
+
+
+/**
+ * TODO...
+ */
 template<int dim, int fe_degree_p, Method method = Method::TaylorHood>
 class ModelProblem : public ModelProblemBase<method, dim, fe_degree_p>
 {
@@ -330,15 +669,6 @@ class ModelProblem : public ModelProblemBase<method, dim, fe_degree_p>
 public:
   static constexpr int fe_degree_v = fe_degree_p + 1;
   using Base::dof_layout;
-
-  using VECTOR = typename Base::VECTOR;
-  using MATRIX = typename Base::MATRIX;
-
-  using MG_TRANSFER           = typename Base::MG_TRANSFER;
-  using GAUSS_SEIDEL_SMOOTHER = typename Base::GAUSS_SEIDEL_SMOOTHER;
-  using PATCH_MATRIX          = typename Base::PATCH_MATRIX;
-  using MG_SMOOTHER_SCHWARZ   = typename Base::MG_SMOOTHER_SCHWARZ;
-  using GMG_PRECONDITIONER    = typename Base::GMG_PRECONDITIONER;
 
   ModelProblem(const RT::Parameter & rt_parameters_in, const EquationData & equation_data_in);
 
@@ -358,6 +688,9 @@ public:
   setup_system_velocity();
 
   void
+  setup_system_pressure();
+
+  void
   assemble_system();
 
   void
@@ -367,21 +700,7 @@ public:
   assemble_multigrid_velocity();
 
   void
-  prepare_schwarz_smoothers();
-
-  void
   prepare_multigrid_velocity();
-
-  const GMG_PRECONDITIONER &
-  prepare_preconditioner_mg()
-  {
-    prepare_multigrid_velocity();
-    AssertThrow(multigrid, ExcNotInitialized());
-
-    preconditioner_mg =
-      std::make_shared<GMG_PRECONDITIONER>(dof_handler_velocity, *multigrid, mg_transfer);
-    return *preconditioner_mg;
-  }
 
   void
   solve();
@@ -393,43 +712,20 @@ public:
   output_results(const unsigned int refinement_cycle) const;
 
   unsigned int
-  max_level() const
-  {
-    return triangulation.n_global_levels() - 1;
-  }
+  max_level() const;
 
   unsigned int
-  n_colors_system()
-  {
-    if(mg_schwarz_smoother_pre)
-      return mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
-    return numbers::invalid_unsigned_int;
-  }
+  n_colors_system();
 
   template<typename T>
   void
-  print_parameter(const std::string & description, const T & value) const
-  {
-    *pcout << Util::parameter_to_fstring(description, value);
-  }
+  print_parameter(const std::string & description, const T & value) const;
 
   void
-  print_informations() const
-  {
-    *pcout << equation_data.to_string();
-    *pcout << std::endl;
-    print_parameter("Finite element:", fe->get_name());
-    print_parameter("Finite element (velocity):", fe_velocity->get_name());
-    *pcout << rt_parameters.to_string();
-    *pcout << std::endl;
-  }
+  print_informations() const;
 
   void
-  set_finite_elements(const std::shared_ptr<FiniteElement<dim>> fe_velocity_in)
-  {
-    fe_velocity = fe_velocity_in;
-    generate_fe(*fe_velocity_in);
-  }
+  set_finite_elements(const std::shared_ptr<FiniteElement<dim>> fe_velocity_in);
 
   std::shared_ptr<ConditionalOStream> pcout;
   RT::Parameter                       rt_parameters;
@@ -444,72 +740,27 @@ public:
   std::shared_ptr<FiniteElement<dim>> fe_velocity;
   std::shared_ptr<FiniteElement<dim>> fe;
   DoFHandler<dim>                     dof_handler;
-  DoFHandler<dim>                     dof_handler_velocity;
 
   AffineConstraints<double> zero_constraints;
-  AffineConstraints<double> constraints_velocity;
 
-  BlockSparsityPattern                         sparsity_pattern;
-  BlockSparseMatrixAugmented<dim, fe_degree_p> system_matrix;
-  SparseMatrix<double>                         pressure_mass_matrix;
-  SparsityPattern                              sparsity_pattern_velocity;
-  SparseMatrix<double>                         system_matrix_velocity;
+  BlockSparsityPattern      sparsity_pattern;
+  BlockSparseMatrix<double> system_matrix;
+  SparseMatrix<double>      pressure_mass_matrix;
 
   BlockVector<double> system_solution;
   BlockVector<double> system_delta_x;
   BlockVector<double> system_rhs;
 
   //: multigrid
-  std::shared_ptr<MGConstrainedDoFs>                mg_constrained_dofs;
-  MG_TRANSFER                                       mg_transfer;
-  MGLevelObject<SparsityPattern>                    mg_sparsity_patterns;
-  MGLevelObject<MATRIX>                             mg_matrices;
-  mutable std::shared_ptr<ColoringBase<dim>>        user_coloring;
-  std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_pre;
-  std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_post;
-  std::shared_ptr<const MGSmootherIdentity<VECTOR>> mg_smoother_identity;
-  std::shared_ptr<const mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, VECTOR>>
-                                     mg_smoother_gauss_seidel;
-  const MGSmootherBase<VECTOR> *     mg_smoother_pre;
-  const MGSmootherBase<VECTOR> *     mg_smoother_post;
-  CoarseGridSolver<MATRIX, VECTOR>   coarse_grid_solver;
-  const MGCoarseGridBase<VECTOR> *   mg_coarse_grid;
-  mg::Matrix<VECTOR>                 mg_matrix_wrapper;
-  std::shared_ptr<Multigrid<VECTOR>> multigrid;
-
-  std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
+  mutable std::shared_ptr<ColoringBase<dim>>             user_coloring;
+  MGCollectionVelocity<dim, fe_degree_p + 1, dof_layout> mgc_velocity;
 
 private:
   std::shared_ptr<FiniteElement<dim>>
-  generate_fe(const FiniteElement<dim> & fe_velocity)
-  {
-    return std::make_shared<FESystem<dim>>(
-      fe_velocity,
-      1,
-      fe_degree_p == 0 ? static_cast<const FiniteElement<dim> &>(FE_DGQ<dim>(0)) :
-                         static_cast<const FiniteElement<dim> &>(FE_Q<dim>(fe_degree_p)),
-      1);
-  }
+  generate_fe(const FiniteElement<dim> & fe_velocity);
 
   bool
-  check_finite_elements() const
-  {
-    //: check fe
-    AssertDimension(fe->n_base_elements(), 2); // velocity + pressure
-    const auto & fe_v = fe->base_element(0);
-    AssertDimension(fe_v.n_components(), dim);          // velocity
-    AssertDimension(fe_v.element_multiplicity(0), dim); // dim times FE_Q
-    AssertThrow(TPSS::get_dof_layout(fe_v.base_element(0)) == dof_layout,
-                ExcMessage("velocity part of fe and dof_layout are incompatible."));
-    const auto & fe_p = fe->base_element(1);
-    AssertDimension(fe_p.n_components(), 1); // pressure
-
-    //: check fe_velocity
-    AssertThrow(TPSS::get_dof_layout(fe_velocity->base_element(0)) == dof_layout,
-                ExcMessage("fe_velocity and dof_layout are incompatible."));
-
-    return true;
-  }
+  check_finite_elements() const;
 
   template<typename PreconditionerType>
   void
@@ -540,18 +791,113 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
     // Finite element for the whole system:
     fe(generate_fe(*fe_velocity)),
     dof_handler(triangulation),
-    dof_handler_velocity(triangulation),
     user_coloring([&]() -> std::shared_ptr<ColoringBase<dim>> {
       if constexpr(dof_layout == TPSS::DoFLayout::Q)
         return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
       else if(dof_layout == TPSS::DoFLayout::DGQ)
         return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
       return std::shared_ptr<ColoringBase<dim>>();
-    }())
+    }()),
+    mgc_velocity(rt_parameters_in.multigrid, equation_data_in)
 {
   Assert(check_finite_elements(), ExcMessage("Check default finite elements and dof_layout."));
   equation_data.assemble_pressure_mass_matrix =
     (rt_parameters.solver.variant == "UMFPACK") ? false : true;
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+unsigned int
+ModelProblem<dim, fe_degree_p, method>::max_level() const
+{
+  return triangulation.n_global_levels() - 1;
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+unsigned int
+ModelProblem<dim, fe_degree_p, method>::n_colors_system()
+{
+  auto & mgc = mgc_velocity;
+  if(mgc.mg_schwarz_smoother_pre)
+    return mgc.mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
+  return numbers::invalid_unsigned_int;
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+template<typename T>
+void
+ModelProblem<dim, fe_degree_p, method>::print_parameter(const std::string & description,
+                                                        const T &           value) const
+{
+  *pcout << Util::parameter_to_fstring(description, value);
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+void
+ModelProblem<dim, fe_degree_p, method>::print_informations() const
+{
+  *pcout << equation_data.to_string();
+  *pcout << std::endl;
+  print_parameter("Finite element:", fe->get_name());
+  print_parameter("Finite element (velocity):", fe_velocity->get_name());
+  *pcout << rt_parameters.to_string();
+  *pcout << std::endl;
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+void
+ModelProblem<dim, fe_degree_p, method>::set_finite_elements(
+  const std::shared_ptr<FiniteElement<dim>> fe_velocity_in)
+{
+  fe_velocity = fe_velocity_in;
+  generate_fe(*fe_velocity_in);
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<FiniteElement<dim>>
+ModelProblem<dim, fe_degree_p, method>::generate_fe(const FiniteElement<dim> & fe_velocity)
+{
+  return std::make_shared<FESystem<dim>>(fe_velocity,
+                                         1,
+                                         fe_degree_p == 0 ?
+                                           static_cast<const FiniteElement<dim> &>(FE_DGQ<dim>(0)) :
+                                           static_cast<const FiniteElement<dim> &>(
+                                             FE_Q<dim>(fe_degree_p)),
+                                         1);
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+bool
+ModelProblem<dim, fe_degree_p, method>::check_finite_elements() const
+{
+  //: check fe
+  AssertDimension(fe->n_base_elements(), 2); // velocity + pressure
+  const auto & fe_v = fe->base_element(0);
+  AssertDimension(fe_v.n_components(), dim);          // velocity
+  AssertDimension(fe_v.element_multiplicity(0), dim); // dim times FE_Q
+  AssertThrow(TPSS::get_dof_layout(fe_v.base_element(0)) == dof_layout,
+              ExcMessage("velocity part of fe and dof_layout are incompatible."));
+  const auto & fe_p = fe->base_element(1);
+  AssertDimension(fe_p.n_components(), 1); // pressure
+
+  //: check fe_velocity
+  AssertThrow(TPSS::get_dof_layout(fe_velocity->base_element(0)) == dof_layout,
+              ExcMessage("fe_velocity and dof_layout are incompatible."));
+
+  return true;
 }
 
 
@@ -611,27 +957,43 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity()
   Assert(check_finite_elements(),
          ExcMessage("Does the choice of finite elements suit the dof_layout?"));
 
-  system_matrix_velocity.clear();
-  dof_handler_velocity.initialize(triangulation, *fe_velocity);
-  dof_handler_velocity.distribute_mg_dofs();
+  //: distribute DoFs and initialize MGCollection
+  mgc_velocity.dof_handler.initialize(triangulation, *fe_velocity);
+  mgc_velocity.dof_handler.distribute_mg_dofs();
+  mgc_velocity.mapping = &mapping;
 
-  constraints_velocity.clear();
-  DoFTools::make_hanging_node_constraints(dof_handler_velocity, constraints_velocity);
+  //: setup system (DEBUG)
+  mgc_velocity.system_matrix.clear();
+  mgc_velocity.constraints.clear();
+  DoFTools::make_hanging_node_constraints(mgc_velocity.dof_handler, mgc_velocity.constraints);
   const FEValuesExtractors::Vector velocities(0);
-  VectorTools::interpolate_boundary_values(dof_handler_velocity,
+  VectorTools::interpolate_boundary_values(mgc_velocity.dof_handler,
                                            0,
                                            DivergenceFree::SolutionVelocity<dim>{},
-                                           constraints_velocity);
-  constraints_velocity.close();
+                                           mgc_velocity.constraints);
+  mgc_velocity.constraints.close();
 
-  DynamicSparsityPattern dsp(dof_handler_velocity.n_dofs());
-  DoFTools::make_flux_sparsity_pattern(dof_handler_velocity,
+  DynamicSparsityPattern dsp(mgc_velocity.dof_handler.n_dofs());
+  DoFTools::make_flux_sparsity_pattern(mgc_velocity.dof_handler,
                                        dsp,
-                                       constraints_velocity,
+                                       mgc_velocity.constraints,
                                        rt_parameters.solver.variant == "UMFPACK" ? true : false);
-  sparsity_pattern_velocity.copy_from(dsp);
-  system_matrix_velocity.reinit(sparsity_pattern_velocity);
+  mgc_velocity.sparsity_pattern.copy_from(dsp);
+  mgc_velocity.system_matrix.reinit(mgc_velocity.sparsity_pattern);
 }
+
+
+
+// template<int dim, int fe_degree_p, Method method>
+// void
+// ModelProblem<dim, fe_degree_p, method>::setup_system_pressure()
+// {
+//   std::vector<bool> pressure_mask(dim, false);
+//   pressure_mask.push_back(true);
+//   const auto & fe_pressure = fe->get_sub_fe(pressure_mask);
+//   dof_handler_pressure.initialize(triangulation, fe_pressure);
+//   dof_handler_pressure.distribute_mg_dofs();
+// }
 
 
 
@@ -657,10 +1019,11 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   // This ensures that all velocities DoFs are enumerated before the
   // pressure unknowns. This allows us to use blocks for vectors and
   // matrices and allows us to get the same DoF numbering for
-  // dof_handler and dof_handler_velocity.
+  // dof_handler and mgc_velocity.dof_handler.
   DoFRenumbering::block_wise(dof_handler);
 
-  setup_system_velocity();
+  setup_system_velocity(); // TODO !!!
+  // setup_system_pressure(); // TODO !!!
 
   std::vector<unsigned int>                  block_component{0U, 1U};
   const std::vector<types::global_dof_index> dofs_per_block =
@@ -705,7 +1068,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   system_matrix.reinit(sparsity_pattern);
   system_solution.reinit(dofs_per_block);
   zero_constraints.set_zero(system_solution);
-  constraints_velocity.distribute(system_solution.block(0)); // particular velocity solution!
+  mgc_velocity.constraints.distribute(system_solution.block(0)); // particular velocity solution!
   system_delta_x.reinit(dofs_per_block);
   zero_constraints.set_zero(system_delta_x);
   system_rhs.reinit(dofs_per_block);
@@ -809,13 +1172,13 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity()
   };
 
   const auto copier = [&](const CopyData & copy_data) {
-    constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-      copy_data.cell_matrix, copy_data.local_dof_indices, system_matrix_velocity);
+    mgc_velocity.constraints.template distribute_local_to_global<SparseMatrix<double>>(
+      copy_data.cell_matrix, copy_data.local_dof_indices, mgc_velocity.system_matrix);
 
     for(auto & cdf : copy_data.face_data)
     {
-      constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-        cdf.cell_matrix, cdf.joint_dof_indices, system_matrix_velocity);
+      mgc_velocity.constraints.template distribute_local_to_global<SparseMatrix<double>>(
+        cdf.cell_matrix, cdf.joint_dof_indices, mgc_velocity.system_matrix);
     }
   };
 
@@ -827,9 +1190,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity()
                                   update_JxW_values,
                                 update_values | update_gradients | update_quadrature_points |
                                   update_JxW_values | update_normal_vectors);
-  CopyData           copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
-  MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                        dof_handler_velocity.end(),
+  CopyData           copy_data(mgc_velocity.dof_handler.get_fe().dofs_per_cell);
+  MeshWorker::mesh_loop(mgc_velocity.dof_handler.begin_active(),
+                        mgc_velocity.dof_handler.end(),
                         cell_worker,
                         copier,
                         scratch_data,
@@ -844,142 +1207,14 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity()
 
 template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, method>::prepare_schwarz_smoothers()
-{
-  Assert(rt_parameters.multigrid.pre_smoother.variant ==
-           SmootherParameter::SmootherVariant::Schwarz,
-         ExcMessage("Invalid smoothing variant."));
-  AssertDimension(mg_matrices.max_level(), max_level());
-  for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
-    AssertThrow(mg_matrices[level].mf_storage, ExcMessage("mf_storage is not initialized."));
-
-  //: pre-smoother
-  {
-    const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
-    typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
-    // additional_data.coloring_func = std::ref(*user_coloring); // !!! TODO
-    additional_data.parameters = rt_parameters.multigrid.pre_smoother;
-    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
-    mgss->initialize(mg_matrices, additional_data);
-    mg_schwarz_smoother_pre = mgss;
-  }
-
-  //: post-smoother (so far only shallow copy!)
-  {
-    const auto mgss_post = std::make_shared<MG_SMOOTHER_SCHWARZ>();
-    typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
-    // additional_data.coloring_func = std::ref(*user_coloring); !!! TODO
-    additional_data.parameters = rt_parameters.multigrid.post_smoother;
-    mgss_post->initialize(*mg_schwarz_smoother_pre, additional_data);
-    mg_schwarz_smoother_post = mgss_post;
-  }
-}
-
-
-
-template<int dim, int fe_degree_p, Method method>
-void
 ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity()
 {
-  // *** clear multigrid infrastructure
-  multigrid.reset();
-  mg_matrix_wrapper.reset();
-  coarse_grid_solver.clear();
-  mg_smoother_post = nullptr;
-  mg_smoother_pre  = nullptr;
-  mg_schwarz_smoother_pre.reset();
-  mg_schwarz_smoother_post.reset();
-  mg_transfer.clear();
-  mg_matrices.clear_elements();
-  mg_constrained_dofs.reset();
+  mgc_velocity.prepare_multigrid(max_level(), user_coloring);
 
-  // *** setup multigrid data
-  const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
-  const unsigned mg_level_max = max_level();
+  const unsigned int mg_level_max = max_level();
+  const unsigned int mg_level_min = rt_parameters.multigrid.coarse_level;
   pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
-
-  // *** initialize multigrid constraints
-  mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
-  mg_constrained_dofs->initialize(dof_handler_velocity);
-  mg_constrained_dofs->make_zero_boundary_constraints(dof_handler_velocity,
-                                                      equation_data.dirichlet_boundary_ids);
-
-  // *** initialize level matrices A_l
-  mg_matrices.resize(mg_level_min, mg_level_max);
-  mg_sparsity_patterns.resize(mg_level_min, mg_level_max);
-  for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
-  {
-    DynamicSparsityPattern dsp(dof_handler_velocity.n_dofs(level),
-                               dof_handler_velocity.n_dofs(level));
-    MGTools::make_flux_sparsity_pattern(dof_handler_velocity, dsp, level);
-    mg_sparsity_patterns[level].copy_from(dsp);
-    mg_matrices[level].reinit(mg_sparsity_patterns[level]);
-  }
-  //: assemble the velocity system A_l on each level l.
-  assemble_multigrid_velocity();
-
-  // *** initialize multigrid transfer R_l
-  mg_transfer.initialize_constraints(*mg_constrained_dofs);
-  mg_transfer.build(dof_handler_velocity);
-
-  // *** initialize Schwarz smoother S_l
-  switch(rt_parameters.multigrid.pre_smoother.variant)
-  {
-    case SmootherParameter::SmootherVariant::None:
-      mg_smoother_identity = std::make_shared<const MGSmootherIdentity<Vector<double>>>();
-      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
-      mg_smoother_pre = mg_smoother_identity.get();
-      break;
-    case SmootherParameter::SmootherVariant::GaussSeidel:
-    {
-      auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, Vector<double>>>();
-      tmp->initialize(mg_matrices);
-      tmp->set_steps(rt_parameters.multigrid.pre_smoother.n_smoothing_steps);
-      tmp->set_symmetric(true);
-      mg_smoother_gauss_seidel = tmp;
-      mg_smoother_pre          = mg_smoother_gauss_seidel.get();
-    }
-    break;
-    case SmootherParameter::SmootherVariant::Schwarz:
-      prepare_schwarz_smoothers();
-      AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
-      mg_smoother_pre = mg_schwarz_smoother_pre.get();
-      break;
-    default:
-      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
-  }
-  switch(rt_parameters.multigrid.post_smoother.variant)
-  {
-    case SmootherParameter::SmootherVariant::None:
-      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
-      mg_smoother_post = mg_smoother_identity.get();
-      break;
-    case SmootherParameter::SmootherVariant::GaussSeidel:
-      AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
-      mg_smoother_post = mg_smoother_gauss_seidel.get();
-      break;
-    case SmootherParameter::SmootherVariant::Schwarz:
-      AssertThrow(mg_schwarz_smoother_post, ExcMessage("Not initialized"));
-      mg_smoother_post = mg_schwarz_smoother_post.get();
-      break;
-    default:
-      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
-  }
   pp_data.n_colors_system.push_back(n_colors_system());
-
-  // *** initialize coarse grid solver
-  coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
-  mg_coarse_grid = &coarse_grid_solver;
-
-  // *** initialize geometric multigrid method
-  mg_matrix_wrapper.initialize(mg_matrices);
-  multigrid = std::make_shared<Multigrid<Vector<double>>>(mg_matrix_wrapper,
-                                                          *mg_coarse_grid,
-                                                          mg_transfer,
-                                                          *mg_smoother_pre,
-                                                          *mg_smoother_post,
-                                                          mg_level_min,
-                                                          mg_level_max);
 }
 
 
@@ -988,93 +1223,7 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::assemble_multigrid_velocity()
 {
-  AssertDimension(mg_matrices.max_level(), max_level());
-  AssertDimension(mg_matrices.min_level(), rt_parameters.multigrid.coarse_level);
-  Assert(mg_constrained_dofs, ExcMessage("mg_constrained_dofs is uninitialized."));
-
-  using Velocity::SIPG::MW::CopyData;
-  using Velocity::SIPG::MW::ScratchData;
-  using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
-  using LevelCellIterator = typename MatrixIntegrator::IteratorType;
-  MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
-
-  for(unsigned int level = 0; level <= max_level(); ++level)
-  {
-    AffineConstraints<double> level_constraints;
-    level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
-    level_constraints.close();
-
-    {
-      //: initialize matrix-free storage (dummy, required to setup TPSS)
-      typename MatrixFree<dim, double>::AdditionalData additional_data;
-      additional_data.mg_level = level;
-      QGauss<1>  quadrature(fe_degree_v + 1);
-      const auto mf_storage = std::make_shared<MatrixFree<dim, double>>();
-      mf_storage->reinit(
-        mapping, dof_handler_velocity, level_constraints, quadrature, additional_data);
-
-      //: initialize FD::MatrixIntegrator (see SparseMatrixAugmented)
-      mg_matrices[level].initialize(mf_storage, equation_data);
-    }
-
-    auto cell_worker =
-      [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-      };
-
-    auto face_worker = [&](const auto &         cell,
-                           const unsigned int & f,
-                           const unsigned int & sf,
-                           const auto &         ncell,
-                           const unsigned int & nf,
-                           const unsigned int & nsf,
-                           ScratchData<dim> &   scratch_data,
-                           CopyData &           copy_data) {
-      if(dof_layout == TPSS::DoFLayout::DGQ)
-        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-    };
-
-    auto boundary_worker = [&](const auto &         cell,
-                               const unsigned int & face_no,
-                               ScratchData<dim> &   scratch_data,
-                               CopyData &           copy_data) {
-      if(dof_layout == TPSS::DoFLayout::DGQ)
-        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-    };
-
-    const auto copier = [&](const CopyData & copy_data) {
-      level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-        copy_data.cell_matrix, copy_data.local_dof_indices, mg_matrices[level]);
-
-      for(auto & cdf : copy_data.face_data)
-      {
-        level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-          cdf.cell_matrix, cdf.joint_dof_indices, mg_matrices[level]);
-      }
-    };
-
-    const unsigned int n_gauss_points = fe_degree_p + 2;
-    const UpdateFlags  update_flags =
-      update_values | update_gradients | update_quadrature_points | update_JxW_values;
-    const UpdateFlags interface_update_flags = update_values | update_gradients |
-                                               update_quadrature_points | update_JxW_values |
-                                               update_normal_vectors;
-    ScratchData<dim> scratch_data(
-      mapping, *fe_velocity, n_gauss_points, update_flags, interface_update_flags);
-
-    CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
-
-    MeshWorker::mesh_loop(dof_handler_velocity.begin_mg(level),
-                          dof_handler_velocity.end_mg(level),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                            MeshWorker::assemble_own_interior_faces_once,
-                          boundary_worker,
-                          face_worker);
-  }
+  mgc_velocity.assemble_multigrid();
 }
 
 
@@ -1159,15 +1308,14 @@ ModelProblem<dim, fe_degree_p, method>::solve()
 
   else if(rt_parameters.solver.variant == "FGMRES_GMG")
   {
-    auto & A_preconditioner = prepare_preconditioner_mg();
+    prepare_multigrid_velocity();
+    auto & A_preconditioner = mgc_velocity.get_preconditioner();
 
     SparseILU<double> S_preconditioner;
     S_preconditioner.initialize(pressure_mass_matrix, SparseILU<double>::AdditionalData());
 
-    const BlockSchurPreconditioner<
-      /*PreconditionMG<dim, Vector<double>, MGTransferPrebuilt<Vector<double>>>*/
-      GMG_PRECONDITIONER,
-      SparseILU<double>>
+    const BlockSchurPreconditioner<typename std::decay<decltype(A_preconditioner)>::type,
+                                   SparseILU<double>>
       preconditioner(
         system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner, use_expensive);
 
@@ -1283,23 +1431,6 @@ ModelProblem<dim, fe_degree_p, method>::run()
     setup_system();
 
     assemble_system();
-
-    // // TODO !!! DEBUG
-    // {
-    //   assemble_system_velocity();
-    //   Vector<double> dst(system_matrix_velocity.m());
-    //   Vector<double> dst_ref(system_matrix_velocity.m());
-    //   Vector<double> src(system_matrix_velocity.m());
-    //   fill_with_random_values(src);
-    //   const auto & matrix_ref = system_matrix.block(0, 0);
-    //   matrix_ref.vmult(dst_ref, src);
-    //   system_matrix_velocity.vmult(dst, src);
-
-    //   // matrix_ref.print_formatted(std::cout);
-    //   // system_matrix_velocity.print_formatted(std::cout);
-    //   dst -= dst_ref;
-    //   std::cout << "diff: " << dst.l2_norm() << std::endl;
-    // }
 
     solve();
 
