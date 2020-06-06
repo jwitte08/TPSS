@@ -58,66 +58,13 @@ compute_penalty_impl(const int degree, const Number h_left, const Number h_right
 
 namespace MW
 {
-/**
- * symgrad(phi)_{d,c} = 0.5 (\partial_d phi_{i;c} + \partial_c phi_{i;d})
- */
-template<int dim>
-SymmetricTensor<2, dim>
-compute_symgrad(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
-{
-  SymmetricTensor<2, dim> symgrad_of_phi;
-  for(auto d = 0U; d < dim; ++d)
-    for(auto c = d; c < dim; ++c)
-      symgrad_of_phi[d][c] =
-        0.5 * (phi.shape_grad_component(i, q, c)[d] + phi.shape_grad_component(i, q, d)[c]);
-  return symgrad_of_phi;
-}
+using ::MW::compute_symgrad;
 
-/**
- * {{ symgrad(phi) }} = 0.5 ({{ \partial_d phi_{i;c} }} + {{ \partial_c phi_{i;d} }})
- */
-template<int dim>
-SymmetricTensor<2, dim>
-compute_average_symgrad(const FEInterfaceValues<dim> & phi,
-                        const unsigned int             i,
-                        const unsigned int             q)
-{
-  SymmetricTensor<2, dim> av_symgrad_of_phi;
-  for(auto d = 0U; d < dim; ++d)
-    for(auto c = d; c < dim; ++c)
-      av_symgrad_of_phi[d][c] =
-        0.5 * (phi.average_gradient(i, q, c)[d] + phi.average_gradient(i, q, d)[c]);
-  return av_symgrad_of_phi;
-}
+using ::MW::compute_average_symgrad;
 
-/**
- * [[ phi ]] = phi^+ - phi^-
- */
-template<int dim>
-Tensor<1, dim>
-compute_jump(const FEInterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
-{
-  Tensor<1, dim> jump_phi;
-  for(auto c = 0; c < dim; ++c)
-    jump_phi[c] = phi.jump(i, q, c);
-  return jump_phi;
-}
+using ::MW::compute_jump;
 
-/**
- * jump_cross_normal(phi) = [[ phi ]] (x) n
- */
-template<int dim>
-Tensor<2, dim>
-compute_jump_cross_normal(const FEInterfaceValues<dim> & phi,
-                          const unsigned int             i,
-                          const unsigned int             q)
-{
-  const Tensor<1, dim> & n          = phi.normal(q);
-  const Tensor<1, dim> & jump_value = compute_jump(phi, i, q);
-  return outer_product(jump_value, n);
-}
-
-
+using ::MW::compute_jump_cross_normal;
 
 using ::MW::ScratchData;
 
@@ -179,24 +126,42 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
   phi.reinit(cell);
   cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
 
-  const unsigned int               dofs_per_cell = phi.get_fe().dofs_per_cell;
-  const FEValuesExtractors::Vector velocities(0);
+  const unsigned int dofs_per_cell = phi.get_fe().dofs_per_cell;
 
+  const auto & quadrature_points = phi.get_quadrature_points();
   for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
   {
+    const auto & x_q = quadrature_points[q];
     for(unsigned int i = 0; i < dofs_per_cell; ++i)
     {
       const SymmetricTensor<2, dim> symgrad_phi_i = compute_symgrad(phi, i, q);
       for(unsigned int j = 0; j < dofs_per_cell; ++j)
       {
-        const SymmetricTensor<2, dim> symgrad_phi_j = phi[velocities].symmetric_gradient(j, q);
+        const SymmetricTensor<2, dim> symgrad_phi_j = compute_symgrad(phi, j, q);
 
         copy_data.cell_matrix(i, j) += 2. *
                                        scalar_product(symgrad_phi_i,   // symgrad phi_i(x)
                                                       symgrad_phi_j) * // symgrad phi_j(x)
                                        phi.JxW(q);                     // dx
       }
+
+      if(!is_multigrid)
+      {
+        const unsigned int component_i = phi.get_fe().system_to_component_index(i).first;
+        const auto         load_value  = load_function->value(x_q, component_i);
+        copy_data.cell_rhs(i) += phi.shape_value(i, q) * load_value * phi.JxW(q);
+      }
     }
+  }
+
+  if(!is_multigrid && discrete_solution)
+  {
+    Vector<double> u0(copy_data.local_dof_indices.size());
+    for(auto i = 0U; i < u0.size(); ++i)
+      u0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
+    Vector<double> w0(copy_data.local_dof_indices.size());
+    copy_data.cell_matrix.vmult(w0, u0);
+    copy_data.cell_rhs -= w0;
   }
 }
 
@@ -675,6 +640,93 @@ public:
 
 
 
+namespace Pressure
+{
+namespace MW
+{
+using ::MW::ScratchData;
+
+using ::MW::CopyData;
+
+template<int dim, bool is_multigrid = false>
+struct MatrixIntegrator
+{
+  using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
+
+  MatrixIntegrator(const Function<dim> *  load_function_in,
+                   const Function<dim> *  analytical_solution_in,
+                   const Vector<double> * particular_solution,
+                   const EquationData &   equation_data_in)
+    : load_function(load_function_in),
+      analytical_solution(analytical_solution_in),
+      discrete_solution(particular_solution),
+      equation_data(equation_data_in)
+  {
+  }
+
+  void
+  cell_worker(const IteratorType & cell,
+              ScratchData<dim> &   scratch_data,
+              CopyData &           copy_data) const;
+
+  const Function<dim> *  load_function;
+  const Function<dim> *  analytical_solution;
+  const Vector<double> * discrete_solution;
+  const EquationData     equation_data;
+};
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
+                                                 ScratchData<dim> &   scratch_data,
+                                                 CopyData &           copy_data) const
+{
+  copy_data.cell_matrix = 0.;
+  copy_data.cell_rhs    = 0.;
+
+  FEValues<dim> & phi = scratch_data.fe_values;
+  phi.reinit(cell);
+  cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
+
+  const unsigned int dofs_per_cell = phi.get_fe().dofs_per_cell;
+
+  const auto & quadrature_points = phi.get_quadrature_points();
+  for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
+  {
+    const auto & x_q = quadrature_points[q];
+    for(unsigned int i = 0; i < dofs_per_cell; ++i)
+    {
+      if(equation_data.assemble_pressure_mass_matrix)
+        for(unsigned int j = 0; j < dofs_per_cell; ++j)
+        {
+          copy_data.cell_matrix(i, j) += phi.shape_value(i, q) * phi.shape_value(j, q) * phi.JxW(q);
+        }
+
+      if(!is_multigrid)
+      {
+        const auto load_value = load_function->value(x_q, 0);
+        copy_data.cell_rhs(i) += phi.shape_value(i, q) * load_value * phi.JxW(q);
+      }
+    }
+  }
+
+  if(!is_multigrid && discrete_solution)
+  {
+    Vector<double> p0(copy_data.local_dof_indices.size());
+    for(auto i = 0U; i < p0.size(); ++i)
+      p0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
+    Vector<double> w0(copy_data.local_dof_indices.size());
+    copy_data.cell_matrix.vmult(w0, p0);
+    copy_data.cell_rhs -= w0;
+  }
+}
+
+} // namespace MW
+
+} // namespace Pressure
+
+
+
 namespace VelocityPressure
 {
 namespace MW
@@ -686,6 +738,8 @@ using ::MW::CopyData;
 template<int dim, bool is_multigrid = false>
 struct MatrixIntegrator
 {
+  static_assert(!is_multigrid, "not implemented.");
+
   using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
 
   MatrixIntegrator(const Function<dim> *       load_function_in,
@@ -771,7 +825,111 @@ struct MatrixIntegrator
   const BlockVector<double> * discrete_solution;
   const EquationData          equation_data;
 };
+
+
+
+namespace Mixed
+{
+using ::MW::compute_divergence;
+
+using ::MW::Mixed::ScratchData;
+
+using ::MW::Mixed::CopyData;
+
+template<int dim, bool is_multigrid = false>
+struct MatrixIntegrator
+{
+  using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
+
+  MatrixIntegrator(/*const Function<dim> *       load_function_in,
+         const Function<dim> *       analytical_solution_in,*/
+                   const Vector<double> * particular_solutionU,
+                   const Vector<double> * particular_solutionP,
+                   const EquationData &   equation_data_in)
+    : discrete_solutionU(particular_solutionU),
+      discrete_solutionP(particular_solutionP),
+      equation_data(equation_data_in)
+  {
+  }
+
+  void
+  cell_worker(const IteratorType & cell_test,
+              const IteratorType & cell_ansatz,
+              ScratchData<dim> &   scratch_data,
+              CopyData &           copy_data) const
+  {
+    copy_data.cell_matrix         = 0.;
+    copy_data.cell_matrix_flipped = 0.;
+    copy_data.cell_rhs_test       = 0.;
+    copy_data.cell_rhs_ansatz     = 0.;
+
+    auto & phiU = scratch_data.fe_values_test;
+    phiU.reinit(cell_test);
+    cell_test->get_active_or_mg_dof_indices(copy_data.local_dof_indices_test);
+    const auto n_dofs_per_cellU = phiU.get_fe().dofs_per_cell;
+    AssertDimension(n_dofs_per_cellU, copy_data.local_dof_indices_test.size());
+
+    auto & phiP = scratch_data.fe_values_ansatz;
+    phiP.reinit(cell_ansatz);
+    cell_ansatz->get_active_or_mg_dof_indices(copy_data.local_dof_indices_ansatz);
+    const auto n_dofs_per_cellP = phiP.get_fe().dofs_per_cell;
+    AssertDimension(n_dofs_per_cellP, copy_data.local_dof_indices_ansatz.size());
+
+    const unsigned int n_q_points = phiU.n_quadrature_points;
+    AssertDimension(n_q_points, phiP.n_quadrature_points);
+
+    for(unsigned int q = 0; q < n_q_points; ++q)
+    {
+      for(unsigned int i = 0; i < n_dofs_per_cellU; ++i)
+      {
+        const auto div_phiU_i = compute_divergence(phiU, i, q);
+        for(unsigned int j = 0; j < n_dofs_per_cellP; ++j)
+        {
+          const auto phiP_j = phiP.shape_value(j, q);
+
+          /// assign to velocity-pressure block
+          copy_data.cell_matrix(i, j) += -div_phiU_i * phiP_j * phiP.JxW(q);
+        }
+      }
+    }
+
+    /// pressure-velocity block ("flipped") is the transpose of the
+    /// velocity-pressure block
+    for(unsigned int i = 0; i < n_dofs_per_cellU; ++i)
+      for(unsigned int j = 0; j < n_dofs_per_cellP; ++j)
+        copy_data.cell_matrix_flipped(j, i) = copy_data.cell_matrix(i, j);
+
+    if(discrete_solutionU)
+    {
+      Vector<double> u0(n_dofs_per_cellU);
+      for(auto i = 0U; i < u0.size(); ++i)
+        u0(i) = (*discrete_solutionU)(copy_data.local_dof_indices_test[i]);
+      Vector<double> w0(n_dofs_per_cellP);
+      copy_data.cell_matrix_flipped.vmult(w0, u0);
+      copy_data.cell_rhs_ansatz -= w0;
+    }
+
+    if(discrete_solutionP)
+    {
+      Vector<double> p0(n_dofs_per_cellP);
+      for(auto i = 0U; i < p0.size(); ++i)
+        p0(i) = (*discrete_solutionP)(copy_data.local_dof_indices_ansatz[i]);
+      Vector<double> w0(n_dofs_per_cellU);
+      copy_data.cell_matrix.vmult(w0, p0);
+      copy_data.cell_rhs_test -= w0;
+    }
+  }
+
+  const Vector<double> * discrete_solutionU;
+  const Vector<double> * discrete_solutionP;
+  const EquationData     equation_data;
+};
+
+} // namespace Mixed
+
 } // namespace MW
+
+
 
 namespace FD
 {

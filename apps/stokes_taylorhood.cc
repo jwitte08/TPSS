@@ -66,11 +66,13 @@ main(int argc, char * argv[])
     const int                        dim    = CT::DIMENSION_;
     const int                        degree = CT::FE_DEGREE_;
 
-    // 0: direct solver (UMFPACK)
-    // 1: flexible GMRES prec. by ILU (FGMRES_ILU)
-    // 2: flexible GMRES prec. by Schur approx., GMG for velocity (Gauss-Seidel)
-    // 2: flexible GMRES prec. by Schur approx., GMG for velocity (Schwarz)
-    constexpr unsigned int test_index_max = 3;
+    // 0 : direct solver (UMFPACK)
+    // 1 : flexible GMRES prec. by ILU (FGMRES_ILU)
+    //     flexible GMRES prec. by Schur complement approximation ...
+    // 2 : ... with GMG based on Gauss-Seidel smoothers for velocity (FGMRES_GMGvelocity)
+    // 3 : ... with GMG based on Schwarz smoothers for velocity (FGMRES_GMGvelocity)
+    // 4 : GMRES prec. by GMG (GMRES_GMG)
+    constexpr unsigned int test_index_max = 4;
     const unsigned int     test_index     = argc > 2 ? std::atoi(argv[2]) : 0;
     AssertThrow(test_index <= test_index_max, ExcMessage("test_index is not valid"));
 
@@ -86,8 +88,8 @@ main(int argc, char * argv[])
       //: solver
       const std::string str_solver_variant[test_index_max + 1] = {"UMFPACK",
                                                                   "FGMRES_ILU",
-                                                                  "FGMRES_GMG",
-                                                                  "FGMRES_GMG"};
+                                                                  "FGMRES_GMGvelocity",
+                                                                  "FGMRES_GMGvelocity"};
       prms.solver.variant                                      = str_solver_variant[test_index];
       prms.solver.rel_tolerance                                = 1.e-8;
       prms.solver.precondition_variant                         = test_index >= 2 ?
