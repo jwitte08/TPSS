@@ -535,6 +535,151 @@ struct CopyData
   std::vector<types::global_dof_index> local_dof_indices;
   std::vector<FaceData>                face_data;
 };
+
+
+
+/**
+ * symgrad(phi)_{d,c} = 0.5 (\partial_d phi_{i;c} + \partial_c phi_{i;d})
+ */
+template<int dim>
+SymmetricTensor<2, dim>
+compute_symgrad(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  SymmetricTensor<2, dim> symgrad_of_phi;
+  for(auto d = 0U; d < dim; ++d)
+    for(auto c = d; c < dim; ++c)
+      symgrad_of_phi[d][c] =
+        0.5 * (phi.shape_grad_component(i, q, c)[d] + phi.shape_grad_component(i, q, d)[c]);
+  return symgrad_of_phi;
+}
+
+
+
+/**
+ * symgrad(phi)_{d,c} = 0.5 (\partial_d phi_{i;c} + \partial_c phi_{i;d})
+ */
+template<int dim>
+double
+compute_divergence(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  double div_of_phi = 0.;
+  for(auto d = 0U; d < dim; ++d)
+    div_of_phi += phi.shape_grad_component(i, q, d)[d];
+  return div_of_phi;
+}
+
+
+
+/**
+ * {{ symgrad(phi) }} = 0.5 ({{ \partial_d phi_{i;c} }} + {{ \partial_c phi_{i;d} }})
+ */
+template<int dim>
+SymmetricTensor<2, dim>
+compute_average_symgrad(const FEInterfaceValues<dim> & phi,
+                        const unsigned int             i,
+                        const unsigned int             q)
+{
+  SymmetricTensor<2, dim> av_symgrad_of_phi;
+  for(auto d = 0U; d < dim; ++d)
+    for(auto c = d; c < dim; ++c)
+      av_symgrad_of_phi[d][c] =
+        0.5 * (phi.average_gradient(i, q, c)[d] + phi.average_gradient(i, q, d)[c]);
+  return av_symgrad_of_phi;
+}
+
+
+
+/**
+ * [[ phi ]] = phi^+ - phi^-
+ */
+template<int dim>
+Tensor<1, dim>
+compute_jump(const FEInterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  Tensor<1, dim> jump_phi;
+  for(auto c = 0; c < dim; ++c)
+    jump_phi[c] = phi.jump(i, q, c);
+  return jump_phi;
+}
+
+
+
+/**
+ * jump_cross_normal(phi) = [[ phi ]] (x) n
+ */
+template<int dim>
+Tensor<2, dim>
+compute_jump_cross_normal(const FEInterfaceValues<dim> & phi,
+                          const unsigned int             i,
+                          const unsigned int             q)
+{
+  const Tensor<1, dim> & n          = phi.normal(q);
+  const Tensor<1, dim> & jump_value = compute_jump(phi, i, q);
+  return outer_product(jump_value, n);
+}
+
+
+
+namespace Mixed
+{
+template<int dim>
+struct ScratchData
+{
+  ScratchData(const Mapping<dim> &       mapping,
+              const FiniteElement<dim> & fe_test,
+              const FiniteElement<dim> & fe_ansatz,
+              const unsigned int         n_q_points_1d,
+              const UpdateFlags          update_flags_test,
+              const UpdateFlags          update_flags_ansatz)
+    : fe_values_test(mapping, fe_test, QGauss<dim>(n_q_points_1d), update_flags_test),
+      fe_values_ansatz(mapping, fe_ansatz, QGauss<dim>(n_q_points_1d), update_flags_ansatz)
+  {
+  }
+
+  ScratchData(const ScratchData<dim> & scratch_data)
+    : fe_values_test(scratch_data.fe_values_test.get_mapping(),
+                     scratch_data.fe_values_test.get_fe(),
+                     scratch_data.fe_values_test.get_quadrature(),
+                     scratch_data.fe_values_test.get_update_flags()),
+      fe_values_ansatz(scratch_data.fe_values_ansatz.get_mapping(),
+                       scratch_data.fe_values_ansatz.get_fe(),
+                       scratch_data.fe_values_ansatz.get_quadrature(),
+                       scratch_data.fe_values_ansatz.get_update_flags())
+  {
+  }
+
+  FEValues<dim> fe_values_test;
+  FEValues<dim> fe_values_ansatz;
+};
+
+struct CopyData
+{
+  CopyData(const unsigned int n_dofs_per_cell_test,
+           const unsigned int n_dofs_per_cell_ansatz,
+           const unsigned int level_in = numbers::invalid_unsigned_int)
+    : level(level_in),
+      cell_matrix(n_dofs_per_cell_test, n_dofs_per_cell_ansatz),
+      cell_matrix_flipped(n_dofs_per_cell_ansatz, n_dofs_per_cell_test),
+      cell_rhs_test(n_dofs_per_cell_test),
+      cell_rhs_ansatz(n_dofs_per_cell_ansatz),
+      local_dof_indices_test(n_dofs_per_cell_test),
+      local_dof_indices_ansatz(n_dofs_per_cell_ansatz)
+  {
+  }
+
+  CopyData(const CopyData &) = default;
+
+  unsigned int                         level;
+  FullMatrix<double>                   cell_matrix;
+  FullMatrix<double>                   cell_matrix_flipped;
+  Vector<double>                       cell_rhs_test;
+  Vector<double>                       cell_rhs_ansatz;
+  std::vector<types::global_dof_index> local_dof_indices_test;
+  std::vector<types::global_dof_index> local_dof_indices_ansatz;
+};
+
+} // namespace Mixed
+
 } // namespace MW
 
 #endif /* APPS_COMMONINTEGRATOR_H_ */
