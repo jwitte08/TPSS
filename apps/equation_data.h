@@ -677,6 +677,41 @@ struct EquationData
 
 
 
+template<int dim>
+class FunctionExtractor : public Function<dim>
+{
+public:
+  /**
+   * Extracting the vector components c = start,...,end-1 from function @p
+   * function_in, which is determined by the half-open range [start, end).
+   */
+  FunctionExtractor(const Function<dim> *                       function_in,
+                    const std::pair<unsigned int, unsigned int> range)
+    : Function<dim>(range.second - range.first), function(function_in), shift(range.first)
+  {
+    Assert(range.first <= range.second, ExcMessage("Invalid range."));
+    AssertIndexRange(range.first, function_in->n_components);
+    AssertIndexRange(range.second, function_in->n_components + 1);
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    return function->value(p, shift + component);
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    return function->gradient(p, shift + component);
+  }
+
+  const Function<dim> * function;
+  const unsigned int    shift;
+};
+
+
+
 namespace DivergenceFree
 {
 // Note that the first dim components are the velocity components
