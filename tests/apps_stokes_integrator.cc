@@ -240,22 +240,33 @@ protected:
 
 
   void
-  check_local_solvers_block()
+  check_local_solvers_block(const bool check_level_matrix = false)
   {
     constexpr auto method = Method::TaylorHood;
 
     EquationData equation_data;
     rt_parameters.solver.variant = "GMRES_GMG";
     using StokesProblem          = ModelProblem<dim, fe_degree_p, method>;
-    std::shared_ptr<const StokesProblem> stokes_problem;
-    auto new_problem   = std::make_shared<StokesProblem>(rt_parameters, equation_data);
-    new_problem->pcout = pcout_owned;
-    new_problem->make_grid();
-    new_problem->setup_system();
-    // new_problem->prepare_multigrid();
-    stokes_problem = new_problem;
+
+    const auto stokes_problem = std::make_shared<StokesProblem>(rt_parameters, equation_data);
+    stokes_problem->pcout     = pcout_owned;
+    stokes_problem->make_grid();
+    stokes_problem->setup_system();
+    stokes_problem->assemble_system();
+    stokes_problem->prepare_multigrid_velocity_pressure();
     stokes_problem->print_informations();
-    // const auto max_level = stokes_problem->max_level();
+    const auto max_level = stokes_problem->max_level();
+
+    if(check_level_matrix)
+    {
+      const auto & level_matrix = stokes_problem->mgc_velocity_pressure.mg_matrices[max_level];
+      FullMatrix<double> A(level_matrix.m());
+      A.copy_from(level_matrix);
+      const auto &       system_matrix = stokes_problem->system_matrix;
+      FullMatrix<double> Aref(system_matrix.m());
+      Aref.copy_from(system_matrix);
+      compare_matrix(A, Aref);
+    }
 
     // using MatrixIntegrator =
     //   Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree_v, double,
@@ -424,22 +435,24 @@ TYPED_TEST_P(TestStokesIntegrator, CheckSystemRHS)
   Fixture::check_system_matrix(false, true);
 }
 
-// TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversBlock)
-// {
-//   using Fixture                                = TestStokesIntegrator<TypeParam>;
-//   Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-//   Fixture::rt_parameters.mesh.n_repetitions    = 2;
-//   Fixture::rt_parameters.mesh.n_refinements    = 0;
-//   Fixture::check_local_solvers_block();
-// }
+TYPED_TEST_P(TestStokesIntegrator, CheckLevelMatrixVelocityPressure)
+{
+  using Fixture                                = TestStokesIntegrator<TypeParam>;
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::rt_parameters.mesh.n_refinements    = 0;
+  Fixture::check_local_solvers_block(true);
+  Fixture::rt_parameters.mesh.n_refinements = 1;
+  Fixture::check_local_solvers_block(true);
+}
 
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckSystemMatrixVelocity,
                             CheckLocalSolversVelocity,
                             CheckLocalSolversDGVelocity,
-			    CheckSystemMatrix,
-			    CheckSystemRHS/*,
-					       CheckLocalSolversBlock*/);
+                            CheckSystemMatrix,
+                            CheckSystemRHS,
+                            CheckLevelMatrixVelocityPressure);
 
 using TestParamsConstant  = testing::Types<Util::NonTypeParams<2, 0>>;
 using TestParamsLinear    = testing::Types<Util::NonTypeParams<2, 1>>;

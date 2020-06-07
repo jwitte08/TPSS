@@ -841,9 +841,7 @@ struct MatrixIntegrator
 {
   using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
 
-  MatrixIntegrator(/*const Function<dim> *       load_function_in,
-         const Function<dim> *       analytical_solution_in,*/
-                   const Vector<double> * particular_solutionU,
+  MatrixIntegrator(const Vector<double> * particular_solutionU,
                    const Vector<double> * particular_solutionP,
                    const EquationData &   equation_data_in)
     : discrete_solutionU(particular_solutionU),
@@ -853,77 +851,87 @@ struct MatrixIntegrator
   }
 
   void
-  cell_worker(const IteratorType & cell_test,
-              const IteratorType & cell_ansatz,
+  cell_worker(const IteratorType & cellU,
+              const IteratorType & cellP,
               ScratchData<dim> &   scratch_data,
-              CopyData &           copy_data) const
-  {
-    copy_data.cell_matrix         = 0.;
-    copy_data.cell_matrix_flipped = 0.;
-    copy_data.cell_rhs_test       = 0.;
-    copy_data.cell_rhs_ansatz     = 0.;
-
-    auto & phiU = scratch_data.fe_values_test;
-    phiU.reinit(cell_test);
-    cell_test->get_active_or_mg_dof_indices(copy_data.local_dof_indices_test);
-    const auto n_dofs_per_cellU = phiU.get_fe().dofs_per_cell;
-    AssertDimension(n_dofs_per_cellU, copy_data.local_dof_indices_test.size());
-
-    auto & phiP = scratch_data.fe_values_ansatz;
-    phiP.reinit(cell_ansatz);
-    cell_ansatz->get_active_or_mg_dof_indices(copy_data.local_dof_indices_ansatz);
-    const auto n_dofs_per_cellP = phiP.get_fe().dofs_per_cell;
-    AssertDimension(n_dofs_per_cellP, copy_data.local_dof_indices_ansatz.size());
-
-    const unsigned int n_q_points = phiU.n_quadrature_points;
-    AssertDimension(n_q_points, phiP.n_quadrature_points);
-
-    for(unsigned int q = 0; q < n_q_points; ++q)
-    {
-      for(unsigned int i = 0; i < n_dofs_per_cellU; ++i)
-      {
-        const auto div_phiU_i = compute_divergence(phiU, i, q);
-        for(unsigned int j = 0; j < n_dofs_per_cellP; ++j)
-        {
-          const auto phiP_j = phiP.shape_value(j, q);
-
-          /// assign to velocity-pressure block
-          copy_data.cell_matrix(i, j) += -div_phiU_i * phiP_j * phiP.JxW(q);
-        }
-      }
-    }
-
-    /// pressure-velocity block ("flipped") is the transpose of the
-    /// velocity-pressure block
-    for(unsigned int i = 0; i < n_dofs_per_cellU; ++i)
-      for(unsigned int j = 0; j < n_dofs_per_cellP; ++j)
-        copy_data.cell_matrix_flipped(j, i) = copy_data.cell_matrix(i, j);
-
-    if(discrete_solutionU)
-    {
-      Vector<double> u0(n_dofs_per_cellU);
-      for(auto i = 0U; i < u0.size(); ++i)
-        u0(i) = (*discrete_solutionU)(copy_data.local_dof_indices_test[i]);
-      Vector<double> w0(n_dofs_per_cellP);
-      copy_data.cell_matrix_flipped.vmult(w0, u0);
-      copy_data.cell_rhs_ansatz -= w0;
-    }
-
-    if(discrete_solutionP)
-    {
-      Vector<double> p0(n_dofs_per_cellP);
-      for(auto i = 0U; i < p0.size(); ++i)
-        p0(i) = (*discrete_solutionP)(copy_data.local_dof_indices_ansatz[i]);
-      Vector<double> w0(n_dofs_per_cellU);
-      copy_data.cell_matrix.vmult(w0, p0);
-      copy_data.cell_rhs_test -= w0;
-    }
-  }
+              CopyData &           copy_data) const;
 
   const Vector<double> * discrete_solutionU;
   const Vector<double> * discrete_solutionP;
   const EquationData     equation_data;
 };
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cellU,
+                                                 const IteratorType & cellP,
+                                                 ScratchData<dim> &   scratch_data,
+                                                 CopyData &           copy_data) const
+{
+  copy_data.cell_matrix         = 0.;
+  copy_data.cell_matrix_flipped = 0.;
+  copy_data.cell_rhs_test       = 0.;
+  copy_data.cell_rhs_ansatz     = 0.;
+
+  /// Velocity "U" takes test function role (in flipped mode ansatz function)
+  auto & phiU = scratch_data.fe_values_test;
+  phiU.reinit(cellU);
+  cellU->get_active_or_mg_dof_indices(copy_data.local_dof_indices_test);
+  const auto n_dofs_per_cellU = phiU.get_fe().dofs_per_cell;
+  AssertDimension(n_dofs_per_cellU, copy_data.local_dof_indices_test.size());
+
+  /// Pressure "P" takes ansatz function role (in flipped mode test function)
+  auto & phiP = scratch_data.fe_values_ansatz;
+  phiP.reinit(cellP);
+  cellP->get_active_or_mg_dof_indices(copy_data.local_dof_indices_ansatz);
+  const auto n_dofs_per_cellP = phiP.get_fe().dofs_per_cell;
+  AssertDimension(n_dofs_per_cellP, copy_data.local_dof_indices_ansatz.size());
+
+  const unsigned int n_q_points = phiU.n_quadrature_points;
+  AssertDimension(n_q_points, phiP.n_quadrature_points);
+
+  for(unsigned int q = 0; q < n_q_points; ++q)
+  {
+    for(unsigned int i = 0; i < n_dofs_per_cellU; ++i)
+    {
+      const auto div_phiU_i = compute_divergence(phiU, i, q);
+      for(unsigned int j = 0; j < n_dofs_per_cellP; ++j)
+      {
+        const auto phiP_j = phiP.shape_value(j, q);
+
+        /// assign to velocity-pressure block
+        copy_data.cell_matrix(i, j) += -div_phiU_i * phiP_j * phiP.JxW(q);
+      }
+    }
+  }
+
+  /// pressure-velocity block ("flipped") is the transpose of the
+  /// velocity-pressure block
+  for(unsigned int i = 0; i < n_dofs_per_cellU; ++i)
+    for(unsigned int j = 0; j < n_dofs_per_cellP; ++j)
+      copy_data.cell_matrix_flipped(j, i) = copy_data.cell_matrix(i, j);
+
+  if(!is_multigrid && discrete_solutionU)
+  {
+    Vector<double> u0(n_dofs_per_cellU);
+    for(auto i = 0U; i < u0.size(); ++i)
+      u0(i) = (*discrete_solutionU)(copy_data.local_dof_indices_test[i]);
+    Vector<double> w0(n_dofs_per_cellP);
+    copy_data.cell_matrix_flipped.vmult(w0, u0);
+    copy_data.cell_rhs_ansatz -= w0;
+  }
+
+  if(!is_multigrid && discrete_solutionP)
+  {
+    Vector<double> p0(n_dofs_per_cellP);
+    for(auto i = 0U; i < p0.size(); ++i)
+      p0(i) = (*discrete_solutionP)(copy_data.local_dof_indices_ansatz[i]);
+    Vector<double> w0(n_dofs_per_cellU);
+    copy_data.cell_matrix.vmult(w0, p0);
+    copy_data.cell_rhs_test -= w0;
+  }
+}
+
 
 } // namespace Mixed
 
@@ -935,8 +943,8 @@ namespace FD
 {
 template<int dim,
          int fe_degree_p,
-         typename Number            = double,
-         TPSS::DoFLayout dof_layout = TPSS::DoFLayout::Q>
+         typename Number              = double,
+         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q>
 class MatrixIntegrator
 {
 public:
