@@ -130,10 +130,14 @@ public:
   {
     AssertDimension(dst.size(), matrix_type::m());
     AssertDimension(src.size(), matrix_type::n());
-    Vector<Number> v(matrix_type::n()); // src
+    std::vector<typename matrix_type::size_type> n_rows_per_block;
+    AssertDimension(matrix_type::n_block_rows(), matrix_type::n_block_cols());
+    for(auto b = 0U; b < matrix_type::n_block_rows(); ++b)
+      n_rows_per_block.emplace_back(matrix_type::block(b, b).m());
+    BlockVector<Number> v(n_rows_per_block); // src
     std::copy(src.cbegin(), src.cend(), v.begin());
-    Vector<Number> w(matrix_type::m()); // dst
-    matrix_type::vmult(w, v);           // w = A v
+    BlockVector<Number> w(n_rows_per_block); // dst
+    matrix_type::vmult(w, v);                // w = A v
     std::copy(w.begin(), w.end(), dst.begin());
   }
 
@@ -420,13 +424,13 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_multigrid(
   switch(parameters.pre_smoother.variant)
   {
     case SmootherParameter::SmootherVariant::None:
-      mg_smoother_identity = std::make_shared<const MGSmootherIdentity<Vector<double>>>();
+      mg_smoother_identity = std::make_shared<const MGSmootherIdentity<VECTOR>>();
       AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
       mg_smoother_pre = mg_smoother_identity.get();
       break;
     case SmootherParameter::SmootherVariant::GaussSeidel:
     {
-      auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, Vector<double>>>();
+      auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, VECTOR>>();
       tmp->initialize(mg_matrices);
       tmp->set_steps(parameters.pre_smoother.n_smoothing_steps);
       tmp->set_symmetric(true);
@@ -466,13 +470,13 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_multigrid(
 
   // *** initialize geometric multigrid method
   mg_matrix_wrapper.initialize(mg_matrices);
-  multigrid = std::make_shared<Multigrid<Vector<double>>>(mg_matrix_wrapper,
-                                                          *mg_coarse_grid,
-                                                          mg_transfer,
-                                                          *mg_smoother_pre,
-                                                          *mg_smoother_post,
-                                                          mg_level_min,
-                                                          mg_level_max);
+  multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
+                                                  *mg_coarse_grid,
+                                                  mg_transfer,
+                                                  *mg_smoother_pre,
+                                                  *mg_smoother_post,
+                                                  mg_level_min,
+                                                  mg_level_max);
 }
 
 template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
@@ -894,6 +898,46 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::assemble_multigrid
 
 template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v>
 void
+MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::prepare_schwarz_smoothers(
+  const std::shared_ptr<ColoringBase<dim>> user_coloring)
+{
+  Assert(parameters.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz,
+         ExcMessage("Invalid smoothing variant."));
+  for(auto level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
+    AssertThrow(mg_matrices[level].mf_storage, ExcMessage("mf_storage is not initialized."));
+
+  //: pre-smoother
+  {
+    const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+    typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
+    if(parameters.pre_smoother.schwarz.manual_coloring)
+    {
+      Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
+      additional_data.coloring_func = std::ref(*user_coloring);
+    }
+    additional_data.parameters = parameters.pre_smoother;
+    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
+    mgss->initialize(mg_matrices, additional_data);
+    mg_schwarz_smoother_pre = mgss;
+  }
+
+  //: post-smoother (so far only shallow copy!)
+  {
+    const auto mgss_post = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+    typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
+    if(parameters.pre_smoother.schwarz.manual_coloring)
+    {
+      Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
+      additional_data.coloring_func = std::ref(*user_coloring);
+    }
+    additional_data.parameters = parameters.post_smoother;
+    mgss_post->initialize(*mg_schwarz_smoother_pre, additional_data);
+    mg_schwarz_smoother_post = mgss_post;
+  }
+}
+
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v>
+void
 MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::prepare_multigrid(
   const unsigned int                       mg_level_max,
   const std::shared_ptr<ColoringBase<dim>> user_coloring)
@@ -920,9 +964,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::prepare_multigrid(
   mg_sparsity_patterns.resize(mg_level_min, mg_level_max);
   std::vector<std::vector<types::global_dof_index>> level_to_dofs_per_block(
     mg_level_max + 1, std::vector<types::global_dof_index>(2, numbers::invalid_dof_index));
-  // level_to_dofs_per_block.resize(mg_level_max+1);
   MGTools::count_dofs_per_block(*dof_handler, level_to_dofs_per_block);
-  // AssertDimension(mg_level_max - mg_level_min + 1, level_to_dofs_per_block.size());
   for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
   {
     const auto &                dofs_per_block = level_to_dofs_per_block[level];
@@ -938,63 +980,78 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::prepare_multigrid(
   mg_transfer.initialize_constraints(*mg_constrained_dofs);
   mg_transfer.build(*dof_handler);
 
-  // // *** initialize Schwarz smoother S_l
-  // switch(parameters.pre_smoother.variant)
-  // {
-  //   case SmootherParameter::SmootherVariant::None:
-  //     mg_smoother_identity = std::make_shared<const MGSmootherIdentity<Vector<double>>>();
-  //     AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
-  //     mg_smoother_pre = mg_smoother_identity.get();
-  //     break;
-  //   case SmootherParameter::SmootherVariant::GaussSeidel:
-  //   {
-  //     auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER,
-  //     Vector<double>>>(); tmp->initialize(mg_matrices);
-  //     tmp->set_steps(parameters.pre_smoother.n_smoothing_steps);
-  //     tmp->set_symmetric(true);
-  //     mg_smoother_gauss_seidel = tmp;
-  //     mg_smoother_pre          = mg_smoother_gauss_seidel.get();
-  //   }
-  //   break;
-  //   case SmootherParameter::SmootherVariant::Schwarz:
-  //     prepare_schwarz_smoothers(user_coloring);
-  //     AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
-  //     mg_smoother_pre = mg_schwarz_smoother_pre.get();
-  //     break;
-  //   default:
-  //     AssertThrow(false, ExcMessage("Invalid smoothing variant."));
-  // }
-  // switch(parameters.post_smoother.variant)
-  // {
-  //   case SmootherParameter::SmootherVariant::None:
-  //     AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
-  //     mg_smoother_post = mg_smoother_identity.get();
-  //     break;
-  //   case SmootherParameter::SmootherVariant::GaussSeidel:
-  //     AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
-  //     mg_smoother_post = mg_smoother_gauss_seidel.get();
-  //     break;
-  //   case SmootherParameter::SmootherVariant::Schwarz:
-  //     AssertThrow(mg_schwarz_smoother_post, ExcMessage("Not initialized"));
-  //     mg_smoother_post = mg_schwarz_smoother_post.get();
-  //     break;
-  //   default:
-  //     AssertThrow(false, ExcMessage("Invalid smoothing variant."));
-  // }
+  // *** initialize Schwarz smoother S_l
+  switch(parameters.pre_smoother.variant)
+  {
+    case SmootherParameter::SmootherVariant::None:
+      mg_smoother_identity = std::make_shared<const MGSmootherIdentity<VECTOR>>();
+      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+      mg_smoother_pre = mg_smoother_identity.get();
+      break;
+    case SmootherParameter::SmootherVariant::GaussSeidel:
+    {
+      // auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER,
+      // VECTOR>>();
+      // tmp->initialize(mg_matrices);
+      // tmp->set_steps(parameters.pre_smoother.n_smoothing_steps);
+      // tmp->set_symmetric(true);
+      // mg_smoother_gauss_seidel = tmp;
+      // mg_smoother_pre          = mg_smoother_gauss_seidel.get();
+    }
+    break;
+    case SmootherParameter::SmootherVariant::Schwarz:
+      // prepare_schwarz_smoothers(user_coloring); // TODO !!!
+      AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
+      mg_smoother_pre = mg_schwarz_smoother_pre.get();
+      break;
+    default:
+      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  }
+  switch(parameters.post_smoother.variant)
+  {
+    case SmootherParameter::SmootherVariant::None:
+      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+      mg_smoother_post = mg_smoother_identity.get();
+      break;
+    case SmootherParameter::SmootherVariant::GaussSeidel:
+      AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
+      mg_smoother_post = mg_smoother_gauss_seidel.get();
+      break;
+    case SmootherParameter::SmootherVariant::Schwarz:
+      AssertThrow(mg_schwarz_smoother_post, ExcMessage("Not initialized"));
+      mg_smoother_post = mg_schwarz_smoother_post.get();
+      break;
+    default:
+      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  }
 
-  // // *** initialize coarse grid solver
-  // coarse_grid_solver.initialize(mg_matrices[mg_level_min], parameters.coarse_grid);
-  // mg_coarse_grid = &coarse_grid_solver;
+  // *** initialize coarse grid solver
+  coarse_grid_solver.initialize(mg_matrices[mg_level_min], parameters.coarse_grid);
+  mg_coarse_grid = &coarse_grid_solver;
 
-  // // *** initialize geometric multigrid method
-  // mg_matrix_wrapper.initialize(mg_matrices);
-  // multigrid = std::make_shared<Multigrid<Vector<double>>>(mg_matrix_wrapper,
-  //                                                         *mg_coarse_grid,
-  //                                                         mg_transfer,
-  //                                                         *mg_smoother_pre,
-  //                                                         *mg_smoother_post,
-  //                                                         mg_level_min,
-  //                                                         mg_level_max);
+  // *** initialize geometric multigrid method
+  mg_matrix_wrapper.initialize(mg_matrices);
+  multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
+                                                  *mg_coarse_grid,
+                                                  mg_transfer,
+                                                  *mg_smoother_pre,
+                                                  *mg_smoother_post,
+                                                  mg_level_min,
+                                                  mg_level_max);
+}
+
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v>
+const PreconditionMG<
+  dim,
+  typename MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::VECTOR,
+  typename MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::MG_TRANSFER> &
+MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::get_preconditioner() const
+{
+  AssertThrow(multigrid, ExcMessage("multigrid is uninitialized."));
+  preconditioner_mg = std::make_shared<PreconditionMG<dim, VECTOR, MG_TRANSFER>>(*dof_handler,
+                                                                                 *multigrid,
+                                                                                 mg_transfer);
+  return *preconditioner_mg;
 }
 
 
@@ -1984,6 +2041,14 @@ ModelProblem<dim, fe_degree_p, method>::solve()
 
     iterative_solve_impl(preconditioner, "fgmres");
     *pcout << preconditioner.get_summary();
+  }
+
+  else if(rt_parameters.solver.variant == "GMRES_GMG")
+  {
+    prepare_multigrid_velocity_pressure();
+    auto & preconditioner = mgc_velocity_pressure.get_preconditioner();
+
+    iterative_solve_impl(preconditioner, "gmres");
   }
 
   else

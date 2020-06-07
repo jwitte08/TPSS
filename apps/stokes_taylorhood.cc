@@ -71,7 +71,9 @@ main(int argc, char * argv[])
     //     flexible GMRES prec. by Schur complement approximation ...
     // 2 : ... with GMG based on Gauss-Seidel smoothers for velocity (FGMRES_GMGvelocity)
     // 3 : ... with GMG based on Schwarz smoothers for velocity (FGMRES_GMGvelocity)
-    // 4 : GMRES prec. by GMG (GMRES_GMG)
+    //     GMRES prec. by GMG ...
+    // 4 : ...based on Gauss-Seidel smoothers for velocity-pressure (GMRES_GMG)
+
     constexpr unsigned int test_index_max = 4;
     const unsigned int     test_index     = argc > 2 ? std::atoi(argv[2]) : 0;
     AssertThrow(test_index <= test_index_max, ExcMessage("test_index is not valid"));
@@ -86,13 +88,11 @@ main(int argc, char * argv[])
       prms.mesh.n_repetitions    = 2;
 
       //: solver
-      const std::string str_solver_variant[test_index_max + 1] = {"UMFPACK",
-                                                                  "FGMRES_ILU",
-                                                                  "FGMRES_GMGvelocity",
-                                                                  "FGMRES_GMGvelocity"};
-      prms.solver.variant                                      = str_solver_variant[test_index];
-      prms.solver.rel_tolerance                                = 1.e-8;
-      prms.solver.precondition_variant                         = test_index >= 2 ?
+      const std::string str_solver_variant[test_index_max + 1] = {
+        "UMFPACK", "FGMRES_ILU", "FGMRES_GMGvelocity", "FGMRES_GMGvelocity", "GMRES_GMG"};
+      prms.solver.variant              = str_solver_variant[test_index];
+      prms.solver.rel_tolerance        = 1.e-8;
+      prms.solver.precondition_variant = test_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
       prms.solver.n_iterations_max = 200;
@@ -112,7 +112,8 @@ main(int argc, char * argv[])
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::GaussSeidel,
-        SmootherParameter::SmootherVariant::Schwarz};
+        SmootherParameter::SmootherVariant::Schwarz,
+        SmootherParameter::SmootherVariant::None};
       prms.multigrid.pre_smoother.variant                    = smoother_variant[test_index];
       prms.multigrid.pre_smoother.n_smoothing_steps          = 2;
       prms.multigrid.pre_smoother.schwarz.patch_variant      = CT::PATCH_VARIANT_;
