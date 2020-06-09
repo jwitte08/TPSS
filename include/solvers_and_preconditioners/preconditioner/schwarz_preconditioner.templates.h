@@ -316,12 +316,13 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
 }
 
 
+
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 template<typename OtherVectorType>
 std::pair<OtherVectorType *, const OtherVectorType *>
-SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::preprocess_solution_and_residual(
-  OtherVectorType &       solution_in,
-  const OtherVectorType & residual_in) const
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
+  preprocess_solution_and_residual_distributed(OtherVectorType &       solution_in,
+                                               const OtherVectorType & residual_in) const
 {
   Timer              timer;
   VectorType *       solution;
@@ -351,6 +352,53 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::preprocess_sol
 
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+template<typename OtherVectorType>
+std::pair<OtherVectorType *, const OtherVectorType *>
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::preprocess_solution_and_residual(
+  OtherVectorType &       solution_in,
+  const OtherVectorType & residual_in) const
+{
+  AssertThrow(false, ExcMessage("Currently, OtherVectorType is not supported."));
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+std::pair<
+  LinearAlgebra::distributed::Vector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> *,
+  const LinearAlgebra::distributed::Vector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> *>
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::preprocess_solution_and_residual(
+  LinearAlgebra::distributed::Vector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    solution_in,
+  const LinearAlgebra::distributed::Vector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    residual_in) const
+{
+  return preprocess_solution_and_residual_distributed(solution_in, residual_in);
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+std::pair<
+  LinearAlgebra::distributed::BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> *,
+  const LinearAlgebra::distributed::BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> *>
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::preprocess_solution_and_residual(
+  LinearAlgebra::distributed::BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    solution_in,
+  const LinearAlgebra::distributed::BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    residual_in) const
+{
+  return preprocess_solution_and_residual_distributed(solution_in, residual_in);
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 std::pair<
   Vector<typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> *,
   const Vector<
@@ -367,19 +415,27 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::preprocess_sol
 
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
-void
-SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_solution(
-  Vector<typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &,
-  const Vector<
-    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &) const
+std::pair<
+  BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> *,
+  const BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> *>
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::preprocess_solution_and_residual(
+  BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    solution_in,
+  const BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    residual_in) const
 {
+  return {&solution_in, &residual_in};
 }
 
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 template<typename OtherVectorType>
 void
-SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_solution(
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_solution_distributed(
   OtherVectorType &       solution_dst,
   const OtherVectorType & solution_src) const
 {
@@ -390,6 +446,68 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_so
     TPSS::internal::copy_locally_owned_data(solution_dst, solution_src);
     time_data.at(3).add_time(timer.wall_time());
   }
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+template<typename OtherVectorType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_solution(
+  OtherVectorType &,
+  const OtherVectorType &) const
+{
+  AssertThrow(false, ExcMessage("Currently, OtherVectorType is not supported."));
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_solution(
+  LinearAlgebra::distributed::Vector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    solution_dst,
+  const LinearAlgebra::distributed::Vector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    solution_src) const
+{
+  postprocess_solution_distributed(solution_dst, solution_src);
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_solution(
+  LinearAlgebra::distributed::BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    solution_dst,
+  const LinearAlgebra::distributed::BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &
+    solution_src) const
+{
+  postprocess_solution_distributed(solution_dst, solution_src);
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_solution(
+  Vector<typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &,
+  const Vector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &) const
+{
+  /// Nothing has to be postprocessed for serial vectors.
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_solution(
+  BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &,
+  const BlockVector<
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type> &) const
+{
+  /// Nothing has to be postprocessed for serial vectors.
 }
 
 

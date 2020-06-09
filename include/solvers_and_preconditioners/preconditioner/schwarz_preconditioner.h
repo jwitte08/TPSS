@@ -196,8 +196,35 @@ private:
    */
   template<typename OtherVectorType = VectorType>
   std::pair<OtherVectorType *, const OtherVectorType *>
+  preprocess_solution_and_residual_distributed(OtherVectorType &       solution_in,
+                                               const OtherVectorType & residual_in) const;
+
+  /**
+   * Generic case is just there to throw an exception for unsupported vector
+   * types.
+   */
+  template<typename OtherVectorType = VectorType>
+  std::pair<OtherVectorType *, const OtherVectorType *>
   preprocess_solution_and_residual(OtherVectorType &       solution_in,
                                    const OtherVectorType & residual_in) const;
+
+  /**
+   * See the description of preprocess_solution_and_residual_distributed().
+   */
+  std::pair<LinearAlgebra::distributed::Vector<value_type> *,
+            const LinearAlgebra::distributed::Vector<value_type> *>
+  preprocess_solution_and_residual(
+    LinearAlgebra::distributed::Vector<value_type> &       solution_in,
+    const LinearAlgebra::distributed::Vector<value_type> & residual_in) const;
+
+  /**
+   * Same as above for parallel block vectors.
+   */
+  std::pair<LinearAlgebra::distributed::BlockVector<value_type> *,
+            const LinearAlgebra::distributed::BlockVector<value_type> *>
+  preprocess_solution_and_residual(
+    LinearAlgebra::distributed::BlockVector<value_type> &       solution_in,
+    const LinearAlgebra::distributed::BlockVector<value_type> & residual_in) const;
 
   /**
    * Nothing has to be done for serial vectors.
@@ -207,6 +234,13 @@ private:
                                    const Vector<value_type> & residual_in) const;
 
   /**
+   * Same as above for serial block vectors.
+   */
+  std::pair<BlockVector<value_type> *, const BlockVector<value_type> *>
+  preprocess_solution_and_residual(BlockVector<value_type> &       solution_in,
+                                   const BlockVector<value_type> & residual_in) const;
+
+  /**
    * If @p solution_src (the solution vector after applying local solvers)
    * coincides with the internal ghosted vector @p solution_ghosted we have to
    * copy all locally owned entries to @p solution_dst (the solution vector
@@ -214,13 +248,42 @@ private:
    */
   template<typename OtherVectorType = VectorType>
   void
+  postprocess_solution_distributed(OtherVectorType &       solution_dst,
+                                   const OtherVectorType & solution_src) const;
+
+  /**
+   * Generic case is just there to throw an exception for unsupported vector
+   * types.
+   */
+  template<typename OtherVectorType = VectorType>
+  void
   postprocess_solution(OtherVectorType & solution_dst, const OtherVectorType & solution_src) const;
+
+  /**
+   * See the description of postprocess_solution_distributed().
+   */
+  void
+  postprocess_solution(LinearAlgebra::distributed::Vector<value_type> &,
+                       const LinearAlgebra::distributed::Vector<value_type> &) const;
+
+  /**
+   * Same as above for parallel block vectors.
+   */
+  void
+  postprocess_solution(LinearAlgebra::distributed::BlockVector<value_type> &,
+                       const LinearAlgebra::distributed::BlockVector<value_type> &) const;
 
   /**
    * Nothing has to be done for serial vectors.
    */
   void
   postprocess_solution(Vector<value_type> &, const Vector<value_type> &) const;
+
+  /**
+   * Same as above for serial block vectors.
+   */
+  void
+  postprocess_solution(BlockVector<value_type> &, const BlockVector<value_type> &) const;
 
   void
   compute_inverses();
