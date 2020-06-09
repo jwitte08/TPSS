@@ -13,7 +13,7 @@ namespace TPSS
 {
 using namespace dealii;
 
-  template<int dim, typename Number>
+template<int dim, typename Number>
 struct MatrixFreeConnect
 {
   /**
