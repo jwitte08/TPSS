@@ -107,6 +107,82 @@ struct InverseTable
 
 
 
+template<typename Number>
+class MatrixAsTable
+{
+public:
+  using value_type  = Number;
+  using matrix_type = Table<2, Number>;
+
+  static constexpr unsigned int macro_size = get_macro_size<Number>();
+
+  unsigned int
+  m() const
+  {
+    return matrix.size(0);
+  }
+
+  unsigned int
+  n() const
+  {
+    return matrix.size(1);
+  }
+
+  void
+  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    AssertDimension(dst_view.size(), m());
+    AssertDimension(src_view.size(), n());
+    for(auto i = 0U; i < m(); ++i)
+    {
+      Number value(0.);
+      for(auto j = 0U; j < n(); ++j)
+        value += matrix(i, j) * src_view[j];
+      dst_view[i] = value;
+    }
+  }
+
+  void
+  apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    if(!inverse_matrix)
+      inverse_matrix = std::make_shared<InverseTable<Number>>(matrix);
+    inverse_matrix->vmult(dst_view, src_view);
+  }
+
+  Table<2, Number> &
+  as_table()
+  {
+    inverse_matrix.reset();
+    return matrix;
+  }
+
+  const Table<2, Number> &
+  as_table() const
+  {
+    return matrix;
+  }
+
+  void
+  fill_submatrix(const Table<2, Number> & other,
+                 const unsigned int       row_start,
+                 const unsigned int       column_start)
+  {
+    AssertIndexRange(row_start + other.size(0) - 1, m());
+    AssertIndexRange(column_start + other.size(1) - 1, n());
+    for(auto i = 0U; i < other.size(0); ++i)
+      for(auto j = 0U; j < other.size(1); ++j)
+        matrix(row_start + i, column_start + j) = other(i, j);
+    inverse_matrix.reset();
+  }
+
+private:
+  Table<2, Number>                              matrix;
+  mutable std::shared_ptr<InverseTable<Number>> inverse_matrix;
+};
+
+
+
 template<typename PatchOperator>
 struct PatchMatrix
 {
