@@ -280,13 +280,13 @@ class MatrixIntegrator
 public:
   using This = MatrixIntegrator<dim, fe_degree, Number>;
 
-  static constexpr int fe_order = fe_degree + 1;
+  static constexpr int n_q_points_1d = fe_degree + 1;
 
   using value_type     = Number;
   using transfer_type  = typename TPSS::PatchTransfer<dim, Number>;
   using matrix_type_1d = Table<2, VectorizedArray<Number>>;
   using matrix_type    = Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, -1>;
-  using evaluator_type = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
+  using evaluator_type = FDEvaluation<dim, fe_degree, n_q_points_1d, Number>;
 
   void
   initialize(const EquationData & equation_data_in)
@@ -950,13 +950,13 @@ class MatrixIntegrator
 public:
   using This = MatrixIntegrator<dim, fe_degree_p, Number>;
 
-  static constexpr int fe_degree_v   = fe_degree_p;
+  static constexpr int fe_degree_v   = fe_degree_p + 1;
   static constexpr int n_q_points_1d = fe_degree_v + 1;
 
   using value_type              = Number;
   using transfer_type           = typename TPSS::PatchTransferBlock<dim, Number>;
   using matrix_type_1d          = Table<2, VectorizedArray<Number>>;
-  using matrix_type             = Tensors::BlockMatrix<dim + 1, VectorizedArray<Number>, -1, -1>;
+  using matrix_type             = MatrixAsTable<VectorizedArray<Number>>;
   using velocity_evaluator_type = FDEvaluation<dim, fe_degree_v, n_q_points_1d, Number>;
   using pressure_evaluator_type = FDEvaluation<dim, fe_degree_p, n_q_points_1d, Number>;
 
@@ -968,12 +968,54 @@ public:
 
   template<typename OperatorType>
   void
-  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
-                             std::vector<matrix_type> &            local_matrices,
-                             const OperatorType &,
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       subdomain_handler,
+                             std::vector<matrix_type> &                  local_matrices,
+                             const OperatorType &                        dummy_operator,
                              const std::pair<unsigned int, unsigned int> subdomain_range) const
   {
-    AssertThrow(false, ExcMessage("Todo."));
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+
+    using MatrixIntegratorVelocity =
+      Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree_v, Number, dof_layout_v>;
+    static_assert(std::is_same<typename MatrixIntegratorVelocity::evaluator_type,
+                               velocity_evaluator_type>::value,
+                  "Velocity evaluator types mismatch.");
+    using matrix_type_velocity = typename MatrixIntegratorVelocity::matrix_type;
+
+    /// Assemble local matrices for the local velocity-velocity block.
+    std::vector<matrix_type_velocity> local_matrices_velocity(local_matrices.size());
+    {
+      MatrixIntegratorVelocity matrix_integrator;
+      matrix_integrator.initialize(equation_data);
+
+      matrix_integrator.template assemble_subspace_inverses<OperatorType>(subdomain_handler,
+                                                                          local_matrices_velocity,
+                                                                          dummy_operator,
+                                                                          subdomain_range);
+    }
+
+    /// Assemble local matrices for the local pressure-pressure block
+    {
+      /// This block is zero.
+    }
+
+    AssertDimension(local_matrices_velocity.size(), local_matrices.size());
+    const auto patch_transfer = get_patch_transfer(subdomain_handler);
+    for(auto patch_index = 0U; patch_index < local_matrices.size(); ++patch_index)
+    {
+      const auto & local_block_velocity = local_matrices_velocity[patch_index];
+      patch_transfer->reinit(patch_index);
+      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
+      const auto n_dofs_velocity = local_block_velocity.m();
+      const auto n_dofs_pressure = n_dofs - n_dofs_velocity;
+      AssertDimension(patch_transfer->n_dofs_per_patch(0), n_dofs_velocity);
+      AssertDimension(patch_transfer->n_dofs_per_patch(1), n_dofs_pressure);
+
+      auto & local_matrix = local_matrices[patch_index];
+      local_matrix.as_table().reinit(n_dofs, n_dofs);
+
+      local_matrix.fill_submatrix(local_block_velocity.as_table(), 0U, 0U);
+    }
   }
 
   std::shared_ptr<transfer_type>

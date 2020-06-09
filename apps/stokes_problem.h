@@ -400,8 +400,8 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_multigrid(
   // *** initialize multigrid constraints
   mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
   mg_constrained_dofs->initialize(*dof_handler);
-  mg_constrained_dofs->make_zero_boundary_constraints(*dof_handler,
-                                                      equation_data.dirichlet_boundary_ids);
+  mg_constrained_dofs->make_zero_boundary_constraints(
+    *dof_handler, equation_data.dirichlet_boundary_ids_velocity);
 
   // *** initialize level matrices A_l
   mg_matrices.resize(mg_level_min, mg_level_max);
@@ -499,7 +499,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_schwarz_smoothers(
       additional_data.coloring_func = std::ref(*user_coloring);
     }
     additional_data.parameters = parameters.pre_smoother;
-    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
+    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids_velocity);
     mgss->initialize(mg_matrices, additional_data);
     mg_schwarz_smoother_pre = mgss;
   }
@@ -916,7 +916,8 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::prepare_schwarz_sm
       additional_data.coloring_func = std::ref(*user_coloring);
     }
     additional_data.parameters = parameters.pre_smoother;
-    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
+    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids_velocity);
+    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids_pressure);
     mgss->initialize(mg_matrices, additional_data);
     mg_schwarz_smoother_pre = mgss;
   }
@@ -955,7 +956,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::prepare_multigrid(
   mg_constrained_dofs->initialize(*dof_handler);
   const FEValuesExtractors::Vector velocities(0);
   mg_constrained_dofs->make_zero_boundary_constraints(*dof_handler,
-                                                      equation_data.dirichlet_boundary_ids,
+                                                      equation_data.dirichlet_boundary_ids_velocity,
                                                       dof_handler->get_fe().component_mask(
                                                         velocities));
 
@@ -1000,7 +1001,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::prepare_multigrid(
     }
     break;
     case SmootherParameter::SmootherVariant::Schwarz:
-      // prepare_schwarz_smoothers(user_coloring); // TODO !!!
+      prepare_schwarz_smoothers(user_coloring); // TODO !!!
       AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
       mg_smoother_pre = mg_schwarz_smoother_pre.get();
       break;
@@ -1482,7 +1483,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
     if(rt_parameters.solver.variant == "FGMRES_ILU") // inhomog. constraints !
     {
-      for(const auto boundary_id : equation_data.dirichlet_boundary_ids)
+      for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
         VectorTools::interpolate_boundary_values(dof_handler,
                                                  boundary_id,
                                                  *analytical_solution,
@@ -1492,7 +1493,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     else
     {
       DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
-      for(const auto boundary_id : equation_data.dirichlet_boundary_ids)
+      for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
         DoFTools::make_zero_boundary_constraints(dof_handler,
                                                  boundary_id,
                                                  zero_constraints,
@@ -1503,7 +1504,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
       constraints_velocity.clear();
       DoFTools::make_hanging_node_constraints(dof_handler, constraints_velocity);
       std::map<types::boundary_id, const Function<dim, double> *> boundary_id_to_function;
-      for(const auto boundary_id : equation_data.dirichlet_boundary_ids)
+      for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
         boundary_id_to_function.emplace(boundary_id, analytical_solution.get());
       VectorTools::interpolate_boundary_values(dof_handler,
                                                boundary_id_to_function,

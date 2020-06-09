@@ -240,13 +240,20 @@ protected:
 
 
   void
-  check_local_solvers_block(const bool check_level_matrix = false)
+  check_local_solvers_block(const bool check_diagonal     = false,
+                            const bool check_level_matrix = false)
   {
+    EXPECT_FALSE(fe_degree_p == 0)
+      << "This test is expected to fail, because MatrixFree does not support finite elements of degree zero. Therefore, we return here...";
+    if(fe_degree_p == 0)
+      return;
+
     constexpr auto method = Method::TaylorHood;
 
     EquationData equation_data;
     rt_parameters.solver.variant = "GMRES_GMG";
-    using StokesProblem          = ModelProblem<dim, fe_degree_p, method>;
+
+    using StokesProblem = ModelProblem<dim, fe_degree_p, method>;
 
     const auto stokes_problem = std::make_shared<StokesProblem>(rt_parameters, equation_data);
     stokes_problem->pcout     = pcout_owned;
@@ -266,76 +273,121 @@ protected:
       FullMatrix<double> Aref(system_matrix.m());
       Aref.copy_from(system_matrix);
       compare_matrix(A, Aref);
+      return;
     }
 
-    // using MatrixIntegrator =
-    //   Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree_v, double,
-    //   StokesProblem::dof_layout_v>;
-    // using LocalMatrix   = typename MatrixIntegrator::matrix_type;
-    // using PatchTransfer = TPSS::PatchTransfer<dim, double>;
+    using MatrixIntegrator =
+      VelocityPressure::FD::MatrixIntegrator<dim, fe_degree_p, double, StokesProblem::dof_layout_v>;
+    using LocalMatrix = typename MatrixIntegrator::matrix_type;
 
-    // const auto mg_smoother = stokes_problem->mg_schwarz_smoother_pre;
-    // ASSERT_TRUE(mg_smoother) << "mg_smoother is not initialized.";
-    // const auto    subdomain_handler = mg_smoother->get_subdomain_handler();
-    // PatchTransfer patch_transfer(*subdomain_handler);
-    // const auto &  patch_worker = patch_transfer.get_patch_dof_worker();
-    // const auto    n_subdomains = patch_worker.get_partition_data().n_subdomains();
+    MatrixIntegrator integrator;
+    integrator.initialize(equation_data);
+    const auto & mgc         = stokes_problem->mgc_velocity_pressure;
+    const auto   mg_smoother = mgc.mg_schwarz_smoother_pre;
+    ASSERT_TRUE(mg_smoother) << "mg_smoother is not initialized.";
+    const auto   subdomain_handler     = mg_smoother->get_subdomain_handler();
+    const auto   patch_transfer        = integrator.get_patch_transfer(*subdomain_handler);
+    const auto & patch_worker_velocity = patch_transfer->get_patch_dof_worker(0);
+    const auto   n_subdomains          = patch_worker_velocity.get_partition_data().n_subdomains();
 
-    // std::vector<LocalMatrix> local_matrices(n_subdomains);
-    // MatrixIntegrator         integrator;
-    // integrator.initialize(equation_data);
-    // integrator.template assemble_subspace_inverses<bool>(
-    //   *subdomain_handler,
-    //   local_matrices,
-    //   /*dummy*/ false,
-    //   patch_worker.get_partition_data().get_patch_range());
+    std::vector<LocalMatrix> local_matrices(n_subdomains);
+    integrator.template assemble_subspace_inverses<bool>(
+      *subdomain_handler,
+      local_matrices,
+      /*dummy*/ false,
+      patch_worker_velocity.get_partition_data().get_patch_range());
 
-    // const SparseMatrix<double> * system_matrix;
-    // system_matrix = &(stokes_problem->mg_matrices[max_level]);
+    const auto * level_matrix = &(mgc.mg_matrices[max_level]);
 
-    // /// compare local matrices
-    // for(auto patch = 0U; patch < n_subdomains; ++patch)
-    // {
-    //   patch_transfer.reinit(patch);
-    //   for(auto lane = 0U; lane < patch_worker.n_lanes_filled(patch); ++lane)
-    //   {
-    //     std::vector<types::global_dof_index> dof_indices_on_patch;
-    //     {
-    //       const auto view = patch_transfer.get_dof_indices(lane);
-    //       std::copy(view.cbegin(), view.cend(), std::back_inserter(dof_indices_on_patch));
-    //     }
-    //     FullMatrix<double> local_matrix(dof_indices_on_patch.size());
-    //     local_matrix.extract_submatrix_from(*system_matrix,
-    //                                         dof_indices_on_patch,
-    //                                         dof_indices_on_patch);
+    /// compare local matrices
+    for(auto patch = 0U; patch < n_subdomains; ++patch)
+    {
+      patch_transfer->reinit(patch);
+      FullMatrix<double> local_matrix(patch_transfer->n_dofs_per_patch());
+      for(auto lane = 0U; lane < patch_worker_velocity.n_lanes_filled(patch); ++lane)
+      {
+        local_matrix *= 0.;
 
-    //     auto local_matrix_tp = table_to_fullmatrix(local_matrices[patch].as_table(), lane);
+        {
+          /// Patch-wise local and global dof indices of velocity block.
+          const auto & patch_transfer_velocity = patch_transfer->get_patch_transfer(0);
+          std::vector<types::global_dof_index> velocity_dof_indices_on_patch;
+          {
+            const auto view = patch_transfer_velocity.get_dof_indices(lane);
+            std::copy(view.cbegin(),
+                      view.cend(),
+                      std::back_inserter(velocity_dof_indices_on_patch));
+          }
+          std::vector<unsigned int> velocity_local_dof_indices(
+            velocity_dof_indices_on_patch.size());
+          std::iota(velocity_local_dof_indices.begin(), velocity_local_dof_indices.end(), 0U);
 
-    //     if(only_diagonal)
-    //     {
-    //       const auto zero_out_block =
-    //         [&](auto & matrix, const unsigned int row, const unsigned int col) {
-    //           const unsigned int n_dofs = dof_indices_on_patch.size();
-    //           AssertDimension(n_dofs % dim, 0);
-    //           const unsigned int n_dofs_per_block = n_dofs / dim;
-    //           const unsigned     row_start        = row * n_dofs_per_block;
-    //           const unsigned     col_start        = col * n_dofs_per_block;
-    //           for(auto i = row_start; i < row_start + n_dofs_per_block; ++i)
-    //             for(auto j = col_start; j < col_start + n_dofs_per_block; ++j)
-    //               matrix(i, j) = 0.;
-    //         };
-    //       for(auto row = 0U; row < dim; ++row)
-    //         for(auto col = 0U; col < dim; ++col)
-    //           if(row != col)
-    //           {
-    //             zero_out_block(local_matrix, row, col);
-    //             zero_out_block(local_matrix_tp, row, col);
-    //           }
-    //     }
+          /// Patch-wise local and global dof indices of pressure block.
+          const auto & patch_transfer_pressure = patch_transfer->get_patch_transfer(1);
+          std::vector<types::global_dof_index> pressure_dof_indices_on_patch;
+          {
+            const auto view = patch_transfer_pressure.get_dof_indices(lane);
+            std::copy(view.cbegin(),
+                      view.cend(),
+                      std::back_inserter(pressure_dof_indices_on_patch));
+          }
+          std::vector<unsigned int> pressure_local_dof_indices(
+            pressure_dof_indices_on_patch.size());
+          std::iota(pressure_local_dof_indices.begin(),
+                    pressure_local_dof_indices.end(),
+                    velocity_dof_indices_on_patch.size());
 
-    //     compare_matrix(local_matrix_tp, local_matrix);
-    //   }
-    // }
+          /// Extract and insert local velocity block.
+          FullMatrix<double> local_block_velocity(velocity_dof_indices_on_patch.size());
+          local_block_velocity.extract_submatrix_from(level_matrix->block(0, 0),
+                                                      velocity_dof_indices_on_patch,
+                                                      velocity_dof_indices_on_patch);
+          local_block_velocity.scatter_matrix_to(velocity_local_dof_indices,
+                                                 velocity_local_dof_indices,
+                                                 local_matrix);
+
+          /// Extract and insert local pressure block.
+          FullMatrix<double> local_block_pressure(pressure_dof_indices_on_patch.size());
+          local_block_pressure.extract_submatrix_from(level_matrix->block(1, 1),
+                                                      pressure_dof_indices_on_patch,
+                                                      pressure_dof_indices_on_patch);
+          local_block_pressure.scatter_matrix_to(pressure_local_dof_indices,
+                                                 pressure_local_dof_indices,
+                                                 local_matrix);
+        }
+
+        auto local_matrix_tp = table_to_fullmatrix(local_matrices[patch].as_table(), lane);
+
+        if(check_diagonal)
+        {
+          const auto zero_out_block =
+            [&](auto & matrix, const unsigned int row, const unsigned int col) {
+              /// row : block row index of the (row,col)-block
+              /// col : block column index of the (row,col)-block
+              const unsigned int n_dofs_per_block_row = patch_transfer->n_dofs_per_patch(row);
+              const unsigned int n_dofs_per_block_col = patch_transfer->n_dofs_per_patch(col);
+              auto               row_start            = 0U;
+              for(auto b = 0U; b < row; ++b)
+                row_start += patch_transfer->n_dofs_per_patch(b);
+              auto col_start = 0U;
+              for(auto b = 0U; b < col; ++b)
+                col_start += patch_transfer->n_dofs_per_patch(b);
+              for(auto i = row_start; i < row_start + n_dofs_per_block_row; ++i)
+                for(auto j = col_start; j < col_start + n_dofs_per_block_col; ++j)
+                  matrix(i, j) = 0.;
+            };
+          for(auto row = 0U; row < 2; ++row)
+            for(auto col = 0U; col < 2; ++col)
+              if(row != col)
+              {
+                zero_out_block(local_matrix, row, col);
+                zero_out_block(local_matrix_tp, row, col);
+              }
+        }
+
+        compare_matrix(local_matrix_tp, local_matrix);
+      }
+    }
   }
 
 
@@ -441,6 +493,17 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLevelMatrixVelocityPressure)
   Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::rt_parameters.mesh.n_repetitions    = 2;
   Fixture::rt_parameters.mesh.n_refinements    = 0;
+  Fixture::check_local_solvers_block(false, true);
+  Fixture::rt_parameters.mesh.n_refinements = 1;
+  Fixture::check_local_solvers_block(false, true);
+}
+
+TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
+{
+  using Fixture                                = TestStokesIntegrator<TypeParam>;
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::rt_parameters.mesh.n_refinements    = 0;
   Fixture::check_local_solvers_block(true);
   Fixture::rt_parameters.mesh.n_refinements = 1;
   Fixture::check_local_solvers_block(true);
@@ -452,7 +515,8 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckLocalSolversDGVelocity,
                             CheckSystemMatrix,
                             CheckSystemRHS,
-                            CheckLevelMatrixVelocityPressure);
+                            CheckLevelMatrixVelocityPressure,
+                            CheckLocalSolversVelocityPressure);
 
 using TestParamsConstant  = testing::Types<Util::NonTypeParams<2, 0>>;
 using TestParamsLinear    = testing::Types<Util::NonTypeParams<2, 1>>;

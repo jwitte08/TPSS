@@ -670,9 +670,10 @@ struct EquationData
     return oss.str();
   }
 
-  std::set<types::boundary_id> dirichlet_boundary_ids        = {0};
-  double                       ip_factor                     = 1.;
-  bool                         assemble_pressure_mass_matrix = false;
+  std::set<types::boundary_id> dirichlet_boundary_ids_velocity = {0};
+  std::set<types::boundary_id> dirichlet_boundary_ids_pressure = {};
+  double                       ip_factor                       = 1.;
+  bool                         assemble_pressure_mass_matrix   = false;
 };
 
 
