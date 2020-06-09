@@ -236,19 +236,18 @@ private:
 
 
 /**
- * Transfer of patch relevant dof values for block vectors. Transfers for a
- * fixed block are provided by PatchTransfer object of appropriate component @p
- * dofh_index.
+ * Transfer of patch relevant dof values for block vectors. Transfer for each
+ * block is provided by a PatchTransfer object, set to the according dof handler.
  *
- * TODO Currently, each block has to be subject to a scalar-valued finite element.
- *
- * TODO class has not been tested on blocks associated to different
- * scalar-valued finite elements.
+ * TESTED This class is used with blocks associated to different finite elements
+ * in tests regarding the (local) Stokes integrators.
  */
 template<int dim, typename Number>
 class PatchTransferBlock
 {
 public:
+  using transfer_type = PatchTransfer<dim, Number>;
+
   PatchTransferBlock(const SubdomainHandler<dim, Number> & subdomain_handler);
 
   ~PatchTransferBlock() = default;
@@ -275,11 +274,32 @@ public:
   void
   gather_add(AlignedVector<VectorizedArray<Number>> & dst, const BlockVectorType & src) const;
 
+  const PatchDoFWorker<dim, Number> &
+  get_patch_dof_worker(const unsigned int block_index = 0) const;
+
+  const transfer_type &
+  get_patch_transfer(const unsigned int block_index = 0) const;
+
   /**
-   * Return the number of DoFs per patch accumulated over all components.
+   * Returns the set of degrees of freedom (as proc-level index) with
+   * lexicographical ordering for each block. The sets of indices for each block
+   * are juxtaposed block-wise.
+   */
+  ArrayView<const unsigned int>
+  get_dof_indices(const unsigned int lane) const;
+
+  /**
+   * Return the number of degrees of freedom per patch accumulated over all
+   * blocks.
    */
   unsigned int
   n_dofs_per_patch() const;
+
+  /**
+   * Return the number of degrees of freedom per patch of block @p block_index.
+   */
+  unsigned int
+  n_dofs_per_patch(const unsigned int block_index) const;
 
   /**
    * Set the size of a patch local vector @p vec with flattened block-structure.
@@ -295,8 +315,6 @@ public:
   scatter_add(BlockVectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const;
 
 private:
-  using transfer_type = PatchTransfer<dim, Number>;
-
   const unsigned int n_blocks;
 
   std::vector<std::shared_ptr<transfer_type>> transfers;
@@ -304,6 +322,8 @@ private:
   unsigned int patch_id;
 
   const unsigned int n_dofs_total;
+
+  mutable std::vector<unsigned int> dof_indices_cached;
 };
 
 
@@ -458,7 +478,7 @@ PatchTransfer<dim, Number>::reinit_local_vector(AlignedVector<VectorizedArray<Nu
 
 
 template<int dim, typename Number>
-const PatchDoFWorker<dim, Number> &
+inline const PatchDoFWorker<dim, Number> &
 PatchTransfer<dim, Number>::get_patch_dof_worker() const
 {
   return patch_dof_worker;
@@ -466,7 +486,7 @@ PatchTransfer<dim, Number>::get_patch_dof_worker() const
 
 
 template<int dim, typename Number>
-ArrayView<const unsigned int>
+inline ArrayView<const unsigned int>
 PatchTransfer<dim, Number>::get_dof_indices(const unsigned int lane) const
 {
   Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
@@ -545,16 +565,76 @@ PatchTransferBlock<dim, Number>::reinit(const unsigned int patch_id)
 
 
 template<int dim, typename Number>
+const PatchDoFWorker<dim, Number> &
+PatchTransferBlock<dim, Number>::get_patch_dof_worker(const unsigned int block_index) const
+{
+  AssertIndexRange(block_index, n_blocks);
+  return transfers[block_index]->get_patch_dof_worker();
+}
+
+
+template<int dim, typename Number>
+const typename PatchTransferBlock<dim, Number>::transfer_type &
+PatchTransferBlock<dim, Number>::get_patch_transfer(const unsigned int block_index) const
+{
+  AssertIndexRange(block_index, n_blocks);
+  return *(transfers[block_index]);
+}
+
+
+template<int dim, typename Number>
+ArrayView<const unsigned int>
+PatchTransferBlock<dim, Number>::get_dof_indices(const unsigned int lane) const
+{
+  /// Currently, each block has its own dof cache, such that there is no
+  /// contiguous dof index cache between blocks. Therefore, it is inevitable to
+  /// copy the sets of indices block-wise and return an ArrayView based on this
+  /// intermediate cache.
+  Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
+  dof_indices_cached.clear();
+  for(auto b = 0U; b < n_blocks; ++b)
+  {
+    const auto get_dof_indices_per_block = [&]() {
+      const auto & transfer         = *(transfers[b]);
+      const auto & patch_dof_worker = transfer.get_patch_dof_worker();
+      const auto   caching_strategy =
+        patch_dof_worker.get_dof_info().get_additional_data().caching_strategy;
+
+      if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
+        return transfer.get_dof_indices(0);
+
+      if(caching_strategy == TPSS::CachingStrategy::Cached)
+        return patch_dof_worker.get_dof_indices_on_patch(patch_id, lane);
+      else
+        AssertThrow(false, ExcMessage("This case is not supported."));
+
+      return ArrayView<const unsigned int>{};
+    };
+    const auto & dof_indices_block_view = get_dof_indices_per_block();
+    std::copy(dof_indices_block_view.cbegin(),
+              dof_indices_block_view.cend(),
+              std::back_inserter(dof_indices_cached));
+  }
+
+  AssertDimension(dof_indices_cached.size(), n_dofs_per_patch());
+  return ArrayView<const unsigned int>(dof_indices_cached.data(), dof_indices_cached.size());
+}
+
+
+template<int dim, typename Number>
 inline unsigned int
 PatchTransferBlock<dim, Number>::n_dofs_per_patch() const
 {
-  // const unsigned int n_dofs_total = std::accumulate(transfers.begin(),
-  //                                                   transfers.end(),
-  //                                                   0,
-  //                                                   [](const auto sum, const auto & transfer) {
-  //                                                     return sum + transfer->n_dofs_per_patch();
-  //                                                   });
   return n_dofs_total;
+}
+
+
+template<int dim, typename Number>
+inline unsigned int
+PatchTransferBlock<dim, Number>::n_dofs_per_patch(const unsigned int block_index) const
+{
+  AssertIndexRange(block_index, n_blocks);
+  return transfers[block_index]->n_dofs_per_patch();
 }
 
 
