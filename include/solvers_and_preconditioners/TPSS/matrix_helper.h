@@ -163,16 +163,34 @@ public:
     return matrix;
   }
 
+  /**
+   * Fills the rectangular submatrix of this matrix with first row index @p
+   * row_start and @p column_start with the values of rectangular matrix @p
+   * other. The "rectangle size" is determined by the size of @p other.
+   *
+   * If the template parameter @p fill_transpose is true we fill the submatrix
+   * with the values of the transpose of @p other.
+   */
+  template<bool fill_transpose = false>
   void
   fill_submatrix(const Table<2, Number> & other,
                  const unsigned int       row_start,
                  const unsigned int       column_start)
   {
-    AssertIndexRange(row_start + other.size(0) - 1, m());
-    AssertIndexRange(column_start + other.size(1) - 1, n());
-    for(auto i = 0U; i < other.size(0); ++i)
+    AssertIndexRange(row_start + (fill_transpose ? other.size(1) : other.size(0)) - 1, m());
+    AssertIndexRange(column_start + (fill_transpose ? other.size(0) : other.size(1)) - 1, n());
+    if constexpr(fill_transpose == false)
+    {
+      for(auto i = 0U; i < other.size(0); ++i)
+        for(auto j = 0U; j < other.size(1); ++j)
+          matrix(row_start + i, column_start + j) = other(i, j);
+    }
+    else
+    {
       for(auto j = 0U; j < other.size(1); ++j)
-        matrix(row_start + i, column_start + j) = other(i, j);
+        for(auto i = 0U; i < other.size(0); ++i)
+          matrix(row_start + j, column_start + i) = other(i, j);
+    }
     inverse_matrix.reset();
   }
 
