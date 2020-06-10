@@ -342,6 +342,12 @@ struct TensorHelper
     return n[mode];
   }
 
+  const std::array<IntType, order> &
+  size() const
+  {
+    return n;
+  }
+
   const std::array<IntType, order> n;
 };
 
@@ -697,17 +703,17 @@ template<typename MatrixTypeIn1, typename MatrixTypeOut = MatrixTypeIn1>
 typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type
 transpose(MatrixTypeIn1 && matrix_in)
 {
-  auto && matrix0 = std::forward<MatrixTypeIn1>(matrix_in);
+  auto && matrix_src = std::forward<MatrixTypeIn1>(matrix_in);
 
-  const unsigned int n_rows0 = matrix0.n_rows();
-  const unsigned int n_cols0 = matrix0.n_cols();
+  const unsigned int n_rows_src = matrix_src.n_rows();
+  const unsigned int n_cols_src = matrix_src.n_cols();
 
   typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type matrix_out;
-  matrix_out.reinit(n_rows0, n_cols0);
+  matrix_out.reinit(n_cols_src, n_rows_src);
 
-  for(unsigned int i = 0; i < n_rows0; ++i)
-    for(unsigned int j = 0; j < n_cols0; ++j)
-      matrix_out(i, j) = matrix0(j, i);
+  for(unsigned int i = 0; i < n_rows_src; ++i)
+    for(unsigned int j = 0; j < n_cols_src; ++j)
+      matrix_out(j, i) = matrix_src(i, j);
 
   return matrix_out;
 }
