@@ -2,7 +2,9 @@
 #define ALIGNEDLINALG_H_
 
 #include <deal.II/base/table.h>
+#include <deal.II/base/vectorization.h>
 #include <deal.II/lac/lapack_full_matrix.h>
+
 using namespace dealii;
 
 // Calculate inner product of two AlignedVectors

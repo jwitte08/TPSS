@@ -328,7 +328,7 @@ protected:
 
   struct Assembler
   {
-    using FDMatrixIntegrator = typename FD::MatrixIntegrator<dim, fe_degree, double>;
+    using FDMatrixIntegrator = typename LinElasticity::FD::MatrixIntegrator<dim, fe_degree, double>;
     using EvaluatorType      = typename FDMatrixIntegrator::EvaluatorType;
     // using CellMass           = typename FDMatrixIntegrator::CellMass;
     // using CellStrain         = typename FDMatrixIntegrator::template CellStrain<EvaluatorType>;
