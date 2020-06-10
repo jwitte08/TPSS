@@ -352,6 +352,139 @@ INSTANTIATE_TYPED_TEST_SUITE_P(TwoDimensionsDouble,
 
 
 
+struct Tester
+{
+  Tester()
+  {
+    ofs.open("tensor_product_matrix.log", std::ios_base::app);
+    pcout = std::make_shared<ConditionalOStream>(ofs, true);
+  }
+
+  ~Tester()
+  {
+    ofs.close();
+  }
+
+  template<typename Number>
+  void
+  compare_matrix(const FullMatrix<Number> & matrix, const FullMatrix<Number> & other) const
+  {
+    Util::compare_matrix(matrix, other, *pcout);
+  }
+
+  std::ofstream                       ofs;
+  std::shared_ptr<ConditionalOStream> pcout;
+};
+
+TEST(Order2, VmultIdentity)
+{
+  Tester                                      tester;
+  constexpr int                               order = 2;
+  Tensors::TensorProductMatrix<order, double> tp_matrix;
+  std::array<Table<2, double>, order>         rank1_tensor;
+  const auto                                  n_rows_1d = 3U;
+
+  for(auto & matrix : rank1_tensor)
+  {
+    matrix.reinit(n_rows_1d, n_rows_1d);
+    for(auto i = 0U; i < n_rows_1d; ++i)
+      matrix(i, i) = 1.;
+  }
+
+  std::vector<std::array<Table<2, double>, order>> tensors;
+  tensors.emplace_back(rank1_tensor);
+  tp_matrix.reinit(tensors);
+  /// as_table() uses vmult() for each unit vector to construct the kronecker
+  /// product matrix
+  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+  FullMatrix<double> reference_matrix(tp_matrix.m());
+  for(auto i = 0U; i < reference_matrix.m(); ++i)
+    reference_matrix(i, i) = 1.;
+
+  tester.compare_matrix(matrix, reference_matrix);
+}
+
+TEST(Order2, Vmult2x2)
+{
+  Tester                                      tester;
+  constexpr int                               order = 2;
+  Tensors::TensorProductMatrix<order, double> tp_matrix;
+
+  Table<2, double> id;
+  id.reinit(2U, 2U);
+  for(auto i = 0U; i < 2U; ++i)
+    id(i, i) = 1.;
+
+  Table<2, double> M;
+  M.reinit(2U, 2U);
+  /// first column
+  M(0, 0) = 1.;
+  M(1, 0) = 2.;
+  /// second column
+  M(0, 1) = 3.;
+  M(1, 1) = 4.;
+
+  std::array<Table<2, double>, order>              rank1_tensor{M, id};
+  std::vector<std::array<Table<2, double>, order>> tensors;
+  tensors.emplace_back(rank1_tensor);
+  tp_matrix.reinit(tensors);
+  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+  FullMatrix<double> reference_matrix(tp_matrix.m());
+  const auto         fill_submatrix = [&](const auto & block, const auto offset) {
+    for(auto i = 0U; i < block.m(); ++i)
+      for(auto j = 0U; j < block.n(); ++j)
+        reference_matrix(offset + i, offset + j) = block(i, j);
+  };
+  fill_submatrix(table_to_fullmatrix(M), 0U);
+  fill_submatrix(table_to_fullmatrix(M), 2U);
+
+  tester.compare_matrix(matrix, reference_matrix);
+}
+
+// TEST(Order2, Vmult2x3)
+// {
+//   Tester                                      tester;
+//   constexpr int                               order = 2;
+//   Tensors::TensorProductMatrix<order, double> tp_matrix;
+
+//   Table<2, double> id;
+//   id.reinit(2U, 3U);
+//   for(auto i = 0U; i < 2U; ++i)
+//     id(i, i) = 1.;
+
+//   Table<2, double> M;
+//   M.reinit(2U, 3U);
+//   /// first column
+//   M(0, 0) = 1.;
+//   M(1, 0) = 2.;
+//   /// second column
+//   M(0, 1) = 3.;
+//   M(1, 1) = 4.;
+//   /// third column
+//   M(0, 2) = 5.;
+//   M(1, 2) = 6.;
+
+//   std::array<Table<2, double>, order>              rank1_tensor{M, id};
+//   std::vector<std::array<Table<2, double>, order>> tensors;
+//   tensors.emplace_back(rank1_tensor);
+//   tp_matrix.reinit(tensors);
+//   const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+//   FullMatrix<double> reference_matrix(tp_matrix.m(), tp_matrix.n());
+//   const auto         fill_submatrix = [&](const auto & block, const auto offset_row, const auto
+//   offset_column) {
+//     for(auto i = 0U; i < block.m(); ++i)
+//       for(auto j = 0U; j < block.n(); ++j)
+//         reference_matrix(offset_row + i, offset_column + j) = block(i, j);
+//   };
+//   fill_submatrix(table_to_fullmatrix(M), 0U, 0U);
+//   fill_submatrix(table_to_fullmatrix(M), 2U, 3U);
+
+//   tester.compare_matrix(matrix, reference_matrix);
+// }
+
 int
 main(int argc, char ** argv)
 {

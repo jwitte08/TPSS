@@ -11,6 +11,7 @@
 #include <deal.II/lac/lapack_full_matrix.h>
 
 #include "matrix_helper.h"
+#include "move_to_deal_ii.h"
 #include "tensors.h"
 
 using namespace dealii;
@@ -31,6 +32,7 @@ public:
   using SKDMatrix         = TensorProductMatrixSymmetricSum<order, Number, n_rows_1d>;
   using value_type        = Number;
   using scalar_value_type = typename ExtractScalarType<Number>::type;
+  using matrix_type_1d    = Table<2, Number>;
 
   TensorProductMatrix() = default;
 
@@ -80,6 +82,19 @@ public:
       std::copy(elementary_tensors_in.cbegin(),
                 elementary_tensors_in.cend(),
                 std::back_inserter(elementary_tensors));
+
+      const auto &                    first_elementary_tensor = elementary_tensors.front();
+      std::array<unsigned int, order> n_rows_foreach_dimension;
+      std::array<unsigned int, order> n_columns_foreach_dimension;
+      for(auto d = 0; d < order; ++d)
+      {
+        const auto & matrix            = first_elementary_tensor[d];
+        n_rows_foreach_dimension[d]    = matrix.size(0);
+        n_columns_foreach_dimension[d] = matrix.size(1);
+      }
+      tensor_helper_row = std::make_shared<const TensorHelper<order>>(n_rows_foreach_dimension);
+      tensor_helper_column =
+        std::make_shared<const TensorHelper<order>>(n_columns_foreach_dimension);
     }
 
     else if(state == State::skd)
@@ -356,37 +371,62 @@ private:
     static_assert(order == 2, "TODO");
     AssertDimension(dst_view.size(), m());
     AssertDimension(src_view.size(), n());
+    AssertDimension(left(0).size(0), right(0).size(0)); // assuming isotropy
+    AssertDimension(left(0).size(1), right(0).size(1)); // assuming isotropy
+    Assert(tensor_helper_row, ExcMessage("Did you initialize tensor_helper_row?"));
+    Assert(tensor_helper_column, ExcMessage("Did you initialize tensor_helper_column?"));
+
+    constexpr bool is_dynamic_path = n_rows_1d == -1;
+
+    constexpr int mm_static = Utilities::pow(n_rows_1d, order); // TODO anisotropic
+
+    const unsigned int mm_dynamic =
+      transpose ? tensor_helper_column->n_flat() : tensor_helper_row->n_flat(); // TODO check
+    const int n_rows_1d_dynamic    = tensor_helper_row->size(0);                // TODO anisotropic
+    const int n_columns_1d_dynamic = tensor_helper_column->size(0);             // TODO anisotropic
+
+    const unsigned int mm = is_dynamic_path ? mm_dynamic : mm_static;
+
     std::lock_guard<std::mutex> lock(this->mutex);
-    const unsigned int          mm_dynamic =
-      transpose ? right(0).size(1) * left(0).size(0) : right(0).size(0) * left(0).size(1);
-    const unsigned int mm = n_rows_1d > 0 ? Utilities::fixed_power<order>(n_rows_1d) : mm_dynamic;
     tmp_array.clear();
-    tmp_array.resize_fast(mm);
-    constexpr int kernel_size = n_rows_1d > 0 ? n_rows_1d : 0;
-    internal::
-      EvaluatorTensorProduct<internal::evaluate_general, order, kernel_size, kernel_size, Number>
-                   eval(AlignedVector<Number>{},
-             AlignedVector<Number>{},
-             AlignedVector<Number>{},
-             std::max(left(0).size(0),
-                      right(0).size(0)), // TODO size of left and right matrices differs
-             std::max(left(0).size(1),
-                      right(0).size(1))); // TODO size of left and right matrices differs
-    Number *       tmp     = tmp_array.begin();
-    const Number * src     = src_view.begin();
-    Number *       dst     = dst_view.data();
+    tmp_array.resize(mm);
+    Number *       tmp = tmp_array.begin();
+    const Number * src = src_view.begin();
+    Number *       dst = dst_view.data();
+
+    using Evaluator =
+      dealii::internal::My::EvaluatorTensorProduct<order, Number, n_rows_1d, n_rows_1d>;
+    Evaluator eval(n_rows_1d_dynamic, n_columns_1d_dynamic);
+
+    /// Apply elementary tensor of first rank.
     const Number * left_0  = &(left(0)(0, 0));
     const Number * right_0 = &(right(0)(0, 0));
-    eval.template apply</*direction*/ 0, /*contract_over_rows*/ transpose, /*add*/ false>(right_0,
-                                                                                          src,
-                                                                                          tmp);
-    eval.template apply<1, transpose, add>(left_0, tmp, dst);
+    if(transpose)
+    {
+      eval.template apply<1, transpose, false>(left_0, src, tmp);
+      eval.template apply<0, transpose, add>(right_0, tmp, dst);
+    }
+    else
+    {
+      eval.template apply<0, transpose, false>(right_0, src, tmp);
+      eval.template apply<1, transpose, add>(left_0, tmp, dst);
+    }
+
+    /// Apply elementary tensors of remaining ranks.
     for(std::size_t r = 1; r < elementary_tensors.size(); ++r)
     {
       const Number * left_r  = &(left(r)(0, 0));
       const Number * right_r = &(right(r)(0, 0));
-      eval.template apply<0, transpose, false>(right_r, src, tmp);
-      eval.template apply<1, transpose, true>(left_r, tmp, dst);
+      if(transpose)
+      {
+        eval.template apply<1, transpose, false>(left_r, src, tmp);
+        eval.template apply<0, transpose, true>(right_r, tmp, dst);
+      }
+      else
+      {
+        eval.template apply<0, transpose, false>(right_r, src, tmp);
+        eval.template apply<1, transpose, true>(left_r, tmp, dst);
+      }
     }
   }
 
@@ -429,6 +469,9 @@ private:
                          return tab.size(0) == n_rows && tab.size(1) == n_cols;
                        });
   }
+
+  std::shared_ptr<const TensorHelper<order>> tensor_helper_row;
+  std::shared_ptr<const TensorHelper<order>> tensor_helper_column;
 
   /**
    * The naive inverse of the underlying matrix for the basic state.
