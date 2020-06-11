@@ -326,6 +326,15 @@ struct TensorHelper
     return indices;
   }
 
+  bool
+  is_isotropic() const
+  {
+    for(auto direction = 0; direction < order; ++direction)
+      if(size(0) != size(direction))
+        return false;
+    return true;
+  }
+
   IntType
   n_flat() const
   {
