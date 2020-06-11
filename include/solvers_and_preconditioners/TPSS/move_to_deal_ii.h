@@ -211,7 +211,7 @@ struct EvaluatorTensorProduct<dim, Number, -1, -1, Number2>
         const int                        n_pre        = -1,
         const int                        n_post       = -1,
         const int                        n_rows_in    = -1,
-        const int                        n_columns_in = -1)
+        const int                        n_columns_in = -1) const
   {
     const int n_rows_actual    = n_rows_in == -1 ? n_rows : n_rows_in;
     const int n_columns_actual = n_columns_in == -1 ? n_columns : n_columns_in;

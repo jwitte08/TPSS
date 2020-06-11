@@ -18,6 +18,87 @@ using namespace dealii;
 
 namespace Tensors
 {
+namespace internal
+{
+/**
+ * This struct is a helper class to compute the sum factorizations with
+ * (an)isotropic tensor structure required by TensorProductMatrix. Using the
+ * generic evaluator TensorProductEvaluator as kernel it adheres to the
+ * deal.II convention that the matrix of dimension 0 is the rightmost
+ * Kronecker factor. Furthermore, it facilitates static or dynamic loop bounds.
+ *
+ * The static path allows only for isotropic tensors of quadratic matrices.
+ *
+ * The dynamic path supports anisotropic tensors of matrices.
+ */
+template<int order, typename Number, int n_rows_1d>
+struct Evaluator
+  : public dealii::internal::My::EvaluatorTensorProduct<order, Number, n_rows_1d, n_rows_1d>
+{
+  using Base = dealii::internal::My::EvaluatorTensorProduct<order, Number, n_rows_1d, n_rows_1d>;
+
+  Evaluator(const std::array<unsigned int, order> & n_rows_foreach_dimension,
+            const std::array<unsigned int, order> & n_columns_foreach_dimension)
+    : Base(n_rows_foreach_dimension[0], n_columns_foreach_dimension[0]),
+      thelper_rows(n_rows_foreach_dimension),
+      thelper_columns(n_columns_foreach_dimension)
+  {
+  }
+
+  /**
+   * Returns the correct collapsed mode sizes following the conventions of
+   * TensorProductEvaluator. Furthermore, the number of rows and columns of the
+   * 1D matrix of dimension @p direction are returned.
+   */
+  std::array<int, 4>
+  anisotropic_indices(const int direction) const
+  {
+    const int n_pre     = thelper_columns.collapsed_size_pre(direction);
+    const int n_post    = thelper_rows.collapsed_size_post(direction);
+    const int n_rows    = thelper_rows.size(direction);
+    const int n_columns = thelper_columns.size(direction);
+    return {n_pre, n_post, n_rows, n_columns};
+  };
+
+  /**
+   * Returns the maximum number of elements intermediate tensors have while a
+   * sum factorization is applied following the conventions of
+   * TensorProductEvaluator.
+   */
+  template<bool transpose>
+  unsigned int
+  max_intermediate_size() const
+  {
+    unsigned int max_size = 0;
+    for(auto d = 0; d < order; ++d)
+    {
+      const auto [n_pre, n_post, n_rows, n_columns] = anisotropic_indices(d);
+      const unsigned int n_elements_of_direction    = transpose ? n_columns : n_rows;
+      const unsigned int size_tmp                   = n_pre * n_elements_of_direction * n_post;
+      max_size                                      = std::max(max_size, size_tmp);
+    }
+    return max_size;
+  }
+
+  template<int direction, bool contract_over_rows, bool add>
+  void
+  apply(const Number * matrix,
+        const Number * tensor_of_vectors_src,
+        Number *       tensor_of_vectors_dst) const
+  {
+    const auto [n_pre, n_post, n_rows, n_columns] = anisotropic_indices(direction);
+    Base::template apply<direction, contract_over_rows, add>(
+      matrix, tensor_of_vectors_src, tensor_of_vectors_dst, n_pre, n_post, n_rows, n_columns);
+  }
+
+  TensorHelper<order> thelper_rows;
+  TensorHelper<order> thelper_columns;
+};
+
+} // namespace internal
+
+
+
 /**
  * This struct implements a tensor product matrix in the sense of a sum over
  * rank-1 tensors of matrices (so-called elementary tensors) where the tensor
@@ -67,6 +148,7 @@ public:
   using separable_matrix_type = TensorProductMatrixSymmetricSum<order, Number, n_rows_1d>;
   using value_type            = Number;
   using scalar_value_type     = typename ExtractScalarType<Number>::type;
+  using evaluator_type        = internal::Evaluator<order, Number, n_rows_1d>;
   using matrix_type_1d        = Table<2, Number>;
   using tensor_type           = std::array<matrix_type_1d, order>;
 

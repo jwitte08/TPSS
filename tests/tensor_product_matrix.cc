@@ -376,7 +376,7 @@ struct Tester
   std::shared_ptr<ConditionalOStream> pcout;
 };
 
-TEST(Order2, VmultIdentity)
+TEST(Order2, vmult_id_times_id)
 {
   Tester                                      tester;
   constexpr int                               order = 2;
@@ -405,7 +405,7 @@ TEST(Order2, VmultIdentity)
   tester.compare_matrix(matrix, reference_matrix);
 }
 
-TEST(Order2, Vmult2x2)
+TEST(Order2, vmult_id_times_2x2)
 {
   Tester                                      tester;
   constexpr int                               order = 2;
@@ -443,47 +443,254 @@ TEST(Order2, Vmult2x2)
   tester.compare_matrix(matrix, reference_matrix);
 }
 
-// TEST(Order2, Vmult2x3)
-// {
-//   Tester                                      tester;
-//   constexpr int                               order = 2;
-//   Tensors::TensorProductMatrix<order, double> tp_matrix;
+TEST(Order2, vmult_id_times_2x3)
+{
+  Tester                                      tester;
+  constexpr int                               order = 2;
+  Tensors::TensorProductMatrix<order, double> tp_matrix;
 
-//   Table<2, double> id;
-//   id.reinit(2U, 3U);
-//   for(auto i = 0U; i < 2U; ++i)
-//     id(i, i) = 1.;
+  Table<2, double> id;
+  id.reinit(2U, 3U);
+  for(auto i = 0U; i < 2U; ++i)
+    id(i, i) = 1.;
 
-//   Table<2, double> M;
-//   M.reinit(2U, 3U);
-//   /// first column
-//   M(0, 0) = 1.;
-//   M(1, 0) = 2.;
-//   /// second column
-//   M(0, 1) = 3.;
-//   M(1, 1) = 4.;
-//   /// third column
-//   M(0, 2) = 5.;
-//   M(1, 2) = 6.;
+  Table<2, double> M;
+  M.reinit(2U, 3U);
+  /// first column
+  M(0, 0) = 1.;
+  M(1, 0) = 2.;
+  /// second column
+  M(0, 1) = 3.;
+  M(1, 1) = 4.;
+  /// third column
+  M(0, 2) = 5.;
+  M(1, 2) = 6.;
 
-//   std::array<Table<2, double>, order>              rank1_tensor{M, id};
-//   std::vector<std::array<Table<2, double>, order>> tensors;
-//   tensors.emplace_back(rank1_tensor);
-//   tp_matrix.reinit(tensors);
-//   const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+  std::array<Table<2, double>, order>              rank1_tensor{M, id};
+  std::vector<std::array<Table<2, double>, order>> tensors;
+  tensors.emplace_back(rank1_tensor);
+  tp_matrix.reinit(tensors);
+  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
 
-//   FullMatrix<double> reference_matrix(tp_matrix.m(), tp_matrix.n());
-//   const auto         fill_submatrix = [&](const auto & block, const auto offset_row, const auto
-//   offset_column) {
-//     for(auto i = 0U; i < block.m(); ++i)
-//       for(auto j = 0U; j < block.n(); ++j)
-//         reference_matrix(offset_row + i, offset_column + j) = block(i, j);
-//   };
-//   fill_submatrix(table_to_fullmatrix(M), 0U, 0U);
-//   fill_submatrix(table_to_fullmatrix(M), 2U, 3U);
+  FullMatrix<double> reference_matrix(tp_matrix.m(), tp_matrix.n());
+  const auto         fill_submatrix =
+    [&](const auto & block, const auto offset_row, const auto offset_column) {
+      for(auto i = 0U; i < block.m(); ++i)
+        for(auto j = 0U; j < block.n(); ++j)
+          reference_matrix(offset_row + i, offset_column + j) = block(i, j);
+    };
+  fill_submatrix(table_to_fullmatrix(M), 0U, 0U);
+  fill_submatrix(table_to_fullmatrix(M), 2U, 3U);
 
-//   tester.compare_matrix(matrix, reference_matrix);
-// }
+  tester.compare_matrix(matrix, reference_matrix);
+}
+
+TEST(Order2, vmult_2x3_times_2x3)
+{
+  Tester                                      tester;
+  constexpr int                               order = 2;
+  Tensors::TensorProductMatrix<order, double> tp_matrix;
+
+  Table<2, double> M;
+  M.reinit(2U, 3U);
+  /// first column
+  M(0, 0) = 1.;
+  M(1, 0) = 2.;
+  /// second column
+  M(0, 1) = 3.;
+  M(1, 1) = 4.;
+  /// third column
+  M(0, 2) = 5.;
+  M(1, 2) = 6.;
+
+  std::array<Table<2, double>, order>              rank1_tensor{M, M};
+  std::vector<std::array<Table<2, double>, order>> tensors;
+  tensors.emplace_back(rank1_tensor);
+  tp_matrix.reinit(tensors);
+  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+  const auto reference_matrix = table_to_fullmatrix(Tensors::kronecker_product(M, M));
+
+  tester.compare_matrix(matrix, reference_matrix);
+}
+
+TEST(Order2, vmult_random_sum_of_2x3_times_2x3)
+{
+  Tester                                      tester;
+  constexpr int                               order = 2;
+  Tensors::TensorProductMatrix<order, double> tp_matrix;
+
+  Table<2, double> M;
+  M.reinit(2U, 3U);
+  fill_with_random_values(M);
+  Table<2, double> N;
+  N.reinit(2U, 3U);
+  fill_with_random_values(N);
+
+  std::array<Table<2, double>, order>              rank1_tensor_0{M, N};
+  std::array<Table<2, double>, order>              rank1_tensor_1{N, M};
+  std::vector<std::array<Table<2, double>, order>> tensors;
+  tensors.emplace_back(rank1_tensor_0);
+  tensors.emplace_back(rank1_tensor_1);
+  tp_matrix.reinit(tensors);
+  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+  FullMatrix<double> reference_matrix(matrix.m(), matrix.n());
+  reference_matrix.add(1.,
+                       table_to_fullmatrix(Tensors::kronecker_product(M, N)),
+                       1.,
+                       table_to_fullmatrix(Tensors::kronecker_product(N, M)));
+
+  tester.compare_matrix(matrix, reference_matrix);
+}
+
+TEST(Order2, vmult_id3x1_times_2x3)
+{
+  Tester                                      tester;
+  constexpr int                               order = 2;
+  Tensors::TensorProductMatrix<order, double> tp_matrix;
+
+  Table<2, double> id;
+  id.reinit(3U, 1U);
+  id(0U, 0U) = 1.;
+
+  Table<2, double> M;
+  M.reinit(2U, 3U);
+  /// first column
+  M(0, 0) = 1.;
+  M(1, 0) = 2.;
+  /// second column
+  M(0, 1) = 3.;
+  M(1, 1) = 4.;
+  /// third column
+  M(0, 2) = 5.;
+  M(1, 2) = 6.;
+
+  std::array<Table<2, double>, order>              rank1_tensor{M, id};
+  std::vector<std::array<Table<2, double>, order>> tensors;
+  tensors.emplace_back(rank1_tensor);
+  tp_matrix.reinit(tensors);
+  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+  FullMatrix<double> reference_matrix(tp_matrix.m(), tp_matrix.n());
+  const auto         fill_submatrix =
+    [&](const auto & block, const auto offset_row, const auto offset_column) {
+      for(auto i = 0U; i < block.m(); ++i)
+        for(auto j = 0U; j < block.n(); ++j)
+          reference_matrix(offset_row + i, offset_column + j) = block(i, j);
+    };
+  fill_submatrix(table_to_fullmatrix(M), 0U, 0U);
+
+  tester.compare_matrix(matrix, reference_matrix);
+}
+
+template<bool random = false, bool rank1 = false, bool transpose = false>
+void
+vmult_random_anisotropic()
+{
+  Tester                                      tester;
+  constexpr int                               order = 2;
+  Tensors::TensorProductMatrix<order, double> tp_matrix;
+
+  Table<2, double> M_0, M_1;
+  for(auto M : {&M_0, &M_1})
+  {
+    M->reinit(2U, 3U);
+    if(random)
+      fill_with_random_values(*M);
+    else
+    {
+      /// first column
+      (*M)(0, 0) = 1.;
+      (*M)(1, 0) = 2.;
+      /// second column
+      (*M)(0, 1) = 3.;
+      (*M)(1, 1) = 4.;
+      /// third column
+      (*M)(0, 2) = 5.;
+      (*M)(1, 2) = 6.;
+    }
+  }
+
+  Table<2, double> N_0, N_1;
+  for(auto N : {&N_0, &N_1})
+  {
+    N->reinit(4U, 2U);
+    if(random)
+      fill_with_random_values(*N);
+    else
+      std::fill(&((*N)(0, 0)), &((*N)(0, 0)) + N->n_elements(), 1.);
+  }
+
+  std::array<Table<2, double>, order>              rank1_tensor_0{M_0, N_0};
+  std::array<Table<2, double>, order>              rank1_tensor_1{M_1, N_1};
+  std::vector<std::array<Table<2, double>, order>> tensors;
+  tensors.emplace_back(rank1_tensor_0);
+  if(!rank1)
+    tensors.emplace_back(rank1_tensor_1);
+  tp_matrix.reinit(tensors);
+  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+  /// Note that Tensors::kronecker_product() does not follow (deal.II)
+  /// convention in the sense of the zeroth matrix is the rightmost factor in
+  /// the Kronecker product and so on. Here, kronecker_product(N, M) actually
+  /// computes N (x) M.
+  FullMatrix<double> reference_matrix(matrix.m(), matrix.n());
+  reference_matrix.add(1.,
+                       table_to_fullmatrix(Tensors::kronecker_product(N_0, M_0)),
+                       rank1 ? 0. : 1.,
+                       table_to_fullmatrix(Tensors::kronecker_product(N_1, M_1)));
+
+  if(transpose)
+  {
+    const auto         matrix = table_to_fullmatrix(tp_matrix.as_transpose_table());
+    FullMatrix<double> transpose_reference(matrix.m(), matrix.n());
+    transpose_reference.copy_transposed(reference_matrix);
+    tester.compare_matrix(matrix, transpose_reference);
+  }
+  else
+    tester.compare_matrix(matrix, reference_matrix);
+}
+
+TEST(Order2, vmult_one4x2_times_2x3)
+{
+  vmult_random_anisotropic<false, true, false>();
+}
+
+TEST(Order2, vmult_sum_of_one4x2_times_2x3)
+{
+  vmult_random_anisotropic<false, false, false>();
+}
+
+TEST(Order2, vmult_of_4x2_times_2x3)
+{
+  vmult_random_anisotropic<true, true, false>();
+}
+
+TEST(Order2, vmult_sum_of_4x2_times_2x3)
+{
+  vmult_random_anisotropic<true, false, false>();
+}
+
+TEST(Order2, Tvmult_one4x2_times_2x3)
+{
+  vmult_random_anisotropic<false, true, true>();
+}
+
+TEST(Order2, Tvmult_sum_of_one4x2_times_2x3)
+{
+  vmult_random_anisotropic<false, false, true>();
+}
+
+TEST(Order2, Tvmult_of_4x2_times_2x3)
+{
+  vmult_random_anisotropic<true, true, true>();
+}
+
+TEST(Order2, Tvmult_sum_of_4x2_times_2x3)
+{
+  vmult_random_anisotropic<true, false, true>();
+}
 
 int
 main(int argc, char ** argv)

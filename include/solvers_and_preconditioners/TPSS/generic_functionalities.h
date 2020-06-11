@@ -278,7 +278,16 @@ void
 fill_with_random_values(ArrayView<ElementType> view)
 {
   for(auto it = view.begin(); it != view.end(); ++it)
-    *it = (double)rand() / RAND_MAX;
+    *it = make_random_value<ElementType>();
+}
+
+
+template<typename Number>
+void fill_with_random_values(Table<2, Number> & table)
+{
+  for(auto i = 0U; i < table.size(0); ++i)
+    for(auto j = 0U; j < table.size(1); ++j)
+      table(i, j) = make_random_value<Number>();
 }
 
 
@@ -288,6 +297,7 @@ fill_matrix_with_random_values(MatrixType & matrix)
 {
   fill_matrix_with_random_values<MatrixType, Number>(matrix, matrix.m(), matrix.n());
 }
+
 
 template<typename MatrixType, typename Number = typename MatrixType::value_type>
 void

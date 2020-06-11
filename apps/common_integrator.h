@@ -115,10 +115,15 @@ struct FaceOperationBase
 
 namespace Gradient
 {
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
-struct CellOperation : public CellOperationBase<dim, fe_degree, n_q_points_1d, Number>
+template<int dim,
+         int fe_degree,
+         int n_q_points_1d,
+         typename Number,
+         int fe_degree_ansatz = fe_degree>
+struct CellOperation
+  : public CellOperationBase<dim, fe_degree, n_q_points_1d, Number, fe_degree_ansatz>
 {
-  using Base = CellOperationBase<dim, fe_degree, n_q_points_1d, Number>;
+  using Base = CellOperationBase<dim, fe_degree, n_q_points_1d, Number, fe_degree_ansatz>;
 
   void
   operator()(const typename Base::ansatz_evaluator_type & eval_ansatz,
@@ -294,10 +299,15 @@ struct FaceOperation
 
 namespace L2
 {
-template<int dim, int fe_degree, int n_q_points_1d, typename Number>
-struct CellOperation : public CellOperationBase<dim, fe_degree, n_q_points_1d, Number>
+template<int dim,
+         int fe_degree,
+         int n_q_points_1d,
+         typename Number,
+         int fe_degree_ansatz = fe_degree>
+struct CellOperation
+  : public CellOperationBase<dim, fe_degree, n_q_points_1d, Number, fe_degree_ansatz>
 {
-  using Base = CellOperationBase<dim, fe_degree, n_q_points_1d, Number>;
+  using Base = CellOperationBase<dim, fe_degree, n_q_points_1d, Number, fe_degree_ansatz>;
 
   void
   operator()(const typename Base::ansatz_evaluator_type & eval_ansatz,
@@ -317,8 +327,8 @@ struct CellOperation : public CellOperationBase<dim, fe_degree, n_q_points_1d, N
         integral = 0.;
         for(int q = 0; q < n_q_points; ++q)
         {
-          const auto & u_j = eval_ansatz.shape_value(i, q, direction, cell_no);
-          const auto & v_i = eval_test.shape_value(j, q, direction, cell_no);
+          const auto & u_j = eval_ansatz.shape_value(j, q, direction, cell_no);
+          const auto & v_i = eval_test.shape_value(i, q, direction, cell_no);
           const auto & dx  = eval_test.get_JxW(q, direction, cell_no);
           integral += u_j * v_i * dx;
         }

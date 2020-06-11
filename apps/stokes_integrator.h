@@ -932,7 +932,6 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cellU,
   }
 }
 
-
 } // namespace Mixed
 
 } // namespace MW
@@ -957,6 +956,7 @@ public:
   using transfer_type           = typename TPSS::PatchTransferBlock<dim, Number>;
   using matrix_type_1d          = Table<2, VectorizedArray<Number>>;
   using matrix_type             = MatrixAsTable<VectorizedArray<Number>>;
+  using matrix_type_mixed       = Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, -1>;
   using velocity_evaluator_type = FDEvaluation<dim, fe_degree_v, n_q_points_1d, Number>;
   using pressure_evaluator_type = FDEvaluation<dim, fe_degree_p, n_q_points_1d, Number>;
 
@@ -999,23 +999,135 @@ public:
       /// This block is zero.
     }
 
+    /// Assemble local matrices for the local velocity-pressure block
+    std::vector<matrix_type_mixed> local_matrices_velocity_pressure(local_matrices.size());
+    {
+      assemble_mixed_subspace_inverses<OperatorType>(subdomain_handler,
+                                                     local_matrices_velocity_pressure,
+                                                     dummy_operator,
+                                                     subdomain_range);
+    }
+
     AssertDimension(local_matrices_velocity.size(), local_matrices.size());
     const auto patch_transfer = get_patch_transfer(subdomain_handler);
     for(auto patch_index = 0U; patch_index < local_matrices.size(); ++patch_index)
     {
-      const auto & local_block_velocity = local_matrices_velocity[patch_index];
+      const auto & local_block_velocity          = local_matrices_velocity[patch_index];
+      const auto & local_block_velocity_pressure = local_matrices_velocity_pressure[patch_index];
+
       patch_transfer->reinit(patch_index);
       const auto n_dofs          = patch_transfer->n_dofs_per_patch();
       const auto n_dofs_velocity = local_block_velocity.m();
-      const auto n_dofs_pressure = n_dofs - n_dofs_velocity;
+      const auto n_dofs_pressure = local_block_velocity_pressure.n(); // n_dofs - n_dofs_velocity;
       AssertDimension(patch_transfer->n_dofs_per_patch(0), n_dofs_velocity);
       AssertDimension(patch_transfer->n_dofs_per_patch(1), n_dofs_pressure);
 
       auto & local_matrix = local_matrices[patch_index];
       local_matrix.as_table().reinit(n_dofs, n_dofs);
 
+      /// velocity-velocity
       local_matrix.fill_submatrix(local_block_velocity.as_table(), 0U, 0U);
+
+      /// velocity-pressure
+      local_matrix.fill_submatrix(local_block_velocity_pressure.as_table(), 0U, n_dofs_velocity);
+
+      /// pressure-velocity
+      local_matrix.template fill_submatrix<true>(local_block_velocity_pressure.as_table(),
+                                                 n_dofs_velocity,
+                                                 0U);
+      {
+        for(auto b = 0U; b < dim; ++b)
+        {
+          auto lane = 0U;
+          std::cout << "block: " << b << ", " << 0 << "   patch: " << patch_index
+                    << "   lane: " << lane << std::endl;
+          const auto & rank1_tensors =
+            local_block_velocity_pressure.get_block(b, 0).get_elementary_tensors();
+          for(auto d = 0U; d < dim; ++d)
+          {
+            const auto & matrix_d = rank1_tensors[0][d];
+            std::cout << "direction: " << d << std::endl;
+            table_to_fullmatrix(matrix_d, lane).print_formatted(std::cout);
+          }
+        }
+      }
     }
+  }
+
+  template<typename OperatorType>
+  void
+  assemble_mixed_subspace_inverses(
+    const SubdomainHandler<dim, Number> & subdomain_handler,
+    std::vector<matrix_type_mixed> &      local_matrices,
+    const OperatorType &,
+    const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+
+    for(auto compU = 0U; compU < dim; ++compU)
+    {
+      velocity_evaluator_type eval_velocity(subdomain_handler, /*dofh_index*/ 0, compU);
+      pressure_evaluator_type eval_pressure(subdomain_handler, /*dofh_index*/ 1, /*component*/ 0);
+
+      for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
+      {
+        auto & velocity_pressure_matrix = local_matrices[patch];
+        if(velocity_pressure_matrix.n_block_rows() == 0 &&
+           velocity_pressure_matrix.n_block_cols() == 0)
+          velocity_pressure_matrix.resize(dim, 1);
+
+        eval_velocity.reinit(patch);
+        eval_pressure.reinit(patch);
+
+        const auto mass_matrices =
+          assemble_mass_tensor(/*test*/ eval_velocity, /*ansatz*/ eval_pressure);
+        /// Note that we have flipped ansatz and test functions roles. The
+        /// divergence of the velocity test functions is obtained by
+        /// transposing gradient matrices.
+        const auto gradient_matrices =
+          assemble_gradient_tensor(/*test*/ eval_pressure, /*ansatz*/ eval_velocity);
+
+        const auto & MxMxGT = [&](const unsigned int direction_of_div) {
+          /// For example, we obtain MxMxGT for direction_of_div = 0 (dimension
+          /// 0 is rightmost!)
+          std::array<matrix_type_1d, dim> kronecker_tensor;
+          for(auto d = 0U; d < dim; ++d)
+            kronecker_tensor[d] = d == direction_of_div ?
+                                    -1. * Tensors::transpose(gradient_matrices[direction_of_div]) :
+                                    mass_matrices[d];
+          return kronecker_tensor;
+        };
+
+        std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
+        rank1_tensors.emplace_back(MxMxGT(compU));
+        velocity_pressure_matrix.get_block(compU, 0).reinit(rank1_tensors);
+      }
+    }
+  }
+
+  std::array<matrix_type_1d, dim>
+  assemble_mass_tensor(velocity_evaluator_type & eval_test,
+                       pressure_evaluator_type & eval_ansatz) const
+  {
+    using CellMass = ::FD::L2::CellOperation<dim, fe_degree_v, n_q_points_1d, Number, fe_degree_p>;
+    return eval_test.patch_action(eval_ansatz, CellMass{});
+  }
+
+  /**
+   * We remark that the velocity takes the ansatz function role here
+   * (Gradient::CellOperation derives the ansatz function) although in
+   * assemble_mixed_subspace_inverses() we require the divergence of the
+   * velocity test functions. Therefore, we transpose the returned tensor of
+   * matrices.
+   */
+  std::array<matrix_type_1d, dim>
+  assemble_gradient_tensor(pressure_evaluator_type & eval_test,
+                           velocity_evaluator_type & eval_ansatz) const
+  {
+    using CellGradient =
+      ::FD::Gradient::CellOperation<dim, fe_degree_p, n_q_points_1d, Number, fe_degree_v>;
+    CellGradient cell_gradient;
+    return eval_test.patch_action(eval_ansatz, cell_gradient);
   }
 
   std::shared_ptr<transfer_type>

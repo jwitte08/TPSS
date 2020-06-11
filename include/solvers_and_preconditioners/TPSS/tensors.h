@@ -357,6 +357,18 @@ struct TensorHelper
     return n;
   }
 
+  IntType
+  collapsed_size_pre(const unsigned int direction) const
+  {
+    return std::accumulate(n.begin(), n.begin() + direction, 1, std::multiplies<IntType>{});
+  }
+
+  IntType
+  collapsed_size_post(const unsigned int direction) const
+  {
+    return std::accumulate(n.begin() + direction + 1, n.end(), 1, std::multiplies<IntType>{});
+  }
+
   const std::array<IntType, order> n;
 };
 
@@ -404,10 +416,10 @@ template<typename MatrixType, typename Number = typename MatrixType::value_type>
 Table<2, Number>
 transpose_matrix_to_table(const MatrixType & matrix)
 {
-  Table<2, Number>      table(matrix.m(), matrix.n());
-  AlignedVector<Number> e_j(matrix.n());
-  AlignedVector<Number> col_j(matrix.m());
-  for(unsigned int j = 0; j < matrix.n(); ++j)
+  Table<2, Number>      table(matrix.n(), matrix.m());
+  AlignedVector<Number> e_j(matrix.m());
+  AlignedVector<Number> col_j(matrix.n());
+  for(unsigned int j = 0; j < matrix.m(); ++j)
   {
     e_j.fill(static_cast<Number>(0.));
     col_j.fill(static_cast<Number>(0.));
@@ -415,7 +427,7 @@ transpose_matrix_to_table(const MatrixType & matrix)
     const auto e_j_view   = make_array_view<const Number>(e_j.begin(), e_j.end());
     const auto col_j_view = make_array_view<Number>(col_j.begin(), col_j.end());
     matrix.Tvmult(col_j_view, e_j_view);
-    for(unsigned int i = 0; i < matrix.m(); ++i)
+    for(unsigned int i = 0; i < matrix.n(); ++i)
       table(i, j) = col_j[i];
   }
   return table;

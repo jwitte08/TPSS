@@ -697,7 +697,8 @@ public:
         std::vector<std::array<VectorizedMatrixType, dim>> elementary_tensors;
         elementary_tensors.emplace_back(mass_matrices[comp]);
         elementary_tensors.emplace_back(elasticity_matrices[comp]);
-        block_matrix.get_block(comp, comp).reinit(elementary_tensors, TensorProductState::skd);
+        block_matrix.get_block(comp, comp)
+          .reinit(elementary_tensors, TensorProductState::separable);
       }
 
       /// block off-diagonals

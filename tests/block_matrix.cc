@@ -36,7 +36,7 @@ struct TestBlockMatrix
              const std::size_t                     col,
              const std::vector<Table<2, Number>> & left,
              const std::vector<Table<2, Number>> & right,
-             const bool                            skd_if_possible = false)
+             const bool                            separable_if_possible = false)
   {
     AssertThrow(dim == 2, ExcMessage("Only two dimensions are valid."));
     std::vector<std::array<Table<2, Number>, dim>> tensors;
@@ -48,7 +48,7 @@ struct TestBlockMatrix
                      std::array<Table<2, Number>, dim> tensor = {r, l};
                      return tensor;
                    });
-    State state = skd_if_possible ? State::skd : State::basic;
+    State state = separable_if_possible ? State::separable : State::basic;
     block_matrix.get_block(row, col).reinit(tensors, state);
   }
 
@@ -318,7 +318,8 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastBlockDiagonal)
   D.emplace_back(assemble_id_tensor());
   D.emplace_back(assemble_random_tensor());
   using State = typename Tensors::TensorProductMatrix<dim, value_type>::State;
-  Tensors::TensorProductMatrix<dim, value_type> AA(A, State::skd), BB(B), CC(C), DD(D, State::skd);
+  Tensors::TensorProductMatrix<dim, value_type> AA(A, State::separable), BB(B), CC(C),
+    DD(D, State::separable);
 
   /// compare the fast diagonalized Schur complement
   Tensors::SchurComplementFast<dim, value_type> schur_fd;
@@ -383,7 +384,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastEigenvalueKSVD)
   std::vector<std::array<Table<2, value_type>, dim>> A;
   A.emplace_back(assemble_id_tensor());
   A.emplace_back(assemble_random_tensor());
-  Tensors::TensorProductMatrix<dim, value_type> AA(A, State::skd);
+  Tensors::TensorProductMatrix<dim, value_type> AA(A, State::separable);
 
   /// compare inverse eigenvalues with the associated KSVD
   constexpr unsigned int    rank        = m;
@@ -506,7 +507,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, SchurComplementFastReinit)
   std::vector<std::array<Table<2, value_type>, dim>> tensors_A;
   tensors_A.emplace_back(assemble_id_tensor());     // mass
   tensors_A.emplace_back(assemble_random_tensor()); // derivative
-  Tensors::TensorProductMatrix<dim, value_type>      AA(tensors_A, State::skd);
+  Tensors::TensorProductMatrix<dim, value_type>      AA(tensors_A, State::separable);
   std::vector<std::array<Table<2, value_type>, dim>> tensors_B;
   tensors_B.emplace_back(assemble_random_tensor());
   tensors_B.emplace_back(assemble_random_tensor());
@@ -518,7 +519,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, SchurComplementFastReinit)
   std::vector<std::array<Table<2, value_type>, dim>> tensors_D;
   tensors_D.emplace_back(assemble_id_tensor());     // mass
   tensors_D.emplace_back(assemble_random_tensor()); // derivative
-  Tensors::TensorProductMatrix<dim, value_type> DD(tensors_D, State::skd);
+  Tensors::TensorProductMatrix<dim, value_type> DD(tensors_D, State::separable);
 
   /// compare the fast diagonalized Schur complement
   Tensors::SchurComplementFast<dim, value_type> schur_fd;
@@ -581,7 +582,8 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastOffDiagonals)
   A.emplace_back(assemble_random_tensor());
   D.emplace_back(assemble_id_tensor());
   D.emplace_back(assemble_zero_tensor());
-  Tensors::TensorProductMatrix<dim, value_type> AA(A, State::skd), BB(B), CC(C), DD(D, State::skd);
+  Tensors::TensorProductMatrix<dim, value_type> AA(A, State::separable), BB(B), CC(C),
+    DD(D, State::separable);
 
   /// compare the fast diagonalized Schur complement
   Tensors::SchurComplementFast<dim, value_type> schur_fd;

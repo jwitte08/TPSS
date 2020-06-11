@@ -207,7 +207,7 @@ public:
     AssertThrow(order == 2, ExcMessage("Require two dimensions."));
     AssertThrow(lambda_rank == -1 || lambda_rank > 0, ExcMessage("Invalid lambda_rank."));
     AssertThrow(kronecker_rank == -1 || kronecker_rank > 0, ExcMessage("Invalid kronecker_rank."));
-    AssertThrow(A_in.get_state() == State::skd,
+    AssertThrow(A_in.get_state() == State::separable,
                 ExcMessage("Not a separable Kronecker decomposition."));
 
     /// compute tensors approximating -BAinvC
@@ -283,7 +283,7 @@ public:
      * approximation of Z.
      */
 
-    AssertThrow(D_in.get_state() == State::skd,
+    AssertThrow(D_in.get_state() == State::separable,
                 ExcMessage("Not a separable Kronecker decomposition."));
 
     /// Compute rank1 KSVD of Z
@@ -830,6 +830,12 @@ public:
     return Tensors::inverse_matrix_to_table(*this);
   }
 
+  Table<2, Number>
+  as_transpose_table() const
+  {
+    return Tensors::transpose_matrix_to_table(*this);
+  }
+
   void
   vmult(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const
   {
@@ -929,6 +935,8 @@ private:
    * diagonal and the associated vector slices of @p dst and @p src.
    * The signature of the action function should be equivalent to
    * action(matrix_type& m, ArrayView<...> dst, ArrayView<const ...> src)
+   *
+   * TODO This method has not been tested for non-quadratic blocks.
    */
   template<typename ActionType>
   void
@@ -938,8 +946,8 @@ private:
   {
     AssertDimension(src.size(), n());
     AssertDimension(dst.size(), m());
-    Assert(src.size() == dst.size(),
-           ExcMessage("TODO BlockMatrix is not quadratic.")); // quadratic !
+    // Assert(src.size() == dst.size(),
+    //        ExcMessage("TODO BlockMatrix is not quadratic.")); // quadratic !
     Assert(n_rows_1d == -1 || src.size() % n_rows_1d == 0,
            ExcMessage("Input vector sizes are not a multiple of the static size."));
     Assert(!blocks.empty(), ExcMessage("Blocks are not initialized."));
@@ -950,10 +958,10 @@ private:
     std::size_t row_start = 0;
     for(std::size_t row = 0; row < n_block_rows(); ++row)
     {
-      std::size_t col_start = 0;
+      const ArrayView<Number> dst_block(dst.begin() + row_start, m(row));
+      std::size_t             col_start = 0;
       for(std::size_t col = 0; col < n_block_cols(); ++col)
       {
-        const ArrayView<Number>       dst_block(dst.begin() + row_start, m(row));
         const ArrayView<const Number> src_block(src.begin() + col_start, n(col));
         action(get_block(row, col), dst_block, src_block);
         col_start += n(col);
@@ -1076,7 +1084,7 @@ public:
   {
     blockwise_action([](const matrix_type &             matrix,
                         const ArrayView<Number> &       dst,
-                        const ArrayView<const Number> & src) { matrix.vmult(dst, src); },
+                        const ArrayView<const Number> & src) { matrix.vmult_add(dst, src); },
                      dst,
                      src);
   }
