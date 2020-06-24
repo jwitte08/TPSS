@@ -33,12 +33,16 @@
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 class FDEvaluation
 {
+  template<int dim_friend, int fe_degree_friend, int n_q_points_1d_friend, typename Number_friend>
+  friend class FDEvaluation;
+
 public:
   using CellAssembler =
     typename TPSS::MatrixEvaluator<fe_degree + 1, n_q_points_1d_, VectorizedArray<Number>>;
   using value_type                         = Number;
   static constexpr unsigned int macro_size = VectorizedArray<Number>::size();
 
+  static constexpr unsigned int fe_degree_static       = fe_degree;
   static constexpr unsigned int fe_order               = fe_degree + 1;
   static constexpr unsigned int n_q_points_1d_static   = n_q_points_1d_;
   static constexpr unsigned int n_dofs_per_cell_static = Utilities::pow(fe_order, dim);

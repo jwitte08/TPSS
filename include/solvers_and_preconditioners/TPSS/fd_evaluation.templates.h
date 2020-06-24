@@ -343,7 +343,6 @@ void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::submit_cell_matrix(
   const auto n_dofs_per_cell_1d_col = patch_dof_tensor_col.n_dofs_per_cell_1d(dimension);
   /// assuming isotropy ...
   AssertDimension(fe_order, n_dofs_per_cell_1d_row);
-  AssertDimension(fe_order, n_dofs_per_cell_1d_col);
   AssertIndexRange(dimension, dim);
   AssertDimension(cell_matrix.n_rows(), n_dofs_per_cell_1d_row);
   AssertDimension(cell_matrix.n_cols(), n_dofs_per_cell_1d_col);
