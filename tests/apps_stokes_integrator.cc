@@ -255,6 +255,10 @@ protected:
 
     using StokesProblem = ModelProblem<dim, fe_degree_p, method>;
 
+    *pcout_owned << "TEST. check_local_solvers_block(check_diagonal = " << std::boolalpha
+                 << check_diagonal << ", check_level_matrix = " << check_level_matrix << ")"
+                 << std::endl
+                 << std::endl;
     const auto stokes_problem = std::make_shared<StokesProblem>(rt_parameters, equation_data);
     stokes_problem->pcout     = pcout_owned;
     stokes_problem->make_grid();
@@ -354,6 +358,27 @@ protected:
           local_block_pressure.scatter_matrix_to(pressure_local_dof_indices,
                                                  pressure_local_dof_indices,
                                                  local_matrix);
+
+          /// velocity-pressure
+          FullMatrix<double> local_block_velocity_pressure(velocity_dof_indices_on_patch.size(),
+                                                           pressure_dof_indices_on_patch.size());
+          local_block_velocity_pressure.extract_submatrix_from(level_matrix->block(0, 1),
+                                                               velocity_dof_indices_on_patch,
+                                                               pressure_dof_indices_on_patch);
+          local_block_velocity_pressure.scatter_matrix_to(velocity_local_dof_indices,
+                                                          pressure_local_dof_indices,
+                                                          local_matrix);
+
+
+          /// pressure-velocity
+          FullMatrix<double> local_block_pressure_velocity(pressure_dof_indices_on_patch.size(),
+                                                           velocity_dof_indices_on_patch.size());
+          local_block_pressure_velocity.extract_submatrix_from(level_matrix->block(1, 0),
+                                                               pressure_dof_indices_on_patch,
+                                                               velocity_dof_indices_on_patch);
+          local_block_pressure_velocity.scatter_matrix_to(pressure_local_dof_indices,
+                                                          velocity_local_dof_indices,
+                                                          local_matrix);
         }
 
         auto local_matrix_tp = table_to_fullmatrix(local_matrices[patch].as_table(), lane);
@@ -505,8 +530,10 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
   Fixture::rt_parameters.mesh.n_repetitions    = 2;
   Fixture::rt_parameters.mesh.n_refinements    = 0;
   Fixture::check_local_solvers_block(true);
+  Fixture::check_local_solvers_block(false);
   Fixture::rt_parameters.mesh.n_refinements = 1;
   Fixture::check_local_solvers_block(true);
+  Fixture::check_local_solvers_block(false);
 }
 
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,

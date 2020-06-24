@@ -1018,8 +1018,9 @@ public:
       patch_transfer->reinit(patch_index);
       const auto n_dofs          = patch_transfer->n_dofs_per_patch();
       const auto n_dofs_velocity = local_block_velocity.m();
-      const auto n_dofs_pressure = local_block_velocity_pressure.n(); // n_dofs - n_dofs_velocity;
+      const auto n_dofs_pressure = local_block_velocity_pressure.n();
       AssertDimension(patch_transfer->n_dofs_per_patch(0), n_dofs_velocity);
+      (void)n_dofs_pressure;
       AssertDimension(patch_transfer->n_dofs_per_patch(1), n_dofs_pressure);
 
       auto & local_matrix = local_matrices[patch_index];
@@ -1035,22 +1036,22 @@ public:
       local_matrix.template fill_submatrix<true>(local_block_velocity_pressure.as_table(),
                                                  n_dofs_velocity,
                                                  0U);
-      {
-        for(auto b = 0U; b < dim; ++b)
-        {
-          auto lane = 0U;
-          std::cout << "block: " << b << ", " << 0 << "   patch: " << patch_index
-                    << "   lane: " << lane << std::endl;
-          const auto & rank1_tensors =
-            local_block_velocity_pressure.get_block(b, 0).get_elementary_tensors();
-          for(auto d = 0U; d < dim; ++d)
-          {
-            const auto & matrix_d = rank1_tensors[0][d];
-            std::cout << "direction: " << d << std::endl;
-            table_to_fullmatrix(matrix_d, lane).print_formatted(std::cout);
-          }
-        }
-      }
+      // {
+      //   for(auto b = 0U; b < dim; ++b)
+      //   {
+      //     auto lane = 0U;
+      //     std::cout << "block: " << b << ", " << 0 << "   patch: " << patch_index
+      //               << "   lane: " << lane << std::endl;
+      //     const auto & rank1_tensors =
+      //       local_block_velocity_pressure.get_block(b, 0).get_elementary_tensors();
+      //     for(auto d = 0U; d < dim; ++d)
+      //     {
+      //       const auto & matrix_d = rank1_tensors[0][d];
+      //       std::cout << "direction: " << d << std::endl;
+      //       table_to_fullmatrix(matrix_d, lane).print_formatted(std::cout);
+      //     }
+      //   }
+      // }
     }
   }
 
