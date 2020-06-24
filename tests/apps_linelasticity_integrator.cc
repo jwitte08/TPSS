@@ -657,7 +657,7 @@ protected:
   //                      [lane](const auto & table) { return table_to_fullmatrix(table, lane); });
   //       tensors_comp.emplace_back(masses);
   //       tensors_comp.emplace_back(elases);
-  //       patch_matrix.get_block(comp, comp).reinit(tensors_comp, State::skd);
+  //       patch_matrix.get_block(comp, comp).reinit(tensors_comp, State::separable);
   //     }
 
   //     /// block off-diagonals
