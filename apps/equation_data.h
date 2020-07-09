@@ -659,17 +659,30 @@ namespace Stokes
 {
 struct EquationData
 {
+  enum class Variant
+  {
+    DivFree,
+    DivFreeHom
+  };
+  static std::string
+  str_equation_variant(const Variant variant)
+  {
+    std::string str[] = {"divergence-free", "divergence-free + homogeneous Dirichlet"};
+    return str[static_cast<int>(variant)];
+  }
+
   std::string
   to_string() const
   {
     std::ostringstream oss;
-    oss << Util::parameter_to_fstring("Equation Data:", "");
+    oss << Util::parameter_to_fstring("Equation Data:", str_equation_variant(variant));
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
     oss << Util::parameter_to_fstring("Assemble pressure mass matrix?:",
                                       assemble_pressure_mass_matrix);
     return oss.str();
   }
 
+  Variant                      variant                         = Variant::DivFree;
   std::set<types::boundary_id> dirichlet_boundary_ids_velocity = {0};
   std::set<types::boundary_id> dirichlet_boundary_ids_pressure = {};
   double                       ip_factor                       = 1.;
@@ -684,7 +697,7 @@ class FunctionExtractor : public Function<dim>
 public:
   /**
    * Extracting the vector components c = start,...,end-1 from function @p
-   * function_in, which is determined by the half-open range [start, end).
+   * function_in, which is determined by the half-open range @p range = [start, end).
    */
   FunctionExtractor(const Function<dim> *                       function_in,
                     const std::pair<unsigned int, unsigned int> range)
@@ -713,10 +726,139 @@ public:
 
 
 
+template<int dim, typename VelocityFunction, typename PressureFunction>
+class FunctionMerge : public Function<dim>
+{
+public:
+  FunctionMerge() : Function<dim>(dim + 1)
+  {
+    AssertDimension(solution_velocity.n_components, dim);
+    AssertDimension(solution_pressure.n_components, 1);
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    if(component < dim)
+      return solution_velocity.value(p, component);
+    else if(component == dim)
+      return solution_pressure.value(p);
+
+    AssertThrow(false, ExcMessage("Invalid component."));
+    return 0.;
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    if(component < dim)
+      return solution_velocity.gradient(p, component);
+    else if(component == dim)
+      return solution_pressure.gradient(p);
+
+    AssertThrow(false, ExcMessage("Invalid component."));
+    return Tensor<1, dim>{};
+  }
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    if(component < dim)
+      return solution_velocity.hessian(p, component);
+    else if(component == dim)
+      return solution_pressure.hessian(p, component);
+
+    AssertThrow(false, ExcMessage("Invalid component."));
+    return SymmetricTensor<2, dim>{};
+  }
+
+private:
+  VelocityFunction solution_velocity;
+  PressureFunction solution_pressure;
+};
+
+
+
+template<int dim>
+class ManufacturedLoad : public Function<dim>
+{
+public:
+  ManufacturedLoad(const std::shared_ptr<const Function<dim>> solution_function_in)
+    : Function<dim>(dim + 1), solution_function(solution_function_in)
+  {
+    AssertThrow(solution_function_in->n_components == this->n_components,
+                ExcMessage("Mismatching number of components."));
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    constexpr auto pressure_index = dim;
+    double         value          = 0.;
+
+    /**
+     * The manufactured load associated to the velocity block reads
+     *
+     *    -2 div E + grad p
+     *
+     * where E = 1/2 (grad u + [grad u]^T) is the linear strain.  The divergence
+     * of matrix field E is defined by
+     *
+     *    (div E)_i = sum_j d/dx_j E_ij.
+     *
+     * The symmetric gradient E of vector field u reads
+     *
+     *    E_ij = 1/2 * (d/dx_i u_j + d/dx_j u_i).
+     *
+     * Combining both, we have
+     *
+     *    (div E)_i = sum_j 1/2 * (d/dx_j d/dx_i u_j + d^2/dx_j^2 u_i).
+     */
+    if(component < pressure_index)
+    {
+      const auto i      = component;
+      double     divE_i = 0.;
+      for(auto j = 0U; j < dim; ++j)
+      {
+        const SymmetricTensor<2, dim> & hessian_of_u_j = (solution_function->hessian(p, j));
+        const auto   Dji_of_u_j = hessian_of_u_j({i, j} /*TableIndices<2>(i, j)*/);
+        const double Djj_of_u_i = (solution_function->hessian(p, i))({j, j});
+        divE_i += 0.5 * (Dji_of_u_j + Djj_of_u_i);
+      }
+      const auto & gradp_i = solution_function->gradient(p, pressure_index)[i];
+      value                = -2. * divE_i + gradp_i;
+    }
+
+    /**
+     * The manufactured load associated to the pressure block reads
+     *
+     *    - div u
+     *
+     * with u being the velocity field. The load vanishes for a divergence-free
+     * velocity.
+     */
+    else if(component == pressure_index)
+    {
+      double divu = 0.;
+      for(auto j = 0U; j < dim; ++j)
+        divu += solution_function->gradient(p, j)[j];
+      value = -divu;
+    }
+
+    else
+      AssertThrow(false, ExcMessage("Invalid component."));
+
+    return value;
+  }
+
+private:
+  std::shared_ptr<const Function<dim>> solution_function;
+};
+
+
+
 namespace DivergenceFree
 {
-// Note that the first dim components are the velocity components
-// and the last is the pressure.
 template<int dim>
 class SolutionVelocity : public Function<dim>
 {
@@ -730,6 +872,9 @@ public:
 
   virtual Tensor<1, dim>
   gradient(const Point<dim> & p, const unsigned int component = 0) const override;
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int component = 0) const override;
 };
 
 template<>
@@ -828,6 +973,14 @@ SolutionVelocity<3>::gradient(const Point<3> & p, const unsigned int component) 
   return return_value;
 }
 
+template<int dim>
+SymmetricTensor<2, dim>
+SolutionVelocity<dim>::hessian(const Point<dim> &, const unsigned int) const
+{
+  AssertThrow(false, ExcMessage("Satisfying interfaces..."));
+  return SymmetricTensor<2, dim>{};
+}
+
 
 
 template<int dim>
@@ -843,6 +996,9 @@ public:
 
   virtual Tensor<1, dim>
   gradient(const Point<dim> & p, const unsigned int component = 0) const override;
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int component = 0) const override;
 };
 
 template<>
@@ -904,44 +1060,18 @@ SolutionPressure<3>::gradient(const Point<3> & p, const unsigned int) const
   return return_value;
 }
 
+template<int dim>
+SymmetricTensor<2, dim>
+SolutionPressure<dim>::hessian(const Point<dim> &, const unsigned int) const
+{
+  AssertThrow(false, ExcMessage("No need for this functionality..."));
+  return SymmetricTensor<2, dim>{};
+}
+
 
 
 template<int dim>
-class Solution : public Function<dim>
-{
-public:
-  Solution() : Function<dim>(dim + 1)
-  {
-  }
-
-  virtual double
-  value(const Point<dim> & p, const unsigned int component = 0) const override
-  {
-    if(component < dim)
-      return solution_velocity.value(p, component);
-    else if(component == dim)
-      return solution_pressure.value(p);
-
-    AssertThrow(false, ExcMessage("Invalid component."));
-    return 0.;
-  }
-
-  virtual Tensor<1, dim>
-  gradient(const Point<dim> & p, const unsigned int component = 0) const override
-  {
-    if(component < dim)
-      return solution_velocity.gradient(p, component);
-    else if(component == dim)
-      return solution_pressure.gradient(p);
-
-    AssertThrow(false, ExcMessage("Invalid component."));
-    return Tensor<1, dim>{};
-  }
-
-private:
-  SolutionVelocity<dim> solution_velocity;
-  SolutionPressure<dim> solution_pressure;
-};
+using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
 
 
 
@@ -997,6 +1127,170 @@ Load<3>::value(const Point<3> & p, const unsigned int component) const
 
   return 0;
 }
+
+
+
+namespace Homogeneous
+{
+/**
+ * This class represents the vector curl of
+ *
+ *    PHI(x,y) = sin(pi*x) cos(pi*y)
+ *
+ * in two dimensions, which is by definition divergence free and has
+ * homogeneous boundary values on the unit cube [0,1]^2.
+ */
+template<int dim>
+class SolutionVelocity : public Function<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+
+public:
+  SolutionVelocity() : Function<dim>(dim)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override;
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override;
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int component = 0) const override;
+};
+
+template<>
+double
+SolutionVelocity<2>::value(const Point<2> & p, const unsigned int component) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  if(component == 0)
+    return PI * sin(PI * x) * cos(PI * y);
+  if(component == 1)
+    return -PI * cos(PI * x) * sin(PI * y);
+
+  AssertThrow(false, ExcMessage("Invalid component."));
+  return 0;
+}
+
+template<>
+Tensor<1, 2>
+SolutionVelocity<2>::gradient(const Point<2> & p, const unsigned int component) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  Tensor<1, 2> grad;
+  if(component == 0)
+  {
+    grad[0] = PI * PI * cos(PI * x) * cos(PI * y);
+    grad[1] = -PI * PI * sin(PI * x) * sin(PI * y);
+  }
+  else if(component == 1)
+  {
+    grad[0] = PI * PI * sin(PI * x) * sin(PI * y);
+    grad[1] = -PI * PI * cos(PI * x) * cos(PI * y);
+  }
+  else
+    AssertThrow(false, ExcMessage("Invalid component."));
+
+  return grad;
+}
+
+template<>
+SymmetricTensor<2, 2>
+SolutionVelocity<2>::hessian(const Point<2> & p, const unsigned int component) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  SymmetricTensor<2, 2> hessian;
+  if(component == 0)
+  {
+    hessian[0][0] = hessian[1][1] = -PI * PI * PI * sin(PI * x) * cos(PI * y);
+    hessian[0][1]                 = -PI * PI * PI * cos(PI * x) * sin(PI * y);
+  }
+  else if(component == 1)
+  {
+    hessian[0][0] = hessian[1][1] = PI * PI * PI * cos(PI * x) * sin(PI * y);
+    hessian[0][1]                 = PI * PI * PI * sin(PI * x) * cos(PI * y);
+  }
+  else
+    AssertThrow(false, ExcMessage("Invalid component."));
+
+  return hessian;
+}
+
+
+
+template<int dim>
+class SolutionPressure : public Function<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+
+public:
+  SolutionPressure() : Function<dim>(1)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override;
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override;
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int component = 0) const override;
+};
+
+template<>
+double
+SolutionPressure<2>::value(const Point<2> & p, const unsigned int) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  return cos(2. * PI * x) * cos(2. * PI * y);
+}
+
+template<>
+Tensor<1, 2>
+SolutionPressure<2>::gradient(const Point<2> & p, const unsigned int) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  Tensor<1, 2> grad;
+  {
+    grad[0] = -2. * PI * sin(2. * PI * x) * cos(2. * PI * y);
+    grad[1] = -2. * PI * cos(2. * PI * x) * sin(2. * PI * y);
+  }
+
+  return grad;
+}
+
+template<>
+SymmetricTensor<2, 2>
+SolutionPressure<2>::hessian(const Point<2> &, const unsigned int) const
+{
+  AssertThrow(false, ExcMessage("No need for this functionality..."));
+  return SymmetricTensor<2, 2>{};
+}
+
+
+
+template<int dim>
+using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
+
+} // namespace Homogeneous
 
 } // namespace DivergenceFree
 

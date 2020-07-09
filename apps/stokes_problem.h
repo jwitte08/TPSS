@@ -1238,8 +1238,24 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
                                            Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
     rt_parameters(rt_parameters_in),
     equation_data(equation_data_in),
-    analytical_solution(std::make_shared<DivergenceFree::Solution<dim>>()),
-    load_function(std::make_shared<DivergenceFree::Load<dim>>()),
+    analytical_solution([&]() -> std::shared_ptr<Function<dim>> {
+      if(equation_data_in.variant == EquationData::Variant::DivFree)
+        return std::make_shared<DivergenceFree::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::DivFreeHom)
+        return std::make_shared<DivergenceFree::Homogeneous::Solution<dim>>();
+      else
+        AssertThrow(false, ExcMessage("Not supported..."));
+      return nullptr;
+    }()),
+    load_function([&]() -> std::shared_ptr<Function<dim>> {
+      if(equation_data_in.variant == EquationData::Variant::DivFree)
+        return std::make_shared<DivergenceFree::Load<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::DivFreeHom)
+        return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
+      else
+        AssertThrow(false, ExcMessage("Not supported..."));
+      return nullptr;
+    }()),
     triangulation(Triangulation<dim>::maximum_smoothing),
     mapping(1),
     // Finite element for the velocity only:
@@ -1479,8 +1495,8 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   {
     zero_constraints.clear();
+    DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
     const FEValuesExtractors::Vector velocities(0);
-
     if(rt_parameters.solver.variant == "FGMRES_ILU") // inhomog. constraints !
     {
       for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
@@ -1492,7 +1508,6 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     }
     else
     {
-      DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
       for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
         DoFTools::make_zero_boundary_constraints(dof_handler,
                                                  boundary_id,
@@ -2047,6 +2062,7 @@ ModelProblem<dim, fe_degree_p, method>::solve()
   else if(rt_parameters.solver.variant == "GMRES_GMG")
   {
     prepare_multigrid_velocity_pressure();
+    // PreconditionIdentity prec_id;
     auto & preconditioner = mgc_velocity_pressure.get_preconditioner();
 
     iterative_solve_impl(preconditioner, "gmres");

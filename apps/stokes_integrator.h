@@ -320,7 +320,7 @@ public:
         for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
         {
           auto & velocity_matrix = local_matrices[patch];
-          if(velocity_matrix.n_block_rows() == 0 && velocity_matrix.n_block_cols() == 0)
+          if(velocity_matrix.n_block_rows() != dim && velocity_matrix.n_block_cols() != dim)
             velocity_matrix.resize(dim, dim);
 
           eval_test.reinit(patch);
@@ -1010,7 +1010,8 @@ public:
 
     AssertDimension(local_matrices_velocity.size(), local_matrices.size());
     const auto patch_transfer = get_patch_transfer(subdomain_handler);
-    for(auto patch_index = 0U; patch_index < local_matrices.size(); ++patch_index)
+    for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
+        ++patch_index)
     {
       const auto & local_block_velocity          = local_matrices_velocity[patch_index];
       const auto & local_block_velocity_pressure = local_matrices_velocity_pressure[patch_index];

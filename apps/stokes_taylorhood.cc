@@ -61,7 +61,7 @@ main(int argc, char * argv[])
   {
     using namespace Stokes;
 
-    // deallog.depth_console(3);
+    deallog.depth_console(3);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     const int                        dim    = CT::DIMENSION_;
     const int                        degree = CT::FE_DEGREE_;
@@ -91,7 +91,7 @@ main(int argc, char * argv[])
       const std::string str_solver_variant[test_index_max + 1] = {
         "UMFPACK", "FGMRES_ILU", "FGMRES_GMGvelocity", "FGMRES_GMGvelocity", "GMRES_GMG"};
       prms.solver.variant              = str_solver_variant[test_index];
-      prms.solver.rel_tolerance        = 1.e-8;
+      prms.solver.rel_tolerance        = 1.e-8; // !!!
       prms.solver.precondition_variant = test_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
@@ -113,7 +113,7 @@ main(int argc, char * argv[])
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::GaussSeidel,
         SmootherParameter::SmootherVariant::Schwarz,
-        SmootherParameter::SmootherVariant::None};
+        SmootherParameter::SmootherVariant::Schwarz};
       prms.multigrid.pre_smoother.variant                    = smoother_variant[test_index];
       prms.multigrid.pre_smoother.n_smoothing_steps          = 2;
       prms.multigrid.pre_smoother.schwarz.patch_variant      = CT::PATCH_VARIANT_;
@@ -124,13 +124,14 @@ main(int argc, char * argv[])
       prms.multigrid.post_smoother.schwarz.reverse_smoothing = true;
     }
 
-    EquationData              equation_data;
-    ModelProblem<dim, degree> flow_problem(prms, equation_data);
+    EquationData equation_data;
+    equation_data.variant = EquationData::Variant::DivFreeHom;
+    ModelProblem<dim, degree> stokes_problem(prms, equation_data);
 
-    flow_problem.run();
+    stokes_problem.run();
     std::cout << std::endl
               << std::endl
-              << write_ppdata_to_string(flow_problem.pp_data, flow_problem.pp_data_pressure);
+              << write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
   }
 
   catch(std::exception & exc)
