@@ -1197,6 +1197,7 @@ public:
 
   AffineConstraints<double> zero_constraints;
   AffineConstraints<double> zero_constraints_velocity;
+  AffineConstraints<double> mean_value_constraints;
   AffineConstraints<double> constraints_velocity;
   AffineConstraints<double> constraints_pressure;
 
@@ -1277,7 +1278,10 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
 {
   Assert(check_finite_elements(), ExcMessage("Check default finite elements and dof_layout."));
   equation_data.assemble_pressure_mass_matrix =
-    (rt_parameters.solver.variant == "UMFPACK") ? false : true;
+    (rt_parameters.solver.variant == "FGMRES_ILU" ||
+     rt_parameters.solver.variant == "FGMRES_GMGvelocity") ?
+      true :
+      false;
 }
 
 
@@ -1528,18 +1532,6 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
       constraints_velocity.close();
     }
 
-    // As discussed in the introduction, we need to fix one degree of freedom
-    // of the pressure variable to ensure solvability of the problem. We do
-    // this here by marking the first pressure dof, which has index n_dofs_velocity as a
-    // constrained dof.
-    constraints_pressure.clear();
-    if(rt_parameters.solver.variant == "UMFPACK")
-    {
-      zero_constraints.add_line(n_dofs_velocity);
-      constraints_pressure.add_line(0);
-    }
-    constraints_pressure.close();
-
     zero_constraints.close();
   }
 
@@ -1547,11 +1539,50 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   setup_system_pressure();
 
+  /// Restrict the pressure to be from the mean-value free L2-space, that is
+  /// L^2_0 (\Omega) following the notation in Guido's mixed FEM script.
+  ///
+  /// TODO Currently, we are cheating in the way, that we only fix the
+  /// mean-value on the boundary, which assumes enough regularity from our
+  /// pressure solution.
+  mean_value_constraints.clear();
+  constraints_pressure.clear();
+  if(rt_parameters.solver.variant == "UMFPACK")
+  {
+    {
+      const FEValuesExtractors::Scalar pressure(dim);
+      std::vector<bool>                boundary_dof_mask(dof_handler.n_dofs(), false);
+      DoFTools::extract_boundary_dofs(dof_handler, fe->component_mask(pressure), boundary_dof_mask);
+      const types::global_dof_index first_boundary_dof_index =
+        std::distance(boundary_dof_mask.cbegin(),
+                      std::find(boundary_dof_mask.cbegin(), boundary_dof_mask.cend(), true));
+      mean_value_constraints.add_line(first_boundary_dof_index);
+      for(types::global_dof_index i = first_boundary_dof_index + 1; i < dof_handler.n_dofs(); ++i)
+        if(boundary_dof_mask[i] == true)
+          mean_value_constraints.add_entry(first_boundary_dof_index, i, -1);
+    }
+
+    std::vector<bool> boundary_dof_mask(dof_handler_pressure.n_dofs(), false);
+    DoFTools::extract_boundary_dofs(dof_handler_pressure, ComponentMask{}, boundary_dof_mask);
+    const types::global_dof_index first_boundary_dof_index =
+      std::distance(boundary_dof_mask.cbegin(),
+                    std::find(boundary_dof_mask.cbegin(), boundary_dof_mask.cend(), true));
+    constraints_pressure.add_line(first_boundary_dof_index);
+    for(types::global_dof_index i = first_boundary_dof_index + 1; i < dof_handler_pressure.n_dofs();
+        ++i)
+      if(boundary_dof_mask[i] == true)
+        constraints_pressure.add_entry(first_boundary_dof_index, i, -1);
+  }
+  constraints_pressure.close();
+  mean_value_constraints.close();
+  zero_constraints.merge(mean_value_constraints);
+
   system_matrix.clear();
   pressure_mass_matrix.clear();
   BlockDynamicSparsityPattern dsp(dofs_per_block, dofs_per_block);
-  DoFTools::make_sparsity_pattern(dof_handler, dsp, zero_constraints, false); // TODO !!! DGQ case
+  DoFTools::make_sparsity_pattern(dof_handler, dsp, zero_constraints); // TODO !!! DGQ case
   sparsity_pattern.copy_from(dsp);
+
   system_matrix.reinit(sparsity_pattern);
   system_solution.reinit(dofs_per_block);
   zero_constraints.set_zero(system_solution);
@@ -1832,7 +1863,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system()
   else
     assemble_system_velocity_pressure();
 
-  if(rt_parameters.solver.variant != "UMFPACK")
+  if(equation_data.assemble_pressure_mass_matrix)
   {
     pressure_mass_matrix.reinit(sparsity_pattern.block(1, 1));
     pressure_mass_matrix.copy_from(system_matrix.block(1, 1));
@@ -2011,6 +2042,7 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     SparseDirectUMFPACK A_direct;
     A_direct.template initialize<BlockSparseMatrix<double>>(system_matrix);
     A_direct.vmult(system_delta_x, system_rhs);
+    zero_constraints.distribute(system_delta_x); // mean-value constraint
     system_solution += system_delta_x;
 
     pp_data.average_reduction_system.push_back(0.);
