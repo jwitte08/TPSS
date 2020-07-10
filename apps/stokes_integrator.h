@@ -669,6 +669,11 @@ struct MatrixIntegrator
               ScratchData<dim> &   scratch_data,
               CopyData &           copy_data) const;
 
+  void
+  cell_mass_worker(const IteratorType & cell,
+                   ScratchData<dim> &   scratch_data,
+                   CopyData &           copy_data) const;
+
   const Function<dim> *  load_function;
   const Function<dim> *  analytical_solution;
   const Vector<double> * discrete_solution;
@@ -696,12 +701,6 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
     const auto & x_q = quadrature_points[q];
     for(unsigned int i = 0; i < dofs_per_cell; ++i)
     {
-      if(equation_data.assemble_pressure_mass_matrix)
-        for(unsigned int j = 0; j < dofs_per_cell; ++j)
-        {
-          copy_data.cell_matrix(i, j) += phi.shape_value(i, q) * phi.shape_value(j, q) * phi.JxW(q);
-        }
-
       if(!is_multigrid)
       {
         const auto load_value = load_function->value(x_q, 0);
@@ -709,16 +708,27 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
       }
     }
   }
+}
 
-  if(!is_multigrid && discrete_solution)
-  {
-    Vector<double> p0(copy_data.local_dof_indices.size());
-    for(auto i = 0U; i < p0.size(); ++i)
-      p0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
-    Vector<double> w0(copy_data.local_dof_indices.size());
-    copy_data.cell_matrix.vmult(w0, p0);
-    copy_data.cell_rhs -= w0;
-  }
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::cell_mass_worker(const IteratorType & cell,
+                                                      ScratchData<dim> &   scratch_data,
+                                                      CopyData &           copy_data) const
+{
+  copy_data.cell_matrix = 0.;
+  copy_data.cell_rhs    = 0.;
+
+  FEValues<dim> & phi = scratch_data.fe_values;
+  phi.reinit(cell);
+  cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
+
+  const unsigned int dofs_per_cell = phi.get_fe().dofs_per_cell;
+
+  for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
+    for(unsigned int i = 0; i < dofs_per_cell; ++i)
+      for(unsigned int j = 0; j < dofs_per_cell; ++j)
+        copy_data.cell_matrix(i, j) += phi.shape_value(i, q) * phi.shape_value(j, q) * phi.JxW(q);
 }
 
 } // namespace MW

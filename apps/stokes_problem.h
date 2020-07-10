@@ -1203,6 +1203,7 @@ public:
 
   BlockSparsityPattern      sparsity_pattern;
   BlockSparseMatrix<double> system_matrix;
+  SparsityPattern           sparsity_pattern_pressure;
   SparseMatrix<double>      pressure_mass_matrix;
 
   BlockVector<double> system_solution;
@@ -1277,11 +1278,6 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
     mgc_velocity_pressure(rt_parameters_in.multigrid, equation_data_in)
 {
   Assert(check_finite_elements(), ExcMessage("Check default finite elements and dof_layout."));
-  equation_data.assemble_pressure_mass_matrix =
-    (rt_parameters.solver.variant == "FGMRES_ILU" ||
-     rt_parameters.solver.variant == "FGMRES_GMGvelocity") ?
-      true :
-      false;
 }
 
 
@@ -1468,6 +1464,9 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure()
   pressure_mask.push_back(true);
   const auto & fe_pressure = fe->get_sub_fe(pressure_mask);
   dof_handler_pressure.initialize(triangulation, fe_pressure);
+
+  if(rt_parameters.solver.variant == "FGMRES_ILU")
+    DoFRenumbering::Cuthill_McKee(dof_handler_pressure);
 }
 
 
@@ -1486,10 +1485,10 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   if(rt_parameters.solver.variant == "FGMRES_ILU")
     DoFRenumbering::Cuthill_McKee(dof_handler);
 
-  // This ensures that all velocities DoFs are enumerated before the
-  // pressure unknowns. This allows us to use blocks for vectors and
-  // matrices and allows us to get the same DoF numbering for
-  // dof_handler and dof_handler_velocity.
+  // This ensures that all velocity DoFs are enumerated before the pressure
+  // unknowns. This allows us to use blocks for vectors and matrices and allows
+  // us to get the same DoF numbering for dof_handler and its separated
+  // counterparts dof_handler_velocity and dof_handler_pressure.
   DoFRenumbering::block_wise(dof_handler);
   std::vector<unsigned int>                  block_component{0U, 1U};
   const std::vector<types::global_dof_index> dofs_per_block =
@@ -1542,40 +1541,111 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   /// Restrict the pressure to be from the mean-value free L2-space, that is
   /// L^2_0 (\Omega) following the notation in Guido's mixed FEM script.
   ///
-  /// TODO Currently, we are cheating in the way, that we only fix the
-  /// mean-value on the boundary, which assumes enough regularity from our
-  /// pressure solution.
-  mean_value_constraints.clear();
-  constraints_pressure.clear();
-  if(rt_parameters.solver.variant == "UMFPACK")
+  /// Therefore, we first compute the (unconstrained) pressure mass matrix and
+  /// then apply the coefficient vector associated to the constant one function
+  /// to obtain the weights for each degree of freedom. By means of these
+  /// weights we impose a mean value free constraint.
   {
-    {
-      const FEValuesExtractors::Scalar pressure(dim);
-      std::vector<bool>                boundary_dof_mask(dof_handler.n_dofs(), false);
-      DoFTools::extract_boundary_dofs(dof_handler, fe->component_mask(pressure), boundary_dof_mask);
-      const types::global_dof_index first_boundary_dof_index =
-        std::distance(boundary_dof_mask.cbegin(),
-                      std::find(boundary_dof_mask.cbegin(), boundary_dof_mask.cend(), true));
-      mean_value_constraints.add_line(first_boundary_dof_index);
-      for(types::global_dof_index i = first_boundary_dof_index + 1; i < dof_handler.n_dofs(); ++i)
-        if(boundary_dof_mask[i] == true)
-          mean_value_constraints.add_entry(first_boundary_dof_index, i, -1);
-    }
+    /// 1) Assemble the (unconstrained) mass for the pressure
+    constraints_pressure.clear();
+    constraints_pressure.close();
 
-    std::vector<bool> boundary_dof_mask(dof_handler_pressure.n_dofs(), false);
-    DoFTools::extract_boundary_dofs(dof_handler_pressure, ComponentMask{}, boundary_dof_mask);
-    const types::global_dof_index first_boundary_dof_index =
-      std::distance(boundary_dof_mask.cbegin(),
-                    std::find(boundary_dof_mask.cbegin(), boundary_dof_mask.cend(), true));
-    constraints_pressure.add_line(first_boundary_dof_index);
-    for(types::global_dof_index i = first_boundary_dof_index + 1; i < dof_handler_pressure.n_dofs();
-        ++i)
-      if(boundary_dof_mask[i] == true)
-        constraints_pressure.add_entry(first_boundary_dof_index, i, -1);
+    DynamicSparsityPattern dsp(dof_handler_pressure.n_dofs());
+    DoFTools::make_sparsity_pattern(dof_handler_pressure, dsp, constraints_pressure);
+
+    SparsityPattern sparsity_pattern;
+    sparsity_pattern.copy_from(dsp);
+    SparseMatrix<double> pressure_mass_matrix;
+    pressure_mass_matrix.reinit(sparsity_pattern);
+
+    using Pressure::MW::CopyData;
+    using Pressure::MW::ScratchData;
+    using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
+
+    MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+
+    auto cell_worker =
+      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+        matrix_integrator.cell_mass_worker(cell, scratch_data, copy_data);
+      };
+
+    const auto copier = [&](const CopyData & copy_data) {
+      constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
+        copy_data.cell_matrix, copy_data.local_dof_indices, pressure_mass_matrix);
+    };
+
+    const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
+    const UpdateFlags interface_update_flags = update_default;
+
+    ScratchData<dim> scratch_data(
+      mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
+    CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
+    MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
+                          dof_handler_pressure.end(),
+                          cell_worker,
+                          copier,
+                          scratch_data,
+                          copy_data,
+                          MeshWorker::assemble_own_cells);
+
+    Vector<double> mass_foreach_dof(dof_handler_pressure.n_dofs());
+    Vector<double> constant_one_vector(dof_handler_pressure.n_dofs());
+    std::fill(constant_one_vector.begin(), constant_one_vector.end(), 1.);
+    pressure_mass_matrix.vmult(mass_foreach_dof, constant_one_vector);
+
+    AssertThrow(mass_foreach_dof(0) > 0., ExcMessage("First DoF has no positive mass."));
+
+    /// 2) Use the mass to impose a mean-value free constraint on the first
+    /// pressure degree of freedom
+    mean_value_constraints.clear();
+    constraints_pressure.clear();
+    if(rt_parameters.solver.variant == "UMFPACK")
+    {
+      const double mass_of_first_dof = mass_foreach_dof(0);
+      constraints_pressure.add_line(0U);
+      for(auto i = 1U; i < n_dofs_pressure; ++i)
+        constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
+      {
+        const types::global_dof_index first_dof_index = n_dofs_velocity;
+        mean_value_constraints.add_line(first_dof_index);
+        for(auto i = 1U; i < n_dofs_pressure; ++i)
+          mean_value_constraints.add_entry(first_dof_index,
+                                           first_dof_index + i,
+                                           -mass_foreach_dof(i) / mass_of_first_dof);
+      }
+
+      // {
+      //   const FEValuesExtractors::Scalar pressure(dim);
+      //   std::vector<bool>                boundary_dof_mask(dof_handler.n_dofs(), false);
+      //   DoFTools::extract_boundary_dofs(dof_handler,
+      //                                   fe->component_mask(pressure),
+      //                                   boundary_dof_mask);
+      //   const types::global_dof_index first_boundary_dof_index =
+      //     std::distance(boundary_dof_mask.cbegin(),
+      //                   std::find(boundary_dof_mask.cbegin(), boundary_dof_mask.cend(), true));
+      //   mean_value_constraints.add_line(first_boundary_dof_index);
+      //   for(types::global_dof_index i = first_boundary_dof_index + 1; i < dof_handler.n_dofs();
+      //   ++i)
+      //     if(boundary_dof_mask[i] == true)
+      //       mean_value_constraints.add_entry(first_boundary_dof_index, i, -1);
+      // }
+
+      // std::vector<bool> boundary_dof_mask(dof_handler_pressure.n_dofs(), false);
+      // DoFTools::extract_boundary_dofs(dof_handler_pressure, ComponentMask{}, boundary_dof_mask);
+      // const types::global_dof_index first_boundary_dof_index =
+      //   std::distance(boundary_dof_mask.cbegin(),
+      //                 std::find(boundary_dof_mask.cbegin(), boundary_dof_mask.cend(), true));
+      // constraints_pressure.add_line(first_boundary_dof_index);
+      // for(types::global_dof_index i = first_boundary_dof_index + 1;
+      //     i < dof_handler_pressure.n_dofs();
+      //     ++i)
+      //   if(boundary_dof_mask[i] == true)
+      //     constraints_pressure.add_entry(first_boundary_dof_index, i, -1);
+    }
+    constraints_pressure.close();
+    mean_value_constraints.close();
+    zero_constraints.merge(mean_value_constraints);
   }
-  constraints_pressure.close();
-  mean_value_constraints.close();
-  zero_constraints.merge(mean_value_constraints);
 
   system_matrix.clear();
   pressure_mass_matrix.clear();
@@ -1863,11 +1933,40 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system()
   else
     assemble_system_velocity_pressure();
 
-  if(equation_data.assemble_pressure_mass_matrix)
+  if(rt_parameters.solver.variant == "FGMRES_ILU" ||
+     rt_parameters.solver.variant == "FGMRES_GMGvelocity")
   {
     pressure_mass_matrix.reinit(sparsity_pattern.block(1, 1));
-    pressure_mass_matrix.copy_from(system_matrix.block(1, 1));
-    system_matrix.block(1, 1) = 0.;
+
+    using Pressure::MW::CopyData;
+    using Pressure::MW::ScratchData;
+    using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
+
+    MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+
+    auto cell_worker =
+      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+        matrix_integrator.cell_mass_worker(cell, scratch_data, copy_data);
+      };
+
+    const auto copier = [&](const CopyData & copy_data) {
+      constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
+        copy_data.cell_matrix, copy_data.local_dof_indices, pressure_mass_matrix);
+    };
+
+    const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
+    const UpdateFlags interface_update_flags = update_default;
+
+    ScratchData<dim> scratch_data(
+      mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
+    CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
+    MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
+                          dof_handler_pressure.end(),
+                          cell_worker,
+                          copier,
+                          scratch_data,
+                          copy_data,
+                          MeshWorker::assemble_own_cells);
   }
 }
 
