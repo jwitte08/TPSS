@@ -1434,6 +1434,8 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_syst
 
   //: distribute DoFs and initialize MGCollection
   dof_handler_velocity.initialize(triangulation, *fe_velocity);
+  if(rt_parameters.solver.variant == "FGMRES_ILU")
+    DoFRenumbering::Cuthill_McKee(dof_handler_velocity);
 
   //: setup system matrix (DEBUG)
   if(do_system_matrix)
@@ -1496,20 +1498,11 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   const unsigned int n_dofs_velocity = dofs_per_block[0];
   const unsigned int n_dofs_pressure = dofs_per_block[1];
 
+  /// No-slip boundary conditions for the velocity.
   {
     zero_constraints.clear();
     DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
     const FEValuesExtractors::Vector velocities(0);
-    if(rt_parameters.solver.variant == "FGMRES_ILU") // inhomog. constraints !
-    {
-      for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
-        VectorTools::interpolate_boundary_values(dof_handler,
-                                                 boundary_id,
-                                                 *analytical_solution,
-                                                 zero_constraints,
-                                                 fe->component_mask(velocities));
-    }
-    else
     {
       for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
         DoFTools::make_zero_boundary_constraints(dof_handler,
@@ -1678,8 +1671,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_step56()
   using VelocityPressure::MW::ScratchData;
   using MatrixIntegrator = VelocityPressure::MW::MatrixIntegrator<dim, /*is_multigrid*/ false>;
 
-  const auto * particular_solution =
-    rt_parameters.solver.variant == "FGMRES_ILU" ? nullptr : &system_solution;
+  const auto *     particular_solution = &system_solution;
   MatrixIntegrator matrix_integrator(load_function.get(),
                                      analytical_solution.get(),
                                      particular_solution,
@@ -1731,9 +1723,8 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     const auto             component_range = std::make_pair<unsigned int>(0, dim);
     FunctionExtractor<dim> load_function_velocity(load_function.get(), component_range);
     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
-    const auto *           particular_solution_velocity =
-      rt_parameters.solver.variant == "FGMRES_ILU" ? nullptr : &(system_solution.block(0));
-    MatrixIntegrator matrix_integrator(&load_function_velocity,
+    const auto *           particular_solution_velocity = &(system_solution.block(0));
+    MatrixIntegrator       matrix_integrator(&load_function_velocity,
                                        &analytical_solution_velocity,
                                        particular_solution_velocity,
                                        equation_data);
@@ -1857,10 +1848,8 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, false>;
     using CellIterator     = typename MatrixIntegrator::IteratorType;
 
-    const auto * particular_solution_velocity =
-      rt_parameters.solver.variant == "FGMRES_ILU" ? nullptr : &(system_solution.block(0));
-    const auto * particular_solution_pressure =
-      rt_parameters.solver.variant == "FGMRES_ILU" ? nullptr : &(system_solution.block(1));
+    const auto *     particular_solution_velocity = &(system_solution.block(0));
+    const auto *     particular_solution_pressure = &(system_solution.block(1));
     MatrixIntegrator matrix_integrator(particular_solution_velocity,
                                        particular_solution_pressure,
                                        equation_data);
@@ -1923,15 +1912,7 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::assemble_system()
 {
-  /// Currently, the FGMRES_ILU path is only supported by the old assembly (step-56)
-  if(rt_parameters.solver.variant == "FGMRES_ILU")
-    assemble_system_step56();
-
-  /// All remaining cases use the assembly where velocity and pressure blocks
-  /// are assembled separately. This allows to use FEInterfaceValues for DG
-  /// elements.
-  else
-    assemble_system_velocity_pressure();
+  assemble_system_velocity_pressure();
 
   if(rt_parameters.solver.variant == "FGMRES_ILU" ||
      rt_parameters.solver.variant == "FGMRES_GMGvelocity")
@@ -2116,11 +2097,6 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
                                                                         system_delta_x,
                                                                         system_rhs,
                                                                         preconditioner);
-  if(rt_parameters.solver.variant == "FGMRES_ILU") // inhomog. constraints !
-  {
-    zero_constraints.distribute(system_delta_x);
-    system_solution = 0.;
-  }
   system_solution += system_delta_x;
 
   const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
