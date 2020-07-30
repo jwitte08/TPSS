@@ -95,7 +95,8 @@ main(int argc, char * argv[])
       prms.solver.precondition_variant = test_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
-      prms.solver.n_iterations_max = 200;
+      prms.solver.n_iterations_max          = 1000; // !!!
+      prms.solver.use_right_preconditioning = true;
 
       //: multigrid
       const double damping_factor =
@@ -125,7 +126,13 @@ main(int argc, char * argv[])
     }
 
     EquationData equation_data;
-    equation_data.variant = EquationData::Variant::DivFreeHom;
+    equation_data.variant                     = EquationData::Variant::DivFreeHom;
+    equation_data.force_mean_value_constraint = true;
+    if(argc > 3)
+    {
+      AssertThrow(std::atoi(argv[3]) == 0 || std::atoi(argv[3]) == 1, ExcMessage("Invalid flag."));
+      equation_data.force_mean_value_constraint = static_cast<bool>(std::atoi(argv[3]));
+    }
     ModelProblem<dim, degree> stokes_problem(prms, equation_data);
 
     stokes_problem.run();

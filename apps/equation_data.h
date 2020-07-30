@@ -679,6 +679,8 @@ struct EquationData
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
     oss << Util::parameter_to_fstring("Assemble pressure mass matrix?:",
                                       assemble_pressure_mass_matrix);
+    oss << Util::parameter_to_fstring("Enforce the mean value constraint:",
+                                      force_mean_value_constraint);
     return oss.str();
   }
 
@@ -687,6 +689,7 @@ struct EquationData
   std::set<types::boundary_id> dirichlet_boundary_ids_pressure = {};
   double                       ip_factor                       = 1.;
   bool                         assemble_pressure_mass_matrix   = false;
+  bool                         force_mean_value_constraint     = false;
 };
 
 

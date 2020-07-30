@@ -953,13 +953,13 @@ namespace FD
 template<int dim,
          int fe_degree_p,
          typename Number              = double,
-         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q>
+         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
+         int             fe_degree_v  = fe_degree_p + 1>
 class MatrixIntegrator
 {
 public:
   using This = MatrixIntegrator<dim, fe_degree_p, Number>;
 
-  static constexpr int fe_degree_v   = fe_degree_p + 1;
   static constexpr int n_q_points_1d = fe_degree_v + 1;
 
   using value_type              = Number;

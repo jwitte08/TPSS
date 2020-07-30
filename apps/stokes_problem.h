@@ -97,16 +97,21 @@ using namespace dealii;
 /**
  * TODO...
  */
-template<int dim, int fe_degree_p = 2, typename Number = double>
+template<int dim,
+         int fe_degree_p,
+         typename Number              = double,
+         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
+         int             fe_degree_v  = fe_degree_p + 1>
 class BlockSparseMatrixAugmented
   : public BlockSparseMatrix<Number>,
-    public VelocityPressure::FD::MatrixIntegrator<dim, fe_degree_p, Number>
+    public VelocityPressure::FD::
+      MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>
 {
 public:
-  using value_type  = Number;
-  using matrix_type = BlockSparseMatrix<Number>;
-  using local_integrator_type =
-    VelocityPressure::FD::MatrixIntegrator<dim, fe_degree_p, Number>; // TODO !!!
+  using value_type            = Number;
+  using matrix_type           = BlockSparseMatrix<Number>;
+  using local_integrator_type = VelocityPressure::FD::
+    MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>; // TODO !!!
 
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
@@ -627,14 +632,16 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::get_preconditioner() const
 /**
  * TODO...
  */
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v>
+template<int             dim,
+         int             fe_degree_p,
+         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
+         int             fe_degree_v  = fe_degree_p + 1>
 struct MGCollectionVelocityPressure
 {
-  static constexpr int fe_degree_v   = fe_degree_p + 1;
   static constexpr int n_q_points_1d = fe_degree_v + 1;
 
   using VECTOR = BlockVector<double>;
-  using MATRIX = BlockSparseMatrixAugmented<dim, fe_degree_p, double>;
+  using MATRIX = BlockSparseMatrixAugmented<dim, fe_degree_p, double, dof_layout_v, fe_degree_v>;
 
   // TODO !!! MGTransferBlockMatrixFree (based on distributed::BlockVector)
   using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
@@ -688,10 +695,10 @@ struct MGCollectionVelocityPressure
   mutable std::shared_ptr<const PreconditionMG<dim, VECTOR, MG_TRANSFER>> preconditioner_mg;
 };
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v>
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::MGCollectionVelocityPressure(
-  const MGParameter &  mg_prms_in,
-  const EquationData & equation_data_in)
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
+MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v>::
+  MGCollectionVelocityPressure(const MGParameter &  mg_prms_in,
+                               const EquationData & equation_data_in)
   : parameters(mg_prms_in),
     equation_data(equation_data_in),
     dof_handler_velocity(nullptr),
@@ -700,9 +707,9 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::MGCollectionVeloci
 {
 }
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
 void
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::clear()
+MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v>::clear()
 {
   preconditioner_mg.reset();
   multigrid.reset();
@@ -720,9 +727,9 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::clear()
   mg_constrained_dofs.reset();
 }
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
 void
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::assemble_multigrid()
+MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v>::assemble_multigrid()
 {
   AssertDimension(mg_matrices.min_level(), parameters.coarse_level);
   Assert(mg_constrained_dofs, ExcMessage("mg_constrained_dofs is uninitialized."));
@@ -896,10 +903,10 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::assemble_multigrid
   }
 }
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
 void
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::prepare_schwarz_smoothers(
-  const std::shared_ptr<ColoringBase<dim>> user_coloring)
+MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v>::
+  prepare_schwarz_smoothers(const std::shared_ptr<ColoringBase<dim>> user_coloring)
 {
   Assert(parameters.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz,
          ExcMessage("Invalid smoothing variant."));
@@ -937,9 +944,9 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::prepare_schwarz_sm
   }
 }
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
 void
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::prepare_multigrid(
+MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v>::prepare_multigrid(
   const unsigned int                       mg_level_max,
   const std::shared_ptr<ColoringBase<dim>> user_coloring)
 {
@@ -1041,12 +1048,13 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::prepare_multigrid(
                                                   mg_level_max);
 }
 
-template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v>
+template<int dim, int fe_degree_p, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
 const PreconditionMG<
   dim,
-  typename MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::VECTOR,
-  typename MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::MG_TRANSFER> &
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v>::get_preconditioner() const
+  typename MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v>::VECTOR,
+  typename MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v>::MG_TRANSFER> &
+MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v>::get_preconditioner()
+  const
 {
   AssertThrow(multigrid, ExcMessage("multigrid is uninitialized."));
   preconditioner_mg = std::make_shared<PreconditionMG<dim, VECTOR, MG_TRANSFER>>(*dof_handler,
@@ -1080,6 +1088,7 @@ struct ModelProblemBase<Method::TaylorHood, dim, fe_degree_p>
 {
   static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q;
   static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::Q;
+  static constexpr int             fe_degree_v  = fe_degree_p + 1;
 };
 
 template<int dim, int fe_degree_p>
@@ -1087,6 +1096,7 @@ struct ModelProblemBase<Method::TaylorHoodDGQ, dim, fe_degree_p>
 {
   static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::DGQ;
   static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::Q;
+  static constexpr int             fe_degree_v  = fe_degree_p + 1;
 };
 
 template<int dim, int fe_degree_p>
@@ -1094,6 +1104,7 @@ struct ModelProblemBase<Method::TaylorHoodBlock, dim, fe_degree_p>
 {
   static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q;
   static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::Q;
+  static constexpr int             fe_degree_v  = fe_degree_p + 1;
 };
 
 
@@ -1109,7 +1120,7 @@ class ModelProblem : public ModelProblemBase<method, dim, fe_degree_p>
   using Base = ModelProblemBase<method, dim, fe_degree_p>;
 
 public:
-  static constexpr int fe_degree_v   = fe_degree_p + 1;
+  static constexpr int fe_degree_v   = Base::fe_degree_v;
   static constexpr int n_q_points_1d = fe_degree_v + 1;
   using Base::dof_layout_v;
 
@@ -1211,9 +1222,9 @@ public:
   BlockVector<double> system_rhs;
 
   //: multigrid
-  mutable std::shared_ptr<ColoringBase<dim>>                   user_coloring;
-  MGCollectionVelocity<dim, fe_degree_p + 1, dof_layout_v>     mgc_velocity;
-  MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v> mgc_velocity_pressure;
+  mutable std::shared_ptr<ColoringBase<dim>>                                user_coloring;
+  MGCollectionVelocity<dim, fe_degree_v, dof_layout_v>                      mgc_velocity;
+  MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v> mgc_velocity_pressure;
 
 private:
   std::shared_ptr<FiniteElement<dim>>
@@ -1262,8 +1273,8 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
     mapping(1),
     // Finite element for the velocity only:
     fe_velocity(dof_layout_v == TPSS::DoFLayout::DGQ ?
-                  std::make_shared<FESystem<dim>>(FE_DGQ<dim>(fe_degree_p + 1), dim) :
-                  std::make_shared<FESystem<dim>>(FE_Q<dim>(fe_degree_p + 1), dim)),
+                  std::make_shared<FESystem<dim>>(FE_DGQ<dim>(fe_degree_v), dim) :
+                  std::make_shared<FESystem<dim>>(FE_Q<dim>(fe_degree_v), dim)),
     // Finite element for the whole system:
     fe(generate_fe(*fe_velocity)),
     dof_handler(triangulation),
@@ -1592,7 +1603,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     /// pressure degree of freedom
     mean_value_constraints.clear();
     constraints_pressure.clear();
-    if(rt_parameters.solver.variant == "UMFPACK")
+    if(rt_parameters.solver.variant == "UMFPACK" || equation_data.force_mean_value_constraint)
     {
       const double mass_of_first_dof = mass_foreach_dof(0);
       constraints_pressure.add_line(0U);
@@ -1606,34 +1617,6 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
                                            first_dof_index + i,
                                            -mass_foreach_dof(i) / mass_of_first_dof);
       }
-
-      // {
-      //   const FEValuesExtractors::Scalar pressure(dim);
-      //   std::vector<bool>                boundary_dof_mask(dof_handler.n_dofs(), false);
-      //   DoFTools::extract_boundary_dofs(dof_handler,
-      //                                   fe->component_mask(pressure),
-      //                                   boundary_dof_mask);
-      //   const types::global_dof_index first_boundary_dof_index =
-      //     std::distance(boundary_dof_mask.cbegin(),
-      //                   std::find(boundary_dof_mask.cbegin(), boundary_dof_mask.cend(), true));
-      //   mean_value_constraints.add_line(first_boundary_dof_index);
-      //   for(types::global_dof_index i = first_boundary_dof_index + 1; i < dof_handler.n_dofs();
-      //   ++i)
-      //     if(boundary_dof_mask[i] == true)
-      //       mean_value_constraints.add_entry(first_boundary_dof_index, i, -1);
-      // }
-
-      // std::vector<bool> boundary_dof_mask(dof_handler_pressure.n_dofs(), false);
-      // DoFTools::extract_boundary_dofs(dof_handler_pressure, ComponentMask{}, boundary_dof_mask);
-      // const types::global_dof_index first_boundary_dof_index =
-      //   std::distance(boundary_dof_mask.cbegin(),
-      //                 std::find(boundary_dof_mask.cbegin(), boundary_dof_mask.cend(), true));
-      // constraints_pressure.add_line(first_boundary_dof_index);
-      // for(types::global_dof_index i = first_boundary_dof_index + 1;
-      //     i < dof_handler_pressure.n_dofs();
-      //     ++i)
-      //   if(boundary_dof_mask[i] == true)
-      //     constraints_pressure.add_entry(first_boundary_dof_index, i, -1);
     }
     constraints_pressure.close();
     mean_value_constraints.close();
@@ -2093,10 +2076,19 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
   SolverSelector<BlockVector<double>> iterative_solver;
   iterative_solver.set_control(solver_control);
   iterative_solver.select(solver_variant);
+  if(solver_variant == "gmres")
+  {
+    SolverGMRES<BlockVector<double>>::AdditionalData additional_data;
+    additional_data.right_preconditioning = rt_parameters.solver.use_right_preconditioning;
+    // additional_data.use_default_residual = false;
+    additional_data.max_n_tmp_vectors = rt_parameters.solver.n_iterations_max;
+    iterative_solver.set_data(additional_data);
+  }
   iterative_solver.solve<BlockSparseMatrix<double>, PreconditionerType>(system_matrix,
                                                                         system_delta_x,
                                                                         system_rhs,
                                                                         preconditioner);
+  zero_constraints.distribute(system_delta_x); // !!!
   system_solution += system_delta_x;
 
   const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
@@ -2179,10 +2171,8 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     AssertThrow(false, ExcMessage("Please, choose a valid solver variant."));
 
   /// Post processing of discrete solution
-  const double mean_pressure = VectorTools::compute_mean_value(dof_handler,
-                                                               QGauss<dim>(fe_degree_p + 2),
-                                                               system_solution,
-                                                               dim);
+  const double mean_pressure =
+    VectorTools::compute_mean_value(dof_handler, QGauss<dim>(n_q_points_1d), system_solution, dim);
   system_solution.block(1).add(-mean_pressure);
   print_parameter("Mean of pressure corrected by:", -mean_pressure);
   *pcout << std::endl;
@@ -2202,7 +2192,7 @@ ModelProblem<dim, fe_degree_p, method>::compute_errors()
                                     system_solution,
                                     *analytical_solution,
                                     difference_per_cell,
-                                    QGauss<dim>(fe_degree_p + 2),
+                                    QGauss<dim>(n_q_points_1d),
                                     VectorTools::L2_norm,
                                     &velocity_mask);
   const double Velocity_L2_error =
@@ -2214,7 +2204,7 @@ ModelProblem<dim, fe_degree_p, method>::compute_errors()
                                     system_solution,
                                     *analytical_solution,
                                     difference_per_cell,
-                                    QGauss<dim>(fe_degree_p + 2),
+                                    QGauss<dim>(n_q_points_1d),
                                     VectorTools::L2_norm,
                                     &pressure_mask);
   const double Pressure_L2_error =
@@ -2226,7 +2216,7 @@ ModelProblem<dim, fe_degree_p, method>::compute_errors()
                                     system_solution,
                                     *analytical_solution,
                                     difference_per_cell,
-                                    QGauss<dim>(fe_degree_p + 2),
+                                    QGauss<dim>(n_q_points_1d),
                                     VectorTools::H1_norm,
                                     &velocity_mask);
   const double Velocity_H1_error =
