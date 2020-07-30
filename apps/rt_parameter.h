@@ -35,11 +35,12 @@ struct SolverParameter
   lookup_solver_variant(const SmootherParameter pre_smoother,
                         const SmootherParameter post_smoother);
 
-  std::string         variant              = "none"; // see SolverSelector
-  double              abs_tolerance        = 1.e-14;
-  double              rel_tolerance        = -1.;
-  int                 n_iterations_max     = 100;
-  PreconditionVariant precondition_variant = PreconditionVariant::None;
+  std::string         variant                   = "none"; // see SolverSelector
+  double              abs_tolerance             = 1.e-14;
+  double              rel_tolerance             = -1.;
+  int                 n_iterations_max          = 100;
+  PreconditionVariant precondition_variant      = PreconditionVariant::None;
+  bool                use_right_preconditioning = false;
 
   void
   set_solver_variant(const SmootherParameter pre_smoother, const SmootherParameter post_smoother);
@@ -157,6 +158,10 @@ SolverParameter::to_string() const
   oss << Util::parameter_to_fstring("Number of maximal iterations:", n_iterations_max);
   oss << Util::parameter_to_fstring("Preconditioner:",
                                     str_precondition_variant(precondition_variant));
+  const bool use_preconditioner_for_gmres =
+    variant == "gmres" && precondition_variant != PreconditionVariant::None;
+  if(use_preconditioner_for_gmres)
+    oss << Util::parameter_to_fstring("Use as right preconditioner?", use_right_preconditioning);
   return oss.str();
 }
 
