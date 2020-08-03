@@ -197,6 +197,7 @@ struct SubdomainHandler<dim, number>::AdditionalData
   {
     internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>> shape_infos;
     std::set<types::boundary_id>                                      dirichlet_ids;
+    bool force_no_boundary_condition = false;
   };
 
   unsigned int          level            = numbers::invalid_unsigned_int;

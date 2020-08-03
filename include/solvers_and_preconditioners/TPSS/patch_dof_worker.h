@@ -185,6 +185,7 @@ PatchDoFWorker<dim, Number>::fill_dof_indices_on_patch(const unsigned int patch_
 {
   AssertIndexRange(patch_id, this->get_partition_data().n_subdomains());
   AssertIndexRange(lane, this->n_lanes_filled(patch_id));
+  const auto &              additional_data = dof_info->get_additional_data();
   const auto                n_cells         = patch_dof_tensor.cell_tensor.n_flat();
   const auto                n_dofs_per_cell = patch_dof_tensor.cell_dof_tensor.n_flat();
   std::vector<unsigned int> global_dof_indices;
@@ -234,7 +235,9 @@ PatchDoFWorker<dim, Number>::fill_dof_indices_on_patch(const unsigned int patch_
             const unsigned int patch_dof_index_per_comp =
               patch_dof_tensor.dof_index(cell_no, cell_dof_index);
             const bool is_boundary_dof =
-              patch_dof_tensor.is_boundary_face_dof(patch_dof_index_per_comp);
+              additional_data.force_no_boundary_condition ?
+                false :
+                patch_dof_tensor.is_boundary_face_dof(patch_dof_index_per_comp);
             global_dof_indices_plain[patch_dof_stride + patch_dof_index_per_comp] =
               is_boundary_dof ? numbers::invalid_unsigned_int :
                                 global_dof_indices_on_cell[cell_dof_index];
@@ -472,7 +475,8 @@ inline unsigned int
 PatchDoFWorker<dim, Number>::n_dofs_1d(const unsigned dimension) const
 {
   AssertIndexRange(dimension, dim);
-  if(dof_layout == TPSS::DoFLayout::Q)
+  const auto & additional_data = dof_info->get_additional_data();
+  if(dof_layout == TPSS::DoFLayout::Q && !additional_data.force_no_boundary_condition)
     if(this->patch_variant == TPSS::PatchVariant::vertex)
       return n_dofs_plain_1d(dimension) - 2;
   return n_dofs_plain_1d(dimension);

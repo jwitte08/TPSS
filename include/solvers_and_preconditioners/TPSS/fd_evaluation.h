@@ -290,7 +290,9 @@ private:
     FaceOperation &&                                                       face_operation,
     InterfaceOperation && interface_operation) const;
 
-  void restrict_matrix_qvp(Table<2, VectorizedArray<Number>> & subdomain_matrix) const;
+  void restrict_matrix_qvp(Table<2, VectorizedArray<Number>> &       subdomain_matrix,
+                           const TPSS::PatchDoFWorker<dim, Number> & patch_worker_row,
+                           const TPSS::PatchDoFWorker<dim, Number> & patch_worker_col) const;
 
   void submit_cell_matrix(
     Table<2, VectorizedArray<Number>> &       subdomain_matrix,

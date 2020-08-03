@@ -111,6 +111,8 @@ SubdomainHandler<dim, number>::internal_reinit()
       {
         AssertIndexRange(dofh_index, additional_data.foreach_dofh.size());
         dof_info_data.dirichlet_ids = additional_data.foreach_dofh[dofh_index].dirichlet_ids;
+        dof_info_data.force_no_boundary_condition =
+          additional_data.foreach_dofh[dofh_index].force_no_boundary_condition;
       }
       auto & dof_info                     = unique_dof_infos[unique_dofh_index];
       const auto [dummy, not_initialized] = initialized_indices.insert(unique_dofh_index);

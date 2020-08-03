@@ -298,9 +298,8 @@ void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::post_process_constrai
 
       if(patch_variant == TPSS::PatchVariant::vertex)
       {
-        restrict_matrix_qvp(matrix);
+        restrict_matrix_qvp(matrix, patch_worker, eval_ansatz.patch_worker);
         AssertDimension(this->patch_worker.n_dofs_1d(direction), matrices.at(direction).n_rows());
-        (void)eval_ansatz;
         AssertDimension(eval_ansatz.patch_worker.n_dofs_1d(direction),
                         matrices.at(direction).n_cols());
       }
@@ -317,13 +316,28 @@ void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::post_process_constrai
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::restrict_matrix_qvp(
-  Table<2, VectorizedArray<Number>> & subdomain_matrix) const
+  Table<2, VectorizedArray<Number>> &       subdomain_matrix,
+  const TPSS::PatchDoFWorker<dim, Number> & patch_worker_row,
+  const TPSS::PatchDoFWorker<dim, Number> & patch_worker_col) const
 {
-  const auto subdomain_matrix_plain = subdomain_matrix;
-  subdomain_matrix.reinit(subdomain_matrix_plain.n_rows() - 2, subdomain_matrix_plain.n_cols() - 2);
+  const auto   subdomain_matrix_plain = subdomain_matrix;
+  const auto & additional_data_row    = patch_worker_row.get_dof_info().get_additional_data();
+  const auto & additional_data_col    = patch_worker_col.get_dof_info().get_additional_data();
+  const auto   n_rows_restricted      = additional_data_row.force_no_boundary_condition ?
+                                   subdomain_matrix_plain.n_rows() :
+                                   subdomain_matrix_plain.n_rows() - 2;
+  const auto n_cols_restricted = additional_data_col.force_no_boundary_condition ?
+                                   subdomain_matrix_plain.n_cols() :
+                                   subdomain_matrix_plain.n_cols() - 2;
+
+  subdomain_matrix.reinit(n_rows_restricted, n_cols_restricted);
   for(auto i = 0U; i < subdomain_matrix.n_rows(); ++i)
     for(auto j = 0U; j < subdomain_matrix.n_cols(); ++j)
-      subdomain_matrix(i, j) = subdomain_matrix_plain(i + 1, j + 1);
+    {
+      const auto ii          = additional_data_row.force_no_boundary_condition ? i : i + 1;
+      const auto jj          = additional_data_col.force_no_boundary_condition ? j : j + 1;
+      subdomain_matrix(i, j) = subdomain_matrix_plain(ii, jj);
+    }
 }
 
 

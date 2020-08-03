@@ -292,7 +292,8 @@ struct DoFInfo<dim, Number>::AdditionalData
 {
   unsigned int                 level = numbers::invalid_unsigned_int;
   std::set<types::boundary_id> dirichlet_ids;
-  TPSS::CachingStrategy        caching_strategy = TPSS::CachingStrategy::Cached;
+  TPSS::CachingStrategy        caching_strategy            = TPSS::CachingStrategy::Cached;
+  bool                         force_no_boundary_condition = false;
 };
 
 
