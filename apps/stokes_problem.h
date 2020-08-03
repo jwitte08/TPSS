@@ -504,7 +504,8 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_schwarz_smoothers(
       additional_data.coloring_func = std::ref(*user_coloring);
     }
     additional_data.parameters = parameters.pre_smoother;
-    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids_velocity);
+    additional_data.foreach_dofh.resize(1);
+    additional_data.foreach_dofh[0].dirichlet_ids = equation_data.dirichlet_boundary_ids_velocity;
     mgss->initialize(mg_matrices, additional_data);
     mg_schwarz_smoother_pre = mgss;
   }
@@ -923,8 +924,10 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v>::
       additional_data.coloring_func = std::ref(*user_coloring);
     }
     additional_data.parameters = parameters.pre_smoother;
-    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids_velocity);
-    additional_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids_pressure);
+    additional_data.foreach_dofh.resize(2);
+    additional_data.foreach_dofh[0].dirichlet_ids = equation_data.dirichlet_boundary_ids_velocity;
+    additional_data.foreach_dofh[1].dirichlet_ids = equation_data.dirichlet_boundary_ids_pressure;
+    additional_data.foreach_dofh[1].force_no_boundary_condition = true; // !!!
     mgss->initialize(mg_matrices, additional_data);
     mg_schwarz_smoother_pre = mgss;
   }

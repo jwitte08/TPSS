@@ -543,9 +543,10 @@ struct ModelProblem : public Subscriptor
       typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
       mgss_data.coloring_func = std::ref(*user_coloring);
       mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
-      mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
+      mgss_data.foreach_dofh.resize(1);
+      mgss_data.foreach_dofh[0].dirichlet_ids = equation_data.dirichlet_boundary_ids;
       const auto mf_storage = mg_matrices[mg_matrices.max_level()].get_matrix_free();
-      mgss_data.shape_infos.emplace_back(mf_storage->get_shape_info(0));
+      mgss_data.foreach_dofh[0].shape_infos = mf_storage->get_shape_info(0);
       mgss->initialize(mg_matrices, mgss_data);
       mg_schwarz_smoother_pre = mgss;
     }

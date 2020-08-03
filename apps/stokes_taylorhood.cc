@@ -96,7 +96,7 @@ main(int argc, char * argv[])
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
       prms.solver.n_iterations_max          = 1000; // !!!
-      prms.solver.use_right_preconditioning = true;
+      prms.solver.use_right_preconditioning = true; // !!!
 
       //: multigrid
       const double damping_factor =

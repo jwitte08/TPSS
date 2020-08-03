@@ -219,11 +219,12 @@ public:
     using UserColoring  = typename std::function<std::vector<std::vector<PatchIterator>>(
       const std::vector<std::vector<CellIterator>> &      patches,
       const typename TPSS::PatchInfo<dim>::AdditionalData additional_data)>;
+    using DataForeachDoFHandler =
+      typename SubdomainHandler<dim, value_type>::AdditionalData::ForeachDoFHandler;
 
-    UserColoring                              coloring_func;
-    std::vector<std::set<types::boundary_id>> dirichlet_ids;
-    std::vector<internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<value_type>>> shape_infos;
-    SmootherParameter                                                                  parameters;
+    UserColoring                       coloring_func;
+    std::vector<DataForeachDoFHandler> foreach_dofh;
+    SmootherParameter                  parameters;
   };
 
   template<typename OtherNumber>
@@ -240,13 +241,7 @@ public:
     sd_handler_data.level = level;
     if(prms.schwarz.manual_coloring)
       sd_handler_data.coloring_func = additional_data.coloring_func;
-    const unsigned int n_data_foreach_dofh =
-      std::max(additional_data.dirichlet_ids.size(), additional_data.shape_infos.size());
-    sd_handler_data.foreach_dofh.resize(n_data_foreach_dofh);
-    for(auto i = 0U; i < additional_data.dirichlet_ids.size(); ++i)
-      sd_handler_data.foreach_dofh[i].dirichlet_ids = additional_data.dirichlet_ids.at(i);
-    for(auto i = 0U; i < additional_data.shape_infos.size(); ++i)
-      sd_handler_data.foreach_dofh[i].shape_infos = additional_data.shape_infos.at(i);
+    sd_handler_data.foreach_dofh = additional_data.foreach_dofh;
 
     /// Initialize SubdomainHandler
     const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
