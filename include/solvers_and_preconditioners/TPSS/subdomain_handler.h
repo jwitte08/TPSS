@@ -368,10 +368,14 @@ inline const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<number>> &
 SubdomainHandler<dim, number>::get_shape_info(const unsigned int dofh_index) const
 {
   AssertIndexRange(dofh_index, n_dof_handlers());
-  const bool data_foreach_dofh_exists =
-    additional_data.foreach_dofh.empty() || additional_data.foreach_dofh.size() == n_dof_handlers();
-  if(data_foreach_dofh_exists && !additional_data.foreach_dofh[dofh_index].shape_infos.data.empty())
-    return additional_data.foreach_dofh[dofh_index].shape_infos;
+  const bool data_foreach_dofh_exists = additional_data.foreach_dofh.size() == n_dof_handlers();
+  if(data_foreach_dofh_exists)
+  {
+    const bool shape_info_is_not_empty =
+      !additional_data.foreach_dofh[dofh_index].shape_infos.data.empty();
+    if(shape_info_is_not_empty)
+      return additional_data.foreach_dofh[dofh_index].shape_infos;
+  }
   /// assuming isotropy of tensor product elements and quadrature
   Assert(this->mf_storage, ExcMessage("MatrixFree object not initialized."));
   return get_matrix_free().get_shape_info(dofh_index, /*quad_index*/ 0);
