@@ -327,12 +327,15 @@ inline AlignedVector<Number>
 TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvalues() const
 {
   AssertThrow(state == State::separable, ExcMessage("Not implemented."));
+  Assert(tensor_helper_row, ExcMessage("Did you initialize tensor_helper_row?"));
+  Assert(tensor_helper_column, ExcMessage("Did you initialize tensor_helper_column?"));
 
   const auto & eigenvalues_foreach_dimension = separable_matrix_type::eigenvalues;
   for(auto direction = 0; direction < order; ++direction)
   {
     AssertDimension(tensor_helper_row->n_flat(), tensor_helper_column->n_flat());
-    AssertDimension(tensor_helper_row->n_flat(), eigenvalues_foreach_dimension[direction].size());
+    AssertDimension(tensor_helper_row->size(direction),
+                    eigenvalues_foreach_dimension[direction].size());
   }
 
   // /// OLD OLD

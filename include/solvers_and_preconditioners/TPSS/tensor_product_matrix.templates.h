@@ -62,7 +62,23 @@ TensorProductMatrix<order, Number, n_rows_1d>::reinit(
         "For this special case two rank-1 tensors are required, first the tensor of mass matrices and second the tensor of derivative matrices."));
     /// TODO avoid duplication
     // elementary_tensor = elementary_tensor_in;
-    separable_matrix_type::reinit(elementary_tensors_in[0], elementary_tensors_in[1]);
+
+    const auto & A = elementary_tensors_in[1]; // tensor of derivative matrices
+    const auto & M = elementary_tensors_in[0]; // tensor of mass matrices
+
+    std::array<unsigned int, order> n_rows_foreach_dimension;
+    std::array<unsigned int, order> n_columns_foreach_dimension;
+    n_rows_foreach_dimension[0]    = A[0].size(0);
+    n_columns_foreach_dimension[0] = A[0].size(1);
+    for(auto d = 1; d < order; ++d)
+    {
+      n_rows_foreach_dimension[d]    = M[d].size(0);
+      n_columns_foreach_dimension[d] = M[d].size(1);
+    }
+    tensor_helper_row    = std::make_shared<const TensorHelper<order>>(n_rows_foreach_dimension);
+    tensor_helper_column = std::make_shared<const TensorHelper<order>>(n_columns_foreach_dimension);
+
+    separable_matrix_type::reinit(M, A);
   }
 
   else
