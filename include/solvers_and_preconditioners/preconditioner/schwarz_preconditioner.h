@@ -288,6 +288,9 @@ private:
   void
   compute_inverses();
 
+  void
+  compute_ras_weights();
+
   /**
    * The sequence of colors for the smoothing step. Colors are defined by the PartitionData of @p
    * subdomain_handler and the ordering is determined in terms of the AdditionalData.
@@ -405,6 +408,8 @@ private:
   AdditionalData additional_data;
 
   mutable std::vector<TimeInfo> time_data;
+
+  mutable VectorType ras_weights;
 };
 
 
@@ -416,6 +421,7 @@ struct SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Additio
   double local_relaxation = 1.;
   bool   reverse          = false;
   bool   symmetrized      = false;
+  bool   use_ras          = false;
 
   bool
   operator==(const AdditionalData & other_data) const

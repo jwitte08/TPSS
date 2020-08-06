@@ -46,6 +46,8 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   compute_inverses();
   time_data[2].add_time(timer.wall_time());
 
+  compute_ras_weights();
+
   /// instantiate ghosted vectors (initialization is postponed to the actual
   /// smoothing step)
   solution_ghosted = std::make_shared<VectorType>();
@@ -119,6 +121,45 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::compute_invers
   AssertThrow(subdomain_to_inverse->size() == partition_data.n_subdomains(),
               ExcMessage("Mismatch."));
   subdomain_to_inverse->shrink_to_fit();
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::compute_ras_weights()
+{
+  // *** count the number of subdomains each degree of freedom belongs to
+  const auto count_appearances = [this](const SubdomainHandler<dim, value_type> & dummy1,
+                                        VectorType &                              appearances,
+                                        const VectorType &                        dummy2,
+                                        const std::pair<int, int> &               subdomain_range) {
+    (void)dummy1; // TODO
+    (void)dummy2;
+    AlignedVector<VectorizedArray<value_type>> local_one;
+    for(int patch_id = subdomain_range.first; patch_id < subdomain_range.second; ++patch_id)
+    {
+      // restrict global to local residual and initialize local solution u_j
+      transfer->reinit(patch_id);
+      transfer->reinit_local_vector(local_one);
+      local_one.fill(make_vectorized_array<value_type>(1.));
+      transfer->scatter_add(appearances, local_one);
+    }
+  };
+
+  initialize_ghosted_vector_if_needed(ras_weights);
+
+  const auto & partition_data = subdomain_handler->get_partition_data();
+  const auto   n_colors       = partition_data.n_colors();
+  for(unsigned int color = 0; color < n_colors; ++color)
+  {
+    ras_weights.zero_out_ghosts();
+    subdomain_handler->template loop<const VectorType, VectorType>(std::ref(count_appearances),
+                                                                   ras_weights,
+                                                                   ras_weights,
+                                                                   color);
+    /// compress add, i.e. transfer ghost values to their owners
+    ras_weights.compress(VectorOperation::add);
+  }
 }
 
 
@@ -521,14 +562,19 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   // *** pre-process solution and residual vectors (if needed)
   auto [solution, residual] = preprocess_solution_and_residual(solution_in, residual_in);
 
+  const bool use_ras_weights =
+    additional_data.use_ras && smoother_variant == TPSS::SmootherVariant::additive;
+
   // *** apply local inverses for all subdomains of the given color
-  const auto apply_inverses_add = [this](const SubdomainHandler<dim, value_type> & data,
-                                         VectorType &                              solution,
-                                         const VectorType &                        residual,
-                                         const std::pair<int, int> & subdomain_range) {
-    (void)data;                                                // TODO
-    AlignedVector<VectorizedArray<value_type>> local_residual; // r_j
-    AlignedVector<VectorizedArray<value_type>> local_solution; // u_j
+  const auto apply_inverses_add = [this,
+                                   use_ras_weights](const SubdomainHandler<dim, value_type> & data,
+                                                    VectorType &                solution,
+                                                    const VectorType &          residual,
+                                                    const std::pair<int, int> & subdomain_range) {
+    (void)data;                                                   // TODO
+    AlignedVector<VectorizedArray<value_type>> local_residual;    // r_j
+    AlignedVector<VectorizedArray<value_type>> local_solution;    // u_j
+    AlignedVector<VectorizedArray<value_type>> local_ras_weights; // w_j
 
     for(int patch_id = subdomain_range.first; patch_id < subdomain_range.second; ++patch_id)
     {
@@ -546,8 +592,20 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
       inverse.apply_inverse(local_solution_view, local_residual_view);
 
       // apply local relaxation parameter
-      for(auto & elem : local_solution)
-        elem *= make_vectorized_array<value_type>(additional_data.local_relaxation);
+      if(use_ras_weights)
+      {
+        local_ras_weights = std::move(transfer->gather(ras_weights));
+        // std::cout << "weights:\n";
+        // for (auto w : local_ras_weights)
+        //   std::cout << w[0] << " ";
+        // std::cout << std::endl;
+        for(auto i = 0U; i < local_solution.size(); ++i)
+          local_solution[i] *= make_vectorized_array<value_type>(additional_data.local_relaxation) /
+                               local_ras_weights[i];
+      }
+      else
+        for(auto & elem : local_solution)
+          elem *= make_vectorized_array<value_type>(additional_data.local_relaxation);
 
       // prolongate and add local solution u_j, that is u += R_j^T u_j
       transfer->scatter_add(solution, local_solution);

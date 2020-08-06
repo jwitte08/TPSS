@@ -18,7 +18,7 @@ struct TestParameter
 {
   TPSS::PatchVariant                 patch_variant    = CT::PATCH_VARIANT_;
   TPSS::SmootherVariant              smoother_variant = CT::SMOOTHER_VARIANT_;
-  std::string                        solver_variant   = "cg"; // see SolverSelector
+  std::string                        solver_variant   = "gmres"; //!!! see SolverSelector
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::IterativeAcc;
   double   coarse_grid_accuracy = 1.e-12;
@@ -26,6 +26,7 @@ struct TestParameter
   unsigned n_refinements        = 1;
   unsigned n_repetitions        = 2;
   double   extra_damping        = 1.;
+  bool     use_ras              = false;
 
   std::string
   to_string() const
@@ -34,6 +35,7 @@ struct TestParameter
     oss << Util::parameter_to_fstring("n_refinements (initial):", n_refinements);
     oss << Util::parameter_to_fstring("n_repetitions (initial):", n_repetitions);
     oss << Util::parameter_to_fstring(solver_variant + " solver reduction:", cg_reduction);
+    oss << Util::parameter_to_fstring("restricted additive Schwarz:", use_ras);
     return oss.str();
   }
 };
@@ -81,7 +83,7 @@ struct Tester
   {
     //: discretization
     rt_parameters.n_cycles              = 10;
-    rt_parameters.dof_limits            = {1e5, 2e7};
+    rt_parameters.dof_limits            = {1e1, 1e5}; //!!!{1e5, 2e7};
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
     rt_parameters.mesh.n_refinements    = testprms.n_refinements;
     rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;
@@ -93,9 +95,9 @@ struct Tester
     rt_parameters.solver.n_iterations_max     = 100;
 
     //: multigrid
-    const double damping_factor =
-      testprms.extra_damping *
-      TPSS::lookup_damping_factor(testprms.patch_variant, testprms.smoother_variant, dim);
+    const double damping_factor = testprms.extra_damping; // !!!
+    //*
+    // TPSS::lookup_damping_factor(testprms.patch_variant, testprms.smoother_variant, dim);
     rt_parameters.multigrid.coarse_level                 = 0;
     rt_parameters.multigrid.coarse_grid.solver_variant   = testprms.coarse_grid_variant;
     rt_parameters.multigrid.coarse_grid.iterative_solver = testprms.solver_variant;
@@ -103,6 +105,7 @@ struct Tester
     rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
     rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = testprms.patch_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = testprms.smoother_variant;
+    rt_parameters.multigrid.pre_smoother.schwarz.use_ras              = testprms.use_ras; // !!!
     rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
     rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
     rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5, fe_degree + 1);
@@ -197,6 +200,8 @@ main(int argc, char * argv[])
   TestParameter testprms;
   if(argc > 1)
     testprms.extra_damping = std::atof(argv[1]);
+  if(argc > 2)
+    testprms.use_ras = std::atoi(argv[2]);
 
   Tester<dim, fe_degree, dof_layout, n_patch_dofs_1d_static> tester(testprms);
   tester.run();
