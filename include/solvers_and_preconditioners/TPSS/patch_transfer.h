@@ -104,6 +104,8 @@ public:
   using CellIterator                       = typename PatchInfo<dim>::CellIterator;
   static constexpr unsigned int macro_size = VectorizedArray<Number>::size();
 
+  PatchTransfer(const PatchInfo<dim> & patch_info, const DoFInfo<dim, Number> & dof_info);
+
   PatchTransfer(const SubdomainHandler<dim, Number> & subdomain_handler,
                 const unsigned int                    dofh_index = 0);
 
@@ -192,29 +194,12 @@ private:
 
   /**
    * An interface accessing dof-related patch information stored in PatchInfo
-   * and DoFInfo objects of the underlying subdomain_handler.
+   * and DoFInfo objects (which might be part of the subdomain_handler used for
+   * initialization).
    */
   PatchDoFWorker<dim, Number> patch_dof_worker;
 
-  /**
-   * The underlying SubdomainHandler object.
-   */
-  const SubdomainHandler<dim, Number> & subdomain_handler;
-
-  const PatchLocalTensorHelper<dim> & patch_dof_tensor;
-
-  const Tensors::TensorHelper<dim> & cell_dof_tensor;
-
-  const Tensors::TensorHelper<dim> & cell_tensor;
-
-  const unsigned int dofh_index;
-  const DoFLayout    dof_layout;
-
-  // /**
-  //  * Empty constraints used to read and distribute global dof values
-  //  * cell-by-cell.
-  //  */
-  // AffineConstraints<Number> empty_constraints;
+  const DoFLayout dof_layout;
 
   /**
    * A bijective map between patch local dof indices (position index) and their
@@ -224,7 +209,7 @@ private:
   std::array<std::vector<unsigned int>, macro_size> global_dof_indices;
 
   /**
-   * Current patch id identifying a unique patch given by @p subdomain_handler.
+   * Current patch id identifying a unique patch given by the underlying PatchInfo.
    */
   unsigned int patch_id;
 
@@ -432,24 +417,28 @@ private:
 
 
 template<int dim, typename Number>
+inline PatchTransfer<dim, Number>::PatchTransfer(const PatchInfo<dim> &       patch_info_in,
+                                                 const DoFInfo<dim, Number> & dof_info_in)
+  : level(patch_info_in.get_additional_data().level),
+    n_subdomains(patch_info_in.subdomain_partition_data.n_subdomains()),
+    n_colors(patch_info_in.subdomain_partition_data.n_colors()),
+    patch_variant(patch_info_in.get_additional_data().patch_variant),
+    patch_dof_worker(dof_info_in),
+    dof_layout(dof_info_in.get_dof_layout()),
+    patch_id(numbers::invalid_unsigned_int),
+    caching_strategy(dof_info_in.get_additional_data().caching_strategy)
+{
+  AssertThrow(dof_layout != DoFLayout::invalid, ExcMessage("The finite element is not supported."));
+}
+
+
+template<int dim, typename Number>
 inline PatchTransfer<dim, Number>::PatchTransfer(
   const SubdomainHandler<dim, Number> & subdomain_handler_in,
   const unsigned int                    dofh_index_in)
-  : level(subdomain_handler_in.get_additional_data().level),
-    n_subdomains(subdomain_handler_in.get_patch_info().subdomain_partition_data.n_subdomains()),
-    n_colors(subdomain_handler_in.get_patch_info().subdomain_partition_data.n_colors()),
-    patch_variant(subdomain_handler_in.get_additional_data().patch_variant),
-    patch_dof_worker(subdomain_handler_in.get_dof_info(dofh_index_in)),
-    subdomain_handler(subdomain_handler_in),
-    patch_dof_tensor(patch_dof_worker.get_dof_tensor()),
-    cell_dof_tensor(patch_dof_worker.get_dof_tensor().cell_dof_tensor),
-    cell_tensor(patch_dof_worker.get_dof_tensor().cell_tensor),
-    dofh_index(dofh_index_in),
-    dof_layout(subdomain_handler_in.get_dof_layout(dofh_index_in)),
-    patch_id(numbers::invalid_unsigned_int),
-    caching_strategy(patch_dof_worker.get_dof_info().get_additional_data().caching_strategy)
+  : PatchTransfer<dim, Number>(subdomain_handler_in.get_patch_info(),
+                               subdomain_handler_in.get_dof_info(dofh_index_in))
 {
-  AssertThrow(dof_layout != DoFLayout::invalid, ExcMessage("The finite element is not supported."));
 }
 
 

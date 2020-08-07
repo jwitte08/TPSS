@@ -278,8 +278,13 @@ PatchDoFWorker<dim, Number>::fill_dof_indices_on_patch(const unsigned int patch_
         AssertDimension(n_dofs_per_cell_per_comp, global_dof_indices_on_cell.size()); // ???
         for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell_per_comp; ++cell_dof_index)
         {
+          /// We dont obtain a patch-local lexicographical ordering for DGP
+          /// (TODO is it possible to have a truncated lexicographical
+          /// ordering?).
           const unsigned int patch_dof_index =
-            patch_dof_stride + patch_dof_tensor.dof_index(cell_no, cell_dof_index);
+            patch_dof_stride + (dof_layout == DoFLayout::DGP ?
+                                  cell_no * n_dofs_per_cell_per_comp + cell_dof_index :
+                                  patch_dof_tensor.dof_index(cell_no, cell_dof_index));
           global_dof_indices_plain[patch_dof_index] = global_dof_indices_on_cell[cell_dof_index];
         }
       }
@@ -498,7 +503,7 @@ PatchDoFWorker<dim, Number>::n_dofs() const
   {
     const auto n_cells         = patch_worker_type::n_cells_per_subdomain();
     const auto n_dofs_per_cell = get_shape_info().dofs_per_component_on_cell;
-    return n_cells * n_dofs_per_cell;
+    return n_cells * n_dofs_per_cell * n_components;
   }
 
   /// TODO currently, assuming isotropy for each dimension

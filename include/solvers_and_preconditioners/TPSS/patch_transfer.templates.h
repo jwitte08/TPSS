@@ -6,7 +6,7 @@ AlignedVector<VectorizedArray<Number>>
 PatchTransfer<dim, Number>::gather(const VectorType & src) const
 {
   AssertIndexRange(patch_id, n_subdomains);
-  AssertDimension(src.size(), patch_dof_worker.get_dof_info().dof_handler->n_dofs(level));
+  AssertDimension(src.size(), patch_dof_worker.n_global_dofs());
 
   AlignedVector<VectorizedArray<Number>> dst(n_dofs_per_patch());
   for(unsigned int lane = 0; lane < macro_size; ++lane)
@@ -58,7 +58,7 @@ PatchTransfer<dim, Number>::scatter_add(VectorType &                            
                                         const ArrayView<const VectorizedArray<Number>> src) const
 {
   AssertIndexRange(patch_id, n_subdomains);
-  AssertDimension(dst.size(), patch_dof_worker.get_dof_info().dof_handler->n_dofs(level));
+  AssertDimension(dst.size(), patch_dof_worker.n_global_dofs());
   AssertDimension(src.size(), n_dofs_per_patch());
 
   for(unsigned int lane = 0; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
