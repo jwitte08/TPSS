@@ -198,15 +198,17 @@ private:
   evaluate_hessians();
 
   template<int fe_degree_ansatz, int n_q_points_ansatz>
-  void post_process_constraints(
+  void
+  post_process_constraints(
     std::array<Table<2, VectorizedArray<Number>>, dim> &                   matrices,
     const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz) const;
 
-  void submit_constraints(Table<2, VectorizedArray<Number>> & subdomain_matrix,
-                          const std::set<unsigned int> &      constrained_dof_indices_row,
-                          const std::set<unsigned int> &      constrained_dof_indices_col,
-                          const unsigned int                  lane,
-                          const bool                          at_block_diagonal) const
+  void
+  submit_constraints(Table<2, VectorizedArray<Number>> & subdomain_matrix,
+                     const std::set<unsigned int> &      constrained_dof_indices_row,
+                     const std::set<unsigned int> &      constrained_dof_indices_col,
+                     const unsigned int                  lane,
+                     const bool                          at_block_diagonal) const
   {
     /// Clear rows and columns of constrained dof indices. If this matrix is
     /// part of the block diagonal of the local patch matrix (in case of
@@ -290,11 +292,13 @@ private:
     FaceOperation &&                                                       face_operation,
     InterfaceOperation && interface_operation) const;
 
-  void restrict_matrix_qvp(Table<2, VectorizedArray<Number>> &       subdomain_matrix,
-                           const TPSS::PatchDoFWorker<dim, Number> & patch_worker_row,
-                           const TPSS::PatchDoFWorker<dim, Number> & patch_worker_col) const;
+  void
+  restrict_matrix_qvp(Table<2, VectorizedArray<Number>> &       subdomain_matrix,
+                      const TPSS::PatchDoFWorker<dim, Number> & patch_worker_row,
+                      const TPSS::PatchDoFWorker<dim, Number> & patch_worker_col) const;
 
-  void submit_cell_matrix(
+  void
+  submit_cell_matrix(
     Table<2, VectorizedArray<Number>> &       subdomain_matrix,
     const Table<2, VectorizedArray<Number>> & cell_matrix,
     const unsigned int                        cell_no_row,

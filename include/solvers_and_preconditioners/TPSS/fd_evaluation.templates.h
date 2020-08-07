@@ -283,7 +283,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action_impl(
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 template<int fe_degree_ansatz, int n_q_points_ansatz>
-void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::post_process_constraints(
+void
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::post_process_constraints(
   std::array<Table<2, VectorizedArray<Number>>, dim> &                   matrices,
   const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz) const
 {
@@ -315,7 +316,8 @@ void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::post_process_constrai
 
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
-void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::restrict_matrix_qvp(
+void
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::restrict_matrix_qvp(
   Table<2, VectorizedArray<Number>> &       subdomain_matrix,
   const TPSS::PatchDoFWorker<dim, Number> & patch_worker_row,
   const TPSS::PatchDoFWorker<dim, Number> & patch_worker_col) const
@@ -342,7 +344,8 @@ void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::restrict_matrix_qvp(
 
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
-void FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::submit_cell_matrix(
+void
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::submit_cell_matrix(
   Table<2, VectorizedArray<Number>> &       subdomain_matrix,
   const Table<2, VectorizedArray<Number>> & cell_matrix,
   const unsigned int                        cell_no_row,

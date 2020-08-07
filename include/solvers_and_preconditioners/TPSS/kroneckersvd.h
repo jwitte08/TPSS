@@ -158,8 +158,8 @@ bidiagonal_svd(const AlignedVector<Number> & diagonal,
 // Calculate the unfolding matrix in some direction of a third order tensor with polyadic rank one,
 // that is a tensor given as the polyadic product of three vectors
 template<typename Number>
-Table<2, Number> unfold_rank1(std::array<AlignedVector<Number>, 3> polyadic_factors,
-                              std::size_t                          direction)
+Table<2, Number>
+unfold_rank1(std::array<AlignedVector<Number>, 3> polyadic_factors, std::size_t direction)
 {
   AlignedVector<Number> first;
   AlignedVector<Number> second;
@@ -193,8 +193,9 @@ Table<2, Number> unfold_rank1(std::array<AlignedVector<Number>, 3> polyadic_fact
 // rank, that is a tensor given as the sum of polyadic products of three vectors, here each polyadic
 // product is given as one entry of the vector polyadic_factors
 template<typename Number>
-Table<2, Number> unfold_rankk(std::vector<std::array<AlignedVector<Number>, 3>> polyadic_factors,
-                              std::size_t                                       direction)
+Table<2, Number>
+unfold_rankk(std::vector<std::array<AlignedVector<Number>, 3>> polyadic_factors,
+             std::size_t                                       direction)
 {
   Table<2, Number> ret = unfold_rank1(polyadic_factors[0], direction);
   for(std::size_t i = 1; i < polyadic_factors.size(); i++)

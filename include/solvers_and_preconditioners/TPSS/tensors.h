@@ -741,7 +741,8 @@ transpose(MatrixTypeIn1 && matrix_in)
 
 template<int order, typename Number>
 // std::array<Table<2, VectorizedArray<Number>>, order>
-void transpose_tensor(std::array<Table<2, VectorizedArray<Number>>, order> & tensor)
+void
+transpose_tensor(std::array<Table<2, VectorizedArray<Number>>, order> & tensor)
 {
   for(auto & matrix : tensor)
     matrix = transpose(matrix);

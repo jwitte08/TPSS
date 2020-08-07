@@ -24,7 +24,8 @@ public:
   using State                              = typename matrix_type::State;
   static constexpr unsigned int macro_size = get_macro_size<Number>();
 
-  void remove_zeros(std::vector<std::array<Table<2, Number>, order>> & tensors)
+  void
+  remove_zeros(std::vector<std::array<Table<2, Number>, order>> & tensors)
   {
     std::vector<std::array<Table<2, Number>, order>> tmp;
     std::remove_copy_if(tensors.cbegin(),

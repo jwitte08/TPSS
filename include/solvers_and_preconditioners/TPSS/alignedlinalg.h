@@ -60,27 +60,29 @@ matrix_scaling(const Table<2, Number> & in, const Number & scalar)
 }
 
 template<typename Number>
-Table<2, Number> operator*(const Table<2, Number> & matrix, const Number & factor)
+Table<2, Number>
+operator*(const Table<2, Number> & matrix, const Number & factor)
 {
   return matrix_scaling(matrix, factor);
 }
 
 template<typename Number>
-Table<2, Number> operator*(const Number & factor, const Table<2, Number> & matrix)
+Table<2, Number>
+operator*(const Number & factor, const Table<2, Number> & matrix)
 {
   return matrix * factor;
 }
 
 template<typename Number>
-Table<2, VectorizedArray<Number>> operator*(const Table<2, VectorizedArray<Number>> & matrix,
-                                            const Number &                            factor)
+Table<2, VectorizedArray<Number>>
+operator*(const Table<2, VectorizedArray<Number>> & matrix, const Number & factor)
 {
   return matrix * make_vectorized_array<Number>(factor);
 }
 
 template<typename Number>
-Table<2, VectorizedArray<Number>> operator*(const Number &                            factor,
-                                            const Table<2, VectorizedArray<Number>> & matrix)
+Table<2, VectorizedArray<Number>>
+operator*(const Number & factor, const Table<2, VectorizedArray<Number>> & matrix)
 {
   return matrix * make_vectorized_array<Number>(factor);
 }
@@ -293,7 +295,8 @@ public:
 
 // Two Matrices are considered equal if all of their components are equal up to machine epsilon
 template<typename Number>
-bool operator==(Table<2, Number> tab1, Table<2, Number> tab2)
+bool
+operator==(Table<2, Number> tab1, Table<2, Number> tab2)
 {
   AssertDimension(tab1.size()[0], tab2.size()[0]);
   AssertDimension(tab1.size()[1], tab2.size()[1]);
@@ -322,7 +325,8 @@ bool operator==(Table<2, Number> tab1, Table<2, Number> tab2)
 
 // print a table up to digits sginificant digits
 template<typename Number>
-void printTable(Table<2, Number> tab, double digits = 2)
+void
+printTable(Table<2, Number> tab, double digits = 2)
 {
   std::size_t m = tab.size()[0];
   std::size_t n = tab.size()[1];
@@ -338,7 +342,8 @@ void printTable(Table<2, Number> tab, double digits = 2)
 }
 
 template<typename Number>
-void printTable(Table<2, VectorizedArray<Number>> tab)
+void
+printTable(Table<2, VectorizedArray<Number>> tab)
 {
   constexpr std::size_t macro_size = VectorizedArray<Number>::size();
   std::size_t           m          = tab.size()[0];

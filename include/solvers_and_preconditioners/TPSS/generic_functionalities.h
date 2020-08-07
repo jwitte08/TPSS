@@ -283,7 +283,8 @@ fill_with_random_values(ArrayView<ElementType> view)
 
 
 template<typename Number>
-void fill_with_random_values(Table<2, Number> & table)
+void
+fill_with_random_values(Table<2, Number> & table)
 {
   for(auto i = 0U; i < table.size(0); ++i)
     for(auto j = 0U; j < table.size(1); ++j)

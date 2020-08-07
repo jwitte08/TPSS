@@ -753,12 +753,12 @@ public:
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::CellStrain<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix,
-           const int                           direction,
-           const int                           cell_no) const
+MatrixIntegrator<dim, fe_degree, Number>::CellStrain<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix,
+  const int                           direction,
+  const int                           cell_no) const
 {
   const Number            symgrad_factor = component == direction ? 1. : 0.5;
   const auto              mu             = integrator->equation_data.mu;
@@ -781,12 +781,12 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::CellMass<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix,
-           const int                           direction,
-           const int                           cell_no) const
+MatrixIntegrator<dim, fe_degree, Number>::CellMass<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix,
+  const int                           direction,
+  const int                           cell_no) const
 {
   VectorizedArray<Number> integral;
   for(int dof_u = 0; dof_u < fe_order; ++dof_u)
@@ -807,12 +807,12 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::CellDerivative<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix,
-           const int                           direction,
-           const int                           cell_no) const
+MatrixIntegrator<dim, fe_degree, Number>::CellDerivative<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix,
+  const int                           direction,
+  const int                           cell_no) const
 {
   VectorizedArray<Number> integral;
   const bool              flag_derive_u = (direction == partial_derivative_index_u);
@@ -839,12 +839,12 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::CellGradDiv<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix,
-           const int                           direction,
-           const int                           cell_no) const
+MatrixIntegrator<dim, fe_degree, Number>::CellGradDiv<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix,
+  const int                           direction,
+  const int                           cell_no) const
 {
   const auto lambda = integrator->equation_data.lambda;
   if(component == direction)
@@ -869,13 +869,13 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::NitscheStrain<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix,
-           const int                           direction,
-           const int                           cell_no,
-           const int                           face_no) const
+MatrixIntegrator<dim, fe_degree, Number>::NitscheStrain<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix,
+  const int                           direction,
+  const int                           cell_no,
+  const int                           face_no) const
 {
   const auto & equation_data  = integrator->equation_data;
   const auto   mu             = equation_data.mu;
@@ -911,13 +911,13 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::NitscheStrain<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix01,
-           Table<2, VectorizedArray<Number>> & cell_matrix10,
-           const int                           cell_no_left,
-           const int                           direction) const
+MatrixIntegrator<dim, fe_degree, Number>::NitscheStrain<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix01,
+  Table<2, VectorizedArray<Number>> & cell_matrix10,
+  const int                           cell_no_left,
+  const int                           direction) const
 {
   (void)cell_no_left;
   AssertDimension(cell_no_left, 0);
@@ -970,13 +970,13 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::NitscheStrainMixed<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix,
-           const int                           direction,
-           const int                           cell_no,
-           const int                           face_no) const
+MatrixIntegrator<dim, fe_degree, Number>::NitscheStrainMixed<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix,
+  const int                           direction,
+  const int                           cell_no,
+  const int                           face_no) const
 {
   const auto & equation_data  = integrator->equation_data;
   const auto   mu             = equation_data.mu;
@@ -1001,13 +1001,13 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::NitscheStrainMixed<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix01,
-           Table<2, VectorizedArray<Number>> & cell_matrix10,
-           const int                           cell_no_left,
-           const int                           direction) const
+MatrixIntegrator<dim, fe_degree, Number>::NitscheStrainMixed<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix01,
+  Table<2, VectorizedArray<Number>> & cell_matrix10,
+  const int                           cell_no_left,
+  const int                           direction) const
 {
   (void)cell_no_left;
   AssertDimension(cell_no_left, 0);
@@ -1045,13 +1045,13 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::NitscheGradDiv<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix,
-           const int                           direction,
-           const int                           cell_no,
-           const int                           face_no) const
+MatrixIntegrator<dim, fe_degree, Number>::NitscheGradDiv<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix,
+  const int                           direction,
+  const int                           cell_no,
+  const int                           face_no) const
 {
   const auto & equation_data  = integrator->equation_data;
   const auto   lambda         = equation_data.lambda;
@@ -1084,13 +1084,13 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::NitscheGradDiv<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix01,
-           Table<2, VectorizedArray<Number>> & cell_matrix10,
-           const int                           cell_no_left,
-           const int                           direction) const
+MatrixIntegrator<dim, fe_degree, Number>::NitscheGradDiv<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix01,
+  Table<2, VectorizedArray<Number>> & cell_matrix10,
+  const int                           cell_no_left,
+  const int                           direction) const
 {
   (void)cell_no_left;
   AssertDimension(cell_no_left, 0);
@@ -1139,13 +1139,13 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::NitscheGradDivMixed<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix,
-           const int                           direction,
-           const int                           cell_no,
-           const int                           face_no) const
+MatrixIntegrator<dim, fe_degree, Number>::NitscheGradDivMixed<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix,
+  const int                           direction,
+  const int                           cell_no,
+  const int                           face_no) const
 {
   const auto & equation_data  = integrator->equation_data;
   const auto   lambda         = equation_data.lambda;
@@ -1171,13 +1171,13 @@ operator()(const Evaluator &                   eval_ansatz,
 template<int dim, int fe_degree, typename Number>
 template<typename Evaluator>
 inline void
-MatrixIntegrator<dim, fe_degree, Number>::NitscheGradDivMixed<Evaluator>::
-operator()(const Evaluator &                   eval_ansatz,
-           const Evaluator &                   eval_test,
-           Table<2, VectorizedArray<Number>> & cell_matrix01,
-           Table<2, VectorizedArray<Number>> & cell_matrix10,
-           const int                           cell_no_left,
-           const int                           direction) const
+MatrixIntegrator<dim, fe_degree, Number>::NitscheGradDivMixed<Evaluator>::operator()(
+  const Evaluator &                   eval_ansatz,
+  const Evaluator &                   eval_test,
+  Table<2, VectorizedArray<Number>> & cell_matrix01,
+  Table<2, VectorizedArray<Number>> & cell_matrix10,
+  const int                           cell_no_left,
+  const int                           direction) const
 {
   (void)cell_no_left;
   AssertDimension(cell_no_left, 0);
