@@ -218,7 +218,8 @@ PatchDoFWorker<dim, Number>::fill_dof_indices_on_patch(const unsigned int patch_
     dof_layout == DoFLayout::DGQ ||
     (dof_layout == DoFLayout::Q && additional_data.force_no_boundary_condition) ||
     dof_layout == DoFLayout::DGP;
-  const bool is_H1_conforming = dof_layout == DoFLayout::Q;
+  const bool is_H1_conforming =
+    (dof_layout == DoFLayout::Q && !additional_data.force_no_boundary_condition);
 
   if(is_H1_conforming)
   {

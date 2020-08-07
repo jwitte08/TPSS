@@ -104,7 +104,7 @@ public:
   using CellIterator                       = typename PatchInfo<dim>::CellIterator;
   static constexpr unsigned int macro_size = VectorizedArray<Number>::size();
 
-  PatchTransfer(const PatchInfo<dim> & patch_info, const DoFInfo<dim, Number> & dof_info);
+  PatchTransfer(const DoFInfo<dim, Number> & dof_info);
 
   PatchTransfer(const SubdomainHandler<dim, Number> & subdomain_handler,
                 const unsigned int                    dofh_index = 0);
@@ -125,9 +125,26 @@ public:
   void
   reinit_local_vector(AlignedVector<VectorizedArray<Number>> & vec) const;
 
+  /**
+   * See PatchDoFWorker<dim, Number>::initialize_dof_vector().
+   */
+  void
+  initialize_dof_vector(LinearAlgebra::distributed::Vector<Number> & vec) const;
+
+  /**
+   * See PatchDoFWorker<dim, Number>::initialize_dof_vector().
+   */
+  void
+  initialize_dof_vector(Vector<Number> & vec) const;
+
   const PatchDoFWorker<dim, Number> &
   get_patch_dof_worker() const;
 
+  /**
+   * Returns the set of degrees of freedom (as proc-local index) with
+   * lexicographical ordering (if possible, e.g. DGP polynomials have no such
+   * ordering) for each block.
+   */
   ArrayView<const unsigned int>
   get_dof_indices(const unsigned int lane) const;
 
@@ -233,6 +250,10 @@ class PatchTransferBlock
 public:
   using transfer_type = PatchTransfer<dim, Number>;
 
+  PatchTransferBlock(const std::vector<const TPSS::DoFInfo<dim, Number> *> & dof_infos);
+
+  PatchTransferBlock(const std::vector<TPSS::DoFInfo<dim, Number>> & dof_infos);
+
   PatchTransferBlock(const SubdomainHandler<dim, Number> & subdomain_handler);
 
   ~PatchTransferBlock() = default;
@@ -266,9 +287,10 @@ public:
   get_patch_transfer(const unsigned int block_index = 0) const;
 
   /**
-   * Returns the set of degrees of freedom (as proc-level index) with
-   * lexicographical ordering for each block. The sets of indices for each block
-   * are juxtaposed block-wise.
+   * Returns the set of degrees of freedom (as proc-local index) with
+   * lexicographical ordering (if possible, e.g. DGP polynomials have no such
+   * ordering) for each block. The sets of indices for each block are juxtaposed
+   * block-wise.
    */
   ArrayView<const unsigned int>
   get_dof_indices(const unsigned int lane) const;
@@ -293,6 +315,20 @@ public:
   reinit_local_vector(AlignedVector<VectorizedArray<Number>> & vec) const;
 
   /**
+   * For each block we use the according PatchTransfer to initialize the global
+   * dof vector. For more details see PatchTransfer::initialize_dof_vector().
+   */
+  void
+  initialize_dof_vector(LinearAlgebra::distributed::BlockVector<Number> & vec) const;
+
+  /**
+   * For each block we use the according PatchTransfer to initialize the global
+   * dof vector. For more details see PatchTransfer::initialize_dof_vector().
+   */
+  void
+  initialize_dof_vector(BlockVector<Number> & vec) const;
+
+  /**
    * Add patch intern dof values @o src to the global dof values @p dst.
    */
   template<typename BlockVectorType>
@@ -300,6 +336,10 @@ public:
   scatter_add(BlockVectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const;
 
 private:
+  template<typename BlockVectorType>
+  void
+  initialize_dof_vector_impl(BlockVectorType & vec) const;
+
   const unsigned int n_blocks;
 
   std::vector<std::shared_ptr<transfer_type>> transfers;
@@ -417,12 +457,14 @@ private:
 
 
 template<int dim, typename Number>
-inline PatchTransfer<dim, Number>::PatchTransfer(const PatchInfo<dim> &       patch_info_in,
-                                                 const DoFInfo<dim, Number> & dof_info_in)
-  : level(patch_info_in.get_additional_data().level),
-    n_subdomains(patch_info_in.subdomain_partition_data.n_subdomains()),
-    n_colors(patch_info_in.subdomain_partition_data.n_colors()),
-    patch_variant(patch_info_in.get_additional_data().patch_variant),
+inline PatchTransfer<dim, Number>::PatchTransfer(const DoFInfo<dim, Number> & dof_info_in)
+  : level([&dof_info_in]() {
+      AssertThrow(dof_info_in.patch_info, ExcMessage("dof_info_in is not initialized."));
+      return dof_info_in.patch_info->get_additional_data().level;
+    }()),
+    n_subdomains(dof_info_in.patch_info->subdomain_partition_data.n_subdomains()),
+    n_colors(dof_info_in.patch_info->subdomain_partition_data.n_colors()),
+    patch_variant(dof_info_in.patch_info->get_additional_data().patch_variant),
     patch_dof_worker(dof_info_in),
     dof_layout(dof_info_in.get_dof_layout()),
     patch_id(numbers::invalid_unsigned_int),
@@ -436,8 +478,7 @@ template<int dim, typename Number>
 inline PatchTransfer<dim, Number>::PatchTransfer(
   const SubdomainHandler<dim, Number> & subdomain_handler_in,
   const unsigned int                    dofh_index_in)
-  : PatchTransfer<dim, Number>(subdomain_handler_in.get_patch_info(),
-                               subdomain_handler_in.get_dof_info(dofh_index_in))
+  : PatchTransfer<dim, Number>(subdomain_handler_in.get_dof_info(dofh_index_in))
 {
 }
 
@@ -463,6 +504,23 @@ PatchTransfer<dim, Number>::reinit_local_vector(AlignedVector<VectorizedArray<Nu
 {
   Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
   vec.resize(n_dofs_per_patch());
+}
+
+
+template<int dim, typename Number>
+inline void
+PatchTransfer<dim, Number>::initialize_dof_vector(
+  LinearAlgebra::distributed::Vector<Number> & vec) const
+{
+  patch_dof_worker.initialize_dof_vector(vec);
+}
+
+
+template<int dim, typename Number>
+inline void
+PatchTransfer<dim, Number>::initialize_dof_vector(Vector<Number> & vec) const
+{
+  patch_dof_worker.initialize_dof_vector(vec);
 }
 
 
@@ -520,15 +578,21 @@ PatchTransfer<dim, Number>::fill_global_dof_indices(const unsigned int patch_id)
 
 template<int dim, typename Number>
 inline PatchTransferBlock<dim, Number>::PatchTransferBlock(
-  const SubdomainHandler<dim, Number> & subdomain_handler_in)
-  : n_blocks(subdomain_handler_in.n_dof_handlers()),
-    transfers(std::move([this](const auto & subdomain_handler) {
-      AssertDimension(n_blocks, subdomain_handler.n_dof_handlers());
+  const std::vector<const TPSS::DoFInfo<dim, Number> *> & dof_infos_in)
+  : n_blocks(dof_infos_in.size()),
+    transfers(std::move([this](const auto & dof_infos) {
+      Assert(dof_infos.size() != 0U, ExcMessage("dof_infos is empty."));
+      AssertDimension(n_blocks, dof_infos.size());
       std::vector<std::shared_ptr<transfer_type>> transfers;
       for(auto dofh_index = 0U; dofh_index < n_blocks; ++dofh_index)
-        transfers.emplace_back(std::make_shared<transfer_type>(subdomain_handler, dofh_index));
+      {
+        const auto & dof_info = *(dof_infos[dofh_index]);
+        Assert(dof_infos.front()->patch_info == dof_info.patch_info,
+               ExcMessage("dof_infos have no common PatchInfo."));
+        transfers.emplace_back(std::make_shared<transfer_type>(dof_info));
+      }
       return transfers;
-    }(subdomain_handler_in))),
+    }(dof_infos_in))),
     patch_id(numbers::invalid_unsigned_int),
     n_dofs_total([this]() -> unsigned int {
       AssertDimension(transfers.size(), n_blocks);
@@ -538,6 +602,27 @@ inline PatchTransferBlock<dim, Number>::PatchTransferBlock(
                              [](const auto sum, const auto & transfer) {
                                return sum + transfer->n_dofs_per_patch();
                              });
+    }())
+{
+}
+
+
+template<int dim, typename Number>
+inline PatchTransferBlock<dim, Number>::PatchTransferBlock(
+  const std::vector<TPSS::DoFInfo<dim, Number>> & dof_infos_in)
+  : PatchTransferBlock<dim, Number>(to_vector_of_ptrs(dof_infos_in))
+{
+}
+
+
+template<int dim, typename Number>
+inline PatchTransferBlock<dim, Number>::PatchTransferBlock(
+  const SubdomainHandler<dim, Number> & subdomain_handler_in)
+  : PatchTransferBlock<dim, Number>([&subdomain_handler_in]() {
+      std::vector<const TPSS::DoFInfo<dim, Number> *> dof_infos;
+      for(auto dofh_index = 0U; dofh_index < subdomain_handler_in.n_dof_handlers(); ++dofh_index)
+        dof_infos.emplace_back(&(subdomain_handler_in.get_dof_info(dofh_index)));
+      return dof_infos;
     }())
 {
 }
@@ -634,6 +719,35 @@ PatchTransferBlock<dim, Number>::reinit_local_vector(
 {
   Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
   vec.resize(n_dofs_per_patch());
+}
+
+
+template<int dim, typename Number>
+template<typename BlockVectorType>
+inline void
+PatchTransferBlock<dim, Number>::initialize_dof_vector_impl(BlockVectorType & vec) const
+{
+  vec.reinit(n_blocks);
+  for(auto b = 0U; b < n_blocks; ++b)
+    transfers[b]->initialize_dof_vector(vec.block(b));
+  vec.collect_sizes();
+}
+
+
+template<int dim, typename Number>
+inline void
+PatchTransferBlock<dim, Number>::initialize_dof_vector(
+  LinearAlgebra::distributed::BlockVector<Number> & vec) const
+{
+  initialize_dof_vector_impl<LinearAlgebra::distributed::BlockVector<Number>>(vec);
+}
+
+
+template<int dim, typename Number>
+inline void
+PatchTransferBlock<dim, Number>::initialize_dof_vector(BlockVector<Number> & vec) const
+{
+  initialize_dof_vector_impl<BlockVector<Number>>(vec);
 }
 
 
