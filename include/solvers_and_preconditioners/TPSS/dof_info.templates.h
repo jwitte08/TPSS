@@ -16,6 +16,7 @@ DoFInfo<dim, Number>::initialize(
          ExcMessage("Finite element is not supported."));
   Assert(additional_data_in.level != numbers::invalid_unsigned_int,
          ExcMessage("Implemented for level cells only"));
+  Assert(!shape_info_in->data.empty(), ExcMessage("shape_info_in is empty."));
 
   clear();
   dof_handler     = dof_handler_in;
@@ -36,37 +37,11 @@ DoFInfo<dim, Number>::initialize(
 }
 
 
-// template<int dim, typename Number>
-// void
-// DoFInfo<dim, Number>::initialize(
-//   const DoFHandler<dim> * dof_handler_in,
-//   const PatchInfo<dim> *  patch_info_in,
-//   const std::array<internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> *, dim> &
-//                          shape_infos_in,
-//   const AdditionalData & additional_data_in)
-// {
-//   Assert(patch_info_in->get_internal_data()->level != numbers::invalid_unsigned_int,
-//          ExcMessage("Handles level cells only."));
-//   Assert(DoFLayout::invalid != TPSS::get_dof_layout(dof_handler_in->get_fe()),
-//          ExcMessage("Finite element is not supported."));
-//   Assert(additional_data_in.level != numbers::invalid_unsigned_int,
-//          ExcMessage("Implemented for level cells only"));
-
-//   clear();
-//   dof_handler = dof_handler_in;
-//   patch_info  = patch_info_in;
-//   std::copy(shape_infos_in.cbegin(), shape_infos_in.cend(), shape_infos.begin());
-//   additional_data = additional_data_in;
-
-//   initialize_impl();
-// }
-
-
 template<int dim, typename Number>
 void
 DoFInfo<dim, Number>::initialize_impl()
 {
-  /// cache global dof indices once for each cell owned by this processor
+  /// Cache global dof indices once for each cell owned by this processor
   /// (including ghost cells)
   {
     /// LAMBDA checks if cell is ghost on current level
@@ -151,7 +126,10 @@ DoFInfo<dim, Number>::initialize_impl()
     const auto partitioner =
       std::make_shared<Utilities::MPI::Partitioner>(owned_dof_indices, MPI_COMM_WORLD);
     partitioner->set_ghost_indices(ghost_dof_indices);
-    this->vector_partitioner = partitioner;
+    this->vector_partitioner   = partitioner;
+    const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1); // !!!
+    if(!is_mpi_parallel)
+      AssertDimension(dof_handler->n_dofs(additional_data.level), vector_partitioner->size());
 
     /// Convert global dof indices into process local dof indices
     dof_indices_cellwise.clear();

@@ -71,6 +71,8 @@ public:
   std::vector<unsigned int>                cell_dof_indices_plain;
 };
 
+
+
 /**
  * Helps with the (one-dimensional) patch local dof indexing depending on the
  * underlying finite element. For example, for Q-like finite elements we have
@@ -127,6 +129,17 @@ private:
   dof_index_1d_dgq_impl(const unsigned int cell_no,
                         const unsigned int cell_dof_index,
                         const int          dimension) const;
+
+  /**
+   * Implementation of @p dof_index_1d for DGP-like finite elements.
+   */
+  // !!! TODO the current implementation is not correct. actually this function
+  // !!! makes no sense on a truncated tensor, but we need this interface for
+  // !!! compatibility ...
+  unsigned int
+  dof_index_1d_dgp_impl(const unsigned int cell_no,
+                        const unsigned int cell_dof_index,
+                        const int          dimension) const;
 };
 
 
@@ -180,7 +193,10 @@ public:
 };
 
 
-
+/**
+ * TODO description missing ...
+ */
+// !!! TODO do not pass level as additional data, directly use the level of patch_info_in
 template<int dim, typename Number>
 struct DoFInfo
 {
@@ -188,21 +204,18 @@ struct DoFInfo
 
   struct AdditionalData;
 
-  /// Assuming isotropy of tensor product finite elements and quadrature such
-  /// that we pass a single shape info.
+  /**
+   * Builds up the data structures for degrees of freedom according to the
+   * distribution of (vectorized) subdomains in @p patch_info. The underlying
+   * finite element of @p dof_handler and @p shape_info has to be the
+   * same. Currently, we support scalar- and vector-valued (but primitive)
+   * finite elements.
+   */
   void
   initialize(const DoFHandler<dim> *                                                   dof_handler,
              const PatchInfo<dim> *                                                    patch_info,
              const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> * shape_info,
              const AdditionalData & additional_data = AdditionalData{});
-
-  // void
-  // initialize(const DoFHandler<dim> * dof_handler,
-  //            const PatchInfo<dim> *  patch_info,
-  //            const std::array<internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>>
-  //            *,
-  //                             dim> & shape_infos,
-  //            const AdditionalData &  additional_data = AdditionalData{});
 
   void
   initialize_impl();
@@ -322,6 +335,8 @@ PatchLocalIndexHelper<n_dimensions>::dof_index_1d(const unsigned int cell_no,
     return dof_index_1d_dgq_impl(cell_no, cell_dof_index, dimension);
   else if(dof_layout == DoFLayout::Q)
     return dof_index_1d_q_impl(cell_no, cell_dof_index, dimension);
+  else if(dof_layout == DoFLayout::DGP)
+    return dof_index_1d_dgp_impl(cell_no, cell_dof_index, dimension);
   AssertThrow(false, ExcMessage("Finite element not supported."));
   return numbers::invalid_unsigned_int;
 }
@@ -349,6 +364,24 @@ PatchLocalIndexHelper<n_dimensions>::dof_index_1d_dgq_impl(const unsigned int ce
   AssertIndexRange(cell_no, cell_tensor.n[dimension]);
   AssertIndexRange(cell_dof_index, cell_dof_tensor.n[dimension]);
   AssertIndexRange(dimension, n_dimensions);
+  const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
+  return cell_no * n_dofs_per_cell_1d + cell_dof_index;
+}
+
+
+template<int n_dimensions>
+inline unsigned int
+PatchLocalIndexHelper<n_dimensions>::dof_index_1d_dgp_impl(const unsigned int cell_no,
+                                                           const unsigned int cell_dof_index,
+                                                           const int          dimension) const
+{
+  AssertIndexRange(cell_no, cell_tensor.n[dimension]);
+  AssertIndexRange(cell_dof_index, cell_dof_tensor.n[dimension]);
+  AssertIndexRange(dimension, n_dimensions);
+  // !!! TODO currently, the actually truncated tensor structure is treated as
+  // !!! "full" tensor (i.e. isotropic w.r.t. the polynomial degree)
+  // FIX? one could return the actual 1D dof index if it is part of the
+  // truncated and otherwhise return numbers::invalid_unsigned_int
   const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
   return cell_no * n_dofs_per_cell_1d + cell_dof_index;
 }
