@@ -1,8 +1,8 @@
 
-template<int dim, typename number>
+template<int dim, typename Number>
 void
-SubdomainHandler<dim, number>::reinit(
-  const std::shared_ptr<const dealii::MatrixFree<dim, number>> mf_storage_in,
+SubdomainHandler<dim, Number>::reinit(
+  const std::shared_ptr<const dealii::MatrixFree<dim, Number>> mf_storage_in,
   const AdditionalData                                         additional_data_in)
 {
   clear();
@@ -15,9 +15,9 @@ SubdomainHandler<dim, number>::reinit(
   internal_reinit();
 }
 
-template<int dim, typename number>
+template<int dim, typename Number>
 void
-SubdomainHandler<dim, number>::reinit(const dealii::MatrixFree<dim, number> * mf_storage_in,
+SubdomainHandler<dim, Number>::reinit(const dealii::MatrixFree<dim, Number> * mf_storage_in,
                                       const AdditionalData                    additional_data_in)
 {
   clear();
@@ -29,9 +29,9 @@ SubdomainHandler<dim, number>::reinit(const dealii::MatrixFree<dim, number> * mf
   internal_reinit();
 }
 
-template<int dim, typename number>
+template<int dim, typename Number>
 void
-SubdomainHandler<dim, number>::internal_reinit()
+SubdomainHandler<dim, Number>::internal_reinit()
 {
   // *** check if additional_data is reasonable
   Assert(additional_data.level != static_cast<unsigned int>(-1), ExcNotImplemented());
@@ -93,7 +93,7 @@ SubdomainHandler<dim, number>::internal_reinit()
   for(const auto & info : patch_info.time_data)
     time_data.emplace_back(info.time, info.description, info.unit);
   // *** Calling the constructor, partitions patches with respect to vectorization.
-  TPSS::PatchWorker<dim, number> patch_worker{patch_info};
+  TPSS::PatchWorker<dim, Number> patch_worker{patch_info};
 
 
   { // *** (partially) store dof indices and patch-local dof information
@@ -101,7 +101,7 @@ SubdomainHandler<dim, number>::internal_reinit()
              additional_data.foreach_dofh.size() == n_dof_handlers(),
            ExcMessage("additional_data.foreach_dofh has an incompatible size"));
     unique_dof_infos.resize(unique_dof_handlers.size());
-    typename TPSS::DoFInfo<dim, number>::AdditionalData dof_info_data;
+    typename TPSS::DoFInfo<dim, Number>::AdditionalData dof_info_data;
     dof_info_data.level = additional_data.level;
     std::set<unsigned int> initialized_indices;
     for(auto dofh_index = 0U; dofh_index < n_dof_handlers(); ++dofh_index)
@@ -136,7 +136,7 @@ SubdomainHandler<dim, number>::internal_reinit()
   }
 
   // *** compute the surrogate patches which pertain the tensor structure
-  typename TPSS::MappingInfo<dim, number>::AdditionalData mapping_info_data;
+  typename TPSS::MappingInfo<dim, Number>::AdditionalData mapping_info_data;
   mapping_info_data.n_q_points      = additional_data.n_q_points_surrogate;
   mapping_info_data.normalize_patch = additional_data.normalize_surrogate_patch;
   mapping_info_data.use_arc_length  = additional_data.use_arc_length;
@@ -149,9 +149,9 @@ SubdomainHandler<dim, number>::internal_reinit()
   //   patch_info.get_internal_data()->compress();
 }
 
-template<int dim, typename number>
+template<int dim, typename Number>
 unsigned int
-SubdomainHandler<dim, number>::guess_grain_size(const unsigned int n_subdomain_batches) const
+SubdomainHandler<dim, Number>::guess_grain_size(const unsigned int n_subdomain_batches) const
 {
   unsigned int grain_size = additional_data.grain_size;
   if(grain_size == 0)
@@ -185,11 +185,11 @@ SubdomainHandler<dim, number>::guess_grain_size(const unsigned int n_subdomain_b
   return grain_size;
 }
 
-template<int dim, typename number>
+template<int dim, typename Number>
 template<typename Input, typename Output>
 void
-SubdomainHandler<dim, number>::loop(
-  const std::function<void(const SubdomainHandler<dim, number> &,
+SubdomainHandler<dim, Number>::loop(
+  const std::function<void(const SubdomainHandler<dim, Number> &,
                            Output &,
                            const Input &,
                            const std::pair<unsigned int, unsigned int> &)> & patch_operation,
@@ -220,11 +220,11 @@ SubdomainHandler<dim, number>::loop(
     parallel::apply_to_subranges(range.first, range.second, operation_on_subrange, grain_size);
 }
 
-template<int dim, typename number>
+template<int dim, typename Number>
 template<typename Input, typename Output>
 void
-SubdomainHandler<dim, number>::parloop(
-  const std::function<void(const SubdomainHandler<dim, number> &,
+SubdomainHandler<dim, Number>::parloop(
+  const std::function<void(const SubdomainHandler<dim, Number> &,
                            Output &,
                            const Input &,
                            const std::pair<unsigned int, unsigned int> &)> & patch_operation,
