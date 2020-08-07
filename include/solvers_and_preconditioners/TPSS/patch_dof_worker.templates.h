@@ -1,5 +1,25 @@
 namespace TPSS
 {
+// !!! TODO what about BlockVectors?
+template<int dim, typename Number>
+void
+PatchDoFWorker<dim, Number>::initialize_dof_vector(
+  LinearAlgebra::distributed::Vector<Number> & vec) const
+{
+  Assert(dof_info, ExcMessage("dof_info is not set."));
+  Assert(dof_info->vector_partitioner, ExcMessage("vector_partitioner is not set."));
+  vec.reinit(dof_info->vector_partitioner);
+}
+
+
+template<int dim, typename Number>
+void
+PatchDoFWorker<dim, Number>::initialize_dof_vector(Vector<Number> & vec) const
+{
+  vec.reinit(n_global_dofs());
+}
+
+
 template<int dim, typename number>
 std::shared_ptr<const Utilities::MPI::Partitioner>
 PatchDoFWorker<dim, number>::initialize_vector_partitioner() const
