@@ -412,6 +412,18 @@ vector_to_string(const std::vector<T> & vector)
 }
 
 
+template<typename E>
+std::vector<const E *>
+to_vector_of_ptrs(const std::vector<E> & vec)
+{
+  std::vector<const E *> vec_of_ptrs;
+  std::transform(vec.cbegin(), vec.cend(), std::back_inserter(vec_of_ptrs), [](const auto & elem) {
+    return &elem;
+  });
+  return vec_of_ptrs;
+}
+
+
 template<typename T>
 std::string
 set_to_string(const std::set<T> & set)
