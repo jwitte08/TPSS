@@ -36,6 +36,7 @@ struct PrintFormat
   static constexpr char const * zero_string = " ";
   static constexpr double       denominator = 1.;
   static constexpr double       threshold   = numeric_eps<double>;
+  static constexpr unsigned int max_size    = 200;
 };
 
 /// Compare pair of matrices of FullMatrix type
@@ -172,6 +173,53 @@ compare_vector(const Vector<Number> &     vector,
   }
   pcout << oss.str();
 }
+
+
+/// Compare two vectors of MPI parallel vector type.
+template<typename Number = double>
+void
+compare_vector(const LinearAlgebra::distributed::Vector<Number> & vector,
+               const LinearAlgebra::distributed::Vector<Number> & other,
+               const ConditionalOStream & pcout = ConditionalOStream(std::cout, true))
+{
+  AssertDimension(vector.size(), other.size());
+  std::ostringstream oss;
+  if(vector.size() <= PrintFormat::max_size)
+  {
+    oss << "Vector:\n";
+    vector.print(oss, PrintFormat::precision, PrintFormat::scientific);
+    oss << "Reference vector:\n";
+    other.print(oss, PrintFormat::precision, PrintFormat::scientific);
+  }
+  else
+    oss << "...printing is suppressed!\n";
+
+  for(auto i = 0U; i < vector.local_size(); ++i)
+  {
+    const auto value       = vector.local_element(i);
+    const auto other_value = other.local_element(i);
+    const auto diff        = std::abs(value - other_value);
+    EXPECT_PRED_FORMAT2(testing::FloatLE, diff, numeric_eps<Number> * other_value) << oss.str();
+  }
+  pcout << oss.str();
+}
+
+
+/// Compare two block vectors of MPI parallel vector type.
+template<typename Number = double>
+void
+compare_vector(const LinearAlgebra::distributed::BlockVector<Number> & vector,
+               const LinearAlgebra::distributed::BlockVector<Number> & other,
+               const ConditionalOStream & pcout = ConditionalOStream(std::cout, true))
+{
+  AssertDimension(vector.n_blocks(), other.n_blocks());
+  for(auto b = 0U; b < vector.n_blocks(); ++b)
+  {
+    pcout << "Block: " << b << std::endl;
+    compare_vector(vector.block(b), other.block(b), pcout);
+  }
+}
+
 
 /// Compare two vectors of VectorType element-wise.
 /// VectorType has to provide size() and operator[]() for element access

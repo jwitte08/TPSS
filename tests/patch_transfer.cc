@@ -9,8 +9,9 @@
  *    (3a) DGQ^dim cell patch (vector-valued)
  *    (3b) DGQ^dim vertex patch (vector-valued)
  *    (3c) Q^dim vertex patch (vector-valued)
- *    (4a) DGP cell patch (scalar)
- *    (4b) DGP vertex patch (scalar)
+ *    (4a) DGP cell patch (scalar) (MPI)
+ *    (4b) DGP vertex patch (scalar) (MPI)
+ *    (4c) Q^dim x DGP vertex patch (block) (MPI)
  *
  *  Created on: Feb 06, 2020
  *      Author: witte
@@ -749,11 +750,16 @@ template<typename T>
 class TestPatchTransferDGP : public testing::Test
 {
 protected:
-  static constexpr int dim       = T::template value<0>();
-  static constexpr int fe_degree = T::template value<1>();
+  static constexpr int dim         = T::template value<0>();
+  static constexpr int fe_degree   = T::template value<1>();
+  static constexpr int fe_degree_p = fe_degree;
+  static constexpr int fe_degree_v = fe_degree_p + 2;
 
 
-  TestPatchTransferDGP() : triangulation(Triangulation<dim>::maximum_smoothing)
+  TestPatchTransferDGP()
+    : triangulation(MPI_COMM_WORLD,
+                    Triangulation<dim>::limit_level_difference_at_vertices,
+                    parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy)
   {
   }
 
@@ -829,8 +835,7 @@ protected:
       dof_info.initialize(&dof_handler, &patch_info, &shape_info, additional_data);
     }
 
-    const auto patch_transfer =
-      std::make_shared<TPSS::PatchTransfer<dim, double>>(patch_info, dof_info);
+    const auto   patch_transfer   = std::make_shared<TPSS::PatchTransfer<dim, double>>(dof_info);
     const auto & patch_dof_worker = patch_transfer->get_patch_dof_worker();
 
     //: generate random input
@@ -843,6 +848,8 @@ protected:
 
     //: restrict to and prolongate from each patch
     *pcout << "Restrict & Prolongate = Identity ...  \n\n";
+    src.update_ghost_values();
+    dst.zero_out_ghosts();
     const auto & partition_data = patch_dof_worker.get_partition_data();
     const auto   n_subdomains   = partition_data.n_subdomains();
     for(unsigned patch_id = 0; patch_id < n_subdomains; ++patch_id)
@@ -851,6 +858,99 @@ protected:
       const auto local_vector = patch_transfer->gather(src);
       patch_transfer->scatter_add(dst, local_vector); // second time !
     }
+    dst.compress(VectorOperation::add);
+
+    //: compare vectors (we added 2 times src !)
+    dst *= 0.5;
+    Util::compare_vector(dst, src, *pcout);
+  }
+
+
+  void
+  check_velocity_pressure()
+  {
+    *pcout << create_mesh(triangulation, rt_parameters.mesh) << std::endl;
+    const unsigned int level = triangulation.n_global_levels() - 1;
+
+    //: initialize velocity dof_handler & constraints
+    std::shared_ptr<FiniteElement<dim>> fe_v;
+    DoFHandler<dim>                     dof_handler_v;
+    AffineConstraints<double>           constraints_v;
+    {
+      fe_v = std::make_shared<FESystem<dim>>(FE_Q<dim>(fe_degree_v), dim);
+      *pcout << "Finite element (velocity): " << fe_v->get_name() << std::endl;
+      dof_handler_v.initialize(triangulation, *fe_v);
+      dof_handler_v.distribute_mg_dofs();
+
+      IndexSet locally_relevant_dofs;
+      DoFTools::extract_locally_relevant_dofs(dof_handler_v, locally_relevant_dofs);
+      constraints_v.reinit(locally_relevant_dofs);
+      DoFTools::make_zero_boundary_constraints(dof_handler_v, 0, constraints_v);
+      constraints_v.close();
+    }
+
+    //: initialize pressure dof_handler
+    std::shared_ptr<FiniteElement<dim>> fe_p;
+    DoFHandler<dim>                     dof_handler_p;
+    {
+      fe_p = std::make_shared<FE_DGP<dim>>(fe_degree_p);
+      *pcout << "Finite element (pressure): " << fe_p->get_name() << std::endl;
+      dof_handler_p.initialize(triangulation, *fe_p);
+      dof_handler_p.distribute_mg_dofs();
+    }
+
+    //: distribute subdomains
+    TPSS::PatchInfo<dim> patch_info;
+    {
+      typename TPSS::PatchInfo<dim>::AdditionalData additional_data;
+      const auto schwarz_data          = rt_parameters.multigrid.pre_smoother.schwarz;
+      additional_data.patch_variant    = schwarz_data.patch_variant;
+      additional_data.smoother_variant = schwarz_data.smoother_variant;
+      additional_data.level            = level;
+      patch_info.initialize(&dof_handler_v, additional_data); // raw
+      TPSS::PatchWorker<dim, double>{patch_info};             // vectorized
+    }
+
+    //: distribute velocity + pressure dofs on subdomains
+    QGauss<1>                                                         quadrature(fe_degree_v + 1);
+    std::vector<TPSS::DoFInfo<dim, double>>                           dof_infos(2U);
+    internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info_v;
+    {
+      shape_info_v.reinit(quadrature, *fe_v, /*base_element_index*/ 0);
+      typename TPSS::DoFInfo<dim, double>::AdditionalData additional_data;
+      additional_data.level = level;
+      dof_infos[0].initialize(&dof_handler_v, &patch_info, &shape_info_v, additional_data);
+    }
+    internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info_p;
+    {
+      shape_info_p.reinit(quadrature, *fe_p, /*base_element_index*/ 0);
+      typename TPSS::DoFInfo<dim, double>::AdditionalData additional_data;
+      additional_data.level = level;
+      dof_infos[1].initialize(&dof_handler_p, &patch_info, &shape_info_p, additional_data);
+    }
+
+    const auto patch_transfer = std::make_shared<TPSS::PatchTransferBlock<dim, double>>(dof_infos);
+
+    LinearAlgebra::distributed::BlockVector<double> dst;
+    patch_transfer->initialize_dof_vector(dst);
+    for(auto b = 0U; b < dst.n_blocks(); ++b)
+      fill_with_random_values(dst.block(b)); // first time !
+    constraints_v.set_zero(dst.block(0));
+    const LinearAlgebra::distributed::BlockVector<double> src(dst);
+
+    //: restrict to and prolongate from each patch
+    src.update_ghost_values();
+    dst.zero_out_ghosts();
+    *pcout << "Restrict & Prolongate = Identity ...  \n\n";
+    const auto & partition_data = patch_transfer->get_patch_dof_worker(0).get_partition_data();
+    const auto   n_subdomains   = partition_data.n_subdomains();
+    for(unsigned patch_id = 0; patch_id < n_subdomains; ++patch_id)
+    {
+      patch_transfer->reinit(patch_id);
+      const auto local_vector = patch_transfer->gather(src);
+      patch_transfer->scatter_add(dst, local_vector); // second time !
+    }
+    dst.compress(VectorOperation::add);
 
     //: compare vectors (we added 2 times src !)
     dst *= 0.5;
@@ -862,13 +962,12 @@ protected:
   std::shared_ptr<ConditionalOStream> pcout;
   RT::Parameter                       rt_parameters;
 
-  Triangulation<dim> triangulation;
-  // AffineConstraints<double>           constraints;
+  parallel::distributed::Triangulation<dim> triangulation;
 };
 
 TYPED_TEST_SUITE_P(TestPatchTransferDGP);
 
-TYPED_TEST_P(TestPatchTransferDGP, Cell)
+TYPED_TEST_P(TestPatchTransferDGP, CellPatchMPI)
 {
   using Fixture = TestPatchTransferDGP<TypeParam>;
 
@@ -884,7 +983,7 @@ TYPED_TEST_P(TestPatchTransferDGP, Cell)
   Fixture::check();
 }
 
-TYPED_TEST_P(TestPatchTransferDGP, VertexPatch)
+TYPED_TEST_P(TestPatchTransferDGP, VertexPatchMPI)
 {
   using Fixture = TestPatchTransferDGP<TypeParam>;
 
@@ -902,11 +1001,37 @@ TYPED_TEST_P(TestPatchTransferDGP, VertexPatch)
   Fixture::check();
 }
 
-REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferDGP, Cell, VertexPatch);
+TYPED_TEST_P(TestPatchTransferDGP, VertexPatchVelocityPressureMPI)
+{
+  using Fixture = TestPatchTransferDGP<TypeParam>;
 
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant = TPSS::PatchVariant::vertex;
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  Fixture::rt_parameters.multigrid.post_smoother.schwarz =
+    Fixture::rt_parameters.multigrid.pre_smoother.schwarz;
+
+  // There is only one vertex patch possible such that each degree of freedom
+  // uniquely belongs to one patch
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::rt_parameters.mesh.n_refinements    = 0U;
+  Fixture::check_velocity_pressure();
+}
+
+REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferDGP,
+                            CellPatchMPI,
+                            VertexPatchMPI,
+                            VertexPatchVelocityPressureMPI);
+
+using TestParamsConstant2D = testing::Types<Util::NonTypeParams<2, 0>>;
+using TestParamsConstant3D = testing::Types<Util::NonTypeParams<3, 0>>;
+
+INSTANTIATE_TYPED_TEST_SUITE_P(Constant2D, TestPatchTransferDGP, TestParamsLinear2D);
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferDGP, TestParamsLinear2D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferDGP, TestParamsHigherOrder2D);
 
+INSTANTIATE_TYPED_TEST_SUITE_P(Constant3D, TestPatchTransferDGP, TestParamsLinear3D);
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransferDGP, TestParamsLinear3D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestPatchTransferDGP, TestParamsHigherOrder3D);
 
