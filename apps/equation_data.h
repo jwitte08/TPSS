@@ -657,6 +657,20 @@ using Load = ManufacturedLoad<dim, Solution<dim>>;
  */
 namespace Stokes
 {
+enum class LocalAssembly
+{
+  Tensor,
+  Cut
+};
+
+enum class Method
+{
+  TaylorHood,
+  /*only for testing*/ TaylorHoodDGQ,
+  Qkplus2_DGPk
+};
+
+
 struct EquationData
 {
   enum class Variant

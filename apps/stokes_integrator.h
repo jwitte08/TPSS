@@ -950,15 +950,25 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cellU,
 
 namespace FD
 {
+/**
+ * Assembles the (exact) local matrices/solvers by exploiting the tensor
+ * structure of each scalar-valued shape function, that is each block of a
+ * patch matrix involving a component of the velocity vector-field and/or a
+ * pressure function have a low-rank Kronecker product decomposition (representation?).
+ *
+ * However, each block matrix itself has no low-rank Kronecker decomposition
+ * (representation?), thus, local matrices are stored and inverted in a
+ * standard (vectorized) fashion.
+ */
 template<int dim,
          int fe_degree_p,
          typename Number              = double,
          TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
          int             fe_degree_v  = fe_degree_p + 1>
-class MatrixIntegrator
+class MatrixIntegratorTensor
 {
 public:
-  using This = MatrixIntegrator<dim, fe_degree_p, Number>;
+  using This = MatrixIntegratorTensor<dim, fe_degree_p, Number>;
 
   static constexpr int n_q_points_1d = fe_degree_v + 1;
 
@@ -1150,6 +1160,214 @@ public:
 
   EquationData equation_data;
 };
+
+
+
+/**
+ * This class is actual not an "integration-type" struct for local
+ * matrices. It simply uses the PatchTransferBlock w.r.t. the
+ * velocity-pressure block system to extract the local matrices/solvers from
+ * the (global) level matrix, which is passed to the
+ * assemble_subspace_inverses() interface.
+ *
+ * Therefore, all local matrices are stored and inverted in a classical
+ * fashion.
+ */
+template<int dim,
+         int fe_degree_p,
+         typename Number              = double,
+         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
+         int             fe_degree_v  = fe_degree_p + 1>
+class MatrixIntegratorCut
+{
+public:
+  using This = MatrixIntegratorCut<dim, fe_degree_p, Number>;
+
+  static constexpr int n_q_points_1d = fe_degree_v + 1;
+
+  using value_type    = Number;
+  using transfer_type = typename TPSS::PatchTransferBlock<dim, Number>;
+  // using matrix_type_1d          = Table<2, VectorizedArray<Number>>;
+  using matrix_type = MatrixAsTable<VectorizedArray<Number>>;
+  // using matrix_type_mixed       = Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, -1>;
+  // using velocity_evaluator_type = FDEvaluation<dim, fe_degree_v, n_q_points_1d, Number>;
+  // using pressure_evaluator_type = FDEvaluation<dim, fe_degree_p, n_q_points_1d, Number>;
+  using operator_type = BlockSparseMatrix<Number>;
+
+  void
+  initialize(const EquationData & equation_data_in)
+  {
+    equation_data = equation_data_in;
+  }
+
+  // template<typename OperatorType>
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
+                             std::vector<matrix_type> &            local_matrices,
+                             const operator_type &                 level_matrix,
+                             // const OperatorType &                        dummy_operator,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+
+    // AssertDimension(local_matrices_velocity.size(), local_matrices.size());
+    const auto patch_transfer = get_patch_transfer(subdomain_handler);
+    for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
+        ++patch_index)
+    {
+      patch_transfer->reinit(patch_index);
+      const auto   n_dofs                = patch_transfer->n_dofs_per_patch();
+      const auto   n_dofs_velocity       = patch_transfer->n_dofs_per_patch(0);
+      const auto   n_dofs_pressure       = patch_transfer->n_dofs_per_patch(1);
+      const auto & patch_worker_velocity = patch_transfer->get_patch_dof_worker(0);
+
+      FullMatrix<double> local_matrix(n_dofs, n_dofs);
+      auto &             patch_matrix = local_matrices[patch_index];
+      patch_matrix.as_table().reinit(n_dofs, n_dofs);
+
+      for(auto lane = 0U; lane < patch_worker_velocity.n_lanes_filled(patch_index); ++lane)
+      {
+        local_matrix *= 0.;
+
+        {
+          /// Patch-wise local and global dof indices of velocity block.
+          const auto & patch_transfer_velocity = patch_transfer->get_patch_transfer(0);
+          std::vector<types::global_dof_index> velocity_dof_indices_on_patch;
+          {
+            const auto view = patch_transfer_velocity.get_dof_indices(lane);
+            std::copy(view.cbegin(),
+                      view.cend(),
+                      std::back_inserter(velocity_dof_indices_on_patch));
+          }
+          std::vector<unsigned int> velocity_local_dof_indices(
+            velocity_dof_indices_on_patch.size());
+          std::iota(velocity_local_dof_indices.begin(), velocity_local_dof_indices.end(), 0U);
+
+          /// Patch-wise local and global dof indices of pressure block.
+          const auto & patch_transfer_pressure = patch_transfer->get_patch_transfer(1);
+          std::vector<types::global_dof_index> pressure_dof_indices_on_patch;
+          {
+            const auto view = patch_transfer_pressure.get_dof_indices(lane);
+            std::copy(view.cbegin(),
+                      view.cend(),
+                      std::back_inserter(pressure_dof_indices_on_patch));
+          }
+          std::vector<unsigned int> pressure_local_dof_indices(
+            pressure_dof_indices_on_patch.size());
+          std::iota(pressure_local_dof_indices.begin(),
+                    pressure_local_dof_indices.end(),
+                    velocity_dof_indices_on_patch.size());
+
+          /// Extract and insert local velocity block.
+          FullMatrix<double> local_block_velocity(velocity_dof_indices_on_patch.size());
+          local_block_velocity.extract_submatrix_from(level_matrix.block(0, 0),
+                                                      velocity_dof_indices_on_patch,
+                                                      velocity_dof_indices_on_patch);
+          local_block_velocity.scatter_matrix_to(velocity_local_dof_indices,
+                                                 velocity_local_dof_indices,
+                                                 local_matrix);
+
+          /// Extract and insert local pressure block.
+          FullMatrix<double> local_block_pressure(pressure_dof_indices_on_patch.size());
+          local_block_pressure.extract_submatrix_from(level_matrix.block(1, 1),
+                                                      pressure_dof_indices_on_patch,
+                                                      pressure_dof_indices_on_patch);
+          local_block_pressure.scatter_matrix_to(pressure_local_dof_indices,
+                                                 pressure_local_dof_indices,
+                                                 local_matrix);
+
+          /// velocity-pressure
+          FullMatrix<double> local_block_velocity_pressure(velocity_dof_indices_on_patch.size(),
+                                                           pressure_dof_indices_on_patch.size());
+          local_block_velocity_pressure.extract_submatrix_from(level_matrix.block(0, 1),
+                                                               velocity_dof_indices_on_patch,
+                                                               pressure_dof_indices_on_patch);
+          local_block_velocity_pressure.scatter_matrix_to(velocity_local_dof_indices,
+                                                          pressure_local_dof_indices,
+                                                          local_matrix);
+
+
+          /// pressure-velocity
+          FullMatrix<double> local_block_pressure_velocity(pressure_dof_indices_on_patch.size(),
+                                                           velocity_dof_indices_on_patch.size());
+          local_block_pressure_velocity.extract_submatrix_from(level_matrix.block(1, 0),
+                                                               pressure_dof_indices_on_patch,
+                                                               velocity_dof_indices_on_patch);
+          local_block_pressure_velocity.scatter_matrix_to(pressure_local_dof_indices,
+                                                          velocity_local_dof_indices,
+                                                          local_matrix);
+        }
+
+        patch_matrix.template fill_submatrix<Number>(
+          static_cast<const Table<2, Number> &>(local_matrix), 0U, 0U, lane);
+      }
+    }
+  }
+
+  std::shared_ptr<transfer_type>
+  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    return std::make_shared<transfer_type>(subdomain_handler);
+  }
+
+  EquationData equation_data;
+};
+
+
+
+/**
+ * Selects the MatrixIntegrator at compile time w.r.t. the LocalAssembly
+ * template. Hence, the generic class is empty and we select by template
+ * specialization.
+ */
+template<LocalAssembly local_assembly,
+         int           dim,
+         int           fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v>
+struct MatrixIntegratorSelector
+{
+};
+
+template<int dim, int fe_degree_p, typename Number, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
+struct MatrixIntegratorSelector<LocalAssembly::Tensor,
+                                dim,
+                                fe_degree_p,
+                                Number,
+                                dof_layout_v,
+                                fe_degree_v>
+{
+  using type = MatrixIntegratorTensor<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
+};
+
+template<int dim, int fe_degree_p, typename Number, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
+struct MatrixIntegratorSelector<LocalAssembly::Cut,
+                                dim,
+                                fe_degree_p,
+                                Number,
+                                dof_layout_v,
+                                fe_degree_v>
+{
+  using type = MatrixIntegratorCut<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
+};
+
+
+/**
+ * Aliasing MatrixIntegrator w.r.t. the choice for LocalAssembly.
+ */
+template<int dim,
+         int fe_degree_p,
+         typename Number                = double,
+         TPSS::DoFLayout dof_layout_v   = TPSS::DoFLayout::Q,
+         int             fe_degree_v    = fe_degree_p + 1,
+         LocalAssembly   local_assembly = LocalAssembly::Tensor>
+using MatrixIntegrator = typename MatrixIntegratorSelector<local_assembly,
+                                                           dim,
+                                                           fe_degree_p,
+                                                           Number,
+                                                           dof_layout_v,
+                                                           fe_degree_v>::type;
 
 } // end namespace FD
 
