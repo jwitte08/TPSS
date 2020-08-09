@@ -20,6 +20,7 @@ set(sourcefiles
   poisson_standard.cc
   biharmonic_c0ip.cc
   stokes_taylorhood.cc
+  stokes_Qkplus2_DGPk.cc
   )
 
 foreach(src ${sourcefiles})
