@@ -43,7 +43,7 @@ def parse_args():
     parser.add_argument('-DEG','--fe-degree',
                         default=2,
                         type=int,
-                        choices=range(1,31),
+                        choices=range(0,32),
                         help="spatial dimension of the domain"
     )
     parser.add_argument('-DLY','--dof-layout',
