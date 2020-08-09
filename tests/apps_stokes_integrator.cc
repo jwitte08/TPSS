@@ -34,6 +34,11 @@ protected:
   void
   SetUp() override
   {
+    ASSERT_FALSE(fe_degree_p == 0)
+      << "This test is expected to fail, because there exist no piecewise constant functions with inter-element continuity (if needed use FE_DGQ<dim>(0) instead of FE_Q<dim>(0))...";
+    if(fe_degree_p == 0)
+      return;
+
     ofs.open("apps_stokes_integrator.log", std::ios_base::app);
     const bool is_first_proc   = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
     const bool is_higher_order = fe_degree_v > 2;
