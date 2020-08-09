@@ -12,6 +12,7 @@
 
 #include "generic_functionalities.h"
 #include "tensors.h"
+#include "vectorization.h"
 
 using namespace dealii;
 
@@ -150,6 +151,9 @@ public:
     inverse_matrix->vmult(dst_view, src_view);
   }
 
+  /**
+   * Read & write access to the underlying Table storing the matrix entries.
+   */
   Table<2, Number> &
   as_table()
   {
@@ -157,6 +161,9 @@ public:
     return matrix;
   }
 
+  /**
+   * Read access to the underlying Table storing the matrix entries.
+   */
   const Table<2, Number> &
   as_table() const
   {
@@ -190,6 +197,39 @@ public:
       for(auto j = 0U; j < other.size(1); ++j)
         for(auto i = 0U; i < other.size(0); ++i)
           matrix(row_start + j, column_start + i) = other(i, j);
+    }
+    inverse_matrix.reset();
+  }
+
+  /**
+   * Same as above except that value types might vary and we read from or write
+   * to one specific vectorization lane @p lane. If Number or OtherNumber
+   * defines a scalar value type the vectorization lane is suppressed by
+   * scalar_value(), consequently, accessing only the scalar value independent
+   * of the index @p lane.
+   */
+  template<typename OtherNumber = Number, bool fill_transpose = false>
+  void
+  fill_submatrix(const Table<2, OtherNumber> & other,
+                 const unsigned int            row_start,
+                 const unsigned int            column_start,
+                 const unsigned int            lane)
+  {
+    AssertIndexRange(row_start + (fill_transpose ? other.size(1) : other.size(0)) - 1, m());
+    AssertIndexRange(column_start + (fill_transpose ? other.size(0) : other.size(1)) - 1, n());
+    if constexpr(fill_transpose == false)
+    {
+      for(auto i = 0U; i < other.size(0); ++i)
+        for(auto j = 0U; j < other.size(1); ++j)
+          scalar_value(matrix(row_start + i, column_start + j), lane) =
+            scalar_value(other(i, j), lane);
+    }
+    else
+    {
+      for(auto j = 0U; j < other.size(1); ++j)
+        for(auto i = 0U; i < other.size(0); ++i)
+          scalar_value(matrix(row_start + j, column_start + i), lane) =
+            scalar_value(other(i, j), lane);
     }
     inverse_matrix.reset();
   }
