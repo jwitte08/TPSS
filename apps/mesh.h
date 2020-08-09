@@ -273,9 +273,12 @@ template<int dim>
 long long unsigned int
 estimate_n_dofs(const FiniteElement<dim> & fe, const MeshParameter & prms)
 {
+  AssertDimension(fe.n_components(), 1); // support only scalar functions
   const auto dof_layout = TPSS::get_dof_layout(fe);
+  const bool is_discontinuous =
+    TPSS::DoFLayout::DGQ == dof_layout || TPSS::DoFLayout::DGP == dof_layout;
 
-  if(TPSS::DoFLayout::DGQ == dof_layout)
+  if(is_discontinuous)
   {
     /// construct root mesh obtaining the number of root cells
     parallel::distributed::Triangulation<dim> tria(
