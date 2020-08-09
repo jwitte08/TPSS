@@ -18,6 +18,8 @@
 #include <string>
 #include <type_traits>
 
+#include "vectorization.h"
+
 
 using namespace dealii;
 
@@ -93,6 +95,7 @@ compute_generalized_eigenvalues_symm(LAPACKFullMatrix<Number> & A,
   return eigenvalues;
 }
 
+
 template<typename Number>
 std::vector<Number>
 compute_generalized_eigenvalues_symm(FullMatrix<Number> & A,
@@ -120,6 +123,7 @@ compute_singular_values(LAPACKFullMatrix<Number> & matrix)
   return singular_values;
 }
 
+
 template<typename Number>
 std::vector<Number>
 compute_singular_values(const FullMatrix<Number> & matrix)
@@ -130,27 +134,6 @@ compute_singular_values(const FullMatrix<Number> & matrix)
   return compute_singular_values(lapack_matrix);
 }
 
-template<typename Number>
-struct ExtractScalarType
-{
-  using type = Number;
-};
-
-template<typename Number>
-struct ExtractScalarType<typename dealii::VectorizedArray<Number>>
-{
-  using type = Number;
-};
-
-template<typename Number>
-constexpr unsigned int
-get_macro_size()
-{
-  using UnvectorizedNumber = typename ExtractScalarType<Number>::type;
-  return (std::is_same<Number, UnvectorizedNumber>::value == true) ?
-           1U :
-           dealii::VectorizedArray<UnvectorizedNumber>::size();
-}
 
 template<typename T1, typename T2>
 std::ostream &
@@ -158,6 +141,7 @@ operator<<(std::ostream & os, const std::pair<T1, T2> & pair)
 {
   return os << "(" << pair.first << ", " << pair.second << ")";
 }
+
 
 std::string
 bool_to_str(const bool b)
@@ -177,73 +161,6 @@ operator/(const Utilities::MPI::MinMaxAvg & mma_in, const double t)
   return mma;
 }
 
-
-template<typename Number>
-std::bitset<VectorizedArray<Number>::size()>
-less_than(const VectorizedArray<Number> & lhs, const VectorizedArray<Number> & rhs)
-{
-  std::bitset<VectorizedArray<Number>::size()> flag;
-  for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
-    flag[lane] = lhs[lane] < rhs[lane];
-  return flag;
-}
-
-
-template<typename Number>
-std::bitset<1>
-less_than(const Number & lhs, const Number & rhs)
-{
-  std::bitset<1> flag;
-  flag[0] = lhs < rhs;
-  return flag;
-}
-
-
-template<typename NumberType>
-bool
-less_than_all_lanes(const NumberType & lhs, const NumberType & rhs)
-{
-  const auto & flag = less_than(lhs, rhs);
-  return flag.all();
-}
-
-template<typename Number>
-Number &
-scalar_value(Number & value, const unsigned int /*dummy*/ = 0)
-{
-  using UnvectorizedNumber = typename ExtractScalarType<Number>::type;
-  static_assert(std::is_same<Number, UnvectorizedNumber>::value == true,
-                "Implemented for unvectorized number type.");
-  return value;
-}
-
-
-template<typename Number>
-Number &
-scalar_value(VectorizedArray<Number> & value, const unsigned int lane = 0)
-{
-  AssertIndexRange(lane, VectorizedArray<Number>::size());
-  return value[lane];
-}
-
-template<typename Number>
-const Number &
-scalar_value(const Number & value, const unsigned int /*dummy*/ = 0)
-{
-  using UnvectorizedNumber = typename ExtractScalarType<Number>::type;
-  static_assert(std::is_same<Number, UnvectorizedNumber>::value == true,
-                "Implemented for unvectorized number type.");
-  return value;
-}
-
-
-template<typename Number>
-const Number &
-scalar_value(const VectorizedArray<Number> & value, const unsigned int lane = 0)
-{
-  AssertIndexRange(lane, VectorizedArray<Number>::size());
-  return value[lane];
-}
 
 template<typename Number = double>
 Number
@@ -310,59 +227,6 @@ fill_matrix_with_random_values(MatrixType &       matrix,
   for(unsigned int i = 0; i < n_rows; ++i)
     for(unsigned int j = 0; j < n_cols; ++j)
       matrix(i, j) = make_random_value<Number>();
-}
-
-
-template<typename Number>
-std::string
-varray_to_string(const VectorizedArray<Number> & array)
-{
-  std::ostringstream osstream;
-  osstream << "[";
-  constexpr auto n_elems = VectorizedArray<Number>::size();
-  for(unsigned int k = 0; k < n_elems - 1; ++k)
-    osstream << array[k] << "|";
-  osstream << array[n_elems - 1] << "]";
-  return osstream.str();
-}
-
-
-/**
- * Extracts and converts the matrix associated to the lane @p lane
- * of the vectorized matrix @p table into the FullMatrix format.
- */
-template<typename Number>
-FullMatrix<Number>
-vectorized_table_to_fullmatrix(const Table<2, VectorizedArray<Number>> & table,
-                               const unsigned int                        lane = 0)
-{
-  AssertIndexRange(lane, VectorizedArray<Number>::size());
-  FullMatrix<Number> matrix{table.n_rows(), table.n_cols()};
-  for(unsigned int i = 0; i < table.n_rows(); ++i)
-    for(unsigned int j = 0; j < table.n_cols(); ++j)
-      matrix(i, j) = (table(i, j))[lane];
-  return matrix;
-}
-
-
-template<typename Number>
-FullMatrix<Number>
-table_to_fullmatrix(const Table<2, VectorizedArray<Number>> & table, const unsigned int lane = 0)
-{
-  return vectorized_table_to_fullmatrix(table, lane);
-}
-
-
-template<typename Number>
-FullMatrix<Number>
-table_to_fullmatrix(const Table<2, Number> & table, const unsigned int dummy = 0)
-{
-  (void)dummy;
-  FullMatrix<Number> matrix{table.n_rows(), table.n_cols()};
-  for(unsigned int i = 0; i < table.n_rows(); ++i)
-    for(unsigned int j = 0; j < table.n_cols(); ++j)
-      matrix(i, j) = table(i, j);
-  return matrix;
 }
 
 
