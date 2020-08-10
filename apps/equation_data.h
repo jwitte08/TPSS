@@ -695,6 +695,9 @@ struct EquationData
                                       assemble_pressure_mass_matrix);
     oss << Util::parameter_to_fstring("Enforce the mean value constraint:",
                                       force_mean_value_constraint);
+    oss << Util::parameter_to_fstring("Use Cuthill-McKee:", use_cuthill_mckee);
+    if(local_kernel_size != numbers::invalid_unsigned_int)
+      oss << Util::parameter_to_fstring("Kernel size per local solver:", local_kernel_size);
     return oss.str();
   }
 
@@ -704,6 +707,8 @@ struct EquationData
   double                       ip_factor                       = 1.;
   bool                         assemble_pressure_mass_matrix   = false;
   bool                         force_mean_value_constraint     = false;
+  bool                         use_cuthill_mckee               = false;
+  unsigned int                 local_kernel_size               = numbers::invalid_unsigned_int;
 };
 
 
