@@ -114,8 +114,7 @@ public:
   using value_type            = Number;
   using matrix_type           = BlockSparseMatrix<Number>;
   using local_integrator_type = VelocityPressure::FD::
-    MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>; // TODO
-                                                                                           // !!!
+    MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>;
 
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
@@ -1038,7 +1037,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     }
     break;
     case SmootherParameter::SmootherVariant::Schwarz:
-      prepare_schwarz_smoothers(user_coloring); // TODO !!!
+      prepare_schwarz_smoothers(user_coloring);
       AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
       mg_smoother_pre = mg_schwarz_smoother_pre.get();
       break;
@@ -1166,6 +1165,7 @@ class ModelProblem : public ModelProblemBase<method, dim, fe_degree_p>
 public:
   static constexpr int fe_degree_v   = Base::fe_degree_v;
   static constexpr int n_q_points_1d = fe_degree_v + 1;
+  using Base::dof_layout_p;
   using Base::dof_layout_v;
   using Base::fe_type_p;
   using Base::fe_type_v;
@@ -1186,10 +1186,10 @@ public:
   setup_system();
 
   void
-  setup_system_velocity(const bool do_system_matrix = true);
+  setup_system_velocity(const bool do_cuthill_mckee);
 
   std::shared_ptr<Vector<double>>
-  setup_system_pressure();
+  setup_system_pressure(const bool do_cuthill_mckee);
 
   void
   assemble_system();
@@ -1261,10 +1261,12 @@ public:
   AffineConstraints<double> constraints_velocity;
   AffineConstraints<double> constraints_pressure;
 
-  BlockSparsityPattern      sparsity_pattern;
-  BlockSparseMatrix<double> system_matrix;
-  SparsityPattern           sparsity_pattern_pressure;
-  SparseMatrix<double>      pressure_mass_matrix;
+  Table<2, DoFTools::Coupling> cell_integrals_mask;
+  Table<2, DoFTools::Coupling> face_integrals_mask;
+  BlockSparsityPattern         sparsity_pattern;
+  BlockSparseMatrix<double>    system_matrix;
+  SparsityPattern              sparsity_pattern_pressure;
+  SparseMatrix<double>         pressure_mass_matrix;
 
   BlockVector<double> system_solution;
   BlockVector<double> system_delta_x;
@@ -1489,14 +1491,14 @@ ModelProblem<dim, fe_degree_p, method>::make_grid_impl(const MeshParameter & mes
 
 template<int dim, int fe_degree_p, Method method>
 void
-ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_system_matrix)
+ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuthill_mckee)
 {
   Assert(check_finite_elements(),
          ExcMessage("Does the choice of finite elements suit the dof_layout?"));
 
   //: distribute DoFs and initialize MGCollection
   dof_handler_velocity.initialize(triangulation, get_fe_velocity());
-  if(rt_parameters.solver.variant == "FGMRES_ILU")
+  if(do_cuthill_mckee)
     DoFRenumbering::Cuthill_McKee(dof_handler_velocity);
 
   /// homogeneous boundary conditions for the solution update
@@ -1546,15 +1548,21 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_syst
 
 template<int dim, int fe_degree_p, Method method>
 std::shared_ptr<Vector<double>>
-ModelProblem<dim, fe_degree_p, method>::setup_system_pressure()
+ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuthill_mckee)
 {
   Assert(check_finite_elements(),
          ExcMessage("Does the choice of finite elements suit the dof_layout?"));
-
   dof_handler_pressure.initialize(triangulation, get_fe_pressure());
 
-  if(rt_parameters.solver.variant == "FGMRES_ILU")
+  if(do_cuthill_mckee)
+  {
+    const bool cuthill_mckee_is_compatible = dof_layout_v == dof_layout_p;
+    AssertThrow(
+      cuthill_mckee_is_compatible,
+      ExcMessage(
+        "The concatenation of the Cuthill-Mckee renumberings on the velocity and pressure dofs each does not result in the same Cuthill-McKee renumbering applied to the whole velocity-pressure block system. They should be compatible if the velocity components and pressure functions have the same dof layout."));
     DoFRenumbering::Cuthill_McKee(dof_handler_pressure);
+  }
 
   /// Restrict the pressure to be from the mean-value free L2-space, that is
   /// L^2_0 (\Omega) following the notation in Guido's mixed FEM script.
@@ -1571,7 +1579,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure()
 
     const auto             n_dofs_pressure = dof_handler_pressure.n_dofs();
     DynamicSparsityPattern dsp(dof_handler_pressure.n_dofs());
-    DoFTools::make_sparsity_pattern(dof_handler_pressure, dsp, constraints_pressure); // !!!
+    DoFTools::make_sparsity_pattern(dof_handler_pressure, dsp, constraints_pressure);
 
     SparsityPattern sparsity_pattern;
     sparsity_pattern.copy_from(dsp);
@@ -1623,7 +1631,10 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure()
     {
       const double mass_of_first_dof = mass_foreach_dof(0);
       constraints_pressure.add_line(0U);
-      for(auto i = 1U; i < n_dofs_pressure; ++i)
+      const auto         n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
+      const unsigned int stride = dof_layout_p == TPSS::DoFLayout::DGP ? n_dofs_per_cell : 1U;
+      const unsigned int start  = dof_layout_p == TPSS::DoFLayout::DGP ? stride : 1U;
+      for(auto i = start; i < n_dofs_pressure; i += stride)
         constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
     }
     constraints_pressure.close();
@@ -1645,8 +1656,17 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   // ILU behaves better if we apply a reordering to reduce fillin. There
   // is no advantage in doing this for the other solvers.
-  if(rt_parameters.solver.variant == "FGMRES_ILU")
+  if(equation_data.use_cuthill_mckee)
+  {
+    const bool cuthill_mckee_is_compatible = dof_layout_v == dof_layout_p;
+    const bool cuthill_mckee_pays_off =
+      rt_parameters.solver.variant == "FGMRES_ILU" && cuthill_mckee_is_compatible;
+    AssertThrow(
+      cuthill_mckee_pays_off,
+      ExcMessage(
+        "For the current solver setting a Cuthill-McKee renumbering seems not be worthwile."));
     DoFRenumbering::Cuthill_McKee(dof_handler);
+  }
 
   // This ensures that all velocity DoFs are enumerated before the pressure
   // unknowns. This allows us to use blocks for vectors and matrices and allows
@@ -1659,9 +1679,9 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   const unsigned int n_dofs_velocity = dofs_per_block[0];
   const unsigned int n_dofs_pressure = dofs_per_block[1];
 
-  setup_system_velocity(false);
+  setup_system_velocity(equation_data.use_cuthill_mckee);
 
-  const auto mass_foreach_dof_ptr = setup_system_pressure();
+  const auto mass_foreach_dof_ptr = setup_system_pressure(equation_data.use_cuthill_mckee);
 
   /// No-slip boundary conditions (velocity)
   {
@@ -1687,7 +1707,12 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
       const double                  mass_of_first_dof = mass_foreach_dof(0);
       const types::global_dof_index first_dof_index   = n_dofs_velocity;
       mean_value_constraints.add_line(first_dof_index);
-      for(auto i = 1U; i < n_dofs_pressure; ++i)
+      const auto n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
+      if(dof_layout_p == TPSS::DoFLayout::DGP)
+        AssertDimension(n_dofs_pressure % n_dofs_per_cell, 0);
+      const unsigned int stride = dof_layout_p == TPSS::DoFLayout::DGP ? n_dofs_per_cell : 1U;
+      const unsigned int start  = dof_layout_p == TPSS::DoFLayout::DGP ? stride : 1U;
+      for(auto i = start; i < n_dofs_pressure; i += stride)
         mean_value_constraints.add_entry(first_dof_index,
                                          first_dof_index + i,
                                          -mass_foreach_dof(i) / mass_of_first_dof);
@@ -1696,11 +1721,24 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     zero_constraints.merge(mean_value_constraints);
   }
 
+  cell_integrals_mask.reinit(dim + 1, dim + 1);
+  face_integrals_mask.reinit(dim + 1, dim + 1);
+  for(auto i = 0U; i < dim + 1; ++i)
+    for(auto j = 0U; j < dim + 1; ++j)
+    {
+      cell_integrals_mask(i, j) = DoFTools::Coupling::always;
+      if(i < dim && j < dim && dof_layout_v == TPSS::DoFLayout::DGQ)
+        face_integrals_mask(i, j) = DoFTools::Coupling::always;
+      else
+        face_integrals_mask(i, j) = DoFTools::Coupling::none;
+    }
+
   system_matrix.clear();
   pressure_mass_matrix.clear();
   BlockDynamicSparsityPattern dsp(dofs_per_block, dofs_per_block);
-  // DoFTools::make_sparsity_pattern(dof_handler, dsp, zero_constraints); // TODO !!! DGQ case
-  DoFTools::make_sparsity_pattern(dof_handler, dsp, zero_constraints); // !!!
+  // DoFTools::make_sparsity_pattern(dof_handler, dsp, zero_constraints); // OLD
+  DoFTools::make_flux_sparsity_pattern(dof_handler, dsp, cell_integrals_mask, face_integrals_mask);
+  zero_constraints.condense(dsp);
   sparsity_pattern.copy_from(dsp);
 
   system_matrix.reinit(sparsity_pattern);
@@ -2163,7 +2201,7 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
                                                                         system_delta_x,
                                                                         system_rhs,
                                                                         preconditioner);
-  zero_constraints.distribute(system_delta_x); // !!! mean value constraint
+  zero_constraints.distribute(system_delta_x); // mean value constraint
   system_solution += system_delta_x;
 
   const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
@@ -2200,7 +2238,6 @@ ModelProblem<dim, fe_degree_p, method>::solve()
   // faster or slower
   const bool use_expensive = true;
 
-  /// Currently, this method only converges with inhomog. constraints !!!
   if(rt_parameters.solver.variant == "FGMRES_ILU")
   {
     SparseILU<double> A_preconditioner;
@@ -2248,7 +2285,18 @@ ModelProblem<dim, fe_degree_p, method>::solve()
   /// Post processing of discrete solution
   const double mean_pressure =
     VectorTools::compute_mean_value(dof_handler, QGauss<dim>(n_q_points_1d), system_solution, dim);
-  system_solution.block(1).add(-mean_pressure);
+  if(dof_layout_p == TPSS::DoFLayout::DGP)
+  {
+    const auto n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
+    const auto n_dofs_pressure = system_solution.block(1).size();
+    AssertDimension(n_dofs_pressure % n_dofs_per_cell, 0);
+    Vector<double> & dof_values_pressure = system_solution.block(1);
+    for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
+      dof_values_pressure[i] -= mean_pressure;
+  }
+  else
+    system_solution.block(1).add(-mean_pressure);
+
   print_parameter("Mean of pressure corrected by:", -mean_pressure);
   *pcout << std::endl;
 }

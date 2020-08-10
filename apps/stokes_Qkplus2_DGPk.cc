@@ -84,7 +84,7 @@ main(int argc, char * argv[])
       prms.n_cycles = 3;
       // prms.dof_limits            = {1e3, 1e5};
       prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-      prms.mesh.n_refinements    = 0; //
+      prms.mesh.n_refinements    = 1;
       prms.mesh.n_repetitions    = 2;
 
       //: solver
@@ -126,13 +126,17 @@ main(int argc, char * argv[])
     }
 
     EquationData equation_data;
-    equation_data.variant                     = EquationData::Variant::DivFreeHom;
-    equation_data.force_mean_value_constraint = true; // !!!
+    equation_data.variant           = EquationData::Variant::DivFreeHom;
+    equation_data.use_cuthill_mckee = false;
+    if(prms.solver.variant == "GMRES_GMG")
+      equation_data.local_kernel_size = 1U;
+    // equation_data.force_mean_value_constraint = false; // !!!
     if(argc > 3)
     {
       AssertThrow(std::atoi(argv[3]) == 0 || std::atoi(argv[3]) == 1, ExcMessage("Invalid flag."));
       equation_data.force_mean_value_constraint = static_cast<bool>(std::atoi(argv[3]));
     }
+
     ModelProblem<dim, degree, Method::Qkplus2_DGPk> stokes_problem(prms, equation_data);
 
     stokes_problem.run();

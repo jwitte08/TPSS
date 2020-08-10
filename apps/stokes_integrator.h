@@ -1057,6 +1057,8 @@ public:
       local_matrix.template fill_submatrix<true>(local_block_velocity_pressure.as_table(),
                                                  n_dofs_velocity,
                                                  0U);
+
+      local_matrix.invert(equation_data.local_kernel_size);
       // {
       //   for(auto b = 0U; b < dim; ++b)
       //   {
@@ -1216,9 +1218,9 @@ public:
         ++patch_index)
     {
       patch_transfer->reinit(patch_index);
-      const auto   n_dofs                = patch_transfer->n_dofs_per_patch();
-      const auto   n_dofs_velocity       = patch_transfer->n_dofs_per_patch(0);
-      const auto   n_dofs_pressure       = patch_transfer->n_dofs_per_patch(1);
+      const auto n_dofs = patch_transfer->n_dofs_per_patch();
+      // const auto   n_dofs_velocity       = patch_transfer->n_dofs_per_patch(0);
+      // const auto   n_dofs_pressure       = patch_transfer->n_dofs_per_patch(1);
       const auto & patch_worker_velocity = patch_transfer->get_patch_dof_worker(0);
 
       FullMatrix<double> local_matrix(n_dofs, n_dofs);
@@ -1301,6 +1303,7 @@ public:
         patch_matrix.template fill_submatrix<Number>(
           static_cast<const Table<2, Number> &>(local_matrix), 0U, 0U, lane);
       }
+      patch_matrix.invert(equation_data.local_kernel_size);
     }
   }
 

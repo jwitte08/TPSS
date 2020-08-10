@@ -128,11 +128,15 @@ main(int argc, char * argv[])
     EquationData equation_data;
     equation_data.variant                     = EquationData::Variant::DivFreeHom;
     equation_data.force_mean_value_constraint = true;
+    equation_data.use_cuthill_mckee           = prms.solver.variant == "FGMRES_ILU";
+    if(prms.solver.variant == "GMRES_GMG")
+      equation_data.local_kernel_size = 1U;
     if(argc > 3)
     {
       AssertThrow(std::atoi(argv[3]) == 0 || std::atoi(argv[3]) == 1, ExcMessage("Invalid flag."));
       equation_data.force_mean_value_constraint = static_cast<bool>(std::atoi(argv[3]));
     }
+
     ModelProblem<dim, degree> stokes_problem(prms, equation_data);
 
     stokes_problem.run();
