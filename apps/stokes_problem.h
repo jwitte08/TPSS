@@ -1188,7 +1188,7 @@ public:
   void
   setup_system_velocity(const bool do_cuthill_mckee);
 
-  std::shared_ptr<Vector<double>>
+  void
   setup_system_pressure(const bool do_cuthill_mckee);
 
   void
@@ -1291,6 +1291,9 @@ private:
 
   void
   make_grid_impl(const MeshParameter & mesh_prms);
+
+  std::shared_ptr<Vector<double>>
+  compute_mass_foreach_pressure_dof_impl();
 };
 
 
@@ -1490,6 +1493,62 @@ ModelProblem<dim, fe_degree_p, method>::make_grid_impl(const MeshParameter & mes
 
 
 template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<Vector<double>>
+ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof_impl()
+{
+  const auto                      n_dofs_pressure = dof_handler_pressure.n_dofs();
+  std::shared_ptr<Vector<double>> mass_foreach_dof_ptr; // book-keeping
+  mass_foreach_dof_ptr = std::make_shared<Vector<double>>(n_dofs_pressure);
+
+  constraints_pressure.clear();
+  constraints_pressure.close();
+  DynamicSparsityPattern dsp(n_dofs_pressure);
+  DoFTools::make_sparsity_pattern(dof_handler_pressure, dsp, constraints_pressure);
+
+  SparsityPattern sparsity_pattern;
+  sparsity_pattern.copy_from(dsp);
+  SparseMatrix<double> pressure_mass_matrix;
+  pressure_mass_matrix.reinit(sparsity_pattern);
+
+  using Pressure::MW::CopyData;
+  using Pressure::MW::ScratchData;
+  using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
+
+  MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+
+  auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+    matrix_integrator.cell_mass_worker(cell, scratch_data, copy_data);
+  };
+
+  const auto copier = [&](const CopyData & copy_data) {
+    constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
+      copy_data.cell_matrix, copy_data.local_dof_indices, pressure_mass_matrix);
+  };
+
+  const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
+  const UpdateFlags interface_update_flags = update_default;
+
+  ScratchData<dim> scratch_data(
+    mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
+  CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
+  MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
+                        dof_handler_pressure.end(),
+                        cell_worker,
+                        copier,
+                        scratch_data,
+                        copy_data,
+                        MeshWorker::assemble_own_cells);
+
+  Vector<double> & mass_foreach_dof = *mass_foreach_dof_ptr;
+  Vector<double>   constant_one_vector(n_dofs_pressure);
+  std::fill(constant_one_vector.begin(), constant_one_vector.end(), 1.);
+  pressure_mass_matrix.vmult(mass_foreach_dof, constant_one_vector);
+
+  AssertThrow(mass_foreach_dof(0) > 0., ExcMessage("First DoF has no positive mass."));
+  return mass_foreach_dof_ptr;
+}
+
+template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuthill_mckee)
 {
@@ -1547,7 +1606,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
 
 
 template<int dim, int fe_degree_p, Method method>
-std::shared_ptr<Vector<double>>
+void
 ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuthill_mckee)
 {
   Assert(check_finite_elements(),
@@ -1571,61 +1630,11 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
   /// then apply the coefficient vector associated to the constant one function
   /// to obtain the weights for each degree of freedom. By means of these
   /// weights we impose a mean value free constraint.
-  std::shared_ptr<Vector<double>> mass_foreach_dof_ptr; // book-keeping
   {
-    /// 1) Assemble the (unconstrained) mass for the pressure
-    constraints_pressure.clear();
-    constraints_pressure.close();
+    const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof_impl();
+    const auto & mass_foreach_dof     = *mass_foreach_dof_ptr;
 
-    const auto             n_dofs_pressure = dof_handler_pressure.n_dofs();
-    DynamicSparsityPattern dsp(dof_handler_pressure.n_dofs());
-    DoFTools::make_sparsity_pattern(dof_handler_pressure, dsp, constraints_pressure);
-
-    SparsityPattern sparsity_pattern;
-    sparsity_pattern.copy_from(dsp);
-    SparseMatrix<double> pressure_mass_matrix;
-    pressure_mass_matrix.reinit(sparsity_pattern);
-
-    using Pressure::MW::CopyData;
-    using Pressure::MW::ScratchData;
-    using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
-
-    MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
-
-    auto cell_worker =
-      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        matrix_integrator.cell_mass_worker(cell, scratch_data, copy_data);
-      };
-
-    const auto copier = [&](const CopyData & copy_data) {
-      constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
-        copy_data.cell_matrix, copy_data.local_dof_indices, pressure_mass_matrix);
-    };
-
-    const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
-    const UpdateFlags interface_update_flags = update_default;
-
-    ScratchData<dim> scratch_data(
-      mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
-    CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
-    MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
-                          dof_handler_pressure.end(),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells);
-
-    mass_foreach_dof_ptr = std::make_shared<Vector<double>>(dof_handler_pressure.n_dofs());
-    Vector<double> & mass_foreach_dof = *mass_foreach_dof_ptr;
-    Vector<double>   constant_one_vector(dof_handler_pressure.n_dofs());
-    std::fill(constant_one_vector.begin(), constant_one_vector.end(), 1.);
-    pressure_mass_matrix.vmult(mass_foreach_dof, constant_one_vector);
-
-    AssertThrow(mass_foreach_dof(0) > 0., ExcMessage("First DoF has no positive mass."));
-
-    /// 2) Use the mass to impose a mean-value free constraint on the first
-    /// pressure degree of freedom
+    const auto n_dofs_pressure = dof_handler_pressure.n_dofs();
     constraints_pressure.clear();
     if(rt_parameters.solver.variant == "UMFPACK" || equation_data.force_mean_value_constraint)
     {
@@ -1635,12 +1644,17 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
       const unsigned int stride = dof_layout_p == TPSS::DoFLayout::DGP ? n_dofs_per_cell : 1U;
       const unsigned int start  = dof_layout_p == TPSS::DoFLayout::DGP ? stride : 1U;
       for(auto i = start; i < n_dofs_pressure; i += stride)
+      {
         constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
+        // std::cout << " column: " << i << " value: " << -mass_foreach_dof(i) / mass_of_first_dof
+        // << std::endl;
+      }
     }
     constraints_pressure.close();
+    // const auto entries =  *(constraints_pressure.get_constraint_entries(0U));
+    // for (const auto & [column, value] : entries)
+    //   std::cout << " column: " << column << " value: " << value << std::endl;
   }
-
-  return mass_foreach_dof_ptr;
 }
 
 
@@ -1681,7 +1695,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   setup_system_velocity(equation_data.use_cuthill_mckee);
 
-  const auto mass_foreach_dof_ptr = setup_system_pressure(equation_data.use_cuthill_mckee);
+  setup_system_pressure(equation_data.use_cuthill_mckee);
 
   /// No-slip boundary conditions (velocity)
   {
@@ -1701,21 +1715,18 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   /// Mean value boundary condition (pressure)
   {
     mean_value_constraints.clear();
-    const Vector<double> & mass_foreach_dof = *mass_foreach_dof_ptr;
     if(rt_parameters.solver.variant == "UMFPACK" || equation_data.force_mean_value_constraint)
     {
-      const double                  mass_of_first_dof = mass_foreach_dof(0);
-      const types::global_dof_index first_dof_index   = n_dofs_velocity;
+      const types::global_dof_index first_dof_index = n_dofs_velocity;
+      AssertDimension(constraints_pressure.n_constraints(), 1U);
+      AssertThrow(constraints_pressure.is_constrained(0U),
+                  ExcMessage("Did you set a mean value free constraint?"));
+      const auto mean_value_free_entries = *(constraints_pressure.get_constraint_entries(0U));
+
+      /// shift dofs of the pressure block by n_dofs_velocity
       mean_value_constraints.add_line(first_dof_index);
-      const auto n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
-      if(dof_layout_p == TPSS::DoFLayout::DGP)
-        AssertDimension(n_dofs_pressure % n_dofs_per_cell, 0);
-      const unsigned int stride = dof_layout_p == TPSS::DoFLayout::DGP ? n_dofs_per_cell : 1U;
-      const unsigned int start  = dof_layout_p == TPSS::DoFLayout::DGP ? stride : 1U;
-      for(auto i = start; i < n_dofs_pressure; i += stride)
-        mean_value_constraints.add_entry(first_dof_index,
-                                         first_dof_index + i,
-                                         -mass_foreach_dof(i) / mass_of_first_dof);
+      for(const auto & [column, value] : mean_value_free_entries)
+        mean_value_constraints.add_entry(first_dof_index, first_dof_index + column, value);
     }
     mean_value_constraints.close();
     zero_constraints.merge(mean_value_constraints);
