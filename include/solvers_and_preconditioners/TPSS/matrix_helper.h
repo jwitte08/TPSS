@@ -25,15 +25,22 @@ struct InverseTable
   using scalar_value_type                  = typename ExtractScalarType<Number>::type;
   static constexpr unsigned int macro_size = get_macro_size<Number>();
 
+  struct AdditionalData
+  {
+    unsigned int kernel_size = numbers::invalid_unsigned_int;
+  };
+
   InverseTable() = default;
 
-  InverseTable(const Table<2, Number> & matrix_in)
+  InverseTable(const Table<2, Number> & matrix_in,
+               const AdditionalData &   additional_data_in = AdditionalData{})
   {
-    reinit(matrix_in);
+    reinit(matrix_in, additional_data_in);
   }
 
   void
-  reinit(const Table<2, Number> & matrix_in)
+  reinit(const Table<2, Number> & matrix_in,
+         const AdditionalData &   additional_data_in = AdditionalData{})
   {
     Assert(matrix_in.size(0) == matrix_in.size(1), ExcMessage("Matrix is not square."));
     clear();
@@ -45,7 +52,10 @@ struct InverseTable
       auto & inverse = (*inverses)[lane];
       inverse.reinit(n_rows);
       inverse = table_to_fullmatrix(matrix_in, lane);
-      inverse.invert();
+      if(additional_data_in.kernel_size != numbers::invalid_unsigned_int)
+        inverse.compute_inverse_svd_with_kernel(additional_data_in.kernel_size);
+      else
+        inverse.compute_inverse_svd();
     }
     /// ALTERNATIVE: FullMatrix
     // auto inverses = std::make_shared<std::array<FullMatrix<scalar_value_type>, macro_size>>();
@@ -143,11 +153,30 @@ public:
     }
   }
 
+  /**
+   * Compute the inverse of the current matrix. The inverse matrix type is
+   * InverseTable and more details can be found there.
+   *
+   * Currently, this method is const (i.e. the internal InverseTable is mutable)
+   * in order that it can be called within apply_inverse() if the inverse has
+   * not been computed.
+   */
+  /// TODO InverseTable non-mutable and throw an exception within
+  /// apply_inverse()
+  void
+  invert(const unsigned int kernel_size = numbers::invalid_unsigned_int) const
+  {
+    typename InverseTable<Number>::AdditionalData inverse_data;
+    if(kernel_size != numbers::invalid_unsigned_int)
+      inverse_data.kernel_size = kernel_size;
+    inverse_matrix = std::make_shared<InverseTable<Number>>(matrix, inverse_data);
+  }
+
   void
   apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
     if(!inverse_matrix)
-      inverse_matrix = std::make_shared<InverseTable<Number>>(matrix);
+      this->invert(numbers::invalid_unsigned_int); // TODO !!! throw exception instead
     inverse_matrix->vmult(dst_view, src_view);
   }
 
