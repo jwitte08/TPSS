@@ -89,6 +89,7 @@ struct CoarseGridParameter
   std::string         iterative_solver     = "none"; // see SolverSelector
   PreconditionVariant precondition_variant = PreconditionVariant::None;
   SolverVariant       solver_variant       = SolverVariant::IterativeAcc;
+  double              threshold_svd        = 0.;
 
   std::string
   to_string() const;
@@ -113,7 +114,7 @@ class MGCoarseGridSVDSerial : public MGCoarseGridBase<VectorType>
 {
 public:
   void
-  initialize(const FullMatrix<Number> & A, const double threshold = 0)
+  initialize(const FullMatrix<Number> & A, const double threshold = 0.)
   {
     solver_svd.initialize(A, threshold);
   }
@@ -165,7 +166,7 @@ public:
       const auto & coarse_table       = Tensors::matrix_to_table(coarse_matrix);
       const auto & coarse_full_matrix = table_to_fullmatrix(coarse_table);
       const auto   solver_svd = std::make_shared<MGCoarseGridSVDSerial<value_type, VectorType>>();
-      solver_svd->initialize(coarse_full_matrix);
+      solver_svd->initialize(coarse_full_matrix, prms.threshold_svd);
       coarse_grid_solver = solver_svd;
     }
     else
