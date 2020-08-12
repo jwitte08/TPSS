@@ -129,7 +129,7 @@ main(int argc, char * argv[])
     }
 
     EquationData equation_data;
-    equation_data.variant           = EquationData::Variant::DivFreeBell; // !!!
+    equation_data.variant           = EquationData::Variant::DivFreeBell;
     equation_data.use_cuthill_mckee = false;
     if(prms.solver.variant == "GMRES_GMG" || prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
@@ -139,18 +139,6 @@ main(int argc, char * argv[])
       AssertThrow(std::atoi(argv[3]) == 0 || std::atoi(argv[3]) == 1, ExcMessage("Invalid flag."));
       equation_data.force_mean_value_constraint = static_cast<bool>(std::atoi(argv[3]));
     }
-
-    const auto sol = std::make_shared<DivergenceFree::GaussianBell::Solution<2>>();
-    Point<2>   p{0.25, 0.5}; // p{0.5, 0.5};
-    for(auto c = 0U; c < 3; ++c)
-      std::cout << "val[" << c << "]: " << sol->value(p, c) << std::endl;
-
-    for(auto c = 0U; c < 3; ++c)
-      std::cout << "grad[" << c << "]: " << sol->gradient(p, c) << std::endl;
-
-    for(auto c = 0U; c < 2; ++c)
-      std::cout << "hess[" << c << "]: " << sol->hessian(p, c)[0][0] << " "
-                << sol->hessian(p, c)[1][1] << " " << sol->hessian(p, c)[0][1] << std::endl;
 
     ModelProblem<dim, degree, Method::Qkplus2_DGPk> stokes_problem(prms, equation_data);
 
