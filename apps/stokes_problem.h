@@ -662,14 +662,15 @@ struct MGCollectionVelocityPressure
   clear();
 
   void
-  prepare_multigrid(const unsigned int                       mg_level_max,
-                    const std::shared_ptr<ColoringBase<dim>> user_coloring);
+  prepare_multigrid(const unsigned int                               mg_level_max,
+                    const std::shared_ptr<ColoringBase<dim>>         user_coloring,
+                    const MGLevelObject<AffineConstraints<double>> & mg_constraints_pressure);
 
   void
   prepare_schwarz_smoothers(const std::shared_ptr<ColoringBase<dim>> user_coloring);
 
   void
-  assemble_multigrid();
+  assemble_multigrid(const MGLevelObject<AffineConstraints<double>> & mg_constraints_pressure);
 
   const PreconditionMG<dim, VECTOR, MG_TRANSFER> &
   get_preconditioner() const;
@@ -748,7 +749,7 @@ template<int             dim,
          LocalAssembly   local_assembly>
 void
 MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-  assemble_multigrid()
+  assemble_multigrid(const MGLevelObject<AffineConstraints<double>> & mg_constraints_pressure)
 {
   AssertDimension(mg_matrices.min_level(), parameters.coarse_level);
   Assert(mg_constrained_dofs, ExcMessage("mg_constrained_dofs is uninitialized."));
@@ -768,8 +769,11 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
     level_constraints.close();
 
-    AffineConstraints<double> level_constraints_pressure;
-    level_constraints_pressure.close();
+    const auto & level_constraints_pressure = mg_constraints_pressure[level];
+    // // DEBUG
+    // const auto   entries = *(level_constraints_pressure.get_constraint_entries(0U));
+    // for(const auto & [column, value] : entries)
+    //   std::cout << " column: " << column << " value: " << value << std::endl;
 
     /// Initialize a (dummy) matrix-free storage for each level. This is
     /// required to initialize SubdomainHandlers for each level.
@@ -976,8 +980,9 @@ template<int             dim,
          LocalAssembly   local_assembly>
 void
 MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-  prepare_multigrid(const unsigned int                       mg_level_max,
-                    const std::shared_ptr<ColoringBase<dim>> user_coloring)
+  prepare_multigrid(const unsigned int                               mg_level_max,
+                    const std::shared_ptr<ColoringBase<dim>>         user_coloring,
+                    const MGLevelObject<AffineConstraints<double>> & mg_constraints_pressure)
 {
   Assert(dof_handler, ExcMessage("Did you set dof_handler?"));
 
@@ -996,6 +1001,30 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                                       dof_handler->get_fe().component_mask(
                                                         velocities));
 
+  AssertDimension(mg_level_min, mg_constraints_pressure.min_level());
+  AssertDimension(mg_level_max, mg_constraints_pressure.max_level());
+  if(equation_data.force_mean_value_constraint)
+    for(auto level = mg_level_min; level <= mg_level_max; ++level)
+    {
+      const auto & level_constraints_pressure = mg_constraints_pressure[level];
+      Assert(dof_handler_velocity, ExcMessage("dof_handler_velocity is uninitialized."));
+      const types::global_dof_index n_dofs_velocity = dof_handler_velocity->n_dofs(level);
+      const types::global_dof_index first_dof_index = n_dofs_velocity;
+      AssertDimension(level_constraints_pressure.n_constraints(), 1U);
+      AssertThrow(level_constraints_pressure.is_constrained(0U),
+                  ExcMessage("Did you set a mean value free constraint?"));
+      const auto mean_value_free_entries = *(level_constraints_pressure.get_constraint_entries(0U));
+
+      /// shift dofs of the pressure block by n_dofs_velocity
+      AffineConstraints<double> level_constraints;
+      level_constraints.add_line(first_dof_index);
+      for(const auto & [column, value] : mean_value_free_entries)
+        level_constraints.add_entry(first_dof_index, first_dof_index + column, value);
+
+      // !!! TODO this call throws an exception: internal IndexSets have no compatible size
+      // mg_constrained_dofs->add_user_constraints(level, level_constraints);
+    }
+
   // *** initialize level matrices A_l
   mg_matrices.resize(mg_level_min, mg_level_max);
   mg_sparsity_patterns.resize(mg_level_min, mg_level_max);
@@ -1011,7 +1040,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     mg_matrices[level].reinit(mg_sparsity_patterns[level]);
   }
   //: assemble the velocity system A_l on each level l.
-  assemble_multigrid();
+  assemble_multigrid(mg_constraints_pressure);
 
   // *** initialize multigrid transfer R_l
   mg_transfer.initialize_constraints(*mg_constrained_dofs);
@@ -1185,6 +1214,12 @@ public:
   void
   setup_system();
 
+  std::shared_ptr<Vector<double>>
+  compute_mass_foreach_pressure_dof() const;
+
+  std::shared_ptr<Vector<double>>
+  compute_mass_foreach_pressure_dof(const unsigned int level) const;
+
   void
   setup_system_velocity(const bool do_cuthill_mckee);
 
@@ -1202,9 +1237,6 @@ public:
 
   void
   assemble_system_velocity();
-
-  void
-  assemble_multigrid_velocity();
 
   void
   prepare_multigrid_velocity();
@@ -1292,8 +1324,10 @@ private:
   void
   make_grid_impl(const MeshParameter & mesh_prms);
 
+  template<bool is_multigrid = false>
   std::shared_ptr<Vector<double>>
-  compute_mass_foreach_pressure_dof_impl();
+  compute_mass_foreach_pressure_dof_impl(
+    const unsigned int level = numbers::invalid_unsigned_int) const;
 };
 
 
@@ -1493,17 +1527,28 @@ ModelProblem<dim, fe_degree_p, method>::make_grid_impl(const MeshParameter & mes
 
 
 template<int dim, int fe_degree_p, Method method>
+template<bool is_multigrid>
 std::shared_ptr<Vector<double>>
-ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof_impl()
+ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof_impl(
+  const unsigned int level) const
 {
-  const auto                      n_dofs_pressure = dof_handler_pressure.n_dofs();
+  const auto n_dofs_pressure = [this, level]() {
+    if(is_multigrid)
+      return dof_handler_pressure.n_dofs(level);
+    else
+      return dof_handler_pressure.n_dofs();
+  }();
   std::shared_ptr<Vector<double>> mass_foreach_dof_ptr; // book-keeping
   mass_foreach_dof_ptr = std::make_shared<Vector<double>>(n_dofs_pressure);
 
+  AffineConstraints<double> constraints_pressure;
   constraints_pressure.clear();
   constraints_pressure.close();
   DynamicSparsityPattern dsp(n_dofs_pressure);
-  DoFTools::make_sparsity_pattern(dof_handler_pressure, dsp, constraints_pressure);
+  if(is_multigrid)
+    MGTools::make_sparsity_pattern(dof_handler_pressure, dsp, level);
+  else
+    DoFTools::make_sparsity_pattern(dof_handler_pressure, dsp, constraints_pressure);
 
   SparsityPattern sparsity_pattern;
   sparsity_pattern.copy_from(dsp);
@@ -1512,7 +1557,7 @@ ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof_impl()
 
   using Pressure::MW::CopyData;
   using Pressure::MW::ScratchData;
-  using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
+  using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, is_multigrid>;
 
   MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
 
@@ -1531,13 +1576,22 @@ ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof_impl()
   ScratchData<dim> scratch_data(
     mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
   CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
-  MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
-                        dof_handler_pressure.end(),
-                        cell_worker,
-                        copier,
-                        scratch_data,
-                        copy_data,
-                        MeshWorker::assemble_own_cells);
+  if(is_multigrid)
+    MeshWorker::mesh_loop(dof_handler_pressure.begin_mg(level),
+                          dof_handler_pressure.end_mg(level),
+                          cell_worker,
+                          copier,
+                          scratch_data,
+                          copy_data,
+                          MeshWorker::assemble_own_cells);
+  else
+    MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
+                          dof_handler_pressure.end(),
+                          cell_worker,
+                          copier,
+                          scratch_data,
+                          copy_data,
+                          MeshWorker::assemble_own_cells);
 
   Vector<double> & mass_foreach_dof = *mass_foreach_dof_ptr;
   Vector<double>   constant_one_vector(n_dofs_pressure);
@@ -1547,6 +1601,27 @@ ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof_impl()
   AssertThrow(mass_foreach_dof(0) > 0., ExcMessage("First DoF has no positive mass."));
   return mass_foreach_dof_ptr;
 }
+
+
+
+template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<Vector<double>>
+ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof() const
+{
+  return compute_mass_foreach_pressure_dof_impl<false>();
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<Vector<double>>
+ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof(
+  const unsigned int level) const
+{
+  return compute_mass_foreach_pressure_dof_impl<true>(level);
+}
+
+
 
 template<int dim, int fe_degree_p, Method method>
 void
@@ -1631,7 +1706,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
   /// to obtain the weights for each degree of freedom. By means of these
   /// weights we impose a mean value free constraint.
   {
-    const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof_impl();
+    const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof();
     const auto & mass_foreach_dof     = *mass_foreach_dof_ptr;
 
     const auto n_dofs_pressure = dof_handler_pressure.n_dofs();
@@ -1644,16 +1719,9 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
       const unsigned int stride = dof_layout_p == TPSS::DoFLayout::DGP ? n_dofs_per_cell : 1U;
       const unsigned int start  = dof_layout_p == TPSS::DoFLayout::DGP ? stride : 1U;
       for(auto i = start; i < n_dofs_pressure; i += stride)
-      {
         constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
-        // std::cout << " column: " << i << " value: " << -mass_foreach_dof(i) / mass_of_first_dof
-        // << std::endl;
-      }
     }
     constraints_pressure.close();
-    // const auto entries =  *(constraints_pressure.get_constraint_entries(0U));
-    // for (const auto & [column, value] : entries)
-    //   std::cout << " column: " << column << " value: " << value << std::endl;
   }
 }
 
@@ -2150,10 +2218,13 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity_pressure()
 {
+  const unsigned int mg_level_max = max_level();
+  const unsigned int mg_level_min = rt_parameters.multigrid.coarse_level;
+
   dof_handler.distribute_mg_dofs();
   /// This aligns dof numbering of dof_handler's first block and
   /// dof_handler_velocity on each level!
-  for(auto level = 0U; level <= max_level(); ++level)
+  for(auto level = 0U /*!!! mg_level_min?*/; level <= max_level(); ++level)
     DoFRenumbering::block_wise(dof_handler, level);
   dof_handler_velocity.distribute_mg_dofs();
   dof_handler_pressure.distribute_mg_dofs();
@@ -2163,21 +2234,37 @@ ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity_pressure()
   mgc_velocity_pressure.dof_handler_pressure = &dof_handler_pressure;
   mgc_velocity_pressure.mapping              = &mapping;
 
-  mgc_velocity_pressure.prepare_multigrid(max_level(), user_coloring);
+  /// One way could be to use a mean_value_filter() (see deal.II) instead of a
+  /// distribute() call. This would still require an assembly w.r.t. the mean
+  /// value constraint!?
+  // !!! TODO I am not sure if it is possible to impose mean value constraints
+  // on all level matrices in dealii and if this makes sense at all
+  MGLevelObject<AffineConstraints<double>> mg_constraints_pressure(mg_level_min, mg_level_max);
+  for(auto level = mg_level_min; level <= mg_level_max; ++level)
+  {
+    const auto   mass_foreach_dof_ptr       = compute_mass_foreach_pressure_dof(level);
+    const auto & mass_foreach_dof           = *mass_foreach_dof_ptr;
+    auto &       level_constraints_pressure = mg_constraints_pressure[level];
+    const auto   n_dofs_pressure            = dof_handler_pressure.n_dofs(level);
 
-  const unsigned int mg_level_max = max_level();
-  const unsigned int mg_level_min = rt_parameters.multigrid.coarse_level;
+    level_constraints_pressure.clear();
+    if(equation_data.force_mean_value_constraint)
+    {
+      const double mass_of_first_dof = mass_foreach_dof(0U);
+      level_constraints_pressure.add_line(0U);
+      const auto         n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
+      const unsigned int stride = dof_layout_p == TPSS::DoFLayout::DGP ? n_dofs_per_cell : 1U;
+      const unsigned int start  = dof_layout_p == TPSS::DoFLayout::DGP ? stride : 1U;
+      for(auto i = start; i < n_dofs_pressure; i += stride)
+        level_constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
+    }
+    level_constraints_pressure.close();
+  }
+
+  mgc_velocity_pressure.prepare_multigrid(mg_level_max, user_coloring, mg_constraints_pressure);
+
   pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
   pp_data.n_colors_system.push_back(n_colors_system());
-}
-
-
-
-template<int dim, int fe_degree_p, Method method>
-void
-ModelProblem<dim, fe_degree_p, method>::assemble_multigrid_velocity()
-{
-  mgc_velocity.assemble_multigrid();
 }
 
 
@@ -2212,7 +2299,9 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
                                                                         system_delta_x,
                                                                         system_rhs,
                                                                         preconditioner);
-  zero_constraints.distribute(system_delta_x); // mean value constraint
+  /// only there to apply mean value constraint (Dirichlet conditions of
+  /// velocity have already been applied to system_solution
+  zero_constraints.distribute(system_delta_x);
   system_solution += system_delta_x;
 
   const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
@@ -2288,6 +2377,14 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     auto & preconditioner = mgc_velocity_pressure.get_preconditioner();
 
     iterative_solve_impl(preconditioner, "gmres");
+  }
+
+  else if(rt_parameters.solver.variant == "CG_GMG")
+  {
+    prepare_multigrid_velocity_pressure();
+    auto & preconditioner = mgc_velocity_pressure.get_preconditioner();
+
+    iterative_solve_impl(preconditioner, "cg");
   }
 
   else
