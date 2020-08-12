@@ -129,7 +129,7 @@ main(int argc, char * argv[])
     }
 
     EquationData equation_data;
-    equation_data.variant           = EquationData::Variant::DivFreeHom;
+    equation_data.variant           = EquationData::Variant::DivFreeBell; // !!!
     equation_data.use_cuthill_mckee = false;
     if(prms.solver.variant == "GMRES_GMG" || prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
@@ -142,10 +142,10 @@ main(int argc, char * argv[])
 
     const auto sol = std::make_shared<DivergenceFree::GaussianBell::Solution<2>>();
     Point<2>   p{0.25, 0.5}; // p{0.5, 0.5};
-    for(auto c = 0U; c < 2; ++c)
+    for(auto c = 0U; c < 3; ++c)
       std::cout << "val[" << c << "]: " << sol->value(p, c) << std::endl;
 
-    for(auto c = 0U; c < 2; ++c)
+    for(auto c = 0U; c < 3; ++c)
       std::cout << "grad[" << c << "]: " << sol->gradient(p, c) << std::endl;
 
     for(auto c = 0U; c < 2; ++c)
@@ -154,7 +154,7 @@ main(int argc, char * argv[])
 
     ModelProblem<dim, degree, Method::Qkplus2_DGPk> stokes_problem(prms, equation_data);
 
-    // stokes_problem.run();
+    stokes_problem.run();
     std::cout << std::endl
               << std::endl
               << write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);

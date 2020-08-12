@@ -1345,6 +1345,8 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
         return std::make_shared<DivergenceFree::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::DivFreeHom)
         return std::make_shared<DivergenceFree::Homogeneous::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::DivFreeBell)
+        return std::make_shared<DivergenceFree::GaussianBell::Solution<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -1353,6 +1355,8 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
       if(equation_data_in.variant == EquationData::Variant::DivFree)
         return std::make_shared<DivergenceFree::Load<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::DivFreeHom)
+        return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
+      else if(equation_data_in.variant == EquationData::Variant::DivFreeBell)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else
         AssertThrow(false, ExcMessage("Not supported..."));

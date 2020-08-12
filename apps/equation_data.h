@@ -41,34 +41,26 @@ template<int dim>
 class SolutionBase
 {
 protected:
-  static constexpr std::size_t n_source_centers = 1;
+  static constexpr std::size_t n_source_centers = 3;
   static const Point<dim>      source_centers[n_source_centers];
   static const double          width;
 };
 
-//!!!
-// template<>
-// const Point<1> SolutionBase<1>::source_centers[SolutionBase<1>::n_source_centers] =
-// {Point<1>(0.0),
-//                                                                                      Point<1>(0.25),
-//                                                                                      Point<1>(0.6)};
-
-// template<>
-// const Point<2> SolutionBase<2>::source_centers[SolutionBase<2>::n_source_centers] =
-//   {Point<2>(0.0, +0.0), Point<2>(0.25, 0.85), Point<2>(+0.6, 0.4)};
 template<>
-const Point<2> SolutionBase<2>::source_centers[SolutionBase<2>::n_source_centers] = {
-  Point<2>(0.0, +0.0)};
+const Point<1> SolutionBase<1>::source_centers[SolutionBase<1>::n_source_centers] = {Point<1>(0.0),
+                                                                                     Point<1>(0.25),
+                                                                                     Point<1>(0.6)};
 
-// template<>
-// const Point<3> SolutionBase<3>::source_centers[SolutionBase<3>::n_source_centers] =
-//   {Point<3>(0.0, 0.0, 0.0), Point<3>(0.25, 0.85, 0.85), Point<3>(0.6, 0.4, 0.4)};
+template<>
+const Point<2> SolutionBase<2>::source_centers[SolutionBase<2>::n_source_centers] =
+  {Point<2>(0.0, +0.0), Point<2>(0.25, 0.85), Point<2>(+0.6, 0.4)};
 
-// template<int dim>
-// const double SolutionBase<dim>::width = 1. / 3.;
+template<>
+const Point<3> SolutionBase<3>::source_centers[SolutionBase<3>::n_source_centers] =
+  {Point<3>(0.0, 0.0, 0.0), Point<3>(0.25, 0.85, 0.85), Point<3>(0.6, 0.4, 0.4)};
 
 template<int dim>
-const double SolutionBase<dim>::width = 1.;
+const double SolutionBase<dim>::width = 1. / 3.;
 
 using dealii::numbers::PI;
 
@@ -683,12 +675,15 @@ struct EquationData
   enum class Variant
   {
     DivFree,
-    DivFreeHom
+    DivFreeHom,
+    DivFreeBell,
   };
   static std::string
   str_equation_variant(const Variant variant)
   {
-    std::string str[] = {"divergence-free", "divergence-free + homogeneous Dirichlet"};
+    std::string str[] = {"divergence-free",
+                         "divergence-free + homogeneous Dirichlet",
+                         "divergence-free (Gaussian bells)"};
     return str[static_cast<int>(variant)];
   }
 
@@ -1321,9 +1316,12 @@ using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>
 
 } // namespace Homogeneous
 
+
+
 namespace GaussianBell
 {
-template<int dim>
+
+  template<int dim>
 using SolutionBaseVelocity = Laplace::SolutionBase<dim>;
 
 
@@ -1331,10 +1329,12 @@ using SolutionBaseVelocity = Laplace::SolutionBase<dim>;
 /**
  * This class represents the vector curl of
  *
- *    PHI(x,y) = sin(pi*x) cos(pi*y)
+ *    PHI(x,y) = N * \sum_i exp[-||x-x_i||^2 / s^2]
  *
- * in two dimensions, which is by definition divergence free and has
- * homogeneous boundary values on the unit cube [0,1]^2.
+ * in two dimensions, i.e. a linear combination of Gaussian bell curves with
+ * center point x_i and normalization factor N = 1 / (2Pi * s^2)^{d/2}. This
+ * velocity field is by definition divergence free and has heterogeneous
+ * boundary values on the unit cube [0,1]^2.
  */
 template<int dim>
 class SolutionVelocity : public Function<dim>, protected SolutionBaseVelocity<dim>
@@ -1364,17 +1364,13 @@ private:
   constexpr double
   u0() const
   {
-    //!!!
     return 1. / std::pow(std::sqrt(2 * PI) * width, dim);
-    // return 1.;
   }
 
   constexpr double
   v0() const
   {
-    //!!!
     return -1. / (width * width);
-    // return -1.;
   }
 
   double
@@ -1414,7 +1410,6 @@ SolutionVelocity<2>::value_impl(const Point<2> &   p,
   return sign[comp] * 2. * u0() * v0() * bell(p, i) * x_minus_xi[anti_comp];
 }
 
-
 template<>
 Tensor<1, 2>
 SolutionVelocity<2>::gradient_impl(const Point<2> &   p,
@@ -1452,17 +1447,6 @@ SolutionVelocity<2>::hessian_impl(const Point<2> &   p,
   for(auto d1 = 0U; d1 < 2; ++d1)
     for(auto d2 = d1; d2 < 2; ++d2)
     {
-      // const double factor = 1. + ((d1 == d2 && d1 == anti_comp) ? 2. : 0.);
-      // const double val1   = 3. * x_minus_xi[d1] * x_minus_xi[d2] * x_minus_xi[anti_comp] /
-      //                     std::pow(x_minus_xi.norm(), 5);
-      // const double val2 = -3. * v0() * x_minus_xi[d1] * x_minus_xi[d2] * x_minus_xi[anti_comp] /
-      //                     std::pow(x_minus_xi.norm(), 4);
-      // const double val3 =
-      //   -factor * x_minus_xi[d1 == d2 ? anti_comp : comp] / std::pow(x_minus_xi.norm(), 3);
-      // const double val4 = v0() * v0() * x_minus_xi[d1] * x_minus_xi[d2] * x_minus_xi[anti_comp] /
-      //                     std::pow(x_minus_xi.norm(), 3);
-      // const double val5 =
-      // factor * v0() * x_minus_xi[d1 == d2 ? anti_comp : comp] / std::pow(x_minus_xi.norm(), 2);
       const double factor = ((d1 == d2 && d1 == anti_comp) ? 3. : 1.);
       const double val1   = factor * std::pow(2., 2) * x_minus_xi[d1 == d2 ? anti_comp : comp];
       const double val2 =
@@ -1506,8 +1490,6 @@ SolutionVelocity<2>::hessian(const Point<2> & p, const unsigned int component) c
 
 
 
-// template<int dim>
-// using SolutionPressure = Homogeneous::SolutionPressure<dim>;
 template<int dim>
 class SolutionBasePressure
 {
@@ -1517,12 +1499,23 @@ protected:
 };
 
 template<>
-const Point<2> SolutionBasePressure<2>::source = Point<2>(0.5, 0.5);
+const Point<2> SolutionBasePressure<2>::source = Point<2>(0.5, 0.);
 
 template<int dim>
-const double SolutionBasePressure<dim>::width = 1.;
+const double SolutionBasePressure<dim>::width = 1.5;
 
 
+
+/**
+ * This class represents the scalar pressure field
+ *
+ *    PHI(x,y) = N * exp[-||x-\mu||^2 / s^2] - MEAN
+ *
+ * in two dimensions, i.e. an normalized Gaussian bell curve around the center
+ * point \mu and normalization factor N = 1 / (2Pi * s^2)^{d/2} from which we
+ * subtract the hardcoded mean value. To this end, if you modify function
+ * parameters keep in mind to modify the mean as well.
+ */
 template<int dim>
 class SolutionPressure : public Function<dim>, protected SolutionBasePressure<dim>
 {
@@ -1531,6 +1524,7 @@ class SolutionPressure : public Function<dim>, protected SolutionBasePressure<di
 public:
   using SolutionBasePressure<dim>::source;
   using SolutionBasePressure<dim>::width;
+  static constexpr auto PI = numbers::PI;
 
   SolutionPressure() : Function<dim>(1)
   {
@@ -1546,23 +1540,48 @@ public:
   hessian(const Point<dim> & p, const unsigned int component = 0) const override;
 
 private:
+  constexpr double
+  u0() const
+  {
+    return 1. / std::pow(std::sqrt(2 * PI) * width, dim);
+  }
+
+  constexpr double
+  v0() const
+  {
+    return -1. / (width * width);
+  }
+
+  /**
+   * Hardcoded mean. Assumes unit cube [0,1]^2 and source (0.5, 0.0).
+   */
   double
-  mean() const;
+  mean() const
+  {
+    return 1. / 4. * std::erf(1. / (2. * width)) * std::erf(1. / width);
+  }
+
+  double
+  bell(const Point<dim> & p) const
+  {
+    const dealii::Tensor<1, dim> x_minus_xi = p - source;
+    return std::exp(v0() * x_minus_xi.norm_square());
+  }
 };
 
 template<>
 double
 SolutionPressure<2>::value(const Point<2> & p, const unsigned int) const
 {
-  return 0.;
+  return u0() * bell(p) - mean();
 }
 
 template<>
 Tensor<1, 2>
 SolutionPressure<2>::gradient(const Point<2> & p, const unsigned int) const
 {
-  Tensor<1, 2> grad;
-  return grad;
+  const dealii::Tensor<1, 2> x_minus_xi = p - source;
+  return u0() * 2. * v0() * bell(p) * x_minus_xi;
 }
 
 template<>
