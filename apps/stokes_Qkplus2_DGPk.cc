@@ -74,7 +74,7 @@ main(int argc, char * argv[])
     //     GMRES prec. by GMG ...
     // 4 : ...based on Gauss-Seidel smoothers for velocity-pressure (GMRES_GMG)
 
-    constexpr unsigned int test_index_max = 4;
+    constexpr unsigned int test_index_max = 5;
     const unsigned int     test_index     = argc > 2 ? std::atoi(argv[2]) : 0;
     AssertThrow(test_index <= test_index_max, ExcMessage("test_index is not valid"));
 
@@ -89,14 +89,13 @@ main(int argc, char * argv[])
 
       //: solver
       const std::string str_solver_variant[test_index_max + 1] = {
-        "UMFPACK", "FGMRES_ILU", "FGMRES_GMGvelocity", "FGMRES_GMGvelocity", "GMRES_GMG"};
+        "UMFPACK", "FGMRES_ILU", "FGMRES_GMGvelocity", "FGMRES_GMGvelocity", "GMRES_GMG", "CG_GMG"};
       prms.solver.variant              = str_solver_variant[test_index];
       prms.solver.rel_tolerance        = 1.e-8; // !!!
       prms.solver.precondition_variant = test_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
-      prms.solver.n_iterations_max = 100; // !!!
-      // prms.solver.use_right_preconditioning = true; // !!!
+      prms.solver.n_iterations_max = 100;
 
       //: multigrid
       const double damping_factor =
@@ -105,18 +104,22 @@ main(int argc, char * argv[])
              std::atof(argv[1]) :
              TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim)) :
           TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim);
-      prms.multigrid.coarse_level                 = 0;
-      prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::FullSVD;
-      prms.multigrid.coarse_grid.iterative_solver = "cg";
-      prms.multigrid.coarse_grid.accuracy         = 1.e-12;
+      prms.multigrid.coarse_level               = 0;
+      prms.multigrid.coarse_grid.solver_variant = CoarseGridParameter::SolverVariant::FullSVD;
+      /// !!! the threshold is crucial, if we do not impose any mean value
+      /// !!! constraint on the coarse problem
+      prms.multigrid.coarse_grid.threshold_svd                                      = 1.e-8;
+      prms.multigrid.coarse_grid.iterative_solver                                   = "cg";
+      prms.multigrid.coarse_grid.accuracy                                           = 1.e-12;
       const SmootherParameter::SmootherVariant smoother_variant[test_index_max + 1] = {
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::GaussSeidel,
         SmootherParameter::SmootherVariant::Schwarz,
+        SmootherParameter::SmootherVariant::Schwarz,
         SmootherParameter::SmootherVariant::Schwarz};
       prms.multigrid.pre_smoother.variant                    = smoother_variant[test_index];
-      prms.multigrid.pre_smoother.n_smoothing_steps          = 2;
+      prms.multigrid.pre_smoother.n_smoothing_steps          = 2; // !!!
       prms.multigrid.pre_smoother.schwarz.patch_variant      = CT::PATCH_VARIANT_;
       prms.multigrid.pre_smoother.schwarz.smoother_variant   = CT::SMOOTHER_VARIANT_;
       prms.multigrid.pre_smoother.schwarz.manual_coloring    = true;
@@ -128,7 +131,7 @@ main(int argc, char * argv[])
     EquationData equation_data;
     equation_data.variant           = EquationData::Variant::DivFreeHom;
     equation_data.use_cuthill_mckee = false;
-    if(prms.solver.variant == "GMRES_GMG")
+    if(prms.solver.variant == "GMRES_GMG" || prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
     // equation_data.force_mean_value_constraint = false; // !!!
     if(argc > 3)
@@ -137,9 +140,21 @@ main(int argc, char * argv[])
       equation_data.force_mean_value_constraint = static_cast<bool>(std::atoi(argv[3]));
     }
 
+    const auto sol = std::make_shared<DivergenceFree::GaussianBell::Solution<2>>();
+    Point<2>   p{0.25, 0.5}; // p{0.5, 0.5};
+    for(auto c = 0U; c < 2; ++c)
+      std::cout << "val[" << c << "]: " << sol->value(p, c) << std::endl;
+
+    for(auto c = 0U; c < 2; ++c)
+      std::cout << "grad[" << c << "]: " << sol->gradient(p, c) << std::endl;
+
+    for(auto c = 0U; c < 2; ++c)
+      std::cout << "hess[" << c << "]: " << sol->hessian(p, c)[0][0] << " "
+                << sol->hessian(p, c)[1][1] << " " << sol->hessian(p, c)[0][1] << std::endl;
+
     ModelProblem<dim, degree, Method::Qkplus2_DGPk> stokes_problem(prms, equation_data);
 
-    stokes_problem.run();
+    // stokes_problem.run();
     std::cout << std::endl
               << std::endl
               << write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
