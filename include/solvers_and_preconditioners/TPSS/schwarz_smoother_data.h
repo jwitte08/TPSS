@@ -22,7 +22,7 @@ struct SchwarzSmootherData
   SchwarzSmootherData()
     : patch_variant(TPSS::PatchVariant::invalid),
       smoother_variant(TPSS::SmootherVariant::invalid),
-      number_of_smoothing_steps(1),
+      // number_of_smoothing_steps(1),
       damping_factor(1.0),
       local_damping_factor(1.0),
       manual_coloring(false),
@@ -54,7 +54,7 @@ struct SchwarzSmootherData
       str_smoother_variant[(int)smoother_variant] + " " + str_patch_variant[(int)patch_variant];
 
     print_parameter(pcout, "Schwarz operator", str_schwarz_operator);
-    print_parameter(pcout, "Number of smoothing steps", number_of_smoothing_steps);
+    // print_parameter(pcout, "Number of smoothing steps", number_of_smoothing_steps);
     print_parameter(pcout, "Damping factor", damping_factor);
     print_parameter(pcout, "Patch-local damping factor", local_damping_factor);
 
@@ -93,8 +93,8 @@ struct SchwarzSmootherData
   // ...
   TPSS::SmootherVariant smoother_variant;
 
-  // number of iterations per smoothing step
-  unsigned int number_of_smoothing_steps;
+  // // number of iterations per smoothing step
+  // unsigned int number_of_smoothing_steps;
 
   // damping factor
   double damping_factor;
