@@ -640,9 +640,19 @@ struct ScratchData
               const FiniteElement<dim> & fe_ansatz,
               const unsigned int         n_q_points_1d,
               const UpdateFlags          update_flags_test,
-              const UpdateFlags          update_flags_ansatz)
+              const UpdateFlags          update_flags_ansatz,
+              const UpdateFlags          interface_update_flags_test = UpdateFlags::update_default,
+              const UpdateFlags interface_update_flags_ansatz        = UpdateFlags::update_default)
     : fe_values_test(mapping, fe_test, QGauss<dim>(n_q_points_1d), update_flags_test),
-      fe_values_ansatz(mapping, fe_ansatz, QGauss<dim>(n_q_points_1d), update_flags_ansatz)
+      fe_values_ansatz(mapping, fe_ansatz, QGauss<dim>(n_q_points_1d), update_flags_ansatz),
+      fe_interface_values_test(mapping,
+                               fe_test,
+                               QGauss<dim - 1>(n_q_points_1d),
+                               interface_update_flags_test),
+      fe_interface_values_ansatz(mapping,
+                                 fe_ansatz,
+                                 QGauss<dim - 1>(n_q_points_1d),
+                                 interface_update_flags_ansatz)
   {
   }
 
@@ -654,12 +664,22 @@ struct ScratchData
       fe_values_ansatz(scratch_data.fe_values_ansatz.get_mapping(),
                        scratch_data.fe_values_ansatz.get_fe(),
                        scratch_data.fe_values_ansatz.get_quadrature(),
-                       scratch_data.fe_values_ansatz.get_update_flags())
+                       scratch_data.fe_values_ansatz.get_update_flags()),
+      fe_interface_values_test(scratch_data.fe_values_test.get_mapping(),
+                               scratch_data.fe_values_test.get_fe(),
+                               scratch_data.fe_interface_values_test.get_quadrature(),
+                               scratch_data.fe_interface_values_test.get_update_flags()),
+      fe_interface_values_ansatz(scratch_data.fe_values_ansatz.get_mapping(),
+                                 scratch_data.fe_values_ansatz.get_fe(),
+                                 scratch_data.fe_interface_values_ansatz.get_quadrature(),
+                                 scratch_data.fe_interface_values_ansatz.get_update_flags())
   {
   }
 
-  FEValues<dim> fe_values_test;
-  FEValues<dim> fe_values_ansatz;
+  FEValues<dim>          fe_values_test;
+  FEValues<dim>          fe_values_ansatz;
+  FEInterfaceValues<dim> fe_interface_values_test;
+  FEInterfaceValues<dim> fe_interface_values_ansatz;
 };
 
 struct CopyData
