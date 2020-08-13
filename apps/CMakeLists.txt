@@ -21,6 +21,7 @@ set(sourcefiles
   biharmonic_c0ip.cc
   stokes_taylorhood.cc
   stokes_Qkplus2_DGPk.cc
+  stokes_DGQkplus2_DGPk.cc
   )
 
 foreach(src ${sourcefiles})

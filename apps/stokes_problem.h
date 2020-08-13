@@ -890,6 +890,36 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
           matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
         };
 
+      auto face_worker = [&](const LevelCellIterator & cell,
+                             const unsigned int &      f,
+                             const unsigned int &      sf,
+                             const LevelCellIterator & ncell,
+                             const unsigned int &      nf,
+                             const unsigned int &      nsf,
+                             ScratchData<dim> &        scratch_data,
+                             CopyData &                copy_data) {
+        if(dof_layout_v == TPSS::DoFLayout::DGQ)
+        {
+          LevelCellIterator cell_ansatz(&dof_handler_pressure->get_triangulation(),
+                                        cell->level(),
+                                        cell->index(),
+                                        dof_handler_pressure);
+          LevelCellIterator ncell_ansatz(&dof_handler_pressure->get_triangulation(),
+                                         ncell->level(),
+                                         ncell->index(),
+                                         dof_handler_pressure);
+          matrix_integrator.face_worker(
+            cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
+        }
+      };
+
+      auto boundary_worker = [&](const LevelCellIterator & /*cell*/,
+                                 const unsigned int & /*face_no*/,
+                                 ScratchData<dim> & /*scratch_data*/,
+                                 CopyData & /*copy_data*/) {
+        // !!!
+      };
+
       const auto copier = [&](const CopyData & copy_data) {
         level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
           copy_data.cell_matrix,
@@ -903,28 +933,56 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
           level_constraints,
           copy_data.local_dof_indices_test,
           mg_matrices[level].block(1, 0));
+
+        for(auto & cdf : copy_data.face_data)
+        {
+          AssertDimension(cdf.cell_rhs_test.size(), 0);
+          AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
+          level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+            cdf.cell_matrix,
+            cdf.joint_dof_indices_test,
+            level_constraints_pressure,
+            cdf.joint_dof_indices_ansatz,
+            mg_matrices[level].block(0, 1));
+          level_constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
+            cdf.cell_matrix_flipped,
+            cdf.joint_dof_indices_ansatz,
+            level_constraints,
+            cdf.joint_dof_indices_test,
+            mg_matrices[level].block(1, 0));
+        }
       };
 
       const UpdateFlags update_flags_velocity =
         update_values | update_gradients | update_quadrature_points | update_JxW_values;
       const UpdateFlags update_flags_pressure =
         update_values | update_gradients | update_quadrature_points | update_JxW_values;
+      const UpdateFlags interface_update_flags_velocity =
+        update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+      const UpdateFlags interface_update_flags_pressure =
+        update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
 
       ScratchData<dim> scratch_data(*mapping,
                                     dof_handler_velocity->get_fe(),
                                     dof_handler_pressure->get_fe(),
                                     n_q_points_1d,
                                     update_flags_velocity,
-                                    update_flags_pressure);
+                                    update_flags_pressure,
+                                    interface_update_flags_velocity,
+                                    interface_update_flags_pressure);
       CopyData         copy_data(dof_handler_velocity->get_fe().dofs_per_cell,
                          dof_handler_pressure->get_fe().dofs_per_cell);
-      MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
-                            dof_handler_velocity->end_mg(level),
-                            cell_worker,
-                            copier,
-                            scratch_data,
-                            copy_data,
-                            MeshWorker::assemble_own_cells);
+      MeshWorker::mesh_loop(
+        dof_handler_velocity->begin_mg(level),
+        dof_handler_velocity->end_mg(level),
+        cell_worker,
+        copier,
+        scratch_data,
+        copy_data,
+        MeshWorker::assemble_own_cells /*| MeshWorker::assemble_boundary_faces*/ |
+          MeshWorker::assemble_own_interior_faces_once,
+        boundary_worker,
+        face_worker);
     }
   }
 }
@@ -1265,6 +1323,15 @@ public:
 
   void
   solve();
+
+  std::shared_ptr<Vector<double>>
+  compute_L2_error_velocity() const;
+
+  std::shared_ptr<Vector<double>>
+  compute_L2_error_pressure() const;
+
+  std::shared_ptr<Vector<double>>
+  compute_H1semi_error_velocity() const;
 
   void
   compute_errors();
@@ -1836,7 +1903,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     for(auto j = 0U; j < dim + 1; ++j)
     {
       cell_integrals_mask(i, j) = DoFTools::Coupling::always;
-      if(i < dim && j < dim && dof_layout_v == TPSS::DoFLayout::DGQ)
+      if(dof_layout_v == TPSS::DoFLayout::DGQ)
         face_integrals_mask(i, j) = DoFTools::Coupling::always;
       else
         face_integrals_mask(i, j) = DoFTools::Coupling::none;
@@ -2055,14 +2122,19 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, false>;
     using CellIterator     = typename MatrixIntegrator::IteratorType;
 
-    const auto *           particular_solution_velocity = &(system_solution.block(0));
-    const auto *           particular_solution_pressure = &(system_solution.block(1));
+    const auto * particular_solution_velocity =
+      dof_layout_v == TPSS::DoFLayout::Q ? &(system_solution.block(0)) : nullptr;
+    const auto * particular_solution_pressure =
+      dof_layout_v == TPSS::DoFLayout::Q ? &(system_solution.block(1)) : nullptr;
     const auto             component_range_pressure = std::make_pair<unsigned int>(dim, dim + 1);
     FunctionExtractor<dim> analytical_solution_pressure(analytical_solution.get(),
                                                         component_range_pressure);
+    const auto             component_range_velocity = std::make_pair<unsigned int>(0, dim);
+    FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(),
+                                                        component_range_velocity);
     MatrixIntegrator       matrix_integrator(particular_solution_velocity,
                                        particular_solution_pressure,
-                                       /*solution velocity*/ nullptr,
+                                       &analytical_solution_velocity,
                                        &analytical_solution_pressure,
                                        equation_data);
 
@@ -2075,6 +2147,29 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
         matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
       };
 
+    auto face_worker = [&](const auto &         cell,
+                           const unsigned int & f,
+                           const unsigned int & sf,
+                           const auto &         ncell,
+                           const unsigned int & nf,
+                           const unsigned int & nsf,
+                           ScratchData<dim> &   scratch_data,
+                           CopyData &           copy_data) {
+      if(dof_layout_v == TPSS::DoFLayout::DGQ)
+      {
+        CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
+                                 cell->level(),
+                                 cell->index(),
+                                 &dof_handler_pressure);
+        CellIterator ncell_ansatz(&dof_handler_pressure.get_triangulation(),
+                                  ncell->level(),
+                                  ncell->index(),
+                                  &dof_handler_pressure);
+        matrix_integrator.face_worker(
+          cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
+      }
+    };
+
     auto boundary_worker = [&](const CellIterator & cell,
                                const unsigned int & face_no,
                                ScratchData<dim> &   scratch_data,
@@ -2085,7 +2180,11 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                  cell->level(),
                                  cell->index(),
                                  &dof_handler_pressure);
-        AssertThrow(false, ExcMessage("TODO DG-IP is not correct..."));
+        // AssertThrow(
+        //   false,
+        //   ExcMessage(
+        //     "TODO DG-IP is not correct...")); // !!!
+
         matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
       }
     };
@@ -2108,6 +2207,24 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
         copy_data.cell_rhs_test, copy_data.local_dof_indices_test, system_rhs.block(0));
       constraints_pressure.template distribute_local_to_global<Vector<double>>(
         copy_data.cell_rhs_ansatz, copy_data.local_dof_indices_ansatz, system_rhs.block(1));
+
+      for(auto & cdf : copy_data.face_data)
+      {
+        AssertDimension(cdf.cell_rhs_test.size(), 0);
+        AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
+        zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
+          cdf.cell_matrix,
+          cdf.joint_dof_indices_test,
+          constraints_pressure,
+          cdf.joint_dof_indices_ansatz,
+          system_matrix.block(0, 1));
+        constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
+          cdf.cell_matrix_flipped,
+          cdf.joint_dof_indices_ansatz,
+          zero_constraints_velocity,
+          cdf.joint_dof_indices_test,
+          system_matrix.block(1, 0));
+      }
     };
 
     const UpdateFlags update_flags_velocity =
@@ -2135,8 +2252,10 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                           copier,
                           scratch_data,
                           copy_data,
-                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces,
-                          boundary_worker);
+                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                            MeshWorker::assemble_own_interior_faces_once,
+                          boundary_worker,
+                          face_worker);
   }
 }
 
@@ -2478,48 +2597,84 @@ ModelProblem<dim, fe_degree_p, method>::solve()
 
 
 template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<Vector<double>>
+ModelProblem<dim, fe_degree_p, method>::compute_L2_error_velocity() const
+{
+  const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
+  const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  VectorTools::integrate_difference(dof_handler,
+                                    system_solution,
+                                    *analytical_solution,
+                                    *difference_per_cell,
+                                    QGauss<dim>(n_q_points_1d + 2),
+                                    VectorTools::L2_norm,
+                                    &velocity_mask);
+  return difference_per_cell;
+}
+
+template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<Vector<double>>
+ModelProblem<dim, fe_degree_p, method>::compute_L2_error_pressure() const
+{
+  const ComponentSelectFunction<dim> pressure_mask(dim, dim + 1);
+  const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  VectorTools::integrate_difference(dof_handler,
+                                    system_solution,
+                                    *analytical_solution,
+                                    *difference_per_cell,
+                                    QGauss<dim>(n_q_points_1d + 2),
+                                    VectorTools::L2_norm,
+                                    &pressure_mask);
+  return difference_per_cell;
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<Vector<double>>
+ModelProblem<dim, fe_degree_p, method>::compute_H1semi_error_velocity() const
+{
+  const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
+  const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  VectorTools::integrate_difference(dof_handler,
+                                    system_solution,
+                                    *analytical_solution,
+                                    *difference_per_cell,
+                                    QGauss<dim>(n_q_points_1d + 2),
+                                    VectorTools::H1_norm,
+                                    &velocity_mask);
+  return difference_per_cell;
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::compute_errors()
 {
-  const ComponentSelectFunction<dim> pressure_mask(dim, dim + 1);
-  const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
+  {
+    const auto   difference_per_cell = compute_L2_error_velocity();
+    const double Velocity_L2_error =
+      VectorTools::compute_global_error(triangulation, *difference_per_cell, VectorTools::L2_norm);
+    print_parameter("Velocity error in the L2 norm:", Velocity_L2_error);
+    pp_data.L2_error.push_back(Velocity_L2_error);
+  }
 
-  Vector<float> difference_per_cell(triangulation.n_active_cells());
-  VectorTools::integrate_difference(dof_handler,
-                                    system_solution,
-                                    *analytical_solution,
-                                    difference_per_cell,
-                                    QGauss<dim>(n_q_points_1d),
-                                    VectorTools::L2_norm,
-                                    &velocity_mask);
-  const double Velocity_L2_error =
-    VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::L2_norm);
-  print_parameter("Velocity error in the L2 norm:", Velocity_L2_error);
-  pp_data.L2_error.push_back(Velocity_L2_error);
+  {
+    const auto   difference_per_cell = compute_L2_error_pressure();
+    const double Pressure_L2_error =
+      VectorTools::compute_global_error(triangulation, *difference_per_cell, VectorTools::L2_norm);
+    print_parameter("Pressure error in the L2 norm:", Pressure_L2_error);
+    pp_data_pressure.L2_error.push_back(Pressure_L2_error);
+  }
 
-  VectorTools::integrate_difference(dof_handler,
-                                    system_solution,
-                                    *analytical_solution,
-                                    difference_per_cell,
-                                    QGauss<dim>(n_q_points_1d),
-                                    VectorTools::L2_norm,
-                                    &pressure_mask);
-  const double Pressure_L2_error =
-    VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::L2_norm);
-  print_parameter("Pressure error in the L2 norm:", Pressure_L2_error);
-  pp_data_pressure.L2_error.push_back(Pressure_L2_error);
-
-  VectorTools::integrate_difference(dof_handler,
-                                    system_solution,
-                                    *analytical_solution,
-                                    difference_per_cell,
-                                    QGauss<dim>(n_q_points_1d),
-                                    VectorTools::H1_norm,
-                                    &velocity_mask);
-  const double Velocity_H1_error =
-    VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::H1_norm);
-  print_parameter("Velocity error in the H1 seminorm:", Velocity_H1_error);
-  pp_data.H1semi_error.push_back(Velocity_H1_error);
+  {
+    const auto   difference_per_cell = compute_H1semi_error_velocity();
+    const double Velocity_H1_error =
+      VectorTools::compute_global_error(triangulation, *difference_per_cell, VectorTools::H1_norm);
+    print_parameter("Velocity error in the H1 seminorm:", Velocity_H1_error);
+    pp_data.H1semi_error.push_back(Velocity_H1_error);
+  }
 }
 
 
@@ -2541,6 +2696,12 @@ ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refine
                            solution_names,
                            DataOut<dim>::type_dof_data,
                            data_component_interpretation);
+  const auto L2_error_v = compute_L2_error_velocity();
+  data_out.add_data_vector(*L2_error_v, "velocity_L2_error", DataOut<dim>::type_cell_data);
+  const auto L2_error_p = compute_L2_error_pressure();
+  data_out.add_data_vector(*L2_error_p, "pressure_L2_error", DataOut<dim>::type_cell_data);
+  const auto H1semi_error_v = compute_H1semi_error_velocity();
+  data_out.add_data_vector(*H1semi_error_v, "velocity_H1semi_error", DataOut<dim>::type_cell_data);
   data_out.build_patches();
 
   std::ofstream output("solution-" + Utilities::int_to_string(refinement_cycle, 2) + ".vtk");
