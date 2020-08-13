@@ -12,18 +12,18 @@ main(int argc, char * argv[])
     const auto atoi_if = [&](auto & prm, const int index) {
       if(index <= 0 || argc <= index)
         return;
-      if(argv[index] == StokesFlow::skipper)
+      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
         return;
-      else
-        prm = std::atoi(argv[index]);
+      std::cout << argv[index] << StokesFlow::skipper << std::endl;
+      prm = std::atoi(argv[index]);
     };
     const auto atof_if = [&](auto & prm, const int index) {
       if(index <= 0 || argc <= index)
         return;
-      if(argv[index] == StokesFlow::skipper)
+      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
         return;
-      else
-        prm = std::atof(argv[index]);
+      std::cout << argv[index] << std::endl;
+      prm = std::atof(argv[index]);
     };
 
     //: default

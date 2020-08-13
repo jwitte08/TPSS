@@ -9,21 +9,21 @@ main(int argc, char * argv[])
 {
   try
   {
-    const auto       atoi_if = [&](auto & prm, const int index) {
+    const auto atoi_if = [&](auto & prm, const int index) {
       if(index <= 0 || argc <= index)
         return;
-      if(argv[index] == StokesFlow::skipper)
+      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
         return;
-      else
-        prm = std::atoi(argv[index]);
+      std::cout << argv[index] << StokesFlow::skipper << std::endl;
+      prm = std::atoi(argv[index]);
     };
     const auto atof_if = [&](auto & prm, const int index) {
       if(index <= 0 || argc <= index)
         return;
-      if(argv[index] == StokesFlow::skipper)
+      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
         return;
-      else
-        prm = std::atof(argv[index]);
+      std::cout << argv[index] << std::endl;
+      prm = std::atof(argv[index]);
     };
 
     //: default
@@ -31,12 +31,14 @@ main(int argc, char * argv[])
     unsigned int debug_depth                 = 0;
     double       damping                     = 0.;
     unsigned int force_mean_value_constraint = 0;
+    unsigned int n_cycles                    = 3;
 
     //: parse arguments
     atoi_if(test_index, 1);
-    atof_if(damping, 2);
+    atof_if(damping, 5);
     atoi_if(force_mean_value_constraint, 3);
     atoi_if(debug_depth, 4);
+    atoi_if(n_cycles, 2);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
@@ -51,9 +53,10 @@ main(int argc, char * argv[])
       damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
 
     options.setup(test_index, damping);
+    options.prms.n_cycles = n_cycles;
 
     EquationData equation_data;
-    equation_data.variant           = EquationData::Variant::DivFreeHom; // Bell!!!
+    equation_data.variant           = EquationData::Variant::DivFreeHom; // Bell !!!
     equation_data.use_cuthill_mckee = false;
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
@@ -61,12 +64,9 @@ main(int argc, char * argv[])
     AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
                 ExcMessage("Invalid."));
     equation_data.force_mean_value_constraint = static_cast<bool>(force_mean_value_constraint);
-    equation_data.ip_factor                   = 1.;
 
     ModelProblem<dim, fe_degree_p, Method::Qkplus2_DGPk> stokes_problem(options.prms,
-                                                                        equation_data); // !!!
-    // ModelProblem<dim, degree, Method::DGQkplus2_DGPk> stokes_problem(options.prms,
-    // equation_data); // !!!
+                                                                        equation_data);
 
     std::cout << std::endl;
     stokes_problem.run();
