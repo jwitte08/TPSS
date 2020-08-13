@@ -297,7 +297,7 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
     const bool cell_is_at_boundary     = cell->at_boundary();
     const bool neighbor_is_at_boundary = ncell->at_boundary();
     /// Particular solution u0 is only non-zero at the physical boundary.
-    if(cell_is_at_boundary | neighbor_is_at_boundary)
+    if(cell_is_at_boundary || neighbor_is_at_boundary)
     {
       AssertDimension(n_interface_dofs, copy_data_face.joint_dof_indices.size());
       Vector<double> u0(copy_data_face.joint_dof_indices.size());
