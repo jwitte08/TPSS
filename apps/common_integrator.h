@@ -581,7 +581,7 @@ compute_divergence(const FEValues<dim> & phi, const unsigned int i, const unsign
 
 
 /**
- * {{ symgrad(phi) }} = 0.5 ({{ \partial_d phi_{i;c} }} + {{ \partial_c phi_{i;d} }})
+ * {{ symgrad(phi_i) }} = 0.5 ({{ \partial_d phi_{i;c} }} + {{ \partial_c phi_{i;d} }})
  */
 template<int dim>
 SymmetricTensor<2, dim>
@@ -604,7 +604,7 @@ compute_average_symgrad(const FEInterfaceValues<dim> & phi,
  */
 template<int dim>
 Tensor<1, dim>
-compute_jump(const FEInterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+compute_vjump(const FEInterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
 {
   Tensor<1, dim> jump_phi;
   for(auto c = 0; c < dim; ++c)
@@ -615,17 +615,33 @@ compute_jump(const FEInterfaceValues<dim> & phi, const unsigned int i, const uns
 
 
 /**
- * jump_cross_normal(phi) = [[ phi ]] (x) n
+ * [[ phi ]] (x) n
  */
 template<int dim>
 Tensor<2, dim>
-compute_jump_cross_normal(const FEInterfaceValues<dim> & phi,
-                          const unsigned int             i,
-                          const unsigned int             q)
+compute_vjump_cross_normal(const FEInterfaceValues<dim> & phi,
+                           const unsigned int             i,
+                           const unsigned int             q)
 {
   const Tensor<1, dim> & n          = phi.normal(q);
-  const Tensor<1, dim> & jump_value = compute_jump(phi, i, q);
+  const Tensor<1, dim> & jump_value = compute_vjump(phi, i, q);
   return outer_product(jump_value, n);
+}
+
+
+
+/**
+ * [[ phi ]] . n
+ */
+template<int dim>
+double
+compute_vjump_dot_normal(const FEInterfaceValues<dim> & phi,
+                         const unsigned int             i,
+                         const unsigned int             q)
+{
+  const Tensor<1, dim> & n          = phi.normal(q);
+  const Tensor<1, dim> & jump_value = compute_vjump(phi, i, q);
+  return jump_value * n;
 }
 
 
@@ -684,6 +700,16 @@ struct ScratchData
 
 struct CopyData
 {
+  struct FaceData
+  {
+    FullMatrix<double>                   cell_matrix;
+    FullMatrix<double>                   cell_matrix_flipped;
+    std::vector<types::global_dof_index> joint_dof_indices_test;
+    std::vector<types::global_dof_index> joint_dof_indices_ansatz;
+    Vector<double>                       cell_rhs_test;
+    Vector<double>                       cell_rhs_ansatz;
+  };
+
   CopyData(const unsigned int n_dofs_per_cell_test,
            const unsigned int n_dofs_per_cell_ansatz,
            const unsigned int level_in = numbers::invalid_unsigned_int)
@@ -706,6 +732,7 @@ struct CopyData
   Vector<double>                       cell_rhs_ansatz;
   std::vector<types::global_dof_index> local_dof_indices_test;
   std::vector<types::global_dof_index> local_dof_indices_ansatz;
+  std::vector<FaceData>                face_data;
 };
 
 } // namespace Mixed
