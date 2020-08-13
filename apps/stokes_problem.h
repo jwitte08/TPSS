@@ -2085,8 +2085,8 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                  cell->level(),
                                  cell->index(),
                                  &dof_handler_pressure);
-	AssertThrow(false, ExcMessage("TODO DG-IP is not correct..."));
-	matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
+        AssertThrow(false, ExcMessage("TODO DG-IP is not correct..."));
+        matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
       }
     };
 
