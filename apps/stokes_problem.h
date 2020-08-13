@@ -408,8 +408,9 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_multigrid(
   // *** initialize multigrid constraints
   mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
   mg_constrained_dofs->initialize(*dof_handler);
-  mg_constrained_dofs->make_zero_boundary_constraints(
-    *dof_handler, equation_data.dirichlet_boundary_ids_velocity);
+  if(dof_layout == TPSS::DoFLayout::Q)
+    mg_constrained_dofs->make_zero_boundary_constraints(
+      *dof_handler, equation_data.dirichlet_boundary_ids_velocity);
 
   // *** initialize level matrices A_l
   mg_matrices.resize(mg_level_min, mg_level_max);
@@ -685,6 +686,8 @@ struct MGCollectionVelocityPressure
 
   std::shared_ptr<MGConstrainedDoFs>                mg_constrained_dofs;
   MG_TRANSFER                                       mg_transfer;
+  Table<2, DoFTools::Coupling>                      cell_integrals_mask;
+  Table<2, DoFTools::Coupling>                      face_integrals_mask;
   MGLevelObject<BlockSparsityPattern>               mg_sparsity_patterns;
   MGLevelObject<MATRIX>                             mg_matrices;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_pre;
@@ -766,7 +769,8 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     /// block of dof_handler is aligned, we might use the complete set of
     /// level_constraints as constraints for the velocity block.q
     AffineConstraints<double> level_constraints;
-    level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
+    if(mg_constrained_dofs->have_boundary_indices())
+      level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
     level_constraints.close();
 
     const auto & level_constraints_pressure = mg_constraints_pressure[level];
@@ -815,7 +819,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                              const unsigned int & nsf,
                              ScratchData<dim> &   scratch_data,
                              CopyData &           copy_data) {
-        if(dof_layout_v == TPSS::DoFLayout::DGQ) // TODO !!!
+        if(dof_layout_v == TPSS::DoFLayout::DGQ)
           matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
       };
 
@@ -823,7 +827,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                  const unsigned int & face_no,
                                  ScratchData<dim> &   scratch_data,
                                  CopyData &           copy_data) {
-        if(dof_layout_v == TPSS::DoFLayout::DGQ) // TODO !!!
+        if(dof_layout_v == TPSS::DoFLayout::DGQ)
           matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
       };
 
@@ -833,7 +837,6 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
         for(auto & cdf : copy_data.face_data)
         {
-          AssertThrow(false, ExcMessage("TODO DGQ case"));
           level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
             cdf.cell_matrix, cdf.joint_dof_indices, mg_matrices[level].block(0, 0));
         }
@@ -876,7 +879,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
       using MatrixIntegrator  = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, true>;
       using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
-      MatrixIntegrator matrix_integrator(nullptr, nullptr, equation_data);
+      MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, nullptr, equation_data);
       const auto &     triangulation = dof_handler_pressure->get_triangulation();
       auto             cell_worker =
         [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
@@ -996,33 +999,37 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
   mg_constrained_dofs->initialize(*dof_handler);
   const FEValuesExtractors::Vector velocities(0);
-  mg_constrained_dofs->make_zero_boundary_constraints(*dof_handler,
-                                                      equation_data.dirichlet_boundary_ids_velocity,
-                                                      dof_handler->get_fe().component_mask(
-                                                        velocities));
+  if(dof_layout_v == TPSS::DoFLayout::Q)
+    mg_constrained_dofs->make_zero_boundary_constraints(
+      *dof_handler,
+      equation_data.dirichlet_boundary_ids_velocity,
+      dof_handler->get_fe().component_mask(velocities));
 
   AssertDimension(mg_level_min, mg_constraints_pressure.min_level());
   AssertDimension(mg_level_max, mg_constraints_pressure.max_level());
   if(equation_data.force_mean_value_constraint)
     for(auto level = mg_level_min; level <= mg_level_max; ++level)
     {
-      const auto & level_constraints_pressure = mg_constraints_pressure[level];
-      Assert(dof_handler_velocity, ExcMessage("dof_handler_velocity is uninitialized."));
-      const types::global_dof_index n_dofs_velocity = dof_handler_velocity->n_dofs(level);
-      const types::global_dof_index first_dof_index = n_dofs_velocity;
-      AssertDimension(level_constraints_pressure.n_constraints(), 1U);
-      AssertThrow(level_constraints_pressure.is_constrained(0U),
-                  ExcMessage("Did you set a mean value free constraint?"));
-      const auto mean_value_free_entries = *(level_constraints_pressure.get_constraint_entries(0U));
+      AssertThrow(false, ExcMessage("TODO mean value constraint for MG matrices..."));
+      //     const auto & level_constraints_pressure = mg_constraints_pressure[level];
+      //     Assert(dof_handler_velocity, ExcMessage("dof_handler_velocity is uninitialized."));
+      //     const types::global_dof_index n_dofs_velocity = dof_handler_velocity->n_dofs(level);
+      //     const types::global_dof_index first_dof_index = n_dofs_velocity;
+      //     AssertDimension(level_constraints_pressure.n_constraints(), 1U);
+      //     AssertThrow(level_constraints_pressure.is_constrained(0U),
+      //                 ExcMessage("Did you set a mean value free constraint?"));
+      //     const auto mean_value_free_entries =
+      //     *(level_constraints_pressure.get_constraint_entries(0U));
 
-      /// shift dofs of the pressure block by n_dofs_velocity
-      AffineConstraints<double> level_constraints;
-      level_constraints.add_line(first_dof_index);
-      for(const auto & [column, value] : mean_value_free_entries)
-        level_constraints.add_entry(first_dof_index, first_dof_index + column, value);
+      //     /// shift dofs of the pressure block by n_dofs_velocity
+      //     AffineConstraints<double> level_constraints;
+      //     level_constraints.add_line(first_dof_index);
+      //     for(const auto & [column, value] : mean_value_free_entries)
+      //       level_constraints.add_entry(first_dof_index, first_dof_index + column, value);
 
-      // !!! TODO this call throws an exception: internal IndexSets have no compatible size
-      // mg_constrained_dofs->add_user_constraints(level, level_constraints);
+      //     /// TODO this call throws an exception: internal IndexSets have no
+      //     /// compatible size mg_constrained_dofs->add_user_constraints(level,
+      //     /// level_constraints);
     }
 
   // *** initialize level matrices A_l
@@ -1035,7 +1042,8 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   {
     const auto &                dofs_per_block = level_to_dofs_per_block[level];
     BlockDynamicSparsityPattern dsp(dofs_per_block, dofs_per_block);
-    MGTools::make_sparsity_pattern(*dof_handler, dsp, level); // TODO !!! DGQ case
+    MGTools::make_flux_sparsity_pattern(
+      *dof_handler, dsp, level, cell_integrals_mask, face_integrals_mask);
     mg_sparsity_patterns[level].copy_from(dsp);
     mg_matrices[level].reinit(mg_sparsity_patterns[level]);
   }
@@ -1171,6 +1179,17 @@ struct ModelProblemBase<Method::Qkplus2_DGPk, dim, fe_degree_p>
   static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q;
   static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::DGP;
   using fe_type_v                               = FE_Q<dim>;
+  using fe_type_p                               = FE_DGP<dim>;
+  static constexpr int           fe_degree_v    = fe_degree_p + 2;
+  static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
+};
+
+template<int dim, int fe_degree_p>
+struct ModelProblemBase<Method::DGQkplus2_DGPk, dim, fe_degree_p>
+{
+  static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::DGQ;
+  static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::DGP;
+  using fe_type_v                               = FE_DGQ<dim>;
   using fe_type_p                               = FE_DGP<dim>;
   static constexpr int           fe_degree_v    = fe_degree_p + 2;
   static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
@@ -1640,21 +1659,23 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
     DoFRenumbering::Cuthill_McKee(dof_handler_velocity);
 
   /// homogeneous boundary conditions for the solution update
+  zero_constraints_velocity.clear();
+  if(dof_layout_v == TPSS::DoFLayout::Q)
   {
-    zero_constraints_velocity.clear();
     DoFTools::make_hanging_node_constraints(dof_handler_velocity, zero_constraints_velocity);
     for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
       DoFTools::make_zero_boundary_constraints(dof_handler_velocity,
                                                boundary_id,
                                                zero_constraints_velocity);
-    zero_constraints_velocity.close();
   }
+  zero_constraints_velocity.close();
 
   /// inhomogeneous boundary conditions for the actual solution
+  constraints_velocity.clear();
+  if(dof_layout_v == TPSS::DoFLayout::Q)
   {
     const auto             component_range = std::make_pair<unsigned int>(0, dim);
     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
-    constraints_velocity.clear();
     DoFTools::make_hanging_node_constraints(dof_handler, constraints_velocity);
     std::map<types::boundary_id, const Function<dim, double> *> boundary_id_to_function;
     for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
@@ -1662,8 +1683,8 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
     VectorTools::interpolate_boundary_values(dof_handler_velocity,
                                              boundary_id_to_function,
                                              constraints_velocity);
-    constraints_velocity.close();
   }
+  constraints_velocity.close();
 
   // //: setup system matrix (DEBUG)
   // if(do_system_matrix)
@@ -1709,13 +1730,15 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
   /// then apply the coefficient vector associated to the constant one function
   /// to obtain the weights for each degree of freedom. By means of these
   /// weights we impose a mean value free constraint.
+  constraints_pressure.clear();
+  const bool mv_constraint_is_necessary =
+    dof_layout_v == TPSS::DoFLayout::Q && rt_parameters.solver.variant == "UMFPACK";
+  if(mv_constraint_is_necessary || equation_data.force_mean_value_constraint)
   {
     const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof();
     const auto & mass_foreach_dof     = *mass_foreach_dof_ptr;
 
     const auto n_dofs_pressure = dof_handler_pressure.n_dofs();
-    constraints_pressure.clear();
-    if(rt_parameters.solver.variant == "UMFPACK" || equation_data.force_mean_value_constraint)
     {
       const double mass_of_first_dof = mass_foreach_dof(0);
       constraints_pressure.add_line(0U);
@@ -1725,8 +1748,8 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
       for(auto i = start; i < n_dofs_pressure; i += stride)
         constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
     }
-    constraints_pressure.close();
   }
+  constraints_pressure.close();
 }
 
 
@@ -1770,8 +1793,9 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   setup_system_pressure(equation_data.use_cuthill_mckee);
 
   /// No-slip boundary conditions (velocity)
+  zero_constraints.clear();
+  if(dof_layout_v == TPSS::DoFLayout::Q)
   {
-    zero_constraints.clear();
     DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
     const FEValuesExtractors::Vector velocities(0);
     {
@@ -1781,13 +1805,15 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
                                                  zero_constraints,
                                                  fe->component_mask(velocities));
     }
-    zero_constraints.close();
   }
+  zero_constraints.close();
 
   /// Mean value boundary condition (pressure)
   {
+    const bool mv_constraint_is_necessary =
+      dof_layout_v == TPSS::DoFLayout::Q && rt_parameters.solver.variant == "UMFPACK";
     mean_value_constraints.clear();
-    if(rt_parameters.solver.variant == "UMFPACK" || equation_data.force_mean_value_constraint)
+    if(mv_constraint_is_necessary || equation_data.force_mean_value_constraint)
     {
       const types::global_dof_index first_dof_index = n_dofs_velocity;
       AssertDimension(constraints_pressure.n_constraints(), 1U);
@@ -1819,7 +1845,6 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   system_matrix.clear();
   pressure_mass_matrix.clear();
   BlockDynamicSparsityPattern dsp(dofs_per_block, dofs_per_block);
-  // DoFTools::make_sparsity_pattern(dof_handler, dsp, zero_constraints); // OLD
   DoFTools::make_flux_sparsity_pattern(dof_handler, dsp, cell_integrals_mask, face_integrals_mask);
   zero_constraints.condense(dsp);
   sparsity_pattern.copy_from(dsp);
@@ -1827,7 +1852,8 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   system_matrix.reinit(sparsity_pattern);
   system_solution.reinit(dofs_per_block);
   zero_constraints.set_zero(system_solution);
-  constraints_velocity.distribute(system_solution.block(0)); // particular velocity solution!
+  if(dof_layout_v == TPSS::DoFLayout::Q)
+    constraints_velocity.distribute(system_solution.block(0)); // particular velocity solution!
   system_delta_x.reinit(dofs_per_block);
   zero_constraints.set_zero(system_delta_x);
   system_rhs.reinit(dofs_per_block);
@@ -1901,8 +1927,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     const auto             component_range = std::make_pair<unsigned int>(0, dim);
     FunctionExtractor<dim> load_function_velocity(load_function.get(), component_range);
     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
-    const auto *           particular_solution_velocity = &(system_solution.block(0));
-    MatrixIntegrator       matrix_integrator(&load_function_velocity,
+    const auto *           particular_solution_velocity =
+      dof_layout_v == TPSS::DoFLayout::Q ? &(system_solution.block(0)) : nullptr;
+    MatrixIntegrator matrix_integrator(&load_function_velocity,
                                        &analytical_solution_velocity,
                                        particular_solution_velocity,
                                        equation_data);
@@ -1920,7 +1947,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                            const unsigned int & nsf,
                            ScratchData<dim> &   scratch_data,
                            CopyData &           copy_data) {
-      if(dof_layout_v == TPSS::DoFLayout::DGQ) // TODO !!!
+      if(dof_layout_v == TPSS::DoFLayout::DGQ)
         matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
     };
 
@@ -1928,7 +1955,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                const unsigned int & face_no,
                                ScratchData<dim> &   scratch_data,
                                CopyData &           copy_data) {
-      if(dof_layout_v == TPSS::DoFLayout::DGQ) // TODO !!!
+      if(dof_layout_v == TPSS::DoFLayout::DGQ)
         matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
     };
 
@@ -1941,8 +1968,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
           system_matrix.block(0, 0),
           system_rhs.block(0));
 
-      for(auto & cdf : copy_data.face_data) // TODO !!!
+      for(auto & cdf : copy_data.face_data)
       {
+        AssertDimension(cdf.cell_rhs.size(), 0);
         if(cdf.cell_rhs.size() == 0) // only filled on cells at the boundary
           zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
             cdf.cell_matrix, cdf.joint_dof_indices, system_matrix.block(0, 0));
@@ -2027,10 +2055,15 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, false>;
     using CellIterator     = typename MatrixIntegrator::IteratorType;
 
-    const auto *     particular_solution_velocity = &(system_solution.block(0));
-    const auto *     particular_solution_pressure = &(system_solution.block(1));
-    MatrixIntegrator matrix_integrator(particular_solution_velocity,
+    const auto *           particular_solution_velocity = &(system_solution.block(0));
+    const auto *           particular_solution_pressure = &(system_solution.block(1));
+    const auto             component_range_pressure = std::make_pair<unsigned int>(dim, dim + 1);
+    FunctionExtractor<dim> analytical_solution_pressure(analytical_solution.get(),
+                                                        component_range_pressure);
+    MatrixIntegrator       matrix_integrator(particular_solution_velocity,
                                        particular_solution_pressure,
+                                       /*solution velocity*/ nullptr,
+                                       &analytical_solution_pressure,
                                        equation_data);
 
     auto cell_worker =
@@ -2041,6 +2074,21 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                  &dof_handler_pressure);
         matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
       };
+
+    auto boundary_worker = [&](const CellIterator & cell,
+                               const unsigned int & face_no,
+                               ScratchData<dim> &   scratch_data,
+                               CopyData &           copy_data) {
+      if(dof_layout_v == TPSS::DoFLayout::DGQ)
+      {
+        CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
+                                 cell->level(),
+                                 cell->index(),
+                                 &dof_handler_pressure);
+	AssertThrow(false, ExcMessage("TODO DG-IP is not correct..."));
+	matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
+      }
+    };
 
     const auto copier = [&](const CopyData & copy_data) {
       zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
@@ -2066,13 +2114,19 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
       update_values | update_gradients | update_quadrature_points | update_JxW_values;
     const UpdateFlags update_flags_pressure =
       update_values | update_gradients | update_quadrature_points | update_JxW_values;
+    const UpdateFlags interface_update_flags_velocity =
+      update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+    const UpdateFlags interface_update_flags_pressure =
+      update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
 
     ScratchData<dim> scratch_data(mapping,
                                   dof_handler_velocity.get_fe(),
                                   dof_handler_pressure.get_fe(),
                                   n_q_points_1d,
                                   update_flags_velocity,
-                                  update_flags_pressure);
+                                  update_flags_pressure,
+                                  interface_update_flags_velocity,
+                                  interface_update_flags_pressure);
     CopyData         copy_data(dof_handler_velocity.get_fe().dofs_per_cell,
                        dof_handler_pressure.get_fe().dofs_per_cell);
     MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
@@ -2081,7 +2135,8 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                           copier,
                           scratch_data,
                           copy_data,
-                          MeshWorker::assemble_own_cells);
+                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces,
+                          boundary_worker);
   }
 }
 
@@ -2237,30 +2292,35 @@ ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity_pressure()
   mgc_velocity_pressure.dof_handler_velocity = &dof_handler_velocity;
   mgc_velocity_pressure.dof_handler_pressure = &dof_handler_pressure;
   mgc_velocity_pressure.mapping              = &mapping;
+  mgc_velocity_pressure.cell_integrals_mask  = cell_integrals_mask;
+  mgc_velocity_pressure.face_integrals_mask  = face_integrals_mask;
 
+
+  /// TODO I am not sure if it is possible to impose mean value constraints on
+  /// all level matrices in dealii and if this makes sense at all...
+  ///
   /// One way could be to use a mean_value_filter() (see deal.II) instead of a
   /// distribute() call. This would still require an assembly w.r.t. the mean
   /// value constraint!?
-  // !!! TODO I am not sure if it is possible to impose mean value constraints
-  // on all level matrices in dealii and if this makes sense at all
   MGLevelObject<AffineConstraints<double>> mg_constraints_pressure(mg_level_min, mg_level_max);
   for(auto level = mg_level_min; level <= mg_level_max; ++level)
   {
-    const auto   mass_foreach_dof_ptr       = compute_mass_foreach_pressure_dof(level);
-    const auto & mass_foreach_dof           = *mass_foreach_dof_ptr;
-    auto &       level_constraints_pressure = mg_constraints_pressure[level];
-    const auto   n_dofs_pressure            = dof_handler_pressure.n_dofs(level);
+    // const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof(level);
+    // const auto & mass_foreach_dof     = *mass_foreach_dof_ptr;
+    // const auto   n_dofs_pressure      = dof_handler_pressure.n_dofs(level);
 
+    auto & level_constraints_pressure = mg_constraints_pressure[level];
     level_constraints_pressure.clear();
     if(equation_data.force_mean_value_constraint)
     {
-      const double mass_of_first_dof = mass_foreach_dof(0U);
-      level_constraints_pressure.add_line(0U);
-      const auto         n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
-      const unsigned int stride = dof_layout_p == TPSS::DoFLayout::DGP ? n_dofs_per_cell : 1U;
-      const unsigned int start  = dof_layout_p == TPSS::DoFLayout::DGP ? stride : 1U;
-      for(auto i = start; i < n_dofs_pressure; i += stride)
-        level_constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
+      AssertThrow(false, ExcMessage("TODO..."));
+      //   const double mass_of_first_dof = mass_foreach_dof(0U);
+      //   level_constraints_pressure.add_line(0U);
+      //   const auto         n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
+      //   const unsigned int stride = dof_layout_p == TPSS::DoFLayout::DGP ? n_dofs_per_cell : 1U;
+      //   const unsigned int start  = dof_layout_p == TPSS::DoFLayout::DGP ? stride : 1U;
+      //   for(auto i = start; i < n_dofs_pressure; i += stride)
+      //     level_constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
     }
     level_constraints_pressure.close();
   }
@@ -2303,8 +2363,8 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
                                                                         system_delta_x,
                                                                         system_rhs,
                                                                         preconditioner);
-  /// only there to apply mean value constraint (Dirichlet conditions of
-  /// velocity have already been applied to system_solution
+  /// distribute() is needed to apply the mean value constraint (Dirichlet
+  /// conditions of velocity have already been applied to system_solution)
   zero_constraints.distribute(system_delta_x);
   system_solution += system_delta_x;
 
@@ -2326,7 +2386,9 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     SparseDirectUMFPACK A_direct;
     A_direct.template initialize<BlockSparseMatrix<double>>(system_matrix);
     A_direct.vmult(system_delta_x, system_rhs);
-    zero_constraints.distribute(system_delta_x); // mean-value constraint
+    /// distribute() is needed to apply the mean value constraint (Dirichlet
+    /// conditions of velocity have already been applied to system_solution)
+    zero_constraints.distribute(system_delta_x);
     system_solution += system_delta_x;
 
     pp_data.average_reduction_system.push_back(0.);

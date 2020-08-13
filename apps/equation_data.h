@@ -666,7 +666,8 @@ enum class Method
 {
   TaylorHood,
   /*only for testing*/ TaylorHoodDGQ,
-  Qkplus2_DGPk
+  Qkplus2_DGPk,
+  DGQkplus2_DGPk
 };
 
 
@@ -1320,8 +1321,7 @@ using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>
 
 namespace GaussianBell
 {
-
-  template<int dim>
+template<int dim>
 using SolutionBaseVelocity = Laplace::SolutionBase<dim>;
 
 

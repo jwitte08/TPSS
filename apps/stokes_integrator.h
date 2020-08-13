@@ -154,15 +154,22 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
     }
   }
 
-  if(!is_multigrid && discrete_solution)
-  {
-    Vector<double> u0(copy_data.local_dof_indices.size());
-    for(auto i = 0U; i < u0.size(); ++i)
-      u0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
-    Vector<double> w0(copy_data.local_dof_indices.size());
-    copy_data.cell_matrix.vmult(w0, u0);
-    copy_data.cell_rhs -= w0;
-  }
+  /// Subtract the particular solution @p discrete_solution from the right hand
+  /// side, thus, as usual moving essential boundary conditions to the right
+  /// hand side.
+  ///
+  /// If @p discrete_solution is not set (for example for a DG method) we skip
+  /// here.
+  if(!is_multigrid)
+    if(discrete_solution)
+    {
+      Vector<double> u0(copy_data.local_dof_indices.size());
+      for(auto i = 0U; i < u0.size(); ++i)
+        u0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
+      Vector<double> w0(copy_data.local_dof_indices.size());
+      copy_data.cell_matrix.vmult(w0, u0);
+      copy_data.cell_rhs -= w0;
+    }
 }
 
 
@@ -191,7 +198,8 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
   const auto   nh        = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
   const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
-  const double gamma_over_h = 0.5 * compute_penalty_impl(fe_degree, h, nh);
+  const double gamma_over_h =
+    equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
   double integral_ijq = 0.;
   for(unsigned int q = 0; q < fe_interface_values.n_quadrature_points; ++q)
@@ -234,23 +242,56 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
 
   copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
 
-  const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
-  copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
+  const unsigned int n_dofs = fe_interface_values.n_current_interface_dofs();
+  copy_data_face.cell_matrix.reinit(n_dofs, n_dofs);
 
   const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
   const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
-  const double gamma_over_h = compute_penalty_impl(fe_degree, h, h);
+  const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, h);
+
+  std::vector<Tensor<1, dim>> solution_values;
+  std::vector<Tensor<2, dim>> solution_cross_normals;
+  if(!is_multigrid)
+  {
+    Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
+    AssertDimension(analytical_solution->n_components, dim);
+    const auto &                        q_points = fe_interface_values.get_quadrature_points();
+    const std::vector<Tensor<1, dim>> & normals  = fe_interface_values.get_normal_vectors();
+    std::transform(q_points.cbegin(),
+                   q_points.cend(),
+                   std::back_inserter(solution_values),
+                   [this](const auto & x_q) {
+                     Tensor<1, dim> value;
+                     for(auto c = 0U; c < dim; ++c)
+                       value[c] = analytical_solution->value(x_q, c);
+                     return value;
+                   });
+    AssertDimension(normals.size(), solution_values.size());
+    std::transform(solution_values.cbegin(),
+                   solution_values.cend(),
+                   normals.cbegin(),
+                   std::back_inserter(solution_cross_normals),
+                   [](const auto & u_q, const auto & normal) {
+                     return outer_product(u_q, normal);
+                   });
+  }
+
+  AssertDimension(copy_data.cell_rhs.size(), n_dofs);
+  Assert(copy_data.local_dof_indices == copy_data_face.joint_dof_indices,
+         ExcMessage(
+           "copy_data.cell_rhs is incompatible compared to copy_data_face.joint_dof_indices."));
 
   double integral_ijq = 0.;
+  double nitsche_iq   = 0.;
   for(unsigned int q = 0; q < fe_interface_values.n_quadrature_points; ++q)
   {
-    for(unsigned int i = 0; i < n_interface_dofs; ++i)
+    for(unsigned int i = 0; i < n_dofs; ++i)
     {
       const auto & av_symgrad_phi_i   = compute_average_symgrad(fe_interface_values, i, q);
       const auto & jump_phi_i_cross_n = compute_jump_cross_normal(fe_interface_values, i, q);
       const auto & jump_phi_i         = compute_jump(fe_interface_values, i, q);
 
-      for(unsigned int j = 0; j < n_interface_dofs; ++j)
+      for(unsigned int j = 0; j < n_dofs; ++j)
       {
         const auto & av_symgrad_phi_j   = compute_average_symgrad(fe_interface_values, j, q);
         const auto & jump_phi_j_cross_n = compute_jump_cross_normal(fe_interface_values, j, q);
@@ -262,6 +303,19 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
         integral_ijq *= 2. * fe_interface_values.JxW(q);
 
         copy_data_face.cell_matrix(i, j) += integral_ijq;
+      }
+
+      /// Nitsche method (weak Dirichlet conditions)
+      if(!is_multigrid)
+      {
+        const auto & solution         = solution_values[q];
+        const auto & solution_cross_n = solution_cross_normals[q];
+
+        nitsche_iq = -scalar_product(solution_cross_n, av_symgrad_phi_i);
+        nitsche_iq += gamma_over_h * solution * jump_phi_i;
+        nitsche_iq *= 2. * fe_interface_values.JxW(q);
+
+        copy_data.cell_rhs(i) += nitsche_iq;
       }
     }
   }
@@ -520,6 +574,8 @@ public:
     {
       using FaceLaplace = ::FD::Laplace::SIPG::FaceOperation<dim, fe_degree, fe_degree + 1, Number>;
       FaceLaplace nitsche;
+      nitsche.penalty_factor          = equation_data.ip_factor;
+      nitsche.interior_penalty_factor = equation_data.ip_factor;
 
       const auto face_nitsche_plus_penalty = [&](const evaluator_type & eval_ansatz,
                                                  const evaluator_type & eval_test,
@@ -840,6 +896,8 @@ struct MatrixIntegrator
 
 namespace Mixed
 {
+using ::MW::compute_jump;
+
 using ::MW::compute_divergence;
 
 using ::MW::Mixed::ScratchData;
@@ -853,9 +911,13 @@ struct MatrixIntegrator
 
   MatrixIntegrator(const Vector<double> * particular_solutionU,
                    const Vector<double> * particular_solutionP,
+                   const Function<dim> *  analytical_solutionU_in,
+                   const Function<dim> *  analytical_solutionP_in,
                    const EquationData &   equation_data_in)
     : discrete_solutionU(particular_solutionU),
       discrete_solutionP(particular_solutionP),
+      analytical_solutionU(analytical_solutionU_in),
+      analytical_solutionP(analytical_solutionP_in),
       equation_data(equation_data_in)
   {
   }
@@ -866,8 +928,17 @@ struct MatrixIntegrator
               ScratchData<dim> &   scratch_data,
               CopyData &           copy_data) const;
 
+  void
+  boundary_worker(const IteratorType & cellU,
+                  const IteratorType & cellP,
+                  const unsigned int & f,
+                  ScratchData<dim> &   scratch_data,
+                  CopyData &           copy_data) const;
+
   const Vector<double> * discrete_solutionU;
   const Vector<double> * discrete_solutionP;
+  const Function<dim> *  analytical_solutionU;
+  const Function<dim> *  analytical_solutionP;
   const EquationData     equation_data;
 };
 
@@ -939,6 +1010,67 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cellU,
     Vector<double> w0(n_dofs_per_cellU);
     copy_data.cell_matrix.vmult(w0, p0);
     copy_data.cell_rhs_test -= w0;
+  }
+}
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
+                                                     const IteratorType & cellP,
+                                                     const unsigned int & f,
+                                                     ScratchData<dim> &   scratch_data,
+                                                     CopyData &           copy_data) const
+{
+  /// Velocity "U" takes test function role (in flipped mode ansatz function)
+  auto & phiU = scratch_data.fe_interface_values_test;
+  phiU.reinit(cellU, f);
+  const auto n_dofsU = phiU.n_current_interface_dofs();
+  AssertDimension(n_dofsU, copy_data.local_dof_indices_test.size());
+
+  /// Pressure "P" takes ansatz function role (in flipped mode test function)
+  auto & phiP = scratch_data.fe_interface_values_ansatz;
+  phiP.reinit(cellP, f);
+  // const auto n_dofsP = phiP.n_current_interface_dofs();
+
+  AssertDimension(phiU.n_quadrature_points, phiP.n_quadrature_points);
+
+  std::vector<Tensor<1, dim>> pressure_solution_times_normals;
+  if(!is_multigrid)
+  {
+    Assert(analytical_solutionP, ExcMessage("analytical_solutionP is not set."));
+    AssertDimension(analytical_solutionP->n_components, 1);
+    const auto &                        q_points = phiP.get_quadrature_points();
+    const std::vector<Tensor<1, dim>> & normals  = phiP.get_normal_vectors();
+    std::transform(q_points.cbegin(),
+                   q_points.cend(),
+                   normals.cbegin(),
+                   std::back_inserter(pressure_solution_times_normals),
+                   [this](const auto & x_q, const auto & normal) {
+                     return analytical_solutionP->value(x_q) * normal;
+                   });
+  }
+
+  AssertDimension(n_dofsU, copy_data.cell_rhs_test.size())
+    Assert(copy_data.local_dof_indices_test == phiU.get_interface_dof_indices(),
+           ExcMessage(
+             "copy_data.cell_rhs is incompatible compared to copy_data_face.joint_dof_indices."));
+
+  double neumann_iq = 0.;
+  for(unsigned int q = 0; q < phiU.n_quadrature_points; ++q)
+  {
+    for(unsigned int i = 0; i < n_dofsU; ++i)
+    {
+      /// Nitsche method (weak Dirichlet conditions)
+      if(!is_multigrid)
+      {
+        const auto & jump_phi_i = compute_jump(phiU, i, q);
+        const auto & pn         = pressure_solution_times_normals[q];
+
+        neumann_iq = -pn * jump_phi_i;
+
+        copy_data.cell_rhs_test(i) += neumann_iq;
+      }
+    }
   }
 }
 
