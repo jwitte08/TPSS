@@ -96,6 +96,26 @@ namespace Stokes
 {
 using namespace dealii;
 
+
+template<TPSS::DoFLayout dof_layout_v, bool is_multigrid>
+MeshWorker::AssembleFlags
+get_assemble_flags_impl()
+{
+  const auto assemble_flags_conforming = MeshWorker::assemble_own_cells;
+  const auto assemble_flags_dg =
+    is_multigrid ? MeshWorker::assemble_own_cells | MeshWorker::assemble_own_interior_faces_once :
+                   MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                     MeshWorker::assemble_own_interior_faces_once;
+  if(dof_layout_v == TPSS::DoFLayout::Q)
+    return assemble_flags_conforming;
+  else if(dof_layout_v == TPSS::DoFLayout::DGQ)
+    return assemble_flags_dg;
+  AssertThrow(false, ExcMessage("FE is not supported."));
+  return MeshWorker::assemble_nothing;
+}
+
+
+
 /**
  * TODO...
  */
@@ -662,6 +682,9 @@ struct MGCollectionVelocityPressure
   void
   clear();
 
+  MeshWorker::AssembleFlags
+  get_mg_assemble_flags() const;
+
   void
   prepare_multigrid(const unsigned int                               mg_level_max,
                     const std::shared_ptr<ColoringBase<dim>>         user_coloring,
@@ -743,6 +766,18 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   mg_matrices.clear_elements();
   mg_transfer.clear();
   mg_constrained_dofs.reset();
+}
+
+template<int             dim,
+         int             fe_degree_p,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         LocalAssembly   local_assembly>
+MeshWorker::AssembleFlags
+MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
+  get_mg_assemble_flags() const
+{
+  return get_assemble_flags_impl<dof_layout_v, true>();
 }
 
 template<int             dim,
@@ -908,6 +943,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                          ncell->level(),
                                          ncell->index(),
                                          dof_handler_pressure);
+          AssertThrow(false, ExcMessage("TODO... no conv. for DivFreeBell"));
           matrix_integrator.face_worker(
             cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
         }
@@ -972,17 +1008,15 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                     interface_update_flags_pressure);
       CopyData         copy_data(dof_handler_velocity->get_fe().dofs_per_cell,
                          dof_handler_pressure->get_fe().dofs_per_cell);
-      MeshWorker::mesh_loop(
-        dof_handler_velocity->begin_mg(level),
-        dof_handler_velocity->end_mg(level),
-        cell_worker,
-        copier,
-        scratch_data,
-        copy_data,
-        MeshWorker::assemble_own_cells /*| MeshWorker::assemble_boundary_faces*/ |
-          MeshWorker::assemble_own_interior_faces_once,
-        boundary_worker,
-        face_worker);
+      MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
+                            dof_handler_velocity->end_mg(level),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            get_mg_assemble_flags(),
+                            boundary_worker,
+                            face_worker);
     }
   }
 }
@@ -1303,6 +1337,9 @@ public:
   void
   setup_system_pressure(const bool do_cuthill_mckee);
 
+  MeshWorker::AssembleFlags
+  get_assemble_flags() const;
+
   void
   assemble_system();
 
@@ -1510,6 +1547,15 @@ ModelProblem<dim, fe_degree_p, method>::print_informations() const
   print_parameter("Finite element:", fe->get_name());
   *pcout << rt_parameters.to_string();
   *pcout << std::endl;
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+MeshWorker::AssembleFlags
+ModelProblem<dim, fe_degree_p, method>::get_assemble_flags() const
+{
+  return get_assemble_flags_impl<dof_layout_v, false>();
 }
 
 
@@ -2126,16 +2172,16 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
       dof_layout_v == TPSS::DoFLayout::Q ? &(system_solution.block(0)) : nullptr;
     const auto * particular_solution_pressure =
       dof_layout_v == TPSS::DoFLayout::Q ? &(system_solution.block(1)) : nullptr;
-    const auto             component_range_pressure = std::make_pair<unsigned int>(dim, dim + 1);
-    FunctionExtractor<dim> analytical_solution_pressure(analytical_solution.get(),
-                                                        component_range_pressure);
+    // const auto             component_range_pressure = std::make_pair<unsigned int>(dim, dim + 1);
+    // FunctionExtractor<dim> analytical_solution_pressure(analytical_solution.get(),
+    //                                                     component_range_pressure);
     const auto             component_range_velocity = std::make_pair<unsigned int>(0, dim);
     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(),
                                                         component_range_velocity);
     MatrixIntegrator       matrix_integrator(particular_solution_velocity,
                                        particular_solution_pressure,
                                        &analytical_solution_velocity,
-                                       &analytical_solution_pressure,
+                                       /*&analytical_solution_pressure*/ nullptr,
                                        equation_data);
 
     auto cell_worker =
@@ -2165,6 +2211,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                   ncell->level(),
                                   ncell->index(),
                                   &dof_handler_pressure);
+        AssertThrow(false, ExcMessage("TODO... no conv. for DivFreeBell"));
         matrix_integrator.face_worker(
           cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
       }
@@ -2180,11 +2227,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                  cell->level(),
                                  cell->index(),
                                  &dof_handler_pressure);
-        // AssertThrow(
-        //   false,
-        //   ExcMessage(
-        //     "TODO DG-IP is not correct...")); // !!!
-
+        AssertThrow(false, ExcMessage("TODO... no conv. for DivFreeBell"));
         matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
       }
     };
@@ -2246,14 +2289,14 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                   interface_update_flags_pressure);
     CopyData         copy_data(dof_handler_velocity.get_fe().dofs_per_cell,
                        dof_handler_pressure.get_fe().dofs_per_cell);
+
     MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
                           dof_handler_velocity.end(),
                           cell_worker,
                           copier,
                           scratch_data,
                           copy_data,
-                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                            MeshWorker::assemble_own_interior_faces_once,
+                          get_assemble_flags(),
                           boundary_worker,
                           face_worker);
   }

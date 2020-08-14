@@ -1140,9 +1140,9 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
       /// Nitsche method (weak Dirichlet conditions)
       if(!is_multigrid)
       {
-        const auto & av_phi_i = phiP.average(i, q);
+        const auto & av_phiP_i = phiP.average(i, q);
 
-        integral_iq = u_dot_n * av_phi_i * phiP.JxW(q);
+        integral_iq = u_dot_n * av_phiP_i * phiP.JxW(q);
 
         copy_data.cell_rhs_ansatz(i) += integral_iq;
       }
