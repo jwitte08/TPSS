@@ -8,13 +8,185 @@
 #ifndef BLOCK_MATRIX_H_
 #define BLOCK_MATRIX_H_
 
+
 #include "kroneckersvd.h"
 #include "tensor_product_matrix.h"
 
+
+
 using namespace dealii;
+
 
 namespace Tensors
 {
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+class BlockMatrixBase
+{
+public:
+  using matrix_type = MatrixType;
+  using value_type  = Number;
+
+  /**
+   * Calls clear() first and then resizes this object to a (n_rows, n_rows)
+   * block matrix.
+   */
+  void
+  resize(const std::size_t n_rows);
+
+  /**
+   * Calls clear() first and then resizes this object to a (n_rows, n_cols)
+   * block matrix.
+   */
+  void
+  resize(const std::size_t n_rows, const std::size_t n_cols);
+
+  /**
+   * Read access to (row_index, col_index) - block.
+   */
+  const matrix_type &
+  get_block(const std::size_t row_index, const std::size_t col_index) const;
+
+  /**
+   * Returns the number of rows of the blocks with row index @p row_index.
+   */
+  std::size_t
+  m(const std::size_t row_index) const;
+
+  /**
+   * Returns the number of columns of the blocks with column index @p column_index.
+   */
+  std::size_t
+  n(const std::size_t column_index) const;
+
+  /**
+   * Returns the total number of rows, this means the accumulated number of
+   * rows over all blocks with fixed but arbitrary column index.
+   */
+  std::size_t
+  m() const;
+
+  /**
+   * Returns the total number of columns, this means the accumulated number of
+   * columns over all blocks with fixed but arbitrary row index.
+   */
+  std::size_t
+  n() const;
+
+  Table<2, Number>
+  as_table() const;
+
+  // Table<2, Number>
+  // as_transpose_table() const;
+
+  void
+  vmult(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const;
+
+  std::array<std::size_t, 2>
+  size() const;
+
+  std::size_t
+  n_block_rows() const;
+
+  std::size_t
+  n_block_cols() const;
+
+protected:
+  BlockMatrixBase() = default;
+
+  BlockMatrixBase &
+  operator=(const BlockMatrixBase & other);
+
+  /**
+   * Deletes all blocks and resizes this object to a (0, 0) block matrix.
+   */
+  virtual void
+  clear();
+
+  std::size_t
+  block_index(const std::size_t row_index, const std::size_t col_index) const;
+
+  /**
+   * Read-write access to (row_index, col_index) - block. This method resets
+   * the underlying inverse due to possible modifications to this block
+   * matrix.
+   *
+   * The user has to take care that all blocks have consistent sizes. For
+   * example, all blocks with row index @p row_index must have the same number
+   * of rows.
+   */
+  matrix_type &
+  get_block(const std::size_t row_index, const std::size_t col_index);
+
+  /**
+   * Applies the function @p action to each matrix of the block
+   * diagonal and the associated vector slices of @p dst and @p src.
+   * The signature of the action function should be equivalent to
+   * action(matrix_type& m, ArrayView<...> dst, ArrayView<const ...> src)
+   *
+   * TODO This method has not been tested for non-quadratic blocks.
+   */
+  template<typename ActionType>
+  void
+  blockwise_action(const ActionType &              action,
+                   const ArrayView<Number> &       dst,
+                   const ArrayView<const Number> & src) const;
+
+  bool
+  check_row_sizes() const;
+
+  bool
+  check_col_sizes() const;
+
+  bool
+  is_valid() const;
+
+  /**
+   * The number of blocks per row and column
+   */
+  std::array<std::size_t, 2> n_blocks = {0, 0};
+
+  /**
+   * The vector containing the matrix blocks.
+   */
+  AlignedVector<matrix_type> blocks;
+};
+
+
+
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+class BlockMatrixBasic : public BlockMatrixBase<MatrixType, Number>
+{
+public:
+  using Base                = BlockMatrixBase<MatrixType, Number>;
+  using inverse_matrix_type = InverseTable<Number>;
+
+  BlockMatrixBasic() = default;
+
+  BlockMatrixBasic &
+  operator=(const BlockMatrixBasic & other);
+
+  virtual void
+  clear();
+
+  MatrixType &
+  get_block(const std::size_t row_index, const std::size_t col_index);
+
+  void
+  invert(const typename InverseTable<Number>::AdditionalData & additional_data =
+           typename InverseTable<Number>::AdditionalData{});
+
+  void
+  apply_inverse(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const;
+
+  Table<2, Number>
+  as_inverse_table() const;
+
+private:
+  std::shared_ptr<InverseTable<Number>> basic_inverse;
+};
+
+
+
 template<int order, typename Number, int n_rows_1d = -1>
 class SchurComplementFast : public TensorProductMatrix<order, Number, n_rows_1d>
 {
@@ -594,7 +766,8 @@ private:
  *    | I   -A^{-1} * B | | A^{-1}   0      | | I             0 |
  *    | 0   I           | | 0        S^{-1} | | -C * A^{-1}   I |
  *
- * where the inverse of S is the dominating complexity.
+ * where the inverse of S dominates the computational complexity of this
+ * inversion algorithm, if we assume A^{-1} as given.
  */
 template<typename MatrixType,
          typename SchurType = SchurComplement<MatrixType>,
@@ -651,7 +824,7 @@ public:
     AssertDimension(src_view.size(), m0 + m1);
     AssertDimension(dst_view.size(), m0 + m1);
 
-    /// MEMORY INEFFICENT CODE
+    /// MEMORY INEFFICENT CODE (TODO)
 
     /// src1[0,m0) <- [I 0] src_view = src_view[0,m0);
     const auto src1_view_m0 = ArrayView(src_view.begin(), m0);
@@ -1156,5 +1329,7 @@ private:
 };
 
 } // namespace Tensors
+
+#include "block_matrix.templates.h"
 
 #endif // BLOCK_MATRIX_H_

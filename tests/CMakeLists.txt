@@ -39,6 +39,7 @@ set (src_files
   tensors.cc
   tensor_product_matrix.cc
   kroneckersvd.cc
+  block_matrix_base.cc
   )
 
 add_custom_target(setup_tests)

@@ -139,8 +139,9 @@ public:
     return matrix.size(1);
   }
 
+  template<bool add>
   void
-  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
     AssertDimension(dst_view.size(), m());
     AssertDimension(src_view.size(), n());
@@ -149,8 +150,23 @@ public:
       Number value(0.);
       for(auto j = 0U; j < n(); ++j)
         value += matrix(i, j) * src_view[j];
-      dst_view[i] = value;
+      if(add)
+        dst_view[i] += value;
+      else
+        dst_view[i] = value;
     }
+  }
+
+  void
+  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    vmult_impl<false>(dst_view, src_view);
+  }
+
+  void
+  vmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    vmult_impl<true>(dst_view, src_view);
   }
 
   /**
@@ -197,6 +213,16 @@ public:
   as_table() const
   {
     return matrix;
+  }
+
+  /**
+   * Return the inverse matrix as Table by applying apply_inverse() to all
+   * canonical vectors.
+   */
+  Table<2, Number>
+  as_inverse_table() const
+  {
+    return Tensors::inverse_matrix_to_table(*this);
   }
 
   /**

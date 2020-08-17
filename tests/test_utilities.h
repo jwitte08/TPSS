@@ -12,6 +12,7 @@
 
 #include <deal.II/base/utilities.h>
 #include <deal.II/lac/full_matrix.h>
+#include <deal.II/lac/la_parallel_vector.h>
 #include <deal.II/lac/lapack_full_matrix.h>
 
 #include <gtest/gtest.h>
