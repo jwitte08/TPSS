@@ -95,7 +95,7 @@ template<typename MatrixType, typename Number>
 std::size_t
 BlockMatrixBase<MatrixType, Number>::m() const
 {
-  Assert(check_row_sizes(), ExcMessage("Inconsistent block structure."));
+  Assert(has_consistent_block_rows(), ExcMessage("Inconsistent block structure."));
   std::size_t n_rows = 0;
   for(std::size_t row_index = 0; row_index < n_block_rows(); ++row_index)
     n_rows += m(row_index);
@@ -108,7 +108,7 @@ template<typename MatrixType, typename Number>
 std::size_t
 BlockMatrixBase<MatrixType, Number>::n() const
 {
-  Assert(check_col_sizes(), ExcMessage("Inconsistent block structure."));
+  Assert(has_consistent_block_columns(), ExcMessage("Inconsistent block structure."));
   std::size_t n_cols = 0;
   for(std::size_t col_index = 0; col_index < n_block_cols(); ++col_index)
     n_cols += n(col_index);
@@ -234,7 +234,7 @@ BlockMatrixBase<MatrixType, Number>::blockwise_action(const ActionType &        
 
 template<typename MatrixType, typename Number>
 bool
-BlockMatrixBase<MatrixType, Number>::check_row_sizes() const
+BlockMatrixBase<MatrixType, Number>::has_consistent_block_rows() const
 {
   for(std::size_t col = 0; col < n_block_cols(); ++col)
     for(std::size_t row = 0; row < n_block_rows(); ++row)
@@ -247,7 +247,7 @@ BlockMatrixBase<MatrixType, Number>::check_row_sizes() const
 
 template<typename MatrixType, typename Number>
 bool
-BlockMatrixBase<MatrixType, Number>::check_col_sizes() const
+BlockMatrixBase<MatrixType, Number>::has_consistent_block_columns() const
 {
   for(std::size_t row = 0; row < n_block_rows(); ++row)
     for(std::size_t col = 0; col < n_block_cols(); ++col)
@@ -262,7 +262,7 @@ template<typename MatrixType, typename Number>
 bool
 BlockMatrixBase<MatrixType, Number>::is_valid() const
 {
-  return check_row_sizes() && check_col_sizes();
+  return has_consistent_block_rows() && has_consistent_block_columns();
 }
 
 
@@ -327,6 +327,97 @@ template<typename MatrixType, typename Number>
 void
 BlockMatrixBasic<MatrixType, Number>::apply_inverse(const ArrayView<Number> &       dst,
                                                     const ArrayView<const Number> & src) const
+{
+  AssertThrow(basic_inverse,
+              ExcMessage("Have you called invert() after finishing the submission of entries?"));
+  basic_inverse->vmult(dst, src);
+}
+
+
+
+////////// BlockMatrixBasic2x2
+
+
+
+template<typename MatrixType, typename Number>
+BlockMatrixBasic2x2<MatrixType, Number>::BlockMatrixBasic2x2(const MatrixType & A_in,
+                                                             const MatrixType & B_in,
+                                                             const MatrixType & C_in,
+                                                             const MatrixType & D_in)
+{
+  Base::resize(2U, 2U);
+  Base::get_block(0, 0) = A_in;
+  Base::get_block(0, 1) = B_in;
+  Base::get_block(1, 0) = C_in;
+  Base::get_block(1, 1) = D_in;
+}
+
+
+
+template<typename MatrixType, typename Number>
+BlockMatrixBasic2x2<MatrixType, Number> &
+BlockMatrixBasic2x2<MatrixType, Number>::operator=(
+  const BlockMatrixBasic2x2<MatrixType, Number> & other)
+{
+  Base::operator=(other);
+  basic_inverse = other.basic_inverse;
+}
+
+
+
+template<typename MatrixType, typename Number>
+void
+BlockMatrixBasic2x2<MatrixType, Number>::clear()
+{
+  basic_inverse.reset();
+  Base::clear();
+}
+
+
+
+// template<typename MatrixType, typename Number>
+// MatrixType &
+// BlockMatrixBasic2x2<MatrixType, Number>::get_block(const std::size_t row_index,
+//                                                 const std::size_t col_index)
+// {
+//   /// modification of any blocks results in an invalid inverse
+//   basic_inverse.reset();
+
+//   return Base::get_block(row_index, col_index);
+// }
+
+
+
+template<typename MatrixType, typename Number>
+void
+BlockMatrixBasic2x2<MatrixType, Number>::invert()
+{
+  const auto & A = Base::get_block(0, 0);
+  const auto & B = Base::get_block(0, 1);
+  const auto & C = Base::get_block(1, 0);
+  const auto & D = Base::get_block(1, 1);
+  basic_inverse =
+    std::make_shared<BlockGaussianInverse<MatrixType, SchurComplement<MatrixType>, Number>>(A,
+                                                                                            B,
+                                                                                            C,
+                                                                                            D);
+}
+
+
+
+template<typename MatrixType, typename Number>
+Table<2, Number>
+BlockMatrixBasic2x2<MatrixType, Number>::as_inverse_table() const
+{
+  return Tensors::inverse_matrix_to_table(*this);
+}
+
+
+
+template<typename MatrixType, typename Number>
+void
+BlockMatrixBasic2x2<MatrixType, Number>::apply_inverse(const ArrayView<Number> &       dst,
+                                                       const ArrayView<const Number> & src) const
 {
   AssertThrow(basic_inverse,
               ExcMessage("Have you called invert() after finishing the submission of entries?"));

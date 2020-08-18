@@ -23,10 +23,39 @@ using namespace dealii;
 
 
 
+// enum class BMVariant
+// {
+//   basic,
+//   basic2x2
+// };
+
+// template<BMVariant variant, typename Number>
+// struct BlockMatrixSelector
+// {
+// };
+
+// template<typename Number>
+// struct BlockMatrixSelector<BMVariant::basic, Number>
+// {
+//   using type = Tensors::BlockMatrixBasic<MatrixAsTable<Number>>;
+// };
+
+// template<typename Number>
+// struct BlockMatrixSelector<BMVariant::basic2x2, Number>
+// {
+//   using type = Tensors::BlockMatrixBasic2x2<MatrixAsTable<Number>>;
+// };
+
+
+
 template<typename T>
 class FixBlockMatrixBasicMatrixAsTable : public testing::Test
 {
+  // static constexpr BMVariant block_matrix_variant = T::template type<0>::template value<0>();
   using Number                     = typename T::template type<0>;
+  using matrix_type                = MatrixAsTable<Number>;
+  using block_matrix_type          = Tensors::BlockMatrixBasic<MatrixAsTable<Number>>;
+  using block_matrix_type_2x2      = Tensors::BlockMatrixBasic2x2<MatrixAsTable<Number>>;
   using scalar_value_type          = typename ExtractScalarType<Number>::type;
   static constexpr auto macro_size = MatrixAsTable<Number>::macro_size;
 
@@ -35,8 +64,8 @@ protected:
   check_vmult(const std::vector<std::size_t> & row_sizes,
               const std::vector<std::size_t> & column_sizes) const
   {
-    Tensors::BlockMatrixBasic<MatrixAsTable<Number>> block_matrix;
-    MatrixAsTable<Number>                            ref_matrix;
+    block_matrix_type block_matrix;
+    matrix_type       ref_matrix;
     fill_random_matrix(block_matrix, ref_matrix, row_sizes, column_sizes);
 
     compare_matrix(block_matrix, ref_matrix);
@@ -46,8 +75,8 @@ protected:
   check_apply_inverse(const std::vector<std::size_t> & row_sizes,
                       const std::vector<std::size_t> & column_sizes) const
   {
-    Tensors::BlockMatrixBasic<MatrixAsTable<Number>> block_matrix;
-    MatrixAsTable<Number>                            ref_matrix;
+    block_matrix_type block_matrix;
+    matrix_type       ref_matrix;
     fill_random_matrix(block_matrix, ref_matrix, row_sizes, column_sizes);
 
     block_matrix.invert();
@@ -57,10 +86,43 @@ protected:
   }
 
   void
-  fill_random_matrix(Tensors::BlockMatrixBasic<MatrixAsTable<Number>> & block_matrix,
-                     MatrixAsTable<Number> &                            ref_matrix,
-                     const std::vector<std::size_t> &                   row_sizes,
-                     const std::vector<std::size_t> &                   column_sizes) const
+  check_vmult_2x2(const std::vector<std::size_t> & row_sizes,
+                  const std::vector<std::size_t> & column_sizes) const
+  {
+    block_matrix_type tmp;
+    matrix_type       ref_matrix;
+    fill_random_matrix(tmp, ref_matrix, row_sizes, column_sizes);
+    block_matrix_type_2x2 block_matrix(tmp.get_block(0, 0),
+                                       tmp.get_block(0, 1),
+                                       tmp.get_block(1, 0),
+                                       tmp.get_block(1, 1));
+
+    compare_matrix(block_matrix, ref_matrix);
+  }
+
+  void
+  check_apply_inverse_2x2(const std::vector<std::size_t> & row_sizes,
+                          const std::vector<std::size_t> & column_sizes) const
+  {
+    block_matrix_type tmp;
+    matrix_type       ref_matrix;
+    fill_random_matrix(tmp, ref_matrix, row_sizes, column_sizes);
+    block_matrix_type_2x2 block_matrix(tmp.get_block(0, 0),
+                                       tmp.get_block(0, 1),
+                                       tmp.get_block(1, 0),
+                                       tmp.get_block(1, 1));
+
+    block_matrix.invert();
+    ref_matrix.invert();
+
+    compare_inverse_matrix(block_matrix, ref_matrix);
+  }
+
+  void
+  fill_random_matrix(block_matrix_type &              block_matrix,
+                     matrix_type &                    ref_matrix,
+                     const std::vector<std::size_t> & row_sizes,
+                     const std::vector<std::size_t> & column_sizes) const
   {
     /// DEBUG
     // const auto fill_block_with_zeros = [](auto & block, const auto m, const auto n) {
@@ -120,9 +182,9 @@ protected:
     ofs.close();
   }
 
+  template<typename BlockMatrixType>
   void
-  compare_matrix(const Tensors::BlockMatrixBasic<MatrixAsTable<Number>> & block_matrix,
-                 const MatrixAsTable<Number> &                            other) const
+  compare_matrix(const BlockMatrixType & block_matrix, const matrix_type & other) const
   {
     for(auto lane = 0U; lane < macro_size; ++lane)
     {
@@ -132,9 +194,9 @@ protected:
     }
   }
 
+  template<typename BlockMatrixType>
   void
-  compare_inverse_matrix(const Tensors::BlockMatrixBasic<MatrixAsTable<Number>> & block_matrix,
-                         const MatrixAsTable<Number> &                            other) const
+  compare_inverse_matrix(const BlockMatrixType & block_matrix, const matrix_type & other) const
   {
     for(auto lane = 0U; lane < macro_size; ++lane)
     {
@@ -181,8 +243,38 @@ TYPED_TEST_P(FixBlockMatrixBasicMatrixAsTable, ApplyInverse2x2)
   Fixture::check_apply_inverse({3, 5}, {3, 5});
 }
 
-REGISTER_TYPED_TEST_SUITE_P(FixBlockMatrixBasicMatrixAsTable, Vmult2x2, Vmult2x3, ApplyInverse2x2);
+TYPED_TEST_P(FixBlockMatrixBasicMatrixAsTable, VmultBlockMatrixBasic2x2)
+{
+  using Fixture = FixBlockMatrixBasicMatrixAsTable<TypeParam>;
 
+  Fixture::check_vmult_2x2({2, 2}, {2, 2});
+
+  Fixture::check_vmult_2x2({3, 5}, {3, 5});
+
+  Fixture::check_vmult_2x2({4, 2}, {4, 2});
+}
+
+TYPED_TEST_P(FixBlockMatrixBasicMatrixAsTable, ApplyInverseBlockMatrixBasic2x2)
+{
+  using Fixture = FixBlockMatrixBasicMatrixAsTable<TypeParam>;
+
+  Fixture::check_apply_inverse_2x2({2, 2}, {2, 2});
+
+  Fixture::check_apply_inverse_2x2({3, 5}, {3, 5});
+
+  Fixture::check_apply_inverse_2x2({4, 2}, {4, 2});
+}
+
+REGISTER_TYPED_TEST_SUITE_P(FixBlockMatrixBasicMatrixAsTable,
+                            Vmult2x2,
+                            Vmult2x3,
+                            ApplyInverse2x2,
+                            VmultBlockMatrixBasic2x2,
+                            ApplyInverseBlockMatrixBasic2x2);
+
+// using ParamsDouble     = testing::Types<Util::TypeList<Util::NonTypeParams<BMVariant::basic>,
+// double>>; using ParamsVectDouble     =
+// testing::Types<Util::TypeList<Util::NonTypeParams<BMVariant::basic>, VectorizedArray<double>>>;
 using ParamsDouble     = testing::Types<Util::TypeList<double>>;
 using ParamsVectDouble = testing::Types<Util::TypeList<VectorizedArray<double>>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Double, FixBlockMatrixBasicMatrixAsTable, ParamsDouble);
