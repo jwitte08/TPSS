@@ -467,7 +467,8 @@ public:
   std::shared_ptr<const AlignedVector<Number>>                         invsqrt_of_Lambda;
   std::shared_ptr<const std::array<FullMatrix<double>, macro_size>>    inverse;
   std::vector<std::array<Table<2, Number>, order>>                     scratch;
-}; // namespace Tensors
+};
+
 
 
 /**
@@ -714,223 +715,6 @@ private:
   const matrix_type & C;
   const matrix_type & D;
   SchurType           S;
-};
-
-
-
-template<typename MatrixType, typename Number = typename MatrixType::value_type>
-class BlockMatrixBase
-{
-public:
-  using matrix_type = MatrixType;
-  using value_type  = Number;
-
-  /**
-   * Calls clear() first and then resizes this object to a (n_rows, n_rows)
-   * block matrix.
-   */
-  void
-  resize(const std::size_t n_rows);
-
-  /**
-   * Calls clear() first and then resizes this object to a (n_rows, n_cols)
-   * block matrix.
-   */
-  void
-  resize(const std::size_t n_rows, const std::size_t n_cols);
-
-  /**
-   * Read access to (row_index, col_index) - block.
-   */
-  const matrix_type &
-  get_block(const std::size_t row_index, const std::size_t col_index) const;
-
-  /**
-   * Returns the number of rows of the blocks with row index @p row_index.
-   */
-  std::size_t
-  m(const std::size_t row_index) const;
-
-  /**
-   * Returns the number of columns of the blocks with column index @p column_index.
-   */
-  std::size_t
-  n(const std::size_t column_index) const;
-
-  /**
-   * Returns the total number of rows, this means the accumulated number of
-   * rows over all blocks with fixed but arbitrary column index.
-   */
-  std::size_t
-  m() const;
-
-  /**
-   * Returns the total number of columns, this means the accumulated number of
-   * columns over all blocks with fixed but arbitrary row index.
-   */
-  std::size_t
-  n() const;
-
-  Table<2, Number>
-  as_table() const;
-
-  // Table<2, Number>
-  // as_transpose_table() const;
-
-  void
-  vmult(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const;
-
-  std::array<std::size_t, 2>
-  size() const;
-
-  std::size_t
-  n_block_rows() const;
-
-  std::size_t
-  n_block_cols() const;
-
-protected:
-  BlockMatrixBase() = default;
-
-  BlockMatrixBase &
-  operator=(const BlockMatrixBase & other);
-
-  /**
-   * Deletes all blocks and resizes this object to a (0, 0) block matrix.
-   */
-  virtual void
-  clear();
-
-  std::size_t
-  block_index(const std::size_t row_index, const std::size_t col_index) const;
-
-  /**
-   * Read-write access to (row_index, col_index) - block. This method resets
-   * the underlying inverse due to possible modifications to this block
-   * matrix.
-   *
-   * The user has to take care that all blocks have consistent sizes. For
-   * example, all blocks with row index @p row_index must have the same number
-   * of rows.
-   */
-  matrix_type &
-  get_block(const std::size_t row_index, const std::size_t col_index);
-
-  /**
-   * Applies the function @p action to each matrix of the block
-   * diagonal and the associated vector slices of @p dst and @p src.
-   * The signature of the action function should be equivalent to
-   * action(matrix_type& m, ArrayView<...> dst, ArrayView<const ...> src)
-   *
-   * TODO This method has not been tested for non-quadratic blocks.
-   */
-  template<typename ActionType>
-  void
-  blockwise_action(const ActionType &              action,
-                   const ArrayView<Number> &       dst,
-                   const ArrayView<const Number> & src) const;
-
-  bool
-  has_consistent_block_rows() const;
-
-  bool
-  has_consistent_block_columns() const;
-
-  bool
-  is_valid() const;
-
-  /**
-   * The number of blocks per row and column
-   */
-  std::array<std::size_t, 2> n_blocks = {0, 0};
-
-  /**
-   * The vector containing the matrix blocks.
-   */
-  AlignedVector<matrix_type> blocks;
-};
-
-
-
-template<typename MatrixType, typename Number = typename MatrixType::value_type>
-class BlockMatrixBasic2x2 : public BlockMatrixBase<MatrixType, Number>
-{
-public:
-  using Base                = BlockMatrixBase<MatrixType, Number>;
-  using inverse_matrix_type = InverseTable<Number>;
-
-  BlockMatrixBasic2x2(const MatrixType & A_in,
-                      const MatrixType & B_in,
-                      const MatrixType & C_in,
-                      const MatrixType & D_in);
-
-  BlockMatrixBasic2x2 &
-  operator=(const BlockMatrixBasic2x2 & other);
-
-  virtual void
-  clear();
-
-  // MatrixType &
-  // get_block(const std::size_t row_index, const std::size_t col_index);
-
-  // TODO AdditionalData for BlockGaussianInverse
-  void
-  invert();
-
-  void
-
-  apply_inverse(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const;
-
-  Table<2, Number>
-  as_inverse_table() const;
-
-private:
-  std::shared_ptr<BlockGaussianInverse<MatrixType, SchurComplement<MatrixType>, Number>>
-    basic_inverse;
-};
-
-
-
-template<typename MatrixType, typename Number = typename MatrixType::value_type>
-class BlockMatrixBasic : public BlockMatrixBase<MatrixType, Number>
-{
-public:
-  using Base                = BlockMatrixBase<MatrixType, Number>;
-  using inverse_matrix_type = InverseTable<Number>;
-
-  BlockMatrixBasic() = default;
-
-  BlockMatrixBasic &
-  operator=(const BlockMatrixBasic & other);
-
-  BlockMatrixBasic &
-  operator=(const BlockMatrixBasic2x2<MatrixType, Number> & other)
-  {
-    Base::resize(2U, 2U);
-    Base::get_block(0, 0) = other.get_block(0, 0);
-    Base::get_block(0, 1) = other.get_block(0, 1);
-    Base::get_block(1, 0) = other.get_block(1, 0);
-    Base::get_block(1, 1) = other.get_block(1, 1);
-  }
-
-  virtual void
-  clear();
-
-  MatrixType &
-  get_block(const std::size_t row_index, const std::size_t col_index);
-
-  void
-  invert(const typename InverseTable<Number>::AdditionalData & additional_data =
-           typename InverseTable<Number>::AdditionalData{});
-
-  void
-  apply_inverse(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const;
-
-  Table<2, Number>
-  as_inverse_table() const;
-
-private:
-  std::shared_ptr<InverseTable<Number>> basic_inverse;
 };
 
 
@@ -1377,6 +1161,378 @@ private:
    */
   AlignedVector<matrix_type> blocks;
 };
+
+
+
+/**
+ * Schur complement S = D - C * A^{-1} * B
+ */
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+class SchurComplementBase
+{
+public:
+  struct AdditionalData
+  {
+    typename InverseTable<Number>::AdditionalData inverse_table;
+    unsigned int                                  kronecker_rank = numbers::invalid_unsigned_int;
+    /**
+     * The number of rows/columns (pair.first/pair.second) of matrix A_d, which is
+     * the Kronecker factor of dimension d (array position) for the Kronecker
+     * product A_1 (x) A_0
+     */
+    std::array<std::pair<unsigned int, unsigned int>, 2> size_of_kronecker_factors;
+    unsigned int lanczos_iterations = numbers::invalid_unsigned_int;
+  };
+
+  using matrix_type = MatrixType;
+  using value_type  = typename matrix_type::value_type;
+
+  unsigned int
+  m() const;
+
+  unsigned int
+  n() const;
+
+  void
+  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
+
+  Table<2, Number>
+  as_table() const;
+
+protected:
+  SchurComplementBase(const matrix_type & A_in,
+                      const matrix_type & B_in,
+                      const matrix_type & C_in,
+                      const matrix_type & D_in);
+
+  const matrix_type * A = nullptr;
+  const matrix_type * B = nullptr;
+  const matrix_type * C = nullptr;
+  const matrix_type * D = nullptr;
+
+  /**
+   * A mutex that guards access to the array @p tmp_array.
+   */
+  mutable Threads::Mutex mutex;
+
+  /**
+   * An array for temporary data.
+   */
+  mutable AlignedVector<Number> tmp_array;
+};
+
+
+
+/**
+ * Schur complement S = D - C * A^{-1} * B
+ */
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+class SchurComplementBasic : public SchurComplementBase<MatrixType, Number>
+{
+public:
+  using Base                = SchurComplementBase<MatrixType, Number>;
+  using inverse_matrix_type = InverseTable<Number>;
+  using typename Base::AdditionalData;
+
+  SchurComplementBasic(const MatrixType & A_in,
+                       const MatrixType & B_in,
+                       const MatrixType & C_in,
+                       const MatrixType & D_in);
+
+  void
+  invert(const AdditionalData & additional_data = AdditionalData{});
+
+  void
+  apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
+
+  Table<2, Number>
+  as_inverse_table() const;
+
+private:
+  std::shared_ptr<const InverseTable<Number>> Sinv;
+};
+
+
+
+/**
+ * Computes the block Gaussian elimination of the 2x2 block matrix
+ *
+ *    | A B |
+ *    | C D |
+ *
+ * using the Schur complement S for D, namely S = D - C * A^{-1} * B. The inverse
+ * of the 2x2 block matrix is given by
+ *
+ *    | I   -A^{-1} * B | | A^{-1}   0      | | I             0 |
+ *    | 0   I           | | 0        S^{-1} | | -C * A^{-1}   I |
+ *
+ * where the inverse of S dominates the computational complexity of this
+ * inversion algorithm, if we assume A^{-1} as given.
+ */
+template<typename MatrixType, typename SchurType, typename Number = typename MatrixType::value_type>
+class BlockGaussianInverseBase
+{
+public:
+  using matrix_type = MatrixType;
+  using schur_type  = SchurType;
+  using value_type  = Number;
+
+  unsigned int
+  m() const;
+
+  unsigned int
+  n() const;
+
+  void
+  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
+
+  Table<2, Number>
+  as_table() const;
+
+protected:
+  BlockGaussianInverseBase(const matrix_type & A_in,
+                           const matrix_type & B_in,
+                           const matrix_type & C_in,
+                           const schur_type &  S_in);
+
+  const matrix_type & A;
+  const matrix_type & B;
+  const matrix_type & C;
+  const schur_type    S;
+};
+
+
+
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+class BlockGaussianInverseBasic
+  : public BlockGaussianInverseBase<MatrixType, SchurComplementBasic<MatrixType, Number>, Number>
+{
+public:
+  using Base =
+    BlockGaussianInverseBase<MatrixType, SchurComplementBasic<MatrixType, Number>, Number>;
+  using AdditionalData = typename Base::schur_type::AdditionalData;
+
+  BlockGaussianInverseBasic(const MatrixType &   A_in,
+                            const MatrixType &   B_in,
+                            const MatrixType &   C_in,
+                            const MatrixType &   D_in,
+                            const AdditionalData additional_data = AdditionalData{});
+};
+
+
+
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+class BlockMatrixBase
+{
+public:
+  using matrix_type = MatrixType;
+  using value_type  = Number;
+
+  /**
+   * Calls clear() first and then resizes this object to a (n_rows, n_rows)
+   * block matrix.
+   */
+  void
+  resize(const std::size_t n_rows);
+
+  /**
+   * Calls clear() first and then resizes this object to a (n_rows, n_cols)
+   * block matrix.
+   */
+  void
+  resize(const std::size_t n_rows, const std::size_t n_cols);
+
+  /**
+   * Read access to (row_index, col_index) - block.
+   */
+  const matrix_type &
+  get_block(const std::size_t row_index, const std::size_t col_index) const;
+
+  /**
+   * Returns the number of rows of the blocks with row index @p row_index.
+   */
+  std::size_t
+  m(const std::size_t row_index) const;
+
+  /**
+   * Returns the number of columns of the blocks with column index @p column_index.
+   */
+  std::size_t
+  n(const std::size_t column_index) const;
+
+  /**
+   * Returns the total number of rows, this means the accumulated number of
+   * rows over all blocks with fixed but arbitrary column index.
+   */
+  std::size_t
+  m() const;
+
+  /**
+   * Returns the total number of columns, this means the accumulated number of
+   * columns over all blocks with fixed but arbitrary row index.
+   */
+  std::size_t
+  n() const;
+
+  Table<2, Number>
+  as_table() const;
+
+  // Table<2, Number>
+  // as_transpose_table() const;
+
+  void
+  vmult(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const;
+
+  std::array<std::size_t, 2>
+  size() const;
+
+  std::size_t
+  n_block_rows() const;
+
+  std::size_t
+  n_block_cols() const;
+
+protected:
+  BlockMatrixBase() = default;
+
+  BlockMatrixBase &
+  operator=(const BlockMatrixBase & other);
+
+  /**
+   * Deletes all blocks and resizes this object to a (0, 0) block matrix.
+   */
+  virtual void
+  clear();
+
+  std::size_t
+  block_index(const std::size_t row_index, const std::size_t col_index) const;
+
+  /**
+   * Read-write access to (row_index, col_index) - block. This method resets
+   * the underlying inverse due to possible modifications to this block
+   * matrix.
+   *
+   * The user has to take care that all blocks have consistent sizes. For
+   * example, all blocks with row index @p row_index must have the same number
+   * of rows.
+   */
+  matrix_type &
+  get_block(const std::size_t row_index, const std::size_t col_index);
+
+  /**
+   * Applies the function @p action to each matrix of the block
+   * diagonal and the associated vector slices of @p dst and @p src.
+   * The signature of the action function should be equivalent to
+   * action(matrix_type& m, ArrayView<...> dst, ArrayView<const ...> src)
+   *
+   * TODO This method has not been tested for non-quadratic blocks.
+   */
+  template<typename ActionType>
+  void
+  blockwise_action(const ActionType &              action,
+                   const ArrayView<Number> &       dst,
+                   const ArrayView<const Number> & src) const;
+
+  bool
+  has_consistent_block_rows() const;
+
+  bool
+  has_consistent_block_columns() const;
+
+  bool
+  is_valid() const;
+
+  /**
+   * The number of blocks per row and column
+   */
+  std::array<std::size_t, 2> n_blocks = {0, 0};
+
+  /**
+   * The vector containing the matrix blocks.
+   */
+  AlignedVector<matrix_type> blocks;
+};
+
+
+
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+class BlockMatrixBasic2x2 : public BlockMatrixBase<MatrixType, Number>
+{
+public:
+  using Base                = BlockMatrixBase<MatrixType, Number>;
+  using inverse_matrix_type = BlockGaussianInverseBasic<MatrixType, Number>;
+  using AdditionalData      = typename inverse_matrix_type::AdditionalData;
+
+  BlockMatrixBasic2x2(const MatrixType & A_in,
+                      const MatrixType & B_in,
+                      const MatrixType & C_in,
+                      const MatrixType & D_in);
+
+  BlockMatrixBasic2x2 &
+  operator=(const BlockMatrixBasic2x2 & other);
+
+  virtual void
+  clear();
+
+  void
+  invert(const AdditionalData & additional_data = AdditionalData{});
+
+  void
+
+  apply_inverse(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const;
+
+  Table<2, Number>
+  as_inverse_table() const;
+
+private:
+  std::shared_ptr<BlockGaussianInverseBasic<MatrixType, Number>> basic_inverse;
+};
+
+
+
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+class BlockMatrixBasic : public BlockMatrixBase<MatrixType, Number>
+{
+public:
+  using Base                = BlockMatrixBase<MatrixType, Number>;
+  using inverse_matrix_type = InverseTable<Number>;
+
+  BlockMatrixBasic() = default;
+
+  BlockMatrixBasic &
+  operator=(const BlockMatrixBasic & other);
+
+  BlockMatrixBasic &
+  operator=(const BlockMatrixBasic2x2<MatrixType, Number> & other)
+  {
+    Base::resize(2U, 2U);
+    Base::get_block(0, 0) = other.get_block(0, 0);
+    Base::get_block(0, 1) = other.get_block(0, 1);
+    Base::get_block(1, 0) = other.get_block(1, 0);
+    Base::get_block(1, 1) = other.get_block(1, 1);
+  }
+
+  virtual void
+  clear();
+
+  MatrixType &
+  get_block(const std::size_t row_index, const std::size_t col_index);
+
+  void
+  invert(const typename InverseTable<Number>::AdditionalData & additional_data =
+           typename InverseTable<Number>::AdditionalData{});
+
+  void
+  apply_inverse(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const;
+
+  Table<2, Number>
+  as_inverse_table() const;
+
+private:
+  std::shared_ptr<InverseTable<Number>> basic_inverse;
+};
+
+
 
 } // namespace Tensors
 

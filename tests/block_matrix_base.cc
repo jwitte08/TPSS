@@ -89,6 +89,9 @@ protected:
   check_vmult_2x2(const std::vector<std::size_t> & row_sizes,
                   const std::vector<std::size_t> & column_sizes) const
   {
+    ASSERT_EQ(row_sizes.size(), 2U);
+    ASSERT_EQ(column_sizes.size(), 2U);
+
     block_matrix_type tmp;
     matrix_type       ref_matrix;
     fill_random_matrix(tmp, ref_matrix, row_sizes, column_sizes);
@@ -104,6 +107,9 @@ protected:
   check_apply_inverse_2x2(const std::vector<std::size_t> & row_sizes,
                           const std::vector<std::size_t> & column_sizes) const
   {
+    ASSERT_EQ(row_sizes.size(), 2U);
+    ASSERT_EQ(column_sizes.size(), 2U);
+
     block_matrix_type tmp;
     matrix_type       ref_matrix;
     fill_random_matrix(tmp, ref_matrix, row_sizes, column_sizes);
@@ -113,6 +119,67 @@ protected:
                                        tmp.get_block(1, 1));
 
     block_matrix.invert();
+    ref_matrix.invert();
+
+    compare_inverse_matrix(block_matrix, ref_matrix);
+  }
+
+  /**
+   * Starting with the block matrix
+   *
+   *   | A B |
+   *   | C D |
+   *
+   * we compute the exact low-rank Kronecker representation SS of the Schur
+   * complement S = D - C A^{-1} B, that is we pass the maximal Kronecker rank to
+   * the inversion algorithm such that SS equals S. Then, SS^{-1} is used instead
+   * of S^{-1} within the block Gaussian elimination of BlockMatrixBasic2x2.
+   */
+  void
+  check_apply_inverse_2x2_low_rank(
+    const std::vector<std::pair<std::size_t, std::size_t>> & row_sizes_1d,
+    const std::vector<std::pair<std::size_t, std::size_t>> & column_sizes_1d) const
+  {
+    ASSERT_EQ(row_sizes_1d.size(), 2U);
+    ASSERT_EQ(column_sizes_1d.size(), 2U);
+
+    std::vector<std::size_t> row_sizes;
+    std::transform(row_sizes_1d.cbegin(),
+                   row_sizes_1d.cend(),
+                   std::back_inserter(row_sizes),
+                   [](const auto & N) {
+                     const auto [n0, n1] = N;
+                     return n0 * n1;
+                   });
+    std::vector<std::size_t> column_sizes;
+    std::transform(column_sizes_1d.cbegin(),
+                   column_sizes_1d.cend(),
+                   std::back_inserter(column_sizes),
+                   [](const auto & N) {
+                     const auto [n0, n1] = N;
+                     return n0 * n1;
+                   });
+
+    ASSERT_EQ(row_sizes[0], column_sizes[0]); // square matrix
+    ASSERT_EQ(row_sizes[1], column_sizes[1]); // square matrix
+
+    block_matrix_type tmp;
+    matrix_type       ref_matrix;
+    fill_random_matrix(tmp, ref_matrix, row_sizes, column_sizes);
+
+    block_matrix_type_2x2 block_matrix(tmp.get_block(0, 0),
+                                       tmp.get_block(0, 1),
+                                       tmp.get_block(1, 0),
+                                       tmp.get_block(1, 1));
+
+    using AdditionalData = typename block_matrix_type_2x2::AdditionalData;
+    AdditionalData additional_data;
+    const auto [m0, m1]                       = row_sizes_1d[1];
+    const auto [n0, n1]                       = column_sizes_1d[1];
+    additional_data.size_of_kronecker_factors = {{{m0, n0}, {m1, n1}}};
+    additional_data.kronecker_rank            = std::min(m0 * n0, m1 * n1); // = n0 * n1 (<- square)
+
+    block_matrix.invert(additional_data);
     ref_matrix.invert();
 
     compare_inverse_matrix(block_matrix, ref_matrix);
@@ -265,12 +332,42 @@ TYPED_TEST_P(FixBlockMatrixBasicMatrixAsTable, ApplyInverseBlockMatrixBasic2x2)
   Fixture::check_apply_inverse_2x2({4, 2}, {4, 2});
 }
 
+/**
+ * Given the block matrix | A B |
+ *                        | C D |
+ */
+TYPED_TEST_P(FixBlockMatrixBasicMatrixAsTable, LowRankApplyInverseBlockMatrixBasic2x2)
+{
+  using Fixture = FixBlockMatrixBasicMatrixAsTable<TypeParam>;
+
+  /// A is a 4x4 and D is a 4x4 matrix, thus, the Schur complement is 4x4.  The
+  /// Kronecker repres. of S = S_1 (x) S_0 is computed for a 2x2 matrix S_0 and
+  /// 2x2 matrix S_1.
+  Fixture::check_apply_inverse_2x2_low_rank({{2, 2}, {2, 2}}, {{2, 2}, {2, 2}});
+
+  /// A is a 4x4 and D is a 9x9 matrix, thus, the Schur complement is 9x9.  The
+  /// Kronecker repres. of S = S_1 (x) S_0 is computed for a 3x3 matrix S_0 and
+  /// 3x3 matrix S_1.
+  Fixture::check_apply_inverse_2x2_low_rank({{2, 2}, {3, 3}}, {{2, 2}, {3, 3}});
+
+  /// A is a 6x6 and D is a 9x9 matrix, thus, the Schur complement is 9x9.  The
+  /// Kronecker repres. of S = S_1 (x) S_0 is computed for a 3x3 matrix S_0 and
+  /// 3x3 matrix S_1.
+  Fixture::check_apply_inverse_2x2_low_rank({{2, 3}, {3, 3}}, {{2, 3}, {3, 3}});
+
+  /// A is a 6x6 and D is a 9x9 matrix, thus, the Schur complement is 6x6.  The
+  /// Kronecker repres. of S = S_1 (x) S_0 is computed for a 2x2 matrix S_0 and
+  /// 3x3 matrix S_1.
+  Fixture::check_apply_inverse_2x2_low_rank({{2, 2}, {2, 3}}, {{2, 2}, {2, 3}});
+}
+
 REGISTER_TYPED_TEST_SUITE_P(FixBlockMatrixBasicMatrixAsTable,
                             Vmult2x2,
                             Vmult2x3,
                             ApplyInverse2x2,
                             VmultBlockMatrixBasic2x2,
-                            ApplyInverseBlockMatrixBasic2x2);
+                            ApplyInverseBlockMatrixBasic2x2,
+                            LowRankApplyInverseBlockMatrixBasic2x2);
 
 // using ParamsDouble     = testing::Types<Util::TypeList<Util::NonTypeParams<BMVariant::basic>,
 // double>>; using ParamsVectDouble     =
