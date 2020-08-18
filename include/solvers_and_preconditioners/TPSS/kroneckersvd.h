@@ -387,6 +387,8 @@ compute_ksvd(const std::vector<std::array<Table<2, Number>, 2>> & in,
   Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
 
   /// TODO mismatch between out_rank and base_len
+  AssertThrow(out_rank <= base_len,
+              ExcMessage("TODO base_len determines the maximal Kronecker rank? ask Simon!"));
   for(std::size_t i = 0; i < out_rank; i++)
   {
     for(std::size_t k = 0; k < big_m; k++)
