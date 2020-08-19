@@ -678,13 +678,15 @@ struct EquationData
     DivFree,
     DivFreeHom,
     DivFreeBell,
+    DivFreePoiseuille
   };
   static std::string
   str_equation_variant(const Variant variant)
   {
     std::string str[] = {"divergence-free",
                          "divergence-free + homogeneous Dirichlet",
-                         "divergence-free (Gaussian bells)"};
+                         "divergence-free (Gaussian bells)",
+                         "divergence-free (Poiseuille)"};
     return str[static_cast<int>(variant)];
   }
 
@@ -1491,7 +1493,65 @@ SolutionVelocity<2>::hessian(const Point<2> & p, const unsigned int component) c
 
 
 template<int dim>
-class SolutionBasePressure
+class SolutionPressure : public Function<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+
+public:
+  SolutionPressure() : Function<dim>(1)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override;
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override;
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int component = 0) const override;
+};
+
+template<>
+double
+SolutionPressure<2>::value(const Point<2> & p, const unsigned int) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  return cos(2. * PI * x) * cos(2. * PI * y);
+}
+
+template<>
+Tensor<1, 2>
+SolutionPressure<2>::gradient(const Point<2> & p, const unsigned int) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  Tensor<1, 2> grad;
+  {
+    grad[0] = -2. * PI * sin(2. * PI * x) * cos(2. * PI * y);
+    grad[1] = -2. * PI * cos(2. * PI * x) * sin(2. * PI * y);
+  }
+
+  return grad;
+}
+
+template<>
+SymmetricTensor<2, 2>
+SolutionPressure<2>::hessian(const Point<2> &, const unsigned int) const
+{
+  AssertThrow(false, ExcMessage("No need for this functionality..."));
+  return SymmetricTensor<2, 2>{};
+}
+
+
+
+template<int dim>
+class SolutionBasePressure2
 {
 protected:
   static const Point<dim> source;
@@ -1499,10 +1559,10 @@ protected:
 };
 
 template<>
-const Point<2> SolutionBasePressure<2>::source = Point<2>(0.5, 0.);
+const Point<2> SolutionBasePressure2<2>::source = Point<2>(0.5, 0.);
 
 template<int dim>
-const double SolutionBasePressure<dim>::width = 1.5;
+const double SolutionBasePressure2<dim>::width = 1.5;
 
 
 
@@ -1517,16 +1577,16 @@ const double SolutionBasePressure<dim>::width = 1.5;
  * parameters keep in mind to modify the mean as well.
  */
 template<int dim>
-class SolutionPressure : public Function<dim>, protected SolutionBasePressure<dim>
+class SolutionPressure2 : public Function<dim>, protected SolutionBasePressure2<dim>
 {
   static_assert(dim == 2, "Implemented for two dimensions.");
 
 public:
-  using SolutionBasePressure<dim>::source;
-  using SolutionBasePressure<dim>::width;
+  using SolutionBasePressure2<dim>::source;
+  using SolutionBasePressure2<dim>::width;
   static constexpr auto PI = numbers::PI;
 
-  SolutionPressure() : Function<dim>(1)
+  SolutionPressure2() : Function<dim>(1)
   {
   }
 
@@ -1571,17 +1631,94 @@ private:
 
 template<>
 double
-SolutionPressure<2>::value(const Point<2> & p, const unsigned int) const
+SolutionPressure2<2>::value(const Point<2> & p, const unsigned int) const
 {
   return u0() * bell(p) - mean();
 }
 
 template<>
 Tensor<1, 2>
-SolutionPressure<2>::gradient(const Point<2> & p, const unsigned int) const
+SolutionPressure2<2>::gradient(const Point<2> & p, const unsigned int) const
 {
   const dealii::Tensor<1, 2> x_minus_xi = p - source;
   return u0() * 2. * v0() * bell(p) * x_minus_xi;
+}
+
+template<>
+SymmetricTensor<2, 2>
+SolutionPressure2<2>::hessian(const Point<2> &, const unsigned int) const
+{
+  AssertThrow(false, ExcMessage("No need for this functionality..."));
+  return SymmetricTensor<2, 2>{};
+}
+
+
+
+template<int dim>
+using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
+
+} // namespace GaussianBell
+
+
+
+namespace Poiseuille
+{
+template<int dim>
+class SolutionVelocity : public ZeroFunction<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+
+public:
+  SolutionVelocity() : ZeroFunction<dim>(dim)
+  {
+  }
+};
+
+
+
+/**
+ * This class represents the scalar pressure field
+ *
+ *    PHI(x,y) = -Pi x + Pi/2
+ *
+ * in two dimensions.
+ */
+template<int dim>
+class SolutionPressure : public Function<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+
+public:
+  static constexpr auto PI = numbers::PI;
+
+  SolutionPressure() : Function<dim>(1)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override;
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override;
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int component = 0) const override;
+};
+
+template<>
+double
+SolutionPressure<2>::value(const Point<2> & p, const unsigned int) const
+{
+  const auto & x = p[0];
+  return -PI * x + PI / 2.;
+}
+
+template<>
+Tensor<1, 2>
+SolutionPressure<2>::gradient(const Point<2> &, const unsigned int) const
+{
+  const Tensor<1, 2> grad{{-PI, 0}};
+  return grad;
 }
 
 template<>
@@ -1596,9 +1733,7 @@ SolutionPressure<2>::hessian(const Point<2> &, const unsigned int) const
 
 template<int dim>
 using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
-
-} // namespace GaussianBell
-
+} // namespace Poiseuille
 } // namespace DivergenceFree
 
 } // namespace Stokes
