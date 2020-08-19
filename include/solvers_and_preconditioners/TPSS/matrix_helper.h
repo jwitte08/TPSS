@@ -287,7 +287,7 @@ public:
   }
 
 private:
-  Table<2, Number>                              matrix;
+  Table<2, Number>                      matrix;
   std::shared_ptr<InverseTable<Number>> inverse_matrix;
 };
 

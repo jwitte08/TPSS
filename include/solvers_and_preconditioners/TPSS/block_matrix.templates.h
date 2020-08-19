@@ -118,14 +118,12 @@ SchurComplementBasic<MatrixType, Number>::invert(const AdditionalData & addition
 
     TensorProductMatrix<2, Number> low_rank_matrix(low_rank_representation);
     Sinv = std::make_shared<InverseTable<Number>>(low_rank_matrix.as_table(),
-                                                  additional_data.inverse_table);
-
-    // // !!!
-    // AssertThrow(false, ExcMessage("Todo..."));
+                                                  additional_data.basic_inverse);
   }
+
   else
   {
-    Sinv = std::make_shared<InverseTable<Number>>(Base::as_table(), additional_data.inverse_table);
+    Sinv = std::make_shared<InverseTable<Number>>(Base::as_table(), additional_data.basic_inverse);
   }
 }
 
@@ -620,6 +618,14 @@ BlockMatrixBasic<MatrixType, Number>::apply_inverse(const ArrayView<Number> &   
 
 
 template<typename MatrixType, typename Number>
+BlockMatrixBasic2x2<MatrixType, Number>::BlockMatrixBasic2x2()
+{
+  Base::resize(2U, 2U);
+}
+
+
+
+template<typename MatrixType, typename Number>
 BlockMatrixBasic2x2<MatrixType, Number>::BlockMatrixBasic2x2(const MatrixType & A_in,
                                                              const MatrixType & B_in,
                                                              const MatrixType & C_in,
@@ -656,13 +662,31 @@ BlockMatrixBasic2x2<MatrixType, Number>::clear()
 
 
 template<typename MatrixType, typename Number>
-void
-BlockMatrixBasic2x2<MatrixType, Number>::invert(const AdditionalData & additional_data)
+MatrixType &
+BlockMatrixBasic2x2<MatrixType, Number>::get_block(const std::size_t row_index,
+                                                   const std::size_t col_index)
 {
-  const auto & A = Base::get_block(0, 0);
+  /// modification of any blocks results in an invalid inverse
+  basic_inverse.reset();
+
+  return Base::get_block(row_index, col_index);
+}
+
+
+
+template<typename MatrixType, typename Number>
+void
+BlockMatrixBasic2x2<MatrixType, Number>::invert(const AdditionalData & additional_data,
+                                                const bool             omit_inversion_of_blocks)
+{
+  auto &       A = Base::get_block(0, 0);
   const auto & B = Base::get_block(0, 1);
   const auto & C = Base::get_block(1, 0);
   const auto & D = Base::get_block(1, 1);
+
+  if(!omit_inversion_of_blocks)
+    A.invert();
+
   basic_inverse =
     std::make_shared<BlockGaussianInverseBasic<MatrixType, Number>>(A, B, C, D, additional_data);
 }

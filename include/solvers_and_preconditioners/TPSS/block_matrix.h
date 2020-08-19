@@ -1173,8 +1173,9 @@ class SchurComplementBase
 public:
   struct AdditionalData
   {
-    typename InverseTable<Number>::AdditionalData inverse_table;
-    unsigned int                                  kronecker_rank = numbers::invalid_unsigned_int;
+    typename InverseTable<Number>::AdditionalData basic_inverse;
+
+    unsigned int kronecker_rank = numbers::invalid_unsigned_int;
     /**
      * The number of rows/columns (pair.first/pair.second) of matrix A_d, which is
      * the Kronecker factor of dimension d (array position) for the Kronecker
@@ -1442,6 +1443,7 @@ protected:
   bool
   is_valid() const;
 
+private:
   /**
    * The number of blocks per row and column
    */
@@ -1463,10 +1465,12 @@ public:
   using inverse_matrix_type = BlockGaussianInverseBasic<MatrixType, Number>;
   using AdditionalData      = typename inverse_matrix_type::AdditionalData;
 
-  BlockMatrixBasic2x2(const MatrixType & A_in,
-                      const MatrixType & B_in,
-                      const MatrixType & C_in,
-                      const MatrixType & D_in);
+  BlockMatrixBasic2x2();
+
+  BlockMatrixBasic2x2(const MatrixType & block_00,
+                      const MatrixType & block_01,
+                      const MatrixType & block_10,
+                      const MatrixType & block_11);
 
   BlockMatrixBasic2x2 &
   operator=(const BlockMatrixBasic2x2 & other);
@@ -1475,10 +1479,32 @@ public:
   clear();
 
   void
-  invert(const AdditionalData & additional_data = AdditionalData{});
+  resize(const std::size_t n_rows) = delete;
 
   void
+  resize(const std::size_t n_rows, const std::size_t n_cols) = delete;
 
+  MatrixType &
+  get_block(const std::size_t row_index, const std::size_t col_index);
+
+  /**
+   * This method inverts the 2x2 block matrix by means of Gaussian block
+   * elimination (internally, an instance of BlockGaussianInverseBasic-type is
+   * used). Settings used for inversion are are passed as @p additional_data (to
+   * this instance).
+   *
+   * If @p omit_inversion_of_blocks is false we invert the 0-0 block with
+   * default options. If you want to invert the 0-0 block with certain
+   * parameters just query this block by get_block(0, 0), then, call invert()
+   * and finally set @p omit_inversion_of_blocks to true, which suppresses a
+   * fresh inversion of the 0-0 block with default parameters when calling this
+   * method.
+   */
+  void
+  invert(const AdditionalData & additional_data          = AdditionalData{},
+         const bool             omit_inversion_of_blocks = false);
+
+  void
   apply_inverse(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const;
 
   Table<2, Number>
@@ -1496,6 +1522,7 @@ class BlockMatrixBasic : public BlockMatrixBase<MatrixType, Number>
 public:
   using Base                = BlockMatrixBase<MatrixType, Number>;
   using inverse_matrix_type = InverseTable<Number>;
+  using AdditionalData      = typename inverse_matrix_type::AdditionalData;
 
   BlockMatrixBasic() = default;
 
