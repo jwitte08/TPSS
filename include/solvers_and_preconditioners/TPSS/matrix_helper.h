@@ -28,6 +28,8 @@ struct InverseTable
   struct AdditionalData
   {
     unsigned int kernel_size = numbers::invalid_unsigned_int;
+    /// all singular values s_i with s_i/s_max < threshold are set to zero
+    double threshold = 0.;
   };
 
   InverseTable() = default;
@@ -55,7 +57,7 @@ struct InverseTable
       if(additional_data_in.kernel_size != numbers::invalid_unsigned_int)
         inverse.compute_inverse_svd_with_kernel(additional_data_in.kernel_size);
       else
-        inverse.compute_inverse_svd();
+        inverse.compute_inverse_svd(additional_data_in.threshold);
     }
     /// ALTERNATIVE: FullMatrix
     // auto inverses = std::make_shared<std::array<FullMatrix<scalar_value_type>, macro_size>>();
@@ -177,22 +179,17 @@ public:
    * in order that it can be called within apply_inverse() if the inverse has
    * not been computed.
    */
-  /// TODO InverseTable non-mutable and throw an exception within
-  /// apply_inverse()
   void
-  invert(const unsigned int kernel_size = numbers::invalid_unsigned_int) const
+  invert(const typename InverseTable<Number>::AdditionalData & additional_data =
+           typename InverseTable<Number>::AdditionalData{})
   {
-    typename InverseTable<Number>::AdditionalData inverse_data;
-    if(kernel_size != numbers::invalid_unsigned_int)
-      inverse_data.kernel_size = kernel_size;
-    inverse_matrix = std::make_shared<InverseTable<Number>>(matrix, inverse_data);
+    inverse_matrix = std::make_shared<InverseTable<Number>>(matrix, additional_data);
   }
 
   void
   apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    if(!inverse_matrix)
-      this->invert(numbers::invalid_unsigned_int); // TODO !!! throw exception instead
+    AssertThrow(inverse_matrix, ExcMessage("Have you called invert() after modifying entries?"));
     inverse_matrix->vmult(dst_view, src_view);
   }
 
@@ -291,7 +288,7 @@ public:
 
 private:
   Table<2, Number>                              matrix;
-  mutable std::shared_ptr<InverseTable<Number>> inverse_matrix;
+  std::shared_ptr<InverseTable<Number>> inverse_matrix;
 };
 
 
