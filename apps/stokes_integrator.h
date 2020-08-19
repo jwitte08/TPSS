@@ -1425,7 +1425,7 @@ public:
 
   using value_type    = Number;
   using transfer_type = typename TPSS::PatchTransferBlock<dim, Number>;
-  using matrix_type   = MatrixAsTable<VectorizedArray<Number>>;
+  using matrix_type   = Tensors::BlockMatrixBasic2x2<MatrixAsTable<VectorizedArray<Number>>>;
   using operator_type = BlockSparseMatrix<Number>;
 
   void
@@ -1442,95 +1442,89 @@ public:
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
 
-    const auto patch_transfer = get_patch_transfer(subdomain_handler);
+    const auto                           patch_transfer = get_patch_transfer(subdomain_handler);
+    typename matrix_type::AdditionalData additional_data;
+    additional_data.basic_inverse = {equation_data.local_kernel_size,
+                                     equation_data.local_kernel_threshold};
+
+    FullMatrix<double> tmp_v_v;
+    FullMatrix<double> tmp_p_p;
+    FullMatrix<double> tmp_v_p;
+    FullMatrix<double> tmp_p_v;
+
     for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
         ++patch_index)
     {
       patch_transfer->reinit(patch_index);
-      const auto   n_dofs                = patch_transfer->n_dofs_per_patch();
+      const auto   n_dofs_velocity       = patch_transfer->n_dofs_per_patch(0);
+      const auto   n_dofs_pressure       = patch_transfer->n_dofs_per_patch(1);
       const auto & patch_worker_velocity = patch_transfer->get_patch_dof_worker(0);
 
-      FullMatrix<double> local_matrix(n_dofs, n_dofs);
-      auto &             patch_matrix = local_matrices[patch_index];
-      patch_matrix.as_table().reinit(n_dofs, n_dofs);
+      matrix_type & patch_matrix = local_matrices[patch_index];
+
+      auto & local_block_velocity = patch_matrix.get_block(0U, 0U);
+      local_block_velocity.as_table().reinit(n_dofs_velocity, n_dofs_velocity);
+      tmp_v_v.reinit(n_dofs_velocity, n_dofs_velocity);
+
+      auto & local_block_pressure = patch_matrix.get_block(1U, 1U);
+      local_block_pressure.as_table().reinit(n_dofs_pressure, n_dofs_pressure);
+      tmp_p_p.reinit(n_dofs_pressure, n_dofs_pressure);
+
+      auto & local_block_velocity_pressure = patch_matrix.get_block(0U, 1U);
+      local_block_velocity_pressure.as_table().reinit(n_dofs_velocity, n_dofs_pressure);
+      tmp_v_p.reinit(n_dofs_velocity, n_dofs_pressure);
+
+      auto & local_block_pressure_velocity = patch_matrix.get_block(1U, 0U);
+      local_block_pressure_velocity.as_table().reinit(n_dofs_pressure, n_dofs_velocity);
+      tmp_p_v.reinit(n_dofs_pressure, n_dofs_velocity);
 
       for(auto lane = 0U; lane < patch_worker_velocity.n_lanes_filled(patch_index); ++lane)
       {
-        local_matrix *= 0.;
-
+        /// Patch-wise local and global dof indices of velocity block.
+        const auto & patch_transfer_velocity = patch_transfer->get_patch_transfer(0);
+        std::vector<types::global_dof_index> velocity_dof_indices_on_patch;
         {
-          /// Patch-wise local and global dof indices of velocity block.
-          const auto & patch_transfer_velocity = patch_transfer->get_patch_transfer(0);
-          std::vector<types::global_dof_index> velocity_dof_indices_on_patch;
-          {
-            const auto view = patch_transfer_velocity.get_dof_indices(lane);
-            std::copy(view.cbegin(),
-                      view.cend(),
-                      std::back_inserter(velocity_dof_indices_on_patch));
-          }
-          std::vector<unsigned int> velocity_local_dof_indices(
-            velocity_dof_indices_on_patch.size());
-          std::iota(velocity_local_dof_indices.begin(), velocity_local_dof_indices.end(), 0U);
-
-          /// Patch-wise local and global dof indices of pressure block.
-          const auto & patch_transfer_pressure = patch_transfer->get_patch_transfer(1);
-          std::vector<types::global_dof_index> pressure_dof_indices_on_patch;
-          {
-            const auto view = patch_transfer_pressure.get_dof_indices(lane);
-            std::copy(view.cbegin(),
-                      view.cend(),
-                      std::back_inserter(pressure_dof_indices_on_patch));
-          }
-          std::vector<unsigned int> pressure_local_dof_indices(
-            pressure_dof_indices_on_patch.size());
-          std::iota(pressure_local_dof_indices.begin(),
-                    pressure_local_dof_indices.end(),
-                    velocity_dof_indices_on_patch.size());
-
-          /// Extract and insert local velocity block.
-          FullMatrix<double> local_block_velocity(velocity_dof_indices_on_patch.size());
-          local_block_velocity.extract_submatrix_from(level_matrix.block(0, 0),
-                                                      velocity_dof_indices_on_patch,
-                                                      velocity_dof_indices_on_patch);
-          local_block_velocity.scatter_matrix_to(velocity_local_dof_indices,
-                                                 velocity_local_dof_indices,
-                                                 local_matrix);
-
-          /// Extract and insert local pressure block.
-          FullMatrix<double> local_block_pressure(pressure_dof_indices_on_patch.size());
-          local_block_pressure.extract_submatrix_from(level_matrix.block(1, 1),
-                                                      pressure_dof_indices_on_patch,
-                                                      pressure_dof_indices_on_patch);
-          local_block_pressure.scatter_matrix_to(pressure_local_dof_indices,
-                                                 pressure_local_dof_indices,
-                                                 local_matrix);
-
-          /// velocity-pressure
-          FullMatrix<double> local_block_velocity_pressure(velocity_dof_indices_on_patch.size(),
-                                                           pressure_dof_indices_on_patch.size());
-          local_block_velocity_pressure.extract_submatrix_from(level_matrix.block(0, 1),
-                                                               velocity_dof_indices_on_patch,
-                                                               pressure_dof_indices_on_patch);
-          local_block_velocity_pressure.scatter_matrix_to(velocity_local_dof_indices,
-                                                          pressure_local_dof_indices,
-                                                          local_matrix);
-
-
-          /// pressure-velocity
-          FullMatrix<double> local_block_pressure_velocity(pressure_dof_indices_on_patch.size(),
-                                                           velocity_dof_indices_on_patch.size());
-          local_block_pressure_velocity.extract_submatrix_from(level_matrix.block(1, 0),
-                                                               pressure_dof_indices_on_patch,
-                                                               velocity_dof_indices_on_patch);
-          local_block_pressure_velocity.scatter_matrix_to(pressure_local_dof_indices,
-                                                          velocity_local_dof_indices,
-                                                          local_matrix);
+          const auto view = patch_transfer_velocity.get_dof_indices(lane);
+          std::copy(view.cbegin(), view.cend(), std::back_inserter(velocity_dof_indices_on_patch));
         }
 
-        patch_matrix.template fill_submatrix<Number>(
-          static_cast<const Table<2, Number> &>(local_matrix), 0U, 0U, lane);
+        /// Patch-wise local and global dof indices of pressure block.
+        const auto & patch_transfer_pressure = patch_transfer->get_patch_transfer(1);
+        std::vector<types::global_dof_index> pressure_dof_indices_on_patch;
+        {
+          const auto view = patch_transfer_pressure.get_dof_indices(lane);
+          std::copy(view.cbegin(), view.cend(), std::back_inserter(pressure_dof_indices_on_patch));
+        }
+
+        /// velocity block
+        tmp_v_v.extract_submatrix_from(level_matrix.block(0U, 0U),
+                                       velocity_dof_indices_on_patch,
+                                       velocity_dof_indices_on_patch);
+        local_block_velocity.fill_submatrix(tmp_v_v, 0U, 0U, lane);
+
+        /// pressure block
+        tmp_p_p.extract_submatrix_from(level_matrix.block(1U, 1U),
+                                       pressure_dof_indices_on_patch,
+                                       pressure_dof_indices_on_patch);
+        local_block_pressure.fill_submatrix(tmp_p_p, 0U, 0U, lane);
+
+        /// velocity-pressure block
+        tmp_v_p.extract_submatrix_from(level_matrix.block(0U, 1U),
+                                       velocity_dof_indices_on_patch,
+                                       pressure_dof_indices_on_patch);
+        local_block_velocity_pressure.fill_submatrix(tmp_v_p, 0U, 0U, lane);
+
+        /// pressure-velocity block
+        tmp_p_v.extract_submatrix_from(level_matrix.block(1U, 0U),
+                                       pressure_dof_indices_on_patch,
+                                       velocity_dof_indices_on_patch);
+        local_block_pressure_velocity.fill_submatrix(tmp_p_v, 0U, 0U, lane);
       }
-      patch_matrix.invert({equation_data.local_kernel_size, equation_data.local_kernel_threshold});
+
+      AssertDimension(patch_matrix.m(), n_dofs);
+      AssertDimension(patch_matrix.n(), n_dofs);
+
+      patch_matrix.invert(additional_data);
     }
   }
 
