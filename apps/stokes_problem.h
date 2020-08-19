@@ -97,22 +97,22 @@ namespace Stokes
 using namespace dealii;
 
 
-template<TPSS::DoFLayout dof_layout_v, bool is_multigrid>
-MeshWorker::AssembleFlags
-get_assemble_flags_impl()
-{
-  const auto assemble_flags_conforming = MeshWorker::assemble_own_cells;
-  const auto assemble_flags_dg =
-    is_multigrid ? MeshWorker::assemble_own_cells | MeshWorker::assemble_own_interior_faces_once :
-                   MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                     MeshWorker::assemble_own_interior_faces_once;
-  if(dof_layout_v == TPSS::DoFLayout::Q)
-    return assemble_flags_conforming;
-  else if(dof_layout_v == TPSS::DoFLayout::DGQ)
-    return assemble_flags_dg;
-  AssertThrow(false, ExcMessage("FE is not supported."));
-  return MeshWorker::assemble_nothing;
-}
+//   /// DEPRECATED
+//   template<TPSS::DoFLayout dof_layout_v, bool is_multigrid>
+// MeshWorker::AssembleFlags
+// get_assemble_flags_impl()
+// {
+//   const auto assemble_flags_conforming = MeshWorker::assemble_own_cells;
+//   const auto assemble_flags_dg =
+//     MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+//                      MeshWorker::assemble_own_interior_faces_once;
+//   if(dof_layout_v == TPSS::DoFLayout::Q)
+//     return assemble_flags_conforming;
+//   else if(dof_layout_v == TPSS::DoFLayout::DGQ)
+//     return assemble_flags_dg;
+//   AssertThrow(false, ExcMessage("FE is not supported."));
+//   return MeshWorker::assemble_nothing;
+// }
 
 
 
@@ -682,8 +682,9 @@ struct MGCollectionVelocityPressure
   void
   clear();
 
-  MeshWorker::AssembleFlags
-  get_mg_assemble_flags() const;
+  /// DEPRECATED
+  // MeshWorker::AssembleFlags
+  // get_mg_assemble_flags() const;
 
   void
   prepare_multigrid(const unsigned int                               mg_level_max,
@@ -768,17 +769,18 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   mg_constrained_dofs.reset();
 }
 
-template<int             dim,
-         int             fe_degree_p,
-         TPSS::DoFLayout dof_layout_v,
-         int             fe_degree_v,
-         LocalAssembly   local_assembly>
-MeshWorker::AssembleFlags
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-  get_mg_assemble_flags() const
-{
-  return get_assemble_flags_impl<dof_layout_v, true>();
-}
+// /// DEPRECATED
+// template<int             dim,
+//          int             fe_degree_p,
+//          TPSS::DoFLayout dof_layout_v,
+//          int             fe_degree_v,
+//          LocalAssembly   local_assembly>
+// MeshWorker::AssembleFlags
+// MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
+//   get_mg_assemble_flags() const
+// {
+//   return get_assemble_flags_impl<dof_layout_v, true>();
+// }
 
 template<int             dim,
          int             fe_degree_p,
@@ -943,17 +945,21 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                          ncell->level(),
                                          ncell->index(),
                                          dof_handler_pressure);
-          AssertThrow(false, ExcMessage("TODO... no conv. for DivFreeBell"));
           matrix_integrator.face_worker(
             cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
         }
       };
 
-      auto boundary_worker = [&](const LevelCellIterator & /*cell*/,
-                                 const unsigned int & /*face_no*/,
-                                 ScratchData<dim> & /*scratch_data*/,
-                                 CopyData & /*copy_data*/) {
-        // !!!
+      auto boundary_worker = [&](const LevelCellIterator & cell,
+                                 const unsigned int &      face_no,
+                                 ScratchData<dim> &        scratch_data,
+                                 CopyData &                copy_data) {
+        LevelCellIterator cell_ansatz(&dof_handler_pressure->get_triangulation(),
+                                      cell->level(),
+                                      cell->index(),
+                                      dof_handler_pressure);
+        // AssertThrow(false, ExcMessage("TODO... no conv. for DivFreeBell"));
+        matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
       };
 
       const auto copier = [&](const CopyData & copy_data) {
@@ -1006,17 +1012,31 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                     update_flags_pressure,
                                     interface_update_flags_velocity,
                                     interface_update_flags_pressure);
-      CopyData         copy_data(dof_handler_velocity->get_fe().dofs_per_cell,
+
+      CopyData copy_data(dof_handler_velocity->get_fe().dofs_per_cell,
                          dof_handler_pressure->get_fe().dofs_per_cell);
-      MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
-                            dof_handler_velocity->end_mg(level),
-                            cell_worker,
-                            copier,
-                            scratch_data,
-                            copy_data,
-                            get_mg_assemble_flags(),
-                            boundary_worker,
-                            face_worker);
+
+      if(dof_layout_v == TPSS::DoFLayout::Q)
+        MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
+                              dof_handler_velocity->end_mg(level),
+                              cell_worker,
+                              copier,
+                              scratch_data,
+                              copy_data,
+                              MeshWorker::assemble_own_cells);
+      else if(dof_layout_v == TPSS::DoFLayout::DGQ)
+        MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
+                              dof_handler_velocity->end_mg(level),
+                              cell_worker,
+                              copier,
+                              scratch_data,
+                              copy_data,
+                              MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                                MeshWorker::assemble_own_interior_faces_once,
+                              boundary_worker,
+                              face_worker);
+      else
+        AssertThrow(false, ExcMessage("Invalid."));
     }
   }
 }
@@ -1283,7 +1303,7 @@ struct ModelProblemBase<Method::DGQkplus2_DGPk, dim, fe_degree_p>
   static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::DGP;
   using fe_type_v                               = FE_DGQ<dim>;
   using fe_type_p                               = FE_DGP<dim>;
-  static constexpr int           fe_degree_v    = fe_degree_p + 2;
+  static constexpr int           fe_degree_v    = fe_degree_p + 1;
   static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
 };
 
@@ -1337,8 +1357,9 @@ public:
   void
   setup_system_pressure(const bool do_cuthill_mckee);
 
-  MeshWorker::AssembleFlags
-  get_assemble_flags() const;
+  /// DEPRECATED
+  // MeshWorker::AssembleFlags
+  // get_assemble_flags() const;
 
   void
   assemble_system();
@@ -1470,6 +1491,8 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
         return std::make_shared<DivergenceFree::Homogeneous::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::DivFreeBell)
         return std::make_shared<DivergenceFree::GaussianBell::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuille)
+        return std::make_shared<DivergenceFree::Poiseuille::Solution<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -1480,6 +1503,8 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
       else if(equation_data_in.variant == EquationData::Variant::DivFreeHom)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreeBell)
+        return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
+      else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuille)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else
         AssertThrow(false, ExcMessage("Not supported..."));
@@ -1551,12 +1576,13 @@ ModelProblem<dim, fe_degree_p, method>::print_informations() const
 
 
 
-template<int dim, int fe_degree_p, Method method>
-MeshWorker::AssembleFlags
-ModelProblem<dim, fe_degree_p, method>::get_assemble_flags() const
-{
-  return get_assemble_flags_impl<dof_layout_v, false>();
-}
+/// DEPRECATED
+// template<int dim, int fe_degree_p, Method method>
+// MeshWorker::AssembleFlags
+// ModelProblem<dim, fe_degree_p, method>::get_assemble_flags() const
+// {
+//   return get_assemble_flags_impl<dof_layout_v, false>();
+// }
 
 
 
@@ -1844,9 +1870,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
   /// to obtain the weights for each degree of freedom. By means of these
   /// weights we impose a mean value free constraint.
   constraints_pressure.clear();
-  const bool mv_constraint_is_necessary =
-    dof_layout_v == TPSS::DoFLayout::Q && rt_parameters.solver.variant == "UMFPACK";
-  if(mv_constraint_is_necessary || equation_data.force_mean_value_constraint)
+  if(equation_data.force_mean_value_constraint)
   {
     const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof();
     const auto & mass_foreach_dof     = *mass_foreach_dof_ptr;
@@ -1923,10 +1947,8 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   /// Mean value boundary condition (pressure)
   {
-    const bool mv_constraint_is_necessary =
-      dof_layout_v == TPSS::DoFLayout::Q && rt_parameters.solver.variant == "UMFPACK";
     mean_value_constraints.clear();
-    if(mv_constraint_is_necessary || equation_data.force_mean_value_constraint)
+    if(equation_data.force_mean_value_constraint)
     {
       const types::global_dof_index first_dof_index = n_dofs_velocity;
       AssertDimension(constraints_pressure.n_constraints(), 1U);
@@ -1964,12 +1986,15 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   system_matrix.reinit(sparsity_pattern);
   system_solution.reinit(dofs_per_block);
-  zero_constraints.set_zero(system_solution);
-  if(dof_layout_v == TPSS::DoFLayout::Q)
-    constraints_velocity.distribute(system_solution.block(0)); // particular velocity solution!
   system_delta_x.reinit(dofs_per_block);
-  zero_constraints.set_zero(system_delta_x);
   system_rhs.reinit(dofs_per_block);
+
+  zero_constraints.set_zero(system_solution);
+  zero_constraints.set_zero(system_delta_x);
+  if(dof_layout_v == TPSS::DoFLayout::Q)
+  {
+    constraints_velocity.distribute(system_solution.block(0)); // particular velocity solution!
+  }
 
   print_parameter("Number of degrees of freedom (velocity):", n_dofs_velocity);
   print_parameter("Number of degrees of freedom (pressure):", n_dofs_pressure);
@@ -2211,7 +2236,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                   ncell->level(),
                                   ncell->index(),
                                   &dof_handler_pressure);
-        AssertThrow(false, ExcMessage("TODO... no conv. for DivFreeBell"));
         matrix_integrator.face_worker(
           cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
       }
@@ -2227,7 +2251,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                  cell->level(),
                                  cell->index(),
                                  &dof_handler_pressure);
-        AssertThrow(false, ExcMessage("TODO... no conv. for DivFreeBell"));
         matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
       }
     };
@@ -2290,15 +2313,27 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     CopyData         copy_data(dof_handler_velocity.get_fe().dofs_per_cell,
                        dof_handler_pressure.get_fe().dofs_per_cell);
 
-    MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                          dof_handler_velocity.end(),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          get_assemble_flags(),
-                          boundary_worker,
-                          face_worker);
+    if(dof_layout_v == TPSS::DoFLayout::Q)
+      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+                            dof_handler_velocity.end(),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells);
+    else if(dof_layout_v == TPSS::DoFLayout::DGQ)
+      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+                            dof_handler_velocity.end(),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                              MeshWorker::assemble_own_interior_faces_once,
+                            boundary_worker,
+                            face_worker);
+    else
+      AssertThrow(false, ExcMessage("Invalid."));
   }
 }
 
@@ -2527,7 +2562,8 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
                                                                         preconditioner);
   /// distribute() is needed to apply the mean value constraint (Dirichlet
   /// conditions of velocity have already been applied to system_solution)
-  zero_constraints.distribute(system_delta_x);
+  if(equation_data.force_mean_value_constraint)
+    zero_constraints.distribute(system_delta_x);
   system_solution += system_delta_x;
 
   const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
@@ -2550,6 +2586,7 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     A_direct.vmult(system_delta_x, system_rhs);
     /// distribute() is needed to apply the mean value constraint (Dirichlet
     /// conditions of velocity have already been applied to system_solution)
+    Assert(equation_data.force_mean_value_constraint, ExcMessage("Use mean value constraint."));
     zero_constraints.distribute(system_delta_x);
     system_solution += system_delta_x;
 

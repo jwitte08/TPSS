@@ -14,7 +14,6 @@ main(int argc, char * argv[])
         return;
       if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
         return;
-      std::cout << argv[index] << StokesFlow::skipper << std::endl;
       prm = std::atoi(argv[index]);
     };
     const auto atof_if = [&](auto & prm, const int index) {
@@ -22,7 +21,6 @@ main(int argc, char * argv[])
         return;
       if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
         return;
-      std::cout << argv[index] << std::endl;
       prm = std::atof(argv[index]);
     };
 
@@ -64,8 +62,11 @@ main(int argc, char * argv[])
       equation_data.local_kernel_size = 1U;
     AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
                 ExcMessage("Invalid."));
-    equation_data.force_mean_value_constraint = static_cast<bool>(force_mean_value_constraint);
-    equation_data.ip_factor                   = ip_factor; // !!!
+    equation_data.force_mean_value_constraint =
+      options.prms.solver.variant == "UMFPACK" ?
+        true :
+        static_cast<bool>(force_mean_value_constraint); // !!!
+    equation_data.ip_factor = ip_factor;                // !!!
 
     ModelProblem<dim, fe_degree_p, Method::DGQkplus2_DGPk> stokes_problem(options.prms,
                                                                           equation_data); // !!!

@@ -1099,6 +1099,8 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
   /// Velocity "U" takes test function role (in flipped mode ansatz function)
   auto & phiU = scratch_data.fe_interface_values_test;
   phiU.reinit(cellU, f);
+  const auto n_dofsU = phiU.n_current_interface_dofs();
+  AssertDimension(n_dofsU, copy_data.local_dof_indices_test.size());
 
   /// Pressure "P" takes ansatz function role (in flipped mode test function)
   auto & phiP = scratch_data.fe_interface_values_ansatz;
@@ -1126,28 +1128,55 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
                    });
   }
 
-  AssertDimension(n_dofsP, copy_data.cell_rhs_ansatz.size())
-    Assert(copy_data.local_dof_indices_ansatz == phiP.get_interface_dof_indices(),
-           ExcMessage(
-             "copy_data.cell_rhs is incompatible compared to copy_data_face.joint_dof_indices."));
+  AssertDimension(n_dofsP, copy_data.cell_rhs_ansatz.size());
+  AssertDimension(n_dofsU, copy_data.cell_matrix.m());
+  AssertDimension(n_dofsP, copy_data.cell_matrix.n());
+  Assert(
+    copy_data.local_dof_indices_ansatz == phiP.get_interface_dof_indices(),
+    ExcMessage(
+      "the local dof indices in copy_data are incompatible with the interface dof indices of phiP."));
+  Assert(
+    copy_data.local_dof_indices_test == phiU.get_interface_dof_indices(),
+    ExcMessage(
+      "the local dof indices in copy_data are incompatible with the interface dof indices of phiU."));
 
-  double integral_iq = 0.;
+  double integral_ijq = 0.;
+  double integral_jq  = 0.;
   for(unsigned int q = 0; q < phiP.n_quadrature_points; ++q)
   {
-    const auto & u_dot_n = velocity_solution_dot_normals[q];
-    for(unsigned int i = 0; i < n_dofsP; ++i)
+    for(unsigned int j = 0; j < n_dofsP; ++j)
     {
+      const auto & av_phiP_j = phiP.average(j, q);
+
       /// Nitsche method (weak Dirichlet conditions)
-      if(!is_multigrid)
+      if(!is_multigrid) // here P is test function
       {
-        const auto & av_phiP_i = phiP.average(i, q);
+        const auto & u_dot_n = velocity_solution_dot_normals[q];
 
-        integral_iq = u_dot_n * av_phiP_i * phiP.JxW(q);
+        integral_jq = u_dot_n * av_phiP_j * phiP.JxW(q);
 
-        copy_data.cell_rhs_ansatz(i) += integral_iq;
+        copy_data.cell_rhs_ansatz(j) += integral_jq;
+      }
+
+      for(unsigned int i = 0; i < n_dofsU; ++i)
+      {
+        /// IP method
+        const auto & jump_phiU_i_dot_n = compute_vjump_dot_normal(phiU, i, q);
+
+        integral_ijq = av_phiP_j * jump_phiU_i_dot_n * phiU.JxW(q);
+
+        copy_data.cell_matrix(i, j) += integral_ijq;
       }
     }
   }
+
+  /// The pressure-velocity block ("flipped") is the transpose of the
+  /// velocity-pressure block.
+  AssertDimension(n_dofsP, copy_data.cell_matrix_flipped.m());
+  AssertDimension(n_dofsU, copy_data.cell_matrix_flipped.n());
+  for(unsigned int i = 0; i < n_dofsU; ++i)
+    for(unsigned int j = 0; j < n_dofsP; ++j)
+      copy_data.cell_matrix_flipped(j, i) = copy_data.cell_matrix(i, j);
 }
 
 } // namespace Mixed
@@ -1374,11 +1403,10 @@ public:
 
 
 /**
- * This class is actual not an "integration-type" struct for local
- * matrices. It simply uses the PatchTransferBlock w.r.t. the
- * velocity-pressure block system to extract the local matrices/solvers from
- * the (global) level matrix, which is passed to the
- * assemble_subspace_inverses() interface.
+ * This class is actual not an "integration-type" struct for local matrices. It
+ * simply uses PatchTransferBlock w.r.t. the velocity-pressure block system to
+ * extract the local matrices/solvers from the (global) level matrix. The level
+ * matrix is passed as argument to assemble_subspace_inverses().
  *
  * Therefore, all local matrices are stored and inverted in a classical
  * fashion.
@@ -1397,11 +1425,7 @@ public:
 
   using value_type    = Number;
   using transfer_type = typename TPSS::PatchTransferBlock<dim, Number>;
-  // using matrix_type_1d          = Table<2, VectorizedArray<Number>>;
-  using matrix_type = MatrixAsTable<VectorizedArray<Number>>;
-  // using matrix_type_mixed       = Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, -1>;
-  // using velocity_evaluator_type = FDEvaluation<dim, fe_degree_v, n_q_points_1d, Number>;
-  // using pressure_evaluator_type = FDEvaluation<dim, fe_degree_p, n_q_points_1d, Number>;
+  using matrix_type   = MatrixAsTable<VectorizedArray<Number>>;
   using operator_type = BlockSparseMatrix<Number>;
 
   void
@@ -1410,25 +1434,20 @@ public:
     equation_data = equation_data_in;
   }
 
-  // template<typename OperatorType>
   void
-  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
-                             std::vector<matrix_type> &            local_matrices,
-                             const operator_type &                 level_matrix,
-                             // const OperatorType &                        dummy_operator,
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       subdomain_handler,
+                             std::vector<matrix_type> &                  local_matrices,
+                             const operator_type &                       level_matrix,
                              const std::pair<unsigned int, unsigned int> subdomain_range) const
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
 
-    // AssertDimension(local_matrices_velocity.size(), local_matrices.size());
     const auto patch_transfer = get_patch_transfer(subdomain_handler);
     for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
         ++patch_index)
     {
       patch_transfer->reinit(patch_index);
-      const auto n_dofs = patch_transfer->n_dofs_per_patch();
-      // const auto   n_dofs_velocity       = patch_transfer->n_dofs_per_patch(0);
-      // const auto   n_dofs_pressure       = patch_transfer->n_dofs_per_patch(1);
+      const auto   n_dofs                = patch_transfer->n_dofs_per_patch();
       const auto & patch_worker_velocity = patch_transfer->get_patch_dof_worker(0);
 
       FullMatrix<double> local_matrix(n_dofs, n_dofs);

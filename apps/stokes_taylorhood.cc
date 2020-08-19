@@ -54,9 +54,10 @@ main(int argc, char * argv[])
     options.prms.solver.use_right_preconditioning = true; // !!!
 
     EquationData equation_data;
-    equation_data.variant                     = EquationData::Variant::DivFreeHom;
-    equation_data.force_mean_value_constraint = false; // !!!
-    equation_data.use_cuthill_mckee           = options.prms.solver.variant == "FGMRES_ILU";
+    equation_data.variant = EquationData::Variant::DivFreeHom;
+    equation_data.force_mean_value_constraint =
+      options.prms.solver.variant == "UMFPACK" ? true : false; // !!!
+    equation_data.use_cuthill_mckee = options.prms.solver.variant == "FGMRES_ILU";
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
     AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
