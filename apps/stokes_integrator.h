@@ -1295,7 +1295,7 @@ public:
                                                  n_dofs_velocity,
                                                  0U);
 
-      local_matrix.invert(equation_data.local_kernel_size);
+      local_matrix.invert({equation_data.local_kernel_size, equation_data.local_kernel_threshold});
       // {
       //   for(auto b = 0U; b < dim; ++b)
       //   {
@@ -1530,7 +1530,7 @@ public:
         patch_matrix.template fill_submatrix<Number>(
           static_cast<const Table<2, Number> &>(local_matrix), 0U, 0U, lane);
       }
-      patch_matrix.invert(equation_data.local_kernel_size);
+      patch_matrix.invert({equation_data.local_kernel_size, equation_data.local_kernel_threshold});
     }
   }
 

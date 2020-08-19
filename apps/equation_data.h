@@ -703,6 +703,7 @@ struct EquationData
     oss << Util::parameter_to_fstring("Use Cuthill-McKee:", use_cuthill_mckee);
     if(local_kernel_size != numbers::invalid_unsigned_int)
       oss << Util::parameter_to_fstring("Kernel size per local solver:", local_kernel_size);
+    oss << Util::parameter_to_fstring("Kernel threshold per local solver:", local_kernel_threshold);
     return oss.str();
   }
 
@@ -714,6 +715,7 @@ struct EquationData
   bool                         force_mean_value_constraint     = false;
   bool                         use_cuthill_mckee               = false;
   unsigned int                 local_kernel_size               = numbers::invalid_unsigned_int;
+  double                       local_kernel_threshold          = 0.;
 };
 
 
