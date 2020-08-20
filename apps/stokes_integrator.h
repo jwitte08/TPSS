@@ -1456,6 +1456,7 @@ public:
         ++patch_index)
     {
       patch_transfer->reinit(patch_index);
+      const auto   n_dofs                = patch_transfer->n_dofs_per_patch();
       const auto   n_dofs_velocity       = patch_transfer->n_dofs_per_patch(0);
       const auto   n_dofs_pressure       = patch_transfer->n_dofs_per_patch(1);
       const auto & patch_worker_velocity = patch_transfer->get_patch_dof_worker(0);
@@ -1497,10 +1498,33 @@ public:
         }
 
         /// velocity block
-        tmp_v_v.extract_submatrix_from(level_matrix.block(0U, 0U),
-                                       velocity_dof_indices_on_patch,
-                                       velocity_dof_indices_on_patch);
-        local_block_velocity.fill_submatrix(tmp_v_v, 0U, 0U, lane);
+        if(equation_data.local_solver == LocalSolver::Vdiag)
+        {
+          for(auto comp = 0U; comp < dim; ++comp)
+          {
+            std::vector<types::global_dof_index> velocity_dof_indices_per_comp;
+            const auto view = patch_transfer_velocity.get_dof_indices(lane, comp);
+            std::copy(view.cbegin(),
+                      view.cend(),
+                      std::back_inserter(velocity_dof_indices_per_comp));
+            const auto n_velocity_dofs_per_comp = velocity_dof_indices_per_comp.size();
+
+            tmp_v_v.reinit(n_velocity_dofs_per_comp, n_velocity_dofs_per_comp);
+            tmp_v_v.extract_submatrix_from(level_matrix.block(0U, 0U),
+                                           velocity_dof_indices_per_comp,
+                                           velocity_dof_indices_per_comp);
+
+            const auto start = comp * n_velocity_dofs_per_comp;
+            local_block_velocity.fill_submatrix(tmp_v_v, start, start, lane);
+          }
+        }
+        else
+        {
+          tmp_v_v.extract_submatrix_from(level_matrix.block(0U, 0U),
+                                         velocity_dof_indices_on_patch,
+                                         velocity_dof_indices_on_patch);
+          local_block_velocity.fill_submatrix(tmp_v_v, 0U, 0U, lane);
+        }
 
         /// pressure block
         tmp_p_p.extract_submatrix_from(level_matrix.block(1U, 1U),
@@ -1521,6 +1545,7 @@ public:
         local_block_pressure_velocity.fill_submatrix(tmp_p_v, 0U, 0U, lane);
       }
 
+      (void)n_dofs;
       AssertDimension(patch_matrix.m(), n_dofs);
       AssertDimension(patch_matrix.n(), n_dofs);
 

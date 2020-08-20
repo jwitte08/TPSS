@@ -31,12 +31,14 @@ main(int argc, char * argv[])
     unsigned int force_mean_value_constraint = 0;
     double       ip_factor                   = 0.;
     unsigned int n_cycles                    = 3;
+    unsigned int local_solver_variant        = 0;
 
     //: parse arguments
     atoi_if(test_index, 1);
     atoi_if(ip_factor, 2);
     atoi_if(n_cycles, 3);
-    atoi_if(force_mean_value_constraint, 4);
+    atoi_if(local_solver_variant, 4);
+    atoi_if(force_mean_value_constraint, 7);
     atoi_if(debug_depth, 5);
     atof_if(damping, 6);
 
@@ -66,7 +68,8 @@ main(int argc, char * argv[])
       options.prms.solver.variant == "UMFPACK" ?
         true :
         static_cast<bool>(force_mean_value_constraint); // !!!
-    equation_data.ip_factor = ip_factor;                // !!!
+    equation_data.ip_factor    = ip_factor;             // !!!
+    equation_data.local_solver = static_cast<LocalSolver>(local_solver_variant);
 
     ModelProblem<dim, fe_degree_p, Method::DGQkplus2_DGPk> stokes_problem(options.prms,
                                                                           equation_data); // !!!

@@ -662,6 +662,12 @@ enum class LocalAssembly
   Cut
 };
 
+enum class LocalSolver
+{
+  Exact,
+  Vdiag
+};
+
 enum class Method
 {
   TaylorHood,
@@ -690,6 +696,13 @@ struct EquationData
     return str[static_cast<int>(variant)];
   }
 
+  static std::string
+  str_local_solver(const LocalSolver variant)
+  {
+    std::string str[] = {"exact", "velocity (block diagonal)"};
+    return str[static_cast<int>(variant)];
+  }
+
   std::string
   to_string() const
   {
@@ -703,7 +716,7 @@ struct EquationData
     oss << Util::parameter_to_fstring("Use Cuthill-McKee:", use_cuthill_mckee);
     if(local_kernel_size != numbers::invalid_unsigned_int)
       oss << Util::parameter_to_fstring("Kernel size per local solver:", local_kernel_size);
-    oss << Util::parameter_to_fstring("Kernel threshold per local solver:", local_kernel_threshold);
+    oss << Util::parameter_to_fstring("Local Solver:", str_local_solver(local_solver));
     return oss.str();
   }
 
@@ -716,6 +729,7 @@ struct EquationData
   bool                         use_cuthill_mckee               = false;
   unsigned int                 local_kernel_size               = numbers::invalid_unsigned_int;
   double                       local_kernel_threshold          = 0.;
+  LocalSolver                  local_solver                    = LocalSolver::Exact;
 };
 
 
