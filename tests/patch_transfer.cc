@@ -31,6 +31,64 @@
 
 using namespace dealii;
 
+
+
+using TestParamsConstant2D = testing::Types<Util::NonTypeParams<2, 0>>;
+using TestParamsLinear2D   = testing::Types<Util::NonTypeParams<2, 1>>;
+using TestParamsHigherOrder2D =
+  testing::Types<Util::NonTypeParams<2, 3>, Util::NonTypeParams<2, 4>>;
+
+using TestParamsLinear3D = testing::Types<Util::NonTypeParams<3, 1>>;
+using TestParamsHigherOrder3D =
+  testing::Types<Util::NonTypeParams<3, 3>, Util::NonTypeParams<3, 4>>;
+using TestParamsConstant3D = testing::Types<Util::NonTypeParams<3, 0>>;
+
+
+
+////////// TestPatchTransferBase
+
+
+
+template<typename T>
+class TestPatchTransferBase : public testing::Test
+{
+protected:
+  static constexpr int dim       = T::template value<0>();
+  static constexpr int fe_degree = T::template value<1>();
+
+
+  void
+  SetUp() override
+  {
+    ofs.open("patch_transfer.log", std::ios_base::app);
+    const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
+    pcout                    = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
+
+    /// base mesh is a vertex patch
+    rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+    rt_parameters.mesh.n_repetitions    = 2;
+    rt_parameters.mesh.n_refinements    = 0U;
+  }
+
+
+  void
+  TearDown() override
+  {
+    ofs.close();
+  }
+
+
+  std::ofstream                       ofs;
+  std::shared_ptr<ConditionalOStream> pcout;
+  RT::Parameter                       rt_parameters;
+};
+
+
+
+////////// TestPatchTransfer
+
+
+
 template<typename T>
 class TestPatchTransfer : public testing::Test
 {
@@ -195,17 +253,15 @@ TYPED_TEST_P(TestPatchTransfer, VertexPatchQ)
 
 REGISTER_TYPED_TEST_SUITE_P(TestPatchTransfer, CellPatchDG, VertexPatchDG, VertexPatchQ);
 
-using TestParamsLinear2D = testing::Types<Util::NonTypeParams<2, 1>>;
-using TestParamsHigherOrder2D =
-  testing::Types<Util::NonTypeParams<2, 3>, Util::NonTypeParams<2, 4>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransfer, TestParamsLinear2D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransfer, TestParamsHigherOrder2D);
 
-using TestParamsLinear3D = testing::Types<Util::NonTypeParams<3, 1>>;
-using TestParamsHigherOrder3D =
-  testing::Types<Util::NonTypeParams<3, 3>, Util::NonTypeParams<3, 4>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransfer, TestParamsLinear3D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestPatchTransfer, TestParamsHigherOrder3D);
+
+
+
+////////// TestPatchTransferBlockDG
 
 
 
@@ -343,6 +399,10 @@ INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferBlockDG, TestPara
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransferBlockDG, TestParamsLinear3D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestPatchTransferBlockDG, TestParamsHigherOrder3D);
+
+
+
+////////// TestPatchTransferVectorValued
 
 
 
@@ -551,6 +611,10 @@ INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D,
 
 
 
+////////// TestPatchTransferBlockWithVector
+
+
+
 template<typename T>
 class TestPatchTransferBlockWithVector : public testing::Test
 {
@@ -746,6 +810,10 @@ INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D,
 
 
 
+////////// TestPatchTransferDGP
+
+
+
 template<typename T>
 class TestPatchTransferDGP : public testing::Test
 {
@@ -782,19 +850,6 @@ protected:
   {
     ofs.close();
   }
-
-
-  // template<typename E>
-  // std::vector<const E *>
-  // to_vector_of_ptrs(const std::vector<E> & vec)
-  // {
-  //   std::vector<const E *> vec_of_ptrs;
-  //   std::transform(vec.cbegin(),
-  //                  vec.cend(),
-  //                  std::back_inserter(vec_of_ptrs),
-  //                  [](const auto & elem) { return &elem; });
-  //   return vec_of_ptrs;
-  // }
 
 
   void
@@ -1024,9 +1079,6 @@ REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferDGP,
                             VertexPatchMPI,
                             VertexPatchVelocityPressureMPI);
 
-using TestParamsConstant2D = testing::Types<Util::NonTypeParams<2, 0>>;
-using TestParamsConstant3D = testing::Types<Util::NonTypeParams<3, 0>>;
-
 INSTANTIATE_TYPED_TEST_SUITE_P(Constant2D, TestPatchTransferDGP, TestParamsLinear2D);
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferDGP, TestParamsLinear2D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferDGP, TestParamsHigherOrder2D);
@@ -1035,6 +1087,219 @@ INSTANTIATE_TYPED_TEST_SUITE_P(Constant3D, TestPatchTransferDGP, TestParamsLinea
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransferDGP, TestParamsLinear3D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestPatchTransferDGP, TestParamsHigherOrder3D);
 
+
+
+template<typename T>
+class TestPatchTransferget_dof_indices : public TestPatchTransferBase<T>
+{
+protected:
+  using Base = TestPatchTransferBase<T>;
+  using Base::dim;
+  using Base::fe_degree;
+  using Base::pcout;
+  using Base::rt_parameters;
+
+  void
+  check_get_dof_indices_lane_component(std::shared_ptr<const FiniteElement<dim>> fe)
+  {
+    Base::rt_parameters.multigrid.post_smoother.schwarz =
+      Base::rt_parameters.multigrid.pre_smoother.schwarz;
+
+    //: generate mesh
+    parallel::distributed::Triangulation<dim> triangulation(
+      MPI_COMM_WORLD,
+      Triangulation<dim>::limit_level_difference_at_vertices,
+      parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy);
+    *pcout << create_mesh(triangulation, rt_parameters.mesh) << std::endl;
+    const unsigned int level = triangulation.n_global_levels() - 1;
+
+    //: initialize dof_handler
+    DoFHandler<dim> dof_handler;
+    *pcout << fe->get_name() << std::endl;
+    dof_handler.initialize(triangulation, *fe);
+    dof_handler.distribute_mg_dofs();
+
+    //: distribute subdomains
+    TPSS::PatchInfo<dim> patch_info;
+    {
+      typename TPSS::PatchInfo<dim>::AdditionalData additional_data;
+      const auto schwarz_data          = rt_parameters.multigrid.pre_smoother.schwarz;
+      additional_data.patch_variant    = schwarz_data.patch_variant;
+      additional_data.smoother_variant = schwarz_data.smoother_variant;
+      additional_data.level            = level;
+      patch_info.initialize(&dof_handler, additional_data); // raw
+      TPSS::PatchWorker<dim, double>{patch_info};           // vectorized
+    }
+
+    //: distribute dofs on subdomains
+    QGauss<1>                                                         quadrature(fe_degree + 1);
+    internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info;
+    shape_info.reinit(quadrature, *fe, /*base_element_index*/ 0);
+    TPSS::DoFInfo<dim, double> dof_info;
+    {
+      typename TPSS::DoFInfo<dim, double>::AdditionalData additional_data;
+      additional_data.level = level;
+      dof_info.initialize(&dof_handler, &patch_info, &shape_info, additional_data);
+    }
+
+    TPSS::PatchTransfer<dim, double> patch_transfer(dof_info);
+    const auto &                     patch_dof_worker = patch_transfer.get_patch_dof_worker();
+
+    ASSERT_EQ(fe->n_base_elements(), 1U);
+    const auto n_components = fe->n_components();
+
+    const auto n_subdomains = patch_dof_worker.get_partition_data().n_subdomains();
+    for(auto patch_index = 0U; patch_index < n_subdomains; ++patch_index)
+    {
+      patch_transfer.reinit(patch_index);
+      for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_index); ++lane)
+      {
+        const auto &              view_total = patch_transfer.get_dof_indices(lane);
+        std::vector<unsigned int> dof_indices_total(view_total.begin(), view_total.end());
+
+        std::vector<unsigned int> dof_indices;
+        for(auto comp = 0U; comp < n_components; ++comp)
+        {
+          const auto & view = patch_transfer.get_dof_indices(lane, comp);
+          std::copy(view.begin(), view.end(), std::back_inserter(dof_indices));
+        }
+
+        std::sort(dof_indices_total.begin(), dof_indices_total.end());
+        std::sort(dof_indices.begin(), dof_indices.end());
+        ASSERT_TRUE(dof_indices_total == dof_indices);
+      }
+    }
+  }
+};
+
+TYPED_TEST_SUITE_P(TestPatchTransferget_dof_indices);
+
+TYPED_TEST_P(TestPatchTransferget_dof_indices, DGQMPI)
+{
+  constexpr auto dim       = TestFixture::dim;
+  constexpr auto fe_degree = TestFixture::fe_degree;
+
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  const auto fe = std::make_shared<FE_DGQ<dim>>(fe_degree);
+
+  /// cell patch
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
+    TPSS::PatchVariant::cell;
+
+  /// 1
+  TestFixture::check_get_dof_indices_lane_component(fe);
+  /// 2
+  TestFixture::rt_parameters.mesh.n_refinements = 2U;
+  TestFixture::check_get_dof_indices_lane_component(fe);
+
+  /// vertex patch
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
+    TPSS::PatchVariant::vertex;
+
+  /// 3
+  TestFixture::check_get_dof_indices_lane_component(fe);
+  /// 4
+  TestFixture::rt_parameters.mesh.n_refinements = 2U;
+  TestFixture::check_get_dof_indices_lane_component(fe);
+}
+
+TYPED_TEST_P(TestPatchTransferget_dof_indices, DGQvectorvaluedMPI)
+{
+  constexpr auto dim       = TestFixture::dim;
+  constexpr auto fe_degree = TestFixture::fe_degree;
+
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  const auto fe = std::make_shared<FESystem<dim>>(FE_DGQ<dim>(fe_degree), dim);
+
+  /// cell patch
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
+    TPSS::PatchVariant::cell;
+
+  /// 1
+  TestFixture::check_get_dof_indices_lane_component(fe);
+  /// 2
+  TestFixture::rt_parameters.mesh.n_refinements = 2U;
+  TestFixture::check_get_dof_indices_lane_component(fe);
+
+  /// vertex patch
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
+    TPSS::PatchVariant::vertex;
+
+  /// 3
+  TestFixture::check_get_dof_indices_lane_component(fe);
+  /// 4
+  TestFixture::rt_parameters.mesh.n_refinements = 2U;
+  TestFixture::check_get_dof_indices_lane_component(fe);
+}
+
+// !!! TODO test fails with mpirun
+TYPED_TEST_P(TestPatchTransferget_dof_indices, Qvectorvalued)
+{
+  constexpr auto dim       = TestFixture::dim;
+  constexpr auto fe_degree = TestFixture::fe_degree;
+
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  const auto fe = std::make_shared<FESystem<dim>>(FE_Q<dim>(fe_degree), dim);
+
+  /// vertex patch
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
+    TPSS::PatchVariant::vertex;
+
+  /// 3
+  TestFixture::check_get_dof_indices_lane_component(fe);
+  /// 4
+  TestFixture::rt_parameters.mesh.n_refinements = 2U;
+  TestFixture::check_get_dof_indices_lane_component(fe);
+}
+
+TYPED_TEST_P(TestPatchTransferget_dof_indices, DGPvectorvaluedMPI)
+{
+  constexpr auto dim       = TestFixture::dim;
+  constexpr auto fe_degree = TestFixture::fe_degree;
+
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  const auto fe = std::make_shared<FESystem<dim>>(FE_DGP<dim>(fe_degree), dim);
+
+  /// cell patch
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
+    TPSS::PatchVariant::cell;
+
+  /// 1
+  TestFixture::check_get_dof_indices_lane_component(fe);
+  /// 2
+  TestFixture::rt_parameters.mesh.n_refinements = 2U;
+  TestFixture::check_get_dof_indices_lane_component(fe);
+
+  /// vertex patch
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
+    TPSS::PatchVariant::vertex;
+
+  /// 3
+  TestFixture::check_get_dof_indices_lane_component(fe);
+  /// 4
+  TestFixture::rt_parameters.mesh.n_refinements = 2U;
+  TestFixture::check_get_dof_indices_lane_component(fe);
+}
+
+REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferget_dof_indices,
+                            DGQMPI,
+                            DGQvectorvaluedMPI,
+                            Qvectorvalued,
+                            DGPvectorvaluedMPI);
+
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferget_dof_indices, TestParamsLinear2D);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D,
+                               TestPatchTransferget_dof_indices,
+                               TestParamsHigherOrder2D);
+
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransferget_dof_indices, TestParamsLinear3D);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D,
+                               TestPatchTransferget_dof_indices,
+                               TestParamsHigherOrder3D);
 
 
 int
