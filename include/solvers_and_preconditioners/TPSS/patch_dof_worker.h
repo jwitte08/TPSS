@@ -63,6 +63,16 @@ public:
   get_dof_indices_on_patch(const unsigned int patch_id, const unsigned int lane) const;
 
   /**
+   * Returns cached global dof indices on patch @patch_id at vectorization lane
+   * @p lane of vector component @component. The returned array is subject to
+   * patch local lexicographical ordering.
+   */
+  ArrayView<const unsigned int>
+  get_dof_indices_on_patch(const unsigned int patch_id,
+                           const unsigned int lane,
+                           const unsigned int component) const;
+
+  /**
    * Returns global dof indices on the fly on patch @patch_id at vectorization
    * lane @p lane. The returned array is subject to lexicographical ordering.
    */
@@ -428,6 +438,27 @@ PatchDoFWorker<dim, Number>::get_dof_indices_on_patch(const unsigned int patch_i
   const auto [dof_start, n_dofs] = get_dof_start_and_quantity_on_patch(patch_id, lane);
   const auto begin               = dof_info->dof_indices_patchwise.data() + dof_start;
   return ArrayView<const unsigned int>(begin, n_dofs);
+}
+
+
+template<int dim, typename Number>
+ArrayView<const unsigned int>
+PatchDoFWorker<dim, Number>::get_dof_indices_on_patch(const unsigned int patch_id,
+                                                      const unsigned int lane,
+                                                      const unsigned int component) const
+{
+  AssertIndexRange(lane, this->n_lanes_filled(patch_id));
+  AssertIndexRange(component, n_components);
+  Assert(dof_info, ExcMessage("dof_info is not set."));
+  Assert(!(dof_info->dof_indices_patchwise.empty()), ExcMessage("Dof indices aren't cached."));
+
+  const auto [dof_start, n_dofs] = get_dof_start_and_quantity_on_patch(patch_id, lane);
+  /// assume isotropy w.r.t. components
+  AssertDimension(n_dofs % n_components, 0U);
+  const auto n_dofs_per_component = n_dofs / n_components;
+  const auto begin =
+    dof_info->dof_indices_patchwise.data() + dof_start + component * n_dofs_per_component;
+  return ArrayView<const unsigned int>(begin, n_dofs_per_component);
 }
 
 

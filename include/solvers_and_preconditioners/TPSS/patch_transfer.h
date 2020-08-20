@@ -141,12 +141,19 @@ public:
   get_patch_dof_worker() const;
 
   /**
-   * Returns the set of degrees of freedom (as proc-local index) with
-   * lexicographical ordering (if possible, e.g. DGP polynomials have no such
-   * ordering) for each block.
+   * Returns the set of degrees of freedom (as proc-local index) on the current
+   * patch with lexicographical ordering (if possible, e.g. DGP polynomials have
+   * no such ordering).
    */
   ArrayView<const unsigned int>
   get_dof_indices(const unsigned int lane) const;
+
+  /**
+   * Same as above, but this time only subset of degrees of freedom for vector
+   * component @p component is returned.
+   */
+  ArrayView<const unsigned int>
+  get_dof_indices(const unsigned int lane, const unsigned int component) const;
 
   /**
    * Extract from the global dof values @p src the patch relevant dof values.
@@ -287,13 +294,21 @@ public:
   get_patch_transfer(const unsigned int block_index = 0) const;
 
   /**
-   * Returns the set of degrees of freedom (as proc-local index) with
+   * Returns the sets of degrees of freedom (as proc-local index) with
    * lexicographical ordering (if possible, e.g. DGP polynomials have no such
-   * ordering) for each block. The sets of indices for each block are juxtaposed
-   * block-wise.
+   * ordering) for each block. These sets of dof indices are juxtaposed block by
+   * block.
    */
   ArrayView<const unsigned int>
   get_dof_indices(const unsigned int lane) const;
+
+  /**
+   * Returns the set of degrees of freedom (as proc-local index) with
+   * lexicographical ordering (if possible, e.g. DGP polynomials have no such
+   * ordering) for the given block @p block_index.
+   */
+  ArrayView<const unsigned int>
+  get_dof_indices(const unsigned int block_index, const unsigned int lane) const;
 
   /**
    * Return the number of degrees of freedom per patch accumulated over all
@@ -550,6 +565,24 @@ PatchTransfer<dim, Number>::get_dof_indices(const unsigned int lane) const
 
 
 template<int dim, typename Number>
+inline ArrayView<const unsigned int>
+PatchTransfer<dim, Number>::get_dof_indices(const unsigned int lane,
+                                            const unsigned int component) const
+{
+  Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
+  if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
+    return get_dof_indices(0U, component);
+
+  if(caching_strategy == TPSS::CachingStrategy::Cached)
+    return patch_dof_worker.get_dof_indices_on_patch(patch_id, lane, component);
+  else
+    AssertThrow(false, ExcMessage("Only implemented for CachingStrategy::Cached."));
+
+  return ArrayView<const unsigned int>();
+}
+
+
+template<int dim, typename Number>
 inline unsigned int
 PatchTransfer<dim, Number>::n_dofs_per_patch() const
 {
@@ -692,6 +725,16 @@ PatchTransferBlock<dim, Number>::get_dof_indices(const unsigned int lane) const
 
   AssertDimension(dof_indices_cached.size(), n_dofs_per_patch());
   return ArrayView<const unsigned int>(dof_indices_cached.data(), dof_indices_cached.size());
+}
+
+
+template<int dim, typename Number>
+ArrayView<const unsigned int>
+PatchTransferBlock<dim, Number>::get_dof_indices(const unsigned int block_index,
+                                                 const unsigned int lane) const
+{
+  AssertIndexRange(block_index, n_blocks);
+  return transfers[block_index]->get_dof_indices(lane);
 }
 
 
