@@ -22,6 +22,7 @@ set(sourcefiles
   stokes_taylorhood.cc
   stokes_Qkplus2_DGPk.cc
   stokes_DGQkplus2_DGPk.cc
+  stokes_raviartthomas.cc
   )
 
 foreach(src ${sourcefiles})

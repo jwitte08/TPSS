@@ -61,6 +61,7 @@
 #include <deal.II/fe/fe_dgq.h>
 #include <deal.II/fe/fe_interface_values.h>
 #include <deal.II/fe/fe_q.h>
+#include <deal.II/fe/fe_raviart_thomas_new.h>
 #include <deal.II/fe/fe_system.h>
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/fe/mapping_q.h>
@@ -1307,6 +1308,16 @@ struct ModelProblemBase<Method::DGQkplus2_DGPk, dim, fe_degree_p>
   static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
 };
 
+template<int dim, int fe_degree_p>
+struct ModelProblemBase<Method::RaviartThomas, dim, fe_degree_p>
+{
+  static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::RT;
+  static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::DGQ;
+  using fe_type_v                               = FE_RaviartThomasNodal_new<dim>;
+  using fe_type_p                               = FE_DGQ<dim>;
+  static constexpr int           fe_degree_v    = fe_degree_p;
+  static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
+};
 
 
 /**
@@ -1613,10 +1624,17 @@ template<int dim, int fe_degree_p, Method method>
 std::shared_ptr<FiniteElement<dim>>
 ModelProblem<dim, fe_degree_p, method>::generate_fe() const
 {
-  return std::make_shared<FESystem<dim>>(FESystem<dim>(typename Base::fe_type_v(fe_degree_v), dim),
-                                         1,
-                                         typename Base::fe_type_p(fe_degree_p),
-                                         1);
+  if constexpr(dof_layout_v == TPSS::DoFLayout::RT)
+    return std::make_shared<FESystem<dim>>(typename Base::fe_type_v(fe_degree_v),
+                                           1,
+                                           typename Base::fe_type_p(fe_degree_p),
+                                           1);
+  else
+    return std::make_shared<FESystem<dim>>(FESystem<dim>(typename Base::fe_type_v(fe_degree_v),
+                                                         dim),
+                                           1,
+                                           typename Base::fe_type_p(fe_degree_p),
+                                           1);
 }
 
 
@@ -1628,8 +1646,8 @@ ModelProblem<dim, fe_degree_p, method>::check_finite_elements() const
   //: check fe
   AssertDimension(fe->n_base_elements(), 2); // velocity + pressure
   const auto & fe_v = fe->base_element(0);
-  AssertDimension(fe_v.n_components(), dim);          // velocity
-  AssertDimension(fe_v.element_multiplicity(0), dim); // dim times base element
+  AssertDimension(fe_v.n_components(), dim); // velocity
+  AssertDimension(fe_v.element_multiplicity(0), dof_layout_v == TPSS::DoFLayout::RT ? 1 : dim);
   AssertThrow(TPSS::get_dof_layout(fe_v.base_element(0)) == dof_layout_v,
               ExcMessage("velocity part of fe and dof_layout are incompatible."));
   const auto & fe_p = fe->base_element(1);
@@ -1660,10 +1678,13 @@ ModelProblem<dim, fe_degree_p, method>::make_grid(const unsigned int n_refinemen
   //: estimate number of dofs (velocity + pressure)
   AssertDimension(fe->n_base_elements(), 2); // velocity + pressure
   const auto & fe_v = fe->base_element(0);
-  AssertDimension(fe_v.n_components(), dim);          // velocity
-  AssertDimension(fe_v.element_multiplicity(0), dim); // dim times FE_Q
-  const auto   n_dofs_est_v = dim * estimate_n_dofs(fe_v.base_element(0), mesh_prms);
-  const auto & fe_p         = fe->base_element(1);
+  AssertDimension(fe_v.n_components(), dim); // velocity
+  const auto n_dofs_est_v = [&]() {
+    if(fe_v.element_multiplicity(0) == dim)
+      return dim * estimate_n_dofs(fe_v.base_element(0), mesh_prms);
+    return estimate_n_dofs(fe_v, mesh_prms);
+  }();
+  const auto & fe_p = fe->base_element(1);
   AssertDimension(fe_p.n_components(), 1); // pressure
   const auto n_dofs_est_p = estimate_n_dofs(fe_p, mesh_prms);
   const auto n_dofs_est   = n_dofs_est_v + n_dofs_est_p;

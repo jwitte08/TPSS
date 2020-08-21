@@ -673,7 +673,8 @@ enum class Method
   TaylorHood,
   /*only for testing*/ TaylorHoodDGQ,
   Qkplus2_DGPk,
-  DGQkplus2_DGPk
+  DGQkplus2_DGPk,
+  RaviartThomas
 };
 
 
