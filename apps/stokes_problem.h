@@ -178,14 +178,19 @@ public:
 /**
  * TODO...
  */
-template<int dim, int fe_degree, typename Number = double>
-class SparseMatrixAugmented : public SparseMatrix<Number>,
-                              public Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree, Number>
+template<int dim,
+         int fe_degree,
+         typename Number            = double,
+         TPSS::DoFLayout dof_layout = TPSS::DoFLayout::Q>
+class SparseMatrixAugmented
+  : public SparseMatrix<Number>,
+    public Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree, Number, dof_layout>
 {
 public:
-  using value_type            = Number;
-  using matrix_type           = SparseMatrix<Number>;
-  using local_integrator_type = Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree, Number>;
+  using value_type  = Number;
+  using matrix_type = SparseMatrix<Number>;
+  using local_integrator_type =
+    Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree, Number, dof_layout>;
 
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
@@ -307,7 +312,7 @@ BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
   // or just apply one preconditioner sweep
   if(do_solve_A == true)
   {
-    SolverControl            solver_control(10000, utmp.l2_norm() * 1e-4);
+    SolverControl            solver_control(1000, utmp.l2_norm() * 1e-4);
     SolverCG<Vector<double>> cg(solver_control);
 
     dst.block(0) = 0.0;
@@ -330,10 +335,10 @@ BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
 template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
 struct MGCollectionVelocity
 {
-  static constexpr int n_q_points_1d = fe_degree + 1;
+  static constexpr int n_q_points_1d = fe_degree + 1 + (dof_layout == TPSS::DoFLayout::RT ? 1 : 0);
 
   using VECTOR = Vector<double>;
-  using MATRIX = SparseMatrixAugmented<dim, fe_degree, double>;
+  using MATRIX = SparseMatrixAugmented<dim, fe_degree, double, dof_layout>;
 
   using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
   using GAUSS_SEIDEL_SMOOTHER = PreconditionSOR<MATRIX>;
@@ -369,6 +374,8 @@ struct MGCollectionVelocity
 
   std::shared_ptr<MGConstrainedDoFs>                mg_constrained_dofs;
   MG_TRANSFER                                       mg_transfer;
+  Table<2, DoFTools::Coupling>                      cell_integrals_mask;
+  Table<2, DoFTools::Coupling>                      face_integrals_mask;
   MGLevelObject<SparsityPattern>                    mg_sparsity_patterns;
   MGLevelObject<MATRIX>                             mg_matrices;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_pre;
@@ -439,11 +446,13 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_multigrid(
   for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
   {
     DynamicSparsityPattern dsp(dof_handler->n_dofs(level), dof_handler->n_dofs(level));
-    MGTools::make_flux_sparsity_pattern(*dof_handler, dsp, level);
+    MGTools::make_flux_sparsity_pattern(
+      *dof_handler, dsp, level, cell_integrals_mask, face_integrals_mask);
     mg_sparsity_patterns[level].copy_from(dsp);
     mg_matrices[level].reinit(mg_sparsity_patterns[level]);
   }
-  //: assemble the velocity system A_l on each level l.
+
+  /// assemble the velocity system A_l on each level l.
   assemble_multigrid();
 
   // *** initialize multigrid transfer R_l
@@ -557,6 +566,11 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid()
   AssertDimension(mg_matrices.min_level(), parameters.coarse_level);
   Assert(mg_constrained_dofs, ExcMessage("mg_constrained_dofs is uninitialized."));
 
+  /// TODO discard terms for Hdiv conforming SIPG?
+  constexpr bool use_sipg_method =
+    dof_layout == TPSS::DoFLayout::DGQ || dof_layout == TPSS::DoFLayout::RT;
+  constexpr bool use_conf_method = dof_layout == TPSS::DoFLayout::Q;
+
   using Velocity::SIPG::MW::CopyData;
   using Velocity::SIPG::MW::ScratchData;
   using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
@@ -566,7 +580,8 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid()
   for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
   {
     AffineConstraints<double> level_constraints;
-    level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
+    if(dof_layout == TPSS::DoFLayout::Q)
+      level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
     level_constraints.close();
 
     {
@@ -594,16 +609,14 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid()
                            const unsigned int & nsf,
                            ScratchData<dim> &   scratch_data,
                            CopyData &           copy_data) {
-      if(dof_layout == TPSS::DoFLayout::DGQ)
-        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+      matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
     };
 
     auto boundary_worker = [&](const auto &         cell,
                                const unsigned int & face_no,
                                ScratchData<dim> &   scratch_data,
                                CopyData &           copy_data) {
-      if(dof_layout == TPSS::DoFLayout::DGQ)
-        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+      matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
     };
 
     const auto copier = [&](const CopyData & copy_data) {
@@ -627,16 +640,27 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid()
 
     CopyData copy_data(dof_handler->get_fe().dofs_per_cell);
 
-    MeshWorker::mesh_loop(dof_handler->begin_mg(level),
-                          dof_handler->end_mg(level),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                            MeshWorker::assemble_own_interior_faces_once,
-                          boundary_worker,
-                          face_worker);
+    if(use_conf_method)
+      MeshWorker::mesh_loop(dof_handler->begin_mg(level),
+                            dof_handler->end_mg(level),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells);
+    else if(use_sipg_method)
+      MeshWorker::mesh_loop(dof_handler->begin_mg(level),
+                            dof_handler->end_mg(level),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                              MeshWorker::assemble_own_interior_faces_once,
+                            boundary_worker,
+                            face_worker);
+    else
+      AssertThrow(false, ExcMessage("This FEM is not implemented"));
   }
 }
 
@@ -665,7 +689,8 @@ template<int             dim,
          LocalAssembly   local_assembly = LocalAssembly::Tensor>
 struct MGCollectionVelocityPressure
 {
-  static constexpr int n_q_points_1d = fe_degree_v + 1;
+  static constexpr int n_q_points_1d =
+    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
 
   using VECTOR = BlockVector<double>;
   using MATRIX =
@@ -801,6 +826,10 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
               ExcMessage("dof_handler_velocity and dof_layout_v are incompatible."));
   Assert(dof_handler_pressure, ExcMessage("Did you set dof_handler_pressure?"));
 
+  constexpr bool use_sipg_method =
+    dof_layout_v == TPSS::DoFLayout::DGQ || dof_layout_v == TPSS::DoFLayout::RT;
+  constexpr bool use_conf_method = dof_layout_v == TPSS::DoFLayout::Q;
+
   for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
   {
     /// As long as the DoF numbering of dof_handler_velocity and the velocity
@@ -857,16 +886,14 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                              const unsigned int & nsf,
                              ScratchData<dim> &   scratch_data,
                              CopyData &           copy_data) {
-        if(dof_layout_v == TPSS::DoFLayout::DGQ)
-          matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
       };
 
       auto boundary_worker = [&](const auto &         cell,
                                  const unsigned int & face_no,
                                  ScratchData<dim> &   scratch_data,
                                  CopyData &           copy_data) {
-        if(dof_layout_v == TPSS::DoFLayout::DGQ)
-          matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
       };
 
       const auto copier = [&](const CopyData & copy_data) {
@@ -893,16 +920,27 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
       CopyData copy_data(dof_handler_velocity->get_fe().dofs_per_cell);
 
-      MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
-                            dof_handler_velocity->end_mg(level),
-                            cell_worker,
-                            copier,
-                            scratch_data,
-                            copy_data,
-                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                              MeshWorker::assemble_own_interior_faces_once,
-                            boundary_worker,
-                            face_worker);
+      if(use_conf_method)
+        MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
+                              dof_handler_velocity->end_mg(level),
+                              cell_worker,
+                              copier,
+                              scratch_data,
+                              copy_data,
+                              MeshWorker::assemble_own_cells);
+      else if(use_sipg_method)
+        MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
+                              dof_handler_velocity->end_mg(level),
+                              cell_worker,
+                              copier,
+                              scratch_data,
+                              copy_data,
+                              MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                                MeshWorker::assemble_own_interior_faces_once,
+                              boundary_worker,
+                              face_worker);
+      else
+        AssertThrow(false, ExcMessage("This FEM is not supported"));
     }
 
     /// Assemble pressure-pressure block.
@@ -936,19 +974,16 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                              const unsigned int &      nsf,
                              ScratchData<dim> &        scratch_data,
                              CopyData &                copy_data) {
-        if(dof_layout_v == TPSS::DoFLayout::DGQ)
-        {
-          LevelCellIterator cell_ansatz(&dof_handler_pressure->get_triangulation(),
-                                        cell->level(),
-                                        cell->index(),
-                                        dof_handler_pressure);
-          LevelCellIterator ncell_ansatz(&dof_handler_pressure->get_triangulation(),
-                                         ncell->level(),
-                                         ncell->index(),
-                                         dof_handler_pressure);
-          matrix_integrator.face_worker(
-            cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
-        }
+        LevelCellIterator cell_ansatz(&dof_handler_pressure->get_triangulation(),
+                                      cell->level(),
+                                      cell->index(),
+                                      dof_handler_pressure);
+        LevelCellIterator ncell_ansatz(&dof_handler_pressure->get_triangulation(),
+                                       ncell->level(),
+                                       ncell->index(),
+                                       dof_handler_pressure);
+        matrix_integrator.face_worker(
+          cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
       };
 
       auto boundary_worker = [&](const LevelCellIterator & cell,
@@ -959,7 +994,6 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                       cell->level(),
                                       cell->index(),
                                       dof_handler_pressure);
-        // AssertThrow(false, ExcMessage("TODO... no conv. for DivFreeBell"));
         matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
       };
 
@@ -1017,7 +1051,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
       CopyData copy_data(dof_handler_velocity->get_fe().dofs_per_cell,
                          dof_handler_pressure->get_fe().dofs_per_cell);
 
-      if(dof_layout_v == TPSS::DoFLayout::Q)
+      if(use_conf_method)
         MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
                               dof_handler_velocity->end_mg(level),
                               cell_worker,
@@ -1025,7 +1059,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                               scratch_data,
                               copy_data,
                               MeshWorker::assemble_own_cells);
-      else if(dof_layout_v == TPSS::DoFLayout::DGQ)
+      else if(use_sipg_method)
         MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
                               dof_handler_velocity->end_mg(level),
                               cell_worker,
@@ -1037,7 +1071,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                               boundary_worker,
                               face_worker);
       else
-        AssertThrow(false, ExcMessage("Invalid."));
+        AssertThrow(false, ExcMessage("This FEM is not implemented."));
     }
   }
 }
@@ -1334,13 +1368,15 @@ class ModelProblem : public ModelProblemBase<method, dim, fe_degree_p>
   using Base = ModelProblemBase<method, dim, fe_degree_p>;
 
 public:
-  static constexpr int fe_degree_v   = Base::fe_degree_v;
-  static constexpr int n_q_points_1d = fe_degree_v + 1;
   using Base::dof_layout_p;
   using Base::dof_layout_v;
   using Base::fe_type_p;
   using Base::fe_type_v;
   using Base::local_assembly;
+
+  static constexpr int fe_degree_v = Base::fe_degree_v;
+  static constexpr int n_q_points_1d =
+    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
 
   ModelProblem(const RT::Parameter & rt_parameters_in, const EquationData & equation_data_in);
 
@@ -1992,10 +2028,12 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     for(auto j = 0U; j < dim + 1; ++j)
     {
       cell_integrals_mask(i, j) = DoFTools::Coupling::always;
-      if(dof_layout_v == TPSS::DoFLayout::DGQ)
+      if(dof_layout_v == TPSS::DoFLayout::DGQ || dof_layout_v == TPSS::DoFLayout::RT)
         face_integrals_mask(i, j) = DoFTools::Coupling::always;
-      else
+      else if(dof_layout_v == TPSS::DoFLayout::Q)
         face_integrals_mask(i, j) = DoFTools::Coupling::none;
+      else
+        AssertThrow(false, ExcMessage("This dof layout is not supported."));
     }
 
   system_matrix.clear();
@@ -2077,6 +2115,11 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 {
+  /// TODO discard redundant terms for Hdiv-conforming SIPG !!!
+  constexpr bool use_sipg_method =
+    dof_layout_v == TPSS::DoFLayout::DGQ || dof_layout_v == TPSS::DoFLayout::RT;
+  constexpr bool use_conf_method = dof_layout_v == TPSS::DoFLayout::Q;
+
   /// Assemble the velocity block, here block(0,0).
   {
     using Velocity::SIPG::MW::CopyData;
@@ -2086,8 +2129,10 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     const auto             component_range = std::make_pair<unsigned int>(0, dim);
     FunctionExtractor<dim> load_function_velocity(load_function.get(), component_range);
     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
-    const auto *           particular_solution_velocity =
-      dof_layout_v == TPSS::DoFLayout::Q ? &(system_solution.block(0)) : nullptr;
+
+    const auto * particular_solution_velocity =
+      use_conf_method ? &(system_solution.block(0)) : nullptr;
+
     MatrixIntegrator matrix_integrator(&load_function_velocity,
                                        &analytical_solution_velocity,
                                        particular_solution_velocity,
@@ -2106,16 +2151,14 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                            const unsigned int & nsf,
                            ScratchData<dim> &   scratch_data,
                            CopyData &           copy_data) {
-      if(dof_layout_v == TPSS::DoFLayout::DGQ)
-        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+      matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
     };
 
     auto boundary_worker = [&](const auto &         cell,
                                const unsigned int & face_no,
                                ScratchData<dim> &   scratch_data,
                                CopyData &           copy_data) {
-      if(dof_layout_v == TPSS::DoFLayout::DGQ)
-        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+      matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
     };
 
     const auto copier = [&](const CopyData & copy_data) {
@@ -2152,17 +2195,30 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
     ScratchData<dim> scratch_data(
       mapping, dof_handler_velocity.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
+
     CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
-    MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                          dof_handler_velocity.end(),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                            MeshWorker::assemble_own_interior_faces_once,
-                          boundary_worker,
-                          face_worker);
+
+    if(use_conf_method)
+      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+                            dof_handler_velocity.end(),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells);
+    else if(use_sipg_method)
+      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+                            dof_handler_velocity.end(),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                              MeshWorker::assemble_own_interior_faces_once,
+                            boundary_worker,
+                            face_worker);
+    else
+      AssertThrow(false, ExcMessage("This FEM is not implemented."));
   }
 
   /// Assemble the pressure block, here block(1,1).
@@ -2173,6 +2229,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
     const auto             component_range = std::make_pair<unsigned int>(dim, dim + 1);
     FunctionExtractor<dim> load_function_pressure(load_function.get(), component_range);
+
     MatrixIntegrator matrix_integrator(&load_function_pressure, nullptr, nullptr, equation_data);
 
     auto cell_worker =
@@ -2195,7 +2252,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
     ScratchData<dim> scratch_data(
       mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
+
     CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
+
     MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
                           dof_handler_pressure.end(),
                           cell_worker,
@@ -2215,16 +2274,15 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     using CellIterator     = typename MatrixIntegrator::IteratorType;
 
     const auto * particular_solution_velocity =
-      dof_layout_v == TPSS::DoFLayout::Q ? &(system_solution.block(0)) : nullptr;
+      use_conf_method ? &(system_solution.block(0)) : nullptr;
     const auto * particular_solution_pressure =
-      dof_layout_v == TPSS::DoFLayout::Q ? &(system_solution.block(1)) : nullptr;
-    // const auto             component_range_pressure = std::make_pair<unsigned int>(dim, dim + 1);
-    // FunctionExtractor<dim> analytical_solution_pressure(analytical_solution.get(),
-    //                                                     component_range_pressure);
+      use_conf_method ? &(system_solution.block(1)) : nullptr;
+
     const auto             component_range_velocity = std::make_pair<unsigned int>(0, dim);
     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(),
                                                         component_range_velocity);
-    MatrixIntegrator       matrix_integrator(particular_solution_velocity,
+
+    MatrixIntegrator matrix_integrator(particular_solution_velocity,
                                        particular_solution_pressure,
                                        &analytical_solution_velocity,
                                        /*&analytical_solution_pressure*/ nullptr,
@@ -2247,33 +2305,27 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                            const unsigned int & nsf,
                            ScratchData<dim> &   scratch_data,
                            CopyData &           copy_data) {
-      if(dof_layout_v == TPSS::DoFLayout::DGQ)
-      {
-        CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
-                                 cell->level(),
-                                 cell->index(),
-                                 &dof_handler_pressure);
-        CellIterator ncell_ansatz(&dof_handler_pressure.get_triangulation(),
-                                  ncell->level(),
-                                  ncell->index(),
-                                  &dof_handler_pressure);
-        matrix_integrator.face_worker(
-          cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
-      }
+      CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
+                               cell->level(),
+                               cell->index(),
+                               &dof_handler_pressure);
+      CellIterator ncell_ansatz(&dof_handler_pressure.get_triangulation(),
+                                ncell->level(),
+                                ncell->index(),
+                                &dof_handler_pressure);
+      matrix_integrator.face_worker(
+        cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
     };
 
     auto boundary_worker = [&](const CellIterator & cell,
                                const unsigned int & face_no,
                                ScratchData<dim> &   scratch_data,
                                CopyData &           copy_data) {
-      if(dof_layout_v == TPSS::DoFLayout::DGQ)
-      {
-        CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
-                                 cell->level(),
-                                 cell->index(),
-                                 &dof_handler_pressure);
-        matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
-      }
+      CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
+                               cell->level(),
+                               cell->index(),
+                               &dof_handler_pressure);
+      matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
     };
 
     const auto copier = [&](const CopyData & copy_data) {
@@ -2297,8 +2349,10 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
       for(auto & cdf : copy_data.face_data)
       {
+        /// all rhs contributions are written to copy_data
         AssertDimension(cdf.cell_rhs_test.size(), 0);
         AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
+
         zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
           cdf.cell_matrix,
           cdf.joint_dof_indices_test,
@@ -2331,10 +2385,11 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                   update_flags_pressure,
                                   interface_update_flags_velocity,
                                   interface_update_flags_pressure);
-    CopyData         copy_data(dof_handler_velocity.get_fe().dofs_per_cell,
+
+    CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell,
                        dof_handler_pressure.get_fe().dofs_per_cell);
 
-    if(dof_layout_v == TPSS::DoFLayout::Q)
+    if(use_conf_method)
       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
                             dof_handler_velocity.end(),
                             cell_worker,
@@ -2342,7 +2397,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                             scratch_data,
                             copy_data,
                             MeshWorker::assemble_own_cells);
-    else if(dof_layout_v == TPSS::DoFLayout::DGQ)
+    else if(use_sipg_method)
       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
                             dof_handler_velocity.end(),
                             cell_worker,
@@ -2354,7 +2409,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                             boundary_worker,
                             face_worker);
     else
-      AssertThrow(false, ExcMessage("Invalid."));
+      AssertThrow(false, ExcMessage("This FEM is not supported."));
   }
 }
 
@@ -2480,6 +2535,14 @@ ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity()
 
   mgc_velocity.dof_handler = &dof_handler_velocity;
   mgc_velocity.mapping     = &mapping;
+  mgc_velocity.cell_integrals_mask.reinit(dim, dim);
+  mgc_velocity.face_integrals_mask.reinit(dim, dim);
+  for(auto i = 0U; i < dim; ++i)
+    for(auto j = 0U; j < dim; ++j)
+    {
+      mgc_velocity.cell_integrals_mask(i, j) = cell_integrals_mask(i, j);
+      mgc_velocity.face_integrals_mask(i, j) = face_integrals_mask(i, j);
+    }
 
   mgc_velocity.prepare_multigrid(max_level(), user_coloring);
 
@@ -2712,6 +2775,8 @@ ModelProblem<dim, fe_degree_p, method>::compute_L2_error_velocity() const
                                     &velocity_mask);
   return difference_per_cell;
 }
+
+
 
 template<int dim, int fe_degree_p, Method method>
 std::shared_ptr<Vector<double>>

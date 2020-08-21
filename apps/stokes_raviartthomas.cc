@@ -37,7 +37,7 @@ main(int argc, char * argv[])
     unsigned int test_index                  = 0;
     unsigned int debug_depth                 = 0;
     double       damping                     = 0.;
-    unsigned int force_mean_value_constraint = 0;
+    unsigned int force_mean_value_constraint = false;
     double       ip_factor                   = 0.;
     unsigned int n_cycles                    = 3;
     unsigned int local_solver_variant        = 0;
@@ -67,7 +67,7 @@ main(int argc, char * argv[])
     options.prms.n_cycles = n_cycles;
 
     EquationData equation_data;
-    equation_data.variant           = EquationData::Variant::DivFreePoiseuille; // !!!
+    equation_data.variant           = EquationData::Variant::DivFreeHom; // !!!
     equation_data.use_cuthill_mckee = false;
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;

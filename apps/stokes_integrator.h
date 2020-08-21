@@ -324,11 +324,11 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
       /// Nitsche method (weak Dirichlet conditions)
       if(!is_multigrid)
       {
-        const auto & solution         = solution_values[q];
-        const auto & solution_cross_n = solution_cross_normals[q];
+        const auto & u         = solution_values[q];
+        const auto & u_cross_n = solution_cross_normals[q];
 
-        nitsche_iq = -scalar_product(solution_cross_n, av_symgrad_phi_i);
-        nitsche_iq += gamma_over_h * solution * jump_phi_i;
+        nitsche_iq = -scalar_product(u_cross_n, av_symgrad_phi_i);
+        nitsche_iq += gamma_over_h * u * jump_phi_i;
         nitsche_iq *= 2. * fe_interface_values.JxW(q);
 
         copy_data.cell_rhs(i) += nitsche_iq;
@@ -372,7 +372,9 @@ public:
                              const std::pair<unsigned int, unsigned int> subdomain_range) const
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
-    constexpr bool is_sipg = TPSS::DoFLayout::DGQ == dof_layout;
+    /// TODO tangential components only for RT !!!
+    constexpr bool is_sipg =
+      TPSS::DoFLayout::DGQ == dof_layout || TPSS::DoFLayout::RT == dof_layout;
 
     // const auto zero_out = [](std::vector<std::array<matrix_type_1d, dim>> & rank1_tensors) {
     //   for(auto & tensor : rank1_tensors)
@@ -767,6 +769,8 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
 
   const unsigned int dofs_per_cell = phi.get_fe().dofs_per_cell;
 
+  AssertDimension(load_function->n_components, 1U); // !!!
+
   const auto & quadrature_points = phi.get_quadrature_points();
   for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
   {
@@ -1034,15 +1038,17 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cellU,
     copy_data.cell_rhs_ansatz -= w0;
   }
 
-  if(!is_multigrid && discrete_solutionP)
-  {
-    Vector<double> p0(n_dofs_per_cellP);
-    for(auto i = 0U; i < p0.size(); ++i)
-      p0(i) = (*discrete_solutionP)(copy_data.local_dof_indices_ansatz[i]);
-    Vector<double> w0(n_dofs_per_cellU);
-    copy_data.cell_matrix.vmult(w0, p0);
-    copy_data.cell_rhs_test -= w0;
-  }
+  /// There is no need for this as we have not imposed boundary conditions on
+  /// the pressure !!!
+  // if(!is_multigrid && discrete_solutionP)
+  // {
+  //   Vector<double> p0(n_dofs_per_cellP);
+  //   for(auto i = 0U; i < p0.size(); ++i)
+  //     p0(i) = (*discrete_solutionP)(copy_data.local_dof_indices_ansatz[i]);
+  //   Vector<double> w0(n_dofs_per_cellU);
+  //   copy_data.cell_matrix.vmult(w0, p0);
+  //   copy_data.cell_rhs_test -= w0;
+  // }
 }
 
 template<int dim, bool is_multigrid>
