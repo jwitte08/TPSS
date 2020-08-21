@@ -62,6 +62,8 @@ using ::MW::compute_symgrad;
 
 using ::MW::compute_average_symgrad;
 
+using ::MW::compute_vvalue;
+
 using ::MW::compute_vjump;
 
 using ::MW::compute_vjump_cross_normal;
@@ -128,10 +130,25 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
 
   const unsigned int dofs_per_cell = phi.get_fe().dofs_per_cell;
 
-  const auto & quadrature_points = phi.get_quadrature_points();
+  std::vector<Tensor<1, dim>> load_values;
+  if(!is_multigrid)
+  {
+    Assert(load_function, ExcMessage("load_function is not set."));
+    AssertDimension(load_function->n_components, dim);
+    const auto & q_points = phi.get_quadrature_points();
+    std::transform(q_points.cbegin(),
+                   q_points.cend(),
+                   std::back_inserter(load_values),
+                   [this](const auto & x_q) {
+                     Tensor<1, dim> value;
+                     for(auto c = 0U; c < dim; ++c)
+                       value[c] = load_function->value(x_q, c);
+                     return value;
+                   });
+  }
+
   for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
   {
-    const auto & x_q = quadrature_points[q];
     for(unsigned int i = 0; i < dofs_per_cell; ++i)
     {
       const SymmetricTensor<2, dim> symgrad_phi_i = compute_symgrad(phi, i, q);
@@ -147,9 +164,8 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
 
       if(!is_multigrid)
       {
-        const unsigned int component_i = phi.get_fe().system_to_component_index(i).first;
-        const auto         load_value  = load_function->value(x_q, component_i);
-        copy_data.cell_rhs(i) += phi.shape_value(i, q) * load_value * phi.JxW(q);
+        const auto & phi_i = compute_vvalue(phi, i, q);
+        copy_data.cell_rhs(i) += phi_i * load_values[q] * phi.JxW(q);
       }
     }
   }
@@ -800,6 +816,8 @@ namespace MW
 using ::MW::ScratchData;
 
 using ::MW::CopyData;
+
+
 
 template<int dim, bool is_multigrid = false>
 struct MatrixIntegrator
