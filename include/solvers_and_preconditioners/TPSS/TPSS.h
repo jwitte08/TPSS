@@ -29,12 +29,13 @@ enum class DoFLayout
   invalid,
   DGQ,
   Q,
-  DGP
+  DGP,
+  RT
 };
 std::string
 str_dof_layout(DoFLayout dof_layout)
 {
-  std::string str[] = {"invalid", "DGQ", "Q", "DGP"};
+  std::string str[] = {"invalid", "DGQ", "Q", "DGP", "RaviartThomas"};
   return str[(int)dof_layout];
 }
 
@@ -50,6 +51,8 @@ get_dof_layout(const FiniteElement<dim> & finite_element)
     dof_layout = DoFLayout::Q;
   else if(finite_element.get_name().find("FE_DGP") != std::string::npos)
     dof_layout = DoFLayout::DGP;
+  else if(finite_element.get_name().find("RaviartThoma") != std::string::npos)
+    dof_layout = DoFLayout::RT;
   return dof_layout;
 }
 
