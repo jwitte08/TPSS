@@ -273,10 +273,12 @@ template<int dim>
 long long unsigned int
 estimate_n_dofs(const FiniteElement<dim> & fe, const MeshParameter & prms)
 {
-  AssertDimension(fe.n_components(), 1); // support only scalar functions
-  const auto dof_layout = TPSS::get_dof_layout(fe);
+  const auto dof_layout        = TPSS::get_dof_layout(fe);
+  const bool is_raviart_thomas = dof_layout == TPSS::DoFLayout::RT;
   const bool is_discontinuous =
     TPSS::DoFLayout::DGQ == dof_layout || TPSS::DoFLayout::DGP == dof_layout;
+
+  AssertDimension(fe.n_components(), is_raviart_thomas ? dim : 1); // scalar or RT functions
 
   if(is_discontinuous)
   {
@@ -299,17 +301,18 @@ estimate_n_dofs(const FiniteElement<dim> & fe, const MeshParameter & prms)
     return n_dofs_est;
   }
 
-  else if(TPSS::DoFLayout::Q == dof_layout)
+  else if(TPSS::DoFLayout::Q == dof_layout || is_raviart_thomas)
   {
     const unsigned int                      n_dofs_per_cell_1d = fe.tensor_degree() + 1;
     std::array<long long unsigned int, dim> n_dofs_1d;
     for(auto d = 0U; d < dim; ++d)
     {
+      const bool                   has_lower_degree = is_raviart_thomas && d != 0U ? true : false;
       const long long unsigned int n_cells_1d = prms.n_root_cells_1d(d) * (1 << prms.n_refinements);
-      n_dofs_1d[d]                            = n_cells_1d * (n_dofs_per_cell_1d - 1) + 1;
+      n_dofs_1d[d] = n_cells_1d * (n_dofs_per_cell_1d - (has_lower_degree ? 2 : 1)) + 1;
     }
     Tensors::TensorHelper<dim, long long unsigned int> dof_tensor(n_dofs_1d);
-    return dof_tensor.n_flat();
+    return fe.n_components() * dof_tensor.n_flat();
   }
 
   AssertThrow(false, ExcMessage("Dof layout is not supported."));
