@@ -8,6 +8,7 @@
 #ifndef EQUATION_DATA_H_
 #define EQUATION_DATA_H_
 
+#include <deal.II/base/polynomial.h>
 #include <deal.II/base/tensor_function.h>
 
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
@@ -518,13 +519,30 @@ public:
  */
 namespace Biharmonic
 {
+enum LocalSolverVariant
+{
+  Exact,
+  Bilaplacian
+};
+
+
+
 struct EquationData
 {
-  enum LocalSolverVariant
+  enum class Variant
   {
-    Exact,
-    Bilaplacian
+    ClampedHom,
+    ClampedBell,
+    ClampedStream
   };
+  static std::string
+  str_equation_variant(const Variant variant)
+  {
+    std::string str[] = {"clamped (homogeneous)",
+                         "clamped (Gaussian bells)",
+                         "clamped (stream function)"};
+    return str[static_cast<int>(variant)];
+  }
 
   static std::string
   str_local_solver(const LocalSolverVariant variant);
@@ -539,12 +557,13 @@ struct EquationData
   to_string() const
   {
     std::ostringstream oss;
-    oss << Util::parameter_to_fstring("Equation Data:", "");
+    oss << Util::parameter_to_fstring("Equation Data:", str_equation_variant(variant));
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
     oss << Util::parameter_to_fstring("Local solver:", str_local_solver(local_solver_variant));
     return oss.str();
   }
 
+  Variant                      variant                = Variant::ClampedHom;
   std::set<types::boundary_id> dirichlet_boundary_ids = {0};
   double                       ip_factor              = 1.;
   LocalSolverVariant           local_solver_variant   = LocalSolverVariant::Exact;
@@ -576,16 +595,17 @@ private:
 
 
 
-namespace ZeroBoundary
+namespace Clamped
 {
-using numbers::PI;
-
+namespace Homogeneous
+{
 template<int dim>
 class Solution : public Function<dim>
 {
-public:
   static_assert(dim == 2, "Only dim==2 is implemented.");
+  static constexpr auto PI = numbers::PI;
 
+public:
   virtual double
   value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
   {
@@ -630,7 +650,7 @@ public:
 
 template<int dim>
 using Load = ManufacturedLoad<dim, Solution<dim>>;
-} // namespace ZeroBoundary
+} // namespace Homogeneous
 
 
 
@@ -645,7 +665,132 @@ template<int dim>
 using Load = ManufacturedLoad<dim, Solution<dim>>;
 } // namespace GaussianBells
 
+
+
+namespace StreamFunction
+{
+template<int dim>
+struct SolutionBase
+{
+  static const std::vector<double> polynomial_coefficients;
+};
+
+template<>
+const std::vector<double> SolutionBase<2>::polynomial_coefficients = {{0., 0., 1., -2., 1.}};
+
+
+
+template<int dim>
+class Solution : public Function<dim>, protected SolutionBase<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+
+public:
+  Solution() : Function<dim>(1), poly(SolutionBase<dim>::polynomial_coefficients)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto x = p[0];
+    const auto y = p[1];
+
+    std::vector<double> values_x(1U), values_y(1U);
+    poly.value(x, values_x);
+    poly.value(y, values_y);
+    const auto poly_x = values_x[0];
+    const auto poly_y = values_y[0];
+
+    return poly_x * poly_y;
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto x = p[0];
+    const auto y = p[1];
+
+    std::vector<double> values_x(2U), values_y(2U);
+    poly.value(x, values_x);
+    poly.value(y, values_y);
+    const auto poly_x  = values_x[0];
+    const auto Dpoly_x = values_x[1];
+    const auto poly_y  = values_y[0];
+    const auto Dpoly_y = values_y[1];
+
+    Tensor<1, dim> grad;
+    grad[0] = Dpoly_x * poly_y;
+    grad[1] = poly_x * Dpoly_y;
+
+    return grad;
+  }
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto x = p[0];
+    const auto y = p[1];
+
+    std::vector<double> values_x(3U), values_y(3U);
+    poly.value(x, values_x);
+    poly.value(y, values_y);
+    const auto poly_x   = values_x[0];
+    const auto Dpoly_x  = values_x[1];
+    const auto D2poly_x = values_x[2];
+    const auto poly_y   = values_y[0];
+    const auto Dpoly_y  = values_y[1];
+    const auto D2poly_y = values_y[2];
+
+    SymmetricTensor<2, dim> hess;
+    hess[0][0] = D2poly_x * poly_y;
+    hess[0][1] = Dpoly_x * Dpoly_y;
+    hess[1][1] = poly_x * D2poly_y;
+
+    return hess;
+  }
+
+  double
+  bilaplacian(const Point<dim> & p, const unsigned int /*component*/ = 0) const
+  {
+    const auto & x = p[0];
+    const auto & y = p[1];
+
+    std::vector<double> values_x(5U), values_y(5U);
+    poly.value(x, values_x);
+    poly.value(y, values_y);
+    const auto poly_x = values_x[0];
+    // const auto Dpoly_x  = values_x[1];
+    const auto D2poly_x = values_x[2];
+    // const auto D3poly_x = values_x[3];
+    const auto D4poly_x = values_x[4];
+    const auto poly_y   = values_y[0];
+    // const auto Dpoly_y  = values_y[1];
+    const auto D2poly_y = values_y[2];
+    // const auto D3poly_y = values_y[3];
+    const auto D4poly_y = values_y[4];
+
+    double bilapl = 0.;
+    bilapl        = D4poly_x * poly_y + 2. * D2poly_x * D2poly_y + poly_x * D4poly_y;
+
+    return bilapl;
+  }
+
+private:
+  Polynomials::Polynomial<double> poly;
+};
+
+
+
+template<int dim>
+using Load = ManufacturedLoad<dim, Solution<dim>>;
+} // namespace StreamFunction
+
+} // namespace Clamped
+
 } // namespace Biharmonic
+
+
 
 /**
  *
@@ -678,22 +823,25 @@ enum class Method
 };
 
 
+
 struct EquationData
 {
   enum class Variant
   {
     DivFree,
-    DivFreeHom,
+    DivFreeSlip,
     DivFreeBell,
-    DivFreePoiseuille
+    DivFreePoiseuille,
+    DivFreeNoSlip
   };
   static std::string
   str_equation_variant(const Variant variant)
   {
     std::string str[] = {"divergence-free",
-                         "divergence-free + homogeneous Dirichlet",
+                         "divergence-free (slip)",
                          "divergence-free (Gaussian bells)",
-                         "divergence-free (Poiseuille)"};
+                         "divergence-free (Poiseuille)",
+                         "divergence-free (no-slip)"};
     return str[static_cast<int>(variant)];
   }
 
@@ -1174,7 +1322,7 @@ Load<3>::value(const Point<3> & p, const unsigned int component) const
 
 
 
-namespace Homogeneous
+namespace Slip
 {
 /**
  * This class represents the vector curl of
@@ -1334,7 +1482,7 @@ SolutionPressure<2>::hessian(const Point<2> &, const unsigned int) const
 template<int dim>
 using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
 
-} // namespace Homogeneous
+} // namespace Slip
 
 
 
@@ -1750,7 +1898,228 @@ SolutionPressure<2>::hessian(const Point<2> &, const unsigned int) const
 
 template<int dim>
 using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
+
 } // namespace Poiseuille
+
+
+
+namespace NoSlip
+{
+/**
+ * Given the univariate polynomial (@p poly)
+ *
+ *    p(x) = (x-1)^2 * x^2
+ *
+ * this class represents the vector curl of
+ *
+ *    PHI(x,y) = p(x) * p(y)
+ *
+ * in two dimensions. The roots of p(x) lead to no-slip boundary conditions on
+ * the unit cube [0,1]^2. This is the reference solution for the stream function
+ * formulation in Kanschat, Sharma '14, thus closely connected to the biharmonic
+ * problem of stream functions with clamped boundary conditions.
+ */
+template<int dim>
+class SolutionVelocity : public Function<dim>,
+                         protected Biharmonic::Clamped::StreamFunction::SolutionBase<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+  using Biharmonic::Clamped::StreamFunction::SolutionBase<dim>::polynomial_coefficients;
+
+public:
+  SolutionVelocity() : Function<dim>(dim), poly(polynomial_coefficients)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    AssertIndexRange(component, dim);
+
+    const auto          x = p[0];
+    const auto          y = p[1];
+    std::vector<double> values_x(2U), values_y(2U);
+    poly.value(x, values_x);
+    poly.value(y, values_y);
+    const auto poly_x  = values_x[0];
+    const auto Dpoly_x = values_x[1];
+    const auto poly_y  = values_y[0];
+    const auto Dpoly_y = values_y[1];
+
+    double val = 0.;
+    if(component == 0U)
+      val = poly_x * Dpoly_y;
+    else if(component == 1U)
+      val = -Dpoly_x * poly_y;
+    else
+      AssertThrow(false, ExcMessage("Invalid component."));
+    return val;
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    AssertIndexRange(component, dim);
+
+    const auto x = p[0];
+    const auto y = p[1];
+
+    std::vector<double> values_x(3U), values_y(3U);
+    poly.value(x, values_x);
+    poly.value(y, values_y);
+    const auto poly_x   = values_x[0];
+    const auto Dpoly_x  = values_x[1];
+    const auto D2poly_x = values_x[2];
+    const auto poly_y   = values_y[0];
+    const auto Dpoly_y  = values_y[1];
+    const auto D2poly_y = values_y[2];
+
+    Tensor<1, dim> grad;
+    if(component == 0U)
+    {
+      grad[0] = Dpoly_x * Dpoly_y;
+      grad[1] = poly_x * D2poly_y;
+    }
+    else if(component == 1U)
+    {
+      grad[0] = -D2poly_x * poly_y;
+      grad[1] = -Dpoly_x * Dpoly_y;
+    }
+    else
+      AssertThrow(false, ExcMessage("Invalid component."));
+    return grad;
+  }
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    AssertIndexRange(component, dim);
+
+    const auto x = p[0];
+    const auto y = p[1];
+
+    std::vector<double> values_x(4U), values_y(4U);
+    poly.value(x, values_x);
+    poly.value(y, values_y);
+    const auto poly_x   = values_x[0];
+    const auto Dpoly_x  = values_x[1];
+    const auto D2poly_x = values_x[2];
+    const auto D3poly_x = values_x[3];
+    const auto poly_y   = values_y[0];
+    const auto Dpoly_y  = values_y[1];
+    const auto D2poly_y = values_y[2];
+    const auto D3poly_y = values_y[3];
+
+    SymmetricTensor<2, dim> hess;
+    if(component == 0U)
+    {
+      hess[0][0] = D2poly_x * Dpoly_y;
+      hess[0][1] = Dpoly_x * D2poly_y;
+      hess[1][1] = poly_x * D3poly_y;
+    }
+    else if(component == 1U)
+    {
+      hess[0][0] = -D3poly_x * poly_y;
+      hess[0][1] = -D2poly_x * Dpoly_y;
+      hess[1][1] = -Dpoly_x * D2poly_y;
+    }
+    else
+      AssertThrow(false, ExcMessage("Invalid component."));
+    return hess;
+  }
+
+private:
+  Polynomials::Polynomial<double> poly;
+};
+
+
+
+/**
+ * Choosing a constant zero pressure results in a divergence-free manufactured
+ * load.
+ */
+template<int dim>
+class SolutionPressure : public ZeroFunction<dim>
+{
+public:
+  SolutionPressure() : ZeroFunction<dim>(1U)
+  {
+  }
+};
+
+
+
+template<int dim>
+using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
+
+
+
+/**
+ * The explicit definition of the divergence-free load which suits the
+ * velocity and pressure reference solutions from above.
+ */
+template<int dim>
+class Load : public Function<dim>, protected Biharmonic::Clamped::StreamFunction::SolutionBase<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+  using Biharmonic::Clamped::StreamFunction::SolutionBase<dim>::polynomial_coefficients;
+
+public:
+  Load() : Function<dim>(dim + 1), poly(std::vector<double>{{0., 0., 1., -2., 1.}})
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    constexpr auto pressure_index = dim;
+    double         value          = 0.;
+
+    const auto x = p[0];
+    const auto y = p[1];
+
+    std::vector<double> values_x(4U), values_y(4U);
+    poly.value(x, values_x);
+    poly.value(y, values_y);
+    const auto poly_x   = values_x[0];
+    const auto Dpoly_x  = values_x[1];
+    const auto D2poly_x = values_x[2];
+    const auto D3poly_x = values_x[3];
+    const auto poly_y   = values_y[0];
+    const auto Dpoly_y  = values_y[1];
+    const auto D2poly_y = values_y[2];
+    const auto D3poly_y = values_y[3];
+
+    if(component < pressure_index)
+    {
+      if(component == 0U)
+      {
+        value = -D2poly_x * Dpoly_y - poly_x * D3poly_y;
+      }
+      else if(component == 1U)
+      {
+        value = D3poly_x * poly_y + Dpoly_x * D2poly_y;
+      }
+      else
+        AssertThrow(false, ExcMessage("Invalid component."));
+    }
+
+    else if(component == pressure_index)
+    {
+      value = 0.;
+    }
+
+    else
+      AssertThrow(false, ExcMessage("Invalid component."));
+
+    return value;
+  }
+
+  Polynomials::Polynomial<double> poly;
+};
+
+} // namespace NoSlip
+
 } // namespace DivergenceFree
 
 } // namespace Stokes
