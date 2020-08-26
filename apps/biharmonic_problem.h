@@ -270,10 +270,28 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
                                            const EquationData &  equation_data_in)
   : rt_parameters(rt_parameters_in),
     equation_data(equation_data_in),
-    // analytical_solution(std::make_shared<ZeroBoundary::Solution<dim>>()),
-    // load_function(std::make_shared<ZeroBoundary::Load<dim>>()),
-    analytical_solution(std::make_shared<GaussianBells::Solution<dim>>()),
-    load_function(std::make_shared<GaussianBells::Load<dim>>()),
+    analytical_solution([&]() -> std::shared_ptr<Function<dim>> {
+      if(equation_data_in.variant == EquationData::Variant::ClampedHom)
+        return std::make_shared<Clamped::Homogeneous::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
+        return std::make_shared<Clamped::GaussianBells::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStream)
+        return std::make_shared<Clamped::StreamFunction::Solution<dim>>();
+      else
+        AssertThrow(false, ExcMessage("Not supported..."));
+      return nullptr;
+    }()),
+    load_function([&]() -> std::shared_ptr<Function<dim>> {
+      if(equation_data_in.variant == EquationData::Variant::ClampedHom)
+        return std::make_shared<Clamped::Homogeneous::Load<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
+        return std::make_shared<Clamped::GaussianBells::Load<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStream)
+        return std::make_shared<Clamped::StreamFunction::Load<dim>>();
+      else
+        AssertThrow(false, ExcMessage("Not supported..."));
+      return nullptr;
+    }()),
     pcout(
       std::make_shared<ConditionalOStream>(std::cout,
                                            Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
@@ -470,7 +488,7 @@ ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
   typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
   mgss_data.coloring_func = std::ref(*user_coloring);
   mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
-  mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
+  // mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
   mgss->initialize(mg_matrices, mgss_data);
   mg_schwarz_smoother_pre = mgss;
 

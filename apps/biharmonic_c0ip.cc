@@ -110,7 +110,7 @@ main(int argc, char * argv[])
     {
       //: discretization
       prms.n_cycles              = 10;
-      prms.dof_limits            = {1e4, 1e6};
+      prms.dof_limits            = {1e1, 2e5}; //{1e4, 1e6};
       prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
       prms.mesh.n_refinements    = 1;
       prms.mesh.n_repetitions    = 2;
@@ -147,14 +147,18 @@ main(int argc, char * argv[])
       prms.multigrid.post_smoother.schwarz.reverse_smoothing = true;
     }
 
-    EquationData                 equation_data;
-    ModelProblem<dim, fe_degree> biharmonic_problem(prms, equation_data);
-    std::fstream                 fout;
-    const auto                   filename = get_filename(prms, equation_data, argc > 1);
-    fout.open(filename + ".log", std::ios_base::out);
+    EquationData equation_data;
+    equation_data.variant              = EquationData::Variant::ClampedStream;
+    equation_data.local_solver_variant = LocalSolverVariant::Exact;
 
+    ModelProblem<dim, fe_degree> biharmonic_problem(prms, equation_data);
+
+    std::fstream fout;
+    const auto   filename = get_filename(prms, equation_data, argc > 1);
+    fout.open(filename + ".log", std::ios_base::out);
     auto pcout               = std::make_shared<ConditionalOStream>(fout, true);
     biharmonic_problem.pcout = pcout;
+
     biharmonic_problem.run();
     *pcout << std::endl << std::endl << write_ppdata_to_string(biharmonic_problem.pp_data);
     fout.close();
