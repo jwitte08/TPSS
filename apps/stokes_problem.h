@@ -1534,12 +1534,14 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
     analytical_solution([&]() -> std::shared_ptr<Function<dim>> {
       if(equation_data_in.variant == EquationData::Variant::DivFree)
         return std::make_shared<DivergenceFree::Solution<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::DivFreeHom)
-        return std::make_shared<DivergenceFree::Homogeneous::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::DivFreeSlip)
+        return std::make_shared<DivergenceFree::Slip::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::DivFreeBell)
         return std::make_shared<DivergenceFree::GaussianBell::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuille)
         return std::make_shared<DivergenceFree::Poiseuille::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlip)
+        return std::make_shared<DivergenceFree::NoSlip::Solution<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -1547,12 +1549,15 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
     load_function([&]() -> std::shared_ptr<Function<dim>> {
       if(equation_data_in.variant == EquationData::Variant::DivFree)
         return std::make_shared<DivergenceFree::Load<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::DivFreeHom)
+      else if(equation_data_in.variant == EquationData::Variant::DivFreeSlip)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreeBell)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuille)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
+      else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlip)
+        // return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
+        return std::make_shared<DivergenceFree::NoSlip::Load<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
