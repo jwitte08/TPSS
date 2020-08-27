@@ -150,6 +150,9 @@ main(int argc, char * argv[])
     EquationData equation_data;
     equation_data.variant              = EquationData::Variant::ClampedStream;
     equation_data.local_solver_variant = LocalSolverVariant::Exact;
+    if(equation_data.variant == EquationData::Variant::ClampedStream)
+      equation_data.is_stream_function = true;
+
 
     ModelProblem<dim, fe_degree> biharmonic_problem(prms, equation_data);
 

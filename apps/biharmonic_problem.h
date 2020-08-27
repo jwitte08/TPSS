@@ -154,9 +154,6 @@ public:
   make_grid(const unsigned int n_refinements);
 
   void
-  make_grid_impl(const MeshParameter & mesh_prms);
-
-  void
   setup_system();
 
   void
@@ -177,10 +174,6 @@ public:
     preconditioner_mg = std::make_shared<GMG_PRECONDITIONER>(dof_handler, *multigrid, mg_transfer);
     return *preconditioner_mg;
   }
-
-  template<typename PreconditionerType>
-  void
-  iterative_solve_impl(const PreconditionerType & preconditioner);
 
   void
   solve();
@@ -226,6 +219,7 @@ public:
   EquationData                        equation_data;
   std::shared_ptr<Function<dim>>      analytical_solution;
   std::shared_ptr<Function<dim>>      load_function;
+  std::shared_ptr<Function<dim>>      load_function_stokes;
   std::shared_ptr<ConditionalOStream> pcout;
   mutable PostProcessData             pp_data;
 
@@ -261,6 +255,18 @@ public:
   std::shared_ptr<Multigrid<VECTOR>> multigrid;
 
   std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
+
+private:
+  void
+  make_grid_impl(const MeshParameter & mesh_prms);
+
+  template<bool is_stream_function>
+  void
+  assemble_system_impl();
+
+  template<typename PreconditionerType>
+  void
+  iterative_solve_impl(const PreconditionerType & preconditioner);
 };
 
 
@@ -292,6 +298,17 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
     }()),
+    load_function_stokes([&]() -> std::shared_ptr<Function<dim>> {
+      if(equation_data_in.variant == EquationData::Variant::ClampedHom)
+        return nullptr;
+      else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
+        return nullptr;
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStream)
+        return std::make_shared<Stokes::DivergenceFree::NoSlip::Load<dim>>();
+      else
+        AssertThrow(false, ExcMessage("Not supported..."));
+      return nullptr;
+    }()),
     pcout(
       std::make_shared<ConditionalOStream>(std::cout,
                                            Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
@@ -307,6 +324,17 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
   AssertThrow(rt_parameters.multigrid.pre_smoother.schwarz.patch_variant ==
                 TPSS::PatchVariant::vertex,
               ExcMessage("Vertex patches only."));
+
+  if(equation_data.is_stream_function)
+  {
+    Assert(load_function_stokes, ExcMessage("load_function_stokes is required."));
+    AssertDimension(load_function_stokes->n_components, dim);
+  }
+  else
+  {
+    Assert(load_function, ExcMessage("load_function is required."));
+    AssertDimension(load_function->n_components, 1U);
+  }
 }
 
 
@@ -391,13 +419,19 @@ ModelProblem<dim, fe_degree>::setup_system()
 
 
 template<int dim, int fe_degree>
+template<bool is_stream>
 void
-ModelProblem<dim, fe_degree>::assemble_system()
+ModelProblem<dim, fe_degree>::assemble_system_impl()
 {
-  C0IP::MW::MatrixIntegrator matrix_integrator(load_function.get(),
-                                               analytical_solution.get(),
-                                               &system_u,
-                                               equation_data);
+  const auto * load_function_ptr = is_stream ? load_function_stokes.get() : load_function.get();
+
+  using MatrixIntegrator = typename C0IP::MW::
+    MatrixIntegrator<dim, /*is_multigrid*/ false, /*stream function?*/ is_stream>;
+
+  MatrixIntegrator matrix_integrator(load_function_ptr,
+                                     analytical_solution.get(),
+                                     &system_u,
+                                     equation_data);
 
   auto cell_worker =
     [&](const auto & cell, C0IP::MW::ScratchData<dim> & scratch_data, CopyData & copy_data) {
@@ -468,6 +502,18 @@ ModelProblem<dim, fe_degree>::assemble_system()
                           MeshWorker::assemble_own_interior_faces_once,
                         boundary_worker,
                         face_worker);
+}
+
+
+
+template<int dim, int fe_degree>
+void
+ModelProblem<dim, fe_degree>::assemble_system()
+{
+  if(equation_data.is_stream_function)
+    assemble_system_impl<true>();
+  else
+    assemble_system_impl<false>();
 }
 
 
@@ -862,7 +908,7 @@ ModelProblem<dim, fe_degree>::output_results(const unsigned int iteration) const
   DataOut<dim> data_out;
 
   data_out.attach_dof_handler(dof_handler);
-  data_out.add_data_vector(system_u, "u");
+  data_out.add_data_vector(system_u, "solution");
   data_out.build_patches();
 
   std::ofstream output_vtk(("output_" + Utilities::int_to_string(iteration, 6) + ".vtk").c_str());

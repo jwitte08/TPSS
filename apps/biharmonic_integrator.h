@@ -54,90 +54,18 @@ compute_penalty_impl(const int degree, const Number h_left, const Number h_right
 
 namespace MW
 {
-template<int dim>
-struct ScratchData
-{
-  ScratchData(const Mapping<dim> &       mapping,
-              const FiniteElement<dim> & fe,
-              const unsigned int         quadrature_degree,
-              const UpdateFlags          update_flags,
-              const UpdateFlags          interface_update_flags)
-    : fe_values(mapping, fe, QGauss<dim>(quadrature_degree), update_flags),
-      fe_interface_values(mapping, fe, QGauss<dim - 1>(quadrature_degree), interface_update_flags)
-  {
-  }
+using ::MW::ScratchData;
 
-  ScratchData(const ScratchData<dim> & scratch_data)
-    : fe_values(scratch_data.fe_values.get_mapping(),
-                scratch_data.fe_values.get_fe(),
-                scratch_data.fe_values.get_quadrature(),
-                scratch_data.fe_values.get_update_flags()),
-      fe_interface_values(scratch_data.fe_values.get_mapping(),
-                          scratch_data.fe_values.get_fe(),
-                          scratch_data.fe_interface_values.get_quadrature(),
-                          scratch_data.fe_interface_values.get_update_flags())
-  {
-  }
+using ::MW::CopyData;
 
-  FEValues<dim>          fe_values;
-  FEInterfaceValues<dim> fe_interface_values;
-};
+using ::MW::compute_vcurl;
 
 
 
-struct CopyData
-{
-  struct FaceData
-  {
-    FullMatrix<double>                   cell_matrix;
-    std::vector<types::global_dof_index> joint_dof_indices;
-    Vector<double>                       cell_rhs;
-  };
-
-  CopyData(const unsigned int dofs_per_cell,
-           const unsigned int level_in = numbers::invalid_unsigned_int)
-    : level(level_in),
-      cell_matrix(dofs_per_cell, dofs_per_cell),
-      cell_rhs(dofs_per_cell),
-      local_dof_indices(dofs_per_cell)
-  {
-  }
-
-  CopyData(const CopyData &) = default;
-
-  unsigned int                         level;
-  FullMatrix<double>                   cell_matrix;
-  Vector<double>                       cell_rhs;
-  std::vector<types::global_dof_index> local_dof_indices;
-  std::vector<FaceData>                face_data;
-};
-
-
-
-template<int dim, bool is_multigrid>
-struct IteratorSelector
-{
-  // static_assert(false, "No specialization has been found.");
-};
-
-template<int dim>
-struct IteratorSelector<dim, false>
-{
-  using type = typename DoFHandler<dim>::active_cell_iterator;
-};
-
-template<int dim>
-struct IteratorSelector<dim, true>
-{
-  using type = typename DoFHandler<dim>::level_cell_iterator;
-};
-
-
-
-template<int dim, bool is_multigrid = false>
+template<int dim, bool is_multigrid = false, bool is_stream = false>
 struct MatrixIntegrator
 {
-  using IteratorType = typename IteratorSelector<dim, is_multigrid>::type;
+  using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
 
   MatrixIntegrator(const Function<dim> *  load_function_in,
                    const Function<dim> *  analytical_solution_in,
@@ -177,11 +105,11 @@ struct MatrixIntegrator
   const EquationData     equation_data;
 };
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_stream>
 void
-MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
-                                                 ScratchData<dim> &   scratch_data,
-                                                 CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_stream>::cell_worker(const IteratorType & cell,
+                                                            ScratchData<dim> &   scratch_data,
+                                                            CopyData &           copy_data) const
 {
   copy_data.cell_matrix = 0.;
   copy_data.cell_rhs    = 0.;
@@ -209,9 +137,26 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
       }
 
       if(!is_multigrid)
-        copy_data.cell_rhs(i) += fe_values.shape_value(i, qpoint) * // phi_i(x)
-                                 load_function->value(fe_values.quadrature_point(qpoint)) * // f(x)
-                                 fe_values.JxW(qpoint);                                     // dx
+      {
+        if(!is_stream)
+        {
+          AssertDimension(load_function->n_components, 1U);
+          copy_data.cell_rhs(i) +=
+            fe_values.shape_value(i, qpoint) *                         // phi_i(x)
+            load_function->value(fe_values.quadrature_point(qpoint)) * // f(x)
+            fe_values.JxW(qpoint);                                     // dx
+        }
+        else
+        {
+          AssertDimension(load_function->n_components, dim);
+          const auto &   curl_phi_i = compute_vcurl(fe_values, i, qpoint);
+          Tensor<1, dim> f;
+          for(auto c = 0U; c < dim; ++c)
+            f[c] = load_function->value(fe_values.quadrature_point(qpoint), c);
+
+          copy_data.cell_rhs(i) += f * curl_phi_i * fe_values.JxW(qpoint);
+        }
+      }
     }
   }
 
@@ -230,16 +175,16 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
   }
 }
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_stream>
 void
-MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
-                                                 const unsigned int & f,
-                                                 const unsigned int & sf,
-                                                 const IteratorType & ncell,
-                                                 const unsigned int & nf,
-                                                 const unsigned int & nsf,
-                                                 ScratchData<dim> &   scratch_data,
-                                                 CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_stream>::face_worker(const IteratorType & cell,
+                                                            const unsigned int & f,
+                                                            const unsigned int & sf,
+                                                            const IteratorType & ncell,
+                                                            const unsigned int & nf,
+                                                            const unsigned int & nsf,
+                                                            ScratchData<dim> &   scratch_data,
+                                                            CopyData &           copy_data) const
 {
   FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
   fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
@@ -310,12 +255,12 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   }
 }
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_stream>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
-                                                     const unsigned int & face_no,
-                                                     ScratchData<dim> &   scratch_data,
-                                                     CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_stream>::boundary_worker(const IteratorType & cell,
+                                                                const unsigned int & face_no,
+                                                                ScratchData<dim> &   scratch_data,
+                                                                CopyData & copy_data) const
 {
   FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
   fe_interface_values.reinit(cell, face_no);
@@ -453,7 +398,7 @@ public:
 
       /// store rank1 tensors of mixed derivatives
       /// 2(LxLxM + LxMxL + MxLxL)
-      if(equation_data.local_solver_variant == EquationData::LocalSolverVariant::Exact)
+      if(equation_data.local_solver_variant == LocalSolverVariant::Exact)
       {
         const auto & LxLxM = [&](const int direction1, const int direction2) {
           std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;

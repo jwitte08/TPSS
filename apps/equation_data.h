@@ -560,6 +560,7 @@ struct EquationData
     oss << Util::parameter_to_fstring("Equation Data:", str_equation_variant(variant));
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
     oss << Util::parameter_to_fstring("Local solver:", str_local_solver(local_solver_variant));
+    oss << Util::parameter_to_fstring("Stream function formulation (Stokes):", is_stream_function);
     return oss.str();
   }
 
@@ -567,6 +568,7 @@ struct EquationData
   std::set<types::boundary_id> dirichlet_boundary_ids = {0};
   double                       ip_factor              = 1.;
   LocalSolverVariant           local_solver_variant   = LocalSolverVariant::Exact;
+  bool                         is_stream_function     = false;
 };
 
 

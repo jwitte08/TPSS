@@ -661,6 +661,27 @@ compute_vjump_dot_normal(const FEInterfaceValues<dim> & phi,
 
 
 
+/**
+ * Vector curl in 2D:   curl(phi) = (d/dy phi, -d/dx phi)^T
+ */
+template<int dim>
+Tensor<1, dim>
+compute_vcurl(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  AssertDimension(phi.get_fe().n_components(), 1U);
+  static_assert(dim == 2, "vector curl is reasonable in 2D.");
+
+  /// See Guido's MFEM script for the vector curl definition.
+  Tensor<1, dim> vcurl_of_phi;
+  const auto &   grad_of_phi = phi.shape_grad(i, q);
+  vcurl_of_phi[0]            = grad_of_phi[1];
+  vcurl_of_phi[1]            = -grad_of_phi[0];
+
+  return vcurl_of_phi;
+}
+
+
+
 namespace Mixed
 {
 template<int dim>
