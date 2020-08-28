@@ -121,7 +121,7 @@ private:
   constexpr double
   u0() const
   {
-    return 1. / dealii::Utilities::fixed_power<dim>(std::sqrt(2 * PI) * width);
+    return 1. / std::pow(std::sqrt(2 * PI) * width, dim);
   }
 
   constexpr double
@@ -533,36 +533,28 @@ struct EquationData
   {
     ClampedHom,
     ClampedBell,
-    ClampedStream
+    ClampedStreamNoSlip,
+    ClampedStreamPoiseuille,
+    ClampedStreamNoSlipNormal,
   };
+
   static std::string
-  str_equation_variant(const Variant variant)
-  {
-    std::string str[] = {"clamped (homogeneous)",
-                         "clamped (Gaussian bells)",
-                         "clamped (stream function)"};
-    return str[static_cast<int>(variant)];
-  }
+  str_equation_variant(const Variant variant);
+
+  static std::string
+  sstr_equation_variant(const Variant variant);
+
+  std::string
+  sstr_equation_variant() const;
 
   static std::string
   str_local_solver(const LocalSolverVariant variant);
 
   std::string
-  str_local_solver() const
-  {
-    return str_local_solver(local_solver_variant);
-  }
+  str_local_solver() const;
 
   std::string
-  to_string() const
-  {
-    std::ostringstream oss;
-    oss << Util::parameter_to_fstring("Equation Data:", str_equation_variant(variant));
-    oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
-    oss << Util::parameter_to_fstring("Local solver:", str_local_solver(local_solver_variant));
-    oss << Util::parameter_to_fstring("Stream function formulation (Stokes):", is_stream_function);
-    return oss.str();
-  }
+  to_string() const;
 
   Variant                      variant                = Variant::ClampedHom;
   std::set<types::boundary_id> dirichlet_boundary_ids = {0};
@@ -573,10 +565,57 @@ struct EquationData
 
 
 std::string
+EquationData::str_equation_variant(const Variant variant)
+{
+  std::string str[] = {"clamped (homogeneous)",
+                       "clamped (Gaussian bells)",
+                       "clamped (stream function - no-slip)",
+                       "clamped (stream function - Poiseuille)",
+                       "clamped (stream function - no-slip-normal)"};
+  return str[static_cast<int>(variant)];
+}
+
+
+std::string
+EquationData::sstr_equation_variant(const Variant variant)
+{
+  std::string str[] = {
+    "clamped_hom", "clamped_bell", "clamped_noslip", "clamped_poiseuille)", "clamped_noslipnormal"};
+  return str[static_cast<int>(variant)];
+}
+
+
+std::string
+EquationData::sstr_equation_variant() const
+{
+  return sstr_equation_variant(variant);
+}
+
+
+std::string
 EquationData::str_local_solver(const LocalSolverVariant variant)
 {
   const std::string str_variant[] = {"Exact", "Bilaplacian (no mixed derivatives)"};
   return str_variant[(int)variant];
+}
+
+
+std::string
+EquationData::str_local_solver() const
+{
+  return str_local_solver(local_solver_variant);
+}
+
+
+std::string
+EquationData::to_string() const
+{
+  std::ostringstream oss;
+  oss << Util::parameter_to_fstring("Equation Data:", str_equation_variant(variant));
+  oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
+  oss << Util::parameter_to_fstring("Local solver:", str_local_solver(local_solver_variant));
+  oss << Util::parameter_to_fstring("Stream function formulation (Stokes):", is_stream_function);
+  return oss.str();
 }
 
 
@@ -761,15 +800,11 @@ public:
     std::vector<double> values_x(5U), values_y(5U);
     poly.value(x, values_x);
     poly.value(y, values_y);
-    const auto poly_x = values_x[0];
-    // const auto Dpoly_x  = values_x[1];
+    const auto poly_x   = values_x[0];
     const auto D2poly_x = values_x[2];
-    // const auto D3poly_x = values_x[3];
     const auto D4poly_x = values_x[4];
     const auto poly_y   = values_y[0];
-    // const auto Dpoly_y  = values_y[1];
     const auto D2poly_y = values_y[2];
-    // const auto D3poly_y = values_y[3];
     const auto D4poly_y = values_y[4];
 
     double bilapl = 0.;
@@ -787,6 +822,81 @@ private:
 template<int dim>
 using Load = ManufacturedLoad<dim, Solution<dim>>;
 } // namespace StreamFunction
+
+
+
+namespace Poiseuille
+{
+template<int dim>
+using Solution = ZeroFunction<dim>;
+}
+
+
+
+namespace NoSlipNormal
+{
+template<int dim>
+class Solution : public Function<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+  static constexpr auto PI = numbers::PI;
+
+public:
+  virtual double
+  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto x = p[0];
+    const auto y = p[1];
+
+    return sin(PI * x) * cos(PI * y);
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto x = p[0];
+    const auto y = p[1];
+
+    Tensor<1, dim> grad;
+    grad[0] = PI * cos(PI * x) * cos(PI * y);
+    grad[1] = -PI * sin(PI * x) * sin(PI * y);
+
+    return grad;
+  }
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto x = p[0];
+    const auto y = p[1];
+
+    SymmetricTensor<2, dim> hess;
+    hess[0][0] = -PI * PI * sin(PI * x) * cos(PI * y);
+    hess[0][1] = -PI * PI * cos(PI * x) * sin(PI * y);
+    hess[1][1] = -PI * PI * sin(PI * x) * cos(PI * y);
+
+    return hess;
+  }
+
+  double
+  bilaplacian(const Point<dim> & p, const unsigned int /*component*/ = 0) const
+  {
+    const auto & x = p[0];
+    const auto & y = p[1];
+
+    constexpr auto PI4    = PI * PI * PI * PI;
+    double         bilapl = 0.;
+    /// \partial_xxxx
+    bilapl += PI4 * sin(PI * x) * cos(PI * y);
+    /// 2 \partial_xxyy
+    bilapl += 2. * PI4 * sin(PI * x) * cos(PI * y);
+    /// \partial_yyyy
+    bilapl += PI4 * sin(PI * x) * cos(PI * y);
+
+    return bilapl;
+  }
+};
+} // namespace NoSlipNormal
 
 } // namespace Clamped
 
@@ -831,7 +941,7 @@ struct EquationData
   enum class Variant
   {
     DivFree,
-    DivFreeSlip,
+    DivFreeNoSlipNormal,
     DivFreeBell,
     DivFreePoiseuille,
     DivFreeNoSlip
@@ -840,7 +950,7 @@ struct EquationData
   str_equation_variant(const Variant variant)
   {
     std::string str[] = {"divergence-free",
-                         "divergence-free (slip)",
+                         "divergence-free (no-slip-normal)",
                          "divergence-free (Gaussian bells)",
                          "divergence-free (Poiseuille)",
                          "divergence-free (no-slip)"};
@@ -1324,7 +1434,7 @@ Load<3>::value(const Point<3> & p, const unsigned int component) const
 
 
 
-namespace Slip
+namespace NoSlipNormal
 {
 /**
  * This class represents the vector curl of
@@ -1484,7 +1594,7 @@ SolutionPressure<2>::hessian(const Point<2> &, const unsigned int) const
 template<int dim>
 using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
 
-} // namespace Slip
+} // namespace NoSlipNormal
 
 
 
@@ -1718,7 +1828,7 @@ SolutionPressure<2>::hessian(const Point<2> &, const unsigned int) const
 
 
 template<int dim>
-class SolutionBasePressure2
+class SolutionBasePressureAlt
 {
 protected:
   static const Point<dim> source;
@@ -1726,10 +1836,10 @@ protected:
 };
 
 template<>
-const Point<2> SolutionBasePressure2<2>::source = Point<2>(0.5, 0.);
+const Point<2> SolutionBasePressureAlt<2>::source = Point<2>(0.5, 0.);
 
 template<int dim>
-const double SolutionBasePressure2<dim>::width = 1.5;
+const double SolutionBasePressureAlt<dim>::width = 1.5;
 
 
 
@@ -1744,16 +1854,16 @@ const double SolutionBasePressure2<dim>::width = 1.5;
  * parameters keep in mind to modify the mean as well.
  */
 template<int dim>
-class SolutionPressure2 : public Function<dim>, protected SolutionBasePressure2<dim>
+class SolutionPressureAlt : public Function<dim>, protected SolutionBasePressureAlt<dim>
 {
   static_assert(dim == 2, "Implemented for two dimensions.");
 
 public:
-  using SolutionBasePressure2<dim>::source;
-  using SolutionBasePressure2<dim>::width;
+  using SolutionBasePressureAlt<dim>::source;
+  using SolutionBasePressureAlt<dim>::width;
   static constexpr auto PI = numbers::PI;
 
-  SolutionPressure2() : Function<dim>(1)
+  SolutionPressureAlt() : Function<dim>(1)
   {
   }
 
@@ -1798,14 +1908,14 @@ private:
 
 template<>
 double
-SolutionPressure2<2>::value(const Point<2> & p, const unsigned int) const
+SolutionPressureAlt<2>::value(const Point<2> & p, const unsigned int) const
 {
   return u0() * bell(p) - mean();
 }
 
 template<>
 Tensor<1, 2>
-SolutionPressure2<2>::gradient(const Point<2> & p, const unsigned int) const
+SolutionPressureAlt<2>::gradient(const Point<2> & p, const unsigned int) const
 {
   const dealii::Tensor<1, 2> x_minus_xi = p - source;
   return u0() * 2. * v0() * bell(p) * x_minus_xi;
@@ -1813,7 +1923,7 @@ SolutionPressure2<2>::gradient(const Point<2> & p, const unsigned int) const
 
 template<>
 SymmetricTensor<2, 2>
-SolutionPressure2<2>::hessian(const Point<2> &, const unsigned int) const
+SolutionPressureAlt<2>::hessian(const Point<2> &, const unsigned int) const
 {
   AssertThrow(false, ExcMessage("No need for this functionality..."));
   return SymmetricTensor<2, 2>{};
@@ -2040,15 +2150,10 @@ private:
  * Choosing a constant zero pressure results in a divergence-free manufactured
  * load.
  */
+// template<int dim>
+// using SolutionPressure = ZeroFunction<dim>;
 template<int dim>
-class SolutionPressure : public ZeroFunction<dim>
-{
-public:
-  SolutionPressure() : ZeroFunction<dim>(1U)
-  {
-  }
-};
-
+using SolutionPressure = NoSlipNormal::SolutionPressure<dim>;
 
 
 template<int dim>

@@ -7,7 +7,7 @@
 
 
 std::string
-write_ppdata_to_string(const PostProcessData & pp_data)
+write_ppdata_to_string(const PostProcessData & pp_data, const PostProcessData & pp_data_stokes)
 {
   std::ostringstream oss;
   ConvergenceTable   info_table;
@@ -22,6 +22,8 @@ write_ppdata_to_string(const PostProcessData & pp_data)
     info_table.add_value("reduction", pp_data.average_reduction_system.at(run));
     info_table.add_value("L2_error", pp_data.L2_error.at(run));
     info_table.add_value("H2semiO_error", pp_data.H2semi_error.at(run));
+    if(!pp_data_stokes.L2_error.empty())
+      info_table.add_value("L2_velocity_error", pp_data_stokes.L2_error.at(run));
   }
   info_table.set_scientific("reduction", true);
   info_table.set_precision("reduction", 3);
@@ -39,6 +41,17 @@ write_ppdata_to_string(const PostProcessData & pp_data)
                                         "n_dofs",
                                         ConvergenceTable::reduction_rate_log2,
                                         pp_data.n_dimensions);
+
+  if(!pp_data_stokes.L2_error.empty())
+  {
+    info_table.set_scientific("L2_velocity_error", true);
+    info_table.set_precision("L2_velocity_error", 3);
+    info_table.evaluate_convergence_rates("L2_velocity_error", ConvergenceTable::reduction_rate);
+    info_table.evaluate_convergence_rates("L2_velocity_error",
+                                          "n_dofs",
+                                          ConvergenceTable::reduction_rate_log2,
+                                          pp_data.n_dimensions);
+  }
 
   info_table.write_text(oss);
   return oss.str();
@@ -88,7 +101,7 @@ main(int argc, char * argv[])
     using namespace dealii;
     using namespace Biharmonic;
 
-    // deallog.depth_console(3);
+    deallog.depth_console(3);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
     constexpr int                    dim       = CT::DIMENSION_;
     constexpr int                    fe_degree = CT::FE_DEGREE_;
@@ -110,7 +123,7 @@ main(int argc, char * argv[])
     {
       //: discretization
       prms.n_cycles              = 10;
-      prms.dof_limits            = {1e1, 2e5}; //{1e4, 1e6};
+      prms.dof_limits            = {1e1, 1e5}; //{1e4, 1e6};
       prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
       prms.mesh.n_refinements    = 1;
       prms.mesh.n_repetitions    = 2;
@@ -148,11 +161,12 @@ main(int argc, char * argv[])
     }
 
     EquationData equation_data;
-    equation_data.variant              = EquationData::Variant::ClampedStream;
+    equation_data.variant              = EquationData::Variant::ClampedStreamNoSlip;
     equation_data.local_solver_variant = LocalSolverVariant::Exact;
-    if(equation_data.variant == EquationData::Variant::ClampedStream)
-      equation_data.is_stream_function = true;
-
+    equation_data.is_stream_function =
+      equation_data.variant == EquationData::Variant::ClampedStreamNoSlip ||
+      equation_data.variant == EquationData::Variant::ClampedStreamPoiseuille ||
+      equation_data.variant == EquationData::Variant::ClampedStreamNoSlipNormal; // !!!
 
     ModelProblem<dim, fe_degree> biharmonic_problem(prms, equation_data);
 
@@ -163,11 +177,13 @@ main(int argc, char * argv[])
     biharmonic_problem.pcout = pcout;
 
     biharmonic_problem.run();
-    *pcout << std::endl << std::endl << write_ppdata_to_string(biharmonic_problem.pp_data);
+    *pcout << std::endl
+           << std::endl
+           << write_ppdata_to_string(biharmonic_problem.pp_data, biharmonic_problem.pp_data_stokes);
     fout.close();
 
     fout.open(filename + ".tab", std::ios_base::out);
-    fout << write_ppdata_to_string(biharmonic_problem.pp_data);
+    fout << write_ppdata_to_string(biharmonic_problem.pp_data, biharmonic_problem.pp_data_stokes);
     fout.close();
   }
 

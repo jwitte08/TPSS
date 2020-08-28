@@ -178,6 +178,9 @@ public:
   void
   solve();
 
+  double
+  compute_stream_function_error();
+
   void
   compute_errors();
 
@@ -218,10 +221,12 @@ public:
   RT::Parameter                       rt_parameters;
   EquationData                        equation_data;
   std::shared_ptr<Function<dim>>      analytical_solution;
+  std::shared_ptr<Function<dim>>      analytical_velocity; // Stokes
   std::shared_ptr<Function<dim>>      load_function;
   std::shared_ptr<Function<dim>>      load_function_stokes;
   std::shared_ptr<ConditionalOStream> pcout;
   mutable PostProcessData             pp_data;
+  mutable PostProcessData             pp_data_stokes;
 
   parallel::distributed::Triangulation<dim> triangulation;
   MappingQ<dim>                             mapping;
@@ -281,8 +286,27 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         return std::make_shared<Clamped::Homogeneous::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
         return std::make_shared<Clamped::GaussianBells::Solution<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStream)
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
         return std::make_shared<Clamped::StreamFunction::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuille)
+        return std::make_shared<Clamped::Poiseuille::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
+        return std::make_shared<Clamped::NoSlipNormal::Solution<dim>>();
+      else
+        AssertThrow(false, ExcMessage("Not supported..."));
+      return nullptr;
+    }()),
+    analytical_velocity([&]() -> std::shared_ptr<Function<dim>> {
+      if(equation_data_in.variant == EquationData::Variant::ClampedHom)
+        return nullptr;
+      else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
+        return nullptr;
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
+        return std::make_shared<Stokes::DivergenceFree::NoSlip::SolutionVelocity<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuille)
+        return std::make_shared<Stokes::DivergenceFree::Poiseuille::SolutionVelocity<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
+        return std::make_shared<Stokes::DivergenceFree::NoSlipNormal::SolutionVelocity<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -292,8 +316,12 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         return std::make_shared<Clamped::Homogeneous::Load<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
         return std::make_shared<Clamped::GaussianBells::Load<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStream)
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
         return std::make_shared<Clamped::StreamFunction::Load<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuille)
+        return nullptr;
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
+        return std::make_shared<ManufacturedLoad<dim, Clamped::NoSlipNormal::Solution<dim>>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -303,8 +331,15 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         return nullptr;
       else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
         return nullptr;
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStream)
-        return std::make_shared<Stokes::DivergenceFree::NoSlip::Load<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
+        return std::make_shared<Stokes::ManufacturedLoad<dim>>(
+          std::make_shared<Stokes::DivergenceFree::NoSlip::Solution<dim>>());
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuille)
+        return std::make_shared<Stokes::ManufacturedLoad<dim>>(
+          std::make_shared<Stokes::DivergenceFree::Poiseuille::Solution<dim>>());
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
+        return std::make_shared<Stokes::ManufacturedLoad<dim>>(
+          std::make_shared<Stokes::DivergenceFree::NoSlipNormal::Solution<dim>>());
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -814,6 +849,108 @@ ModelProblem<dim, fe_degree>::solve()
 
 
 
+template<int dim, int fe_degree>
+double
+ModelProblem<dim, fe_degree>::compute_stream_function_error()
+{
+  AssertThrow(analytical_velocity, ExcMessage("analytical_velocity isn't initialized."));
+  AssertDimension(analytical_velocity->n_components, dim);
+
+  using ::MW::ScratchData;
+
+  using ::MW::CopyData;
+
+  using ::MW::compute_vcurl;
+
+  AffineConstraints empty_constraints;
+  empty_constraints.close();
+
+  Vector<double> norm_per_cell(triangulation.n_active_cells());
+
+  auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+    auto & phi = scratch_data.fe_values;
+    phi.reinit(cell);
+
+    const unsigned int n_dofs_per_cell = phi.get_fe().dofs_per_cell;
+    const unsigned int n_q_points      = phi.n_quadrature_points;
+    const auto &       q_points        = phi.get_quadrature_points();
+
+    std::vector<Tensor<1, dim>> velocity_values;
+    std::transform(q_points.cbegin(),
+                   q_points.cend(),
+                   std::back_inserter(velocity_values),
+                   [this](const auto & x_q) {
+                     Tensor<1, dim> u_q;
+                     for(auto c = 0U; c < dim; ++c)
+                       u_q[c] = analytical_velocity->value(x_q, c);
+                     return u_q;
+                   });
+
+    std::vector<types::global_dof_index> local_dof_indices(n_dofs_per_cell);
+    cell->get_active_or_mg_dof_indices(local_dof_indices);
+    std::vector<double> stream_function_dof_values;
+    std::transform(local_dof_indices.cbegin(),
+                   local_dof_indices.cend(),
+                   std::back_inserter(stream_function_dof_values),
+                   [this](const auto & i) { return system_u(i); });
+
+    double local_error = 0.;
+    for(unsigned int q = 0; q < n_q_points; ++q)
+    {
+      Tensor<1, dim> uh_q;
+      for(unsigned int i = 0; i < n_dofs_per_cell; ++i)
+      {
+        const auto & alpha_i    = stream_function_dof_values[i];
+        const auto & curl_phi_i = compute_vcurl(phi, i, q);
+        uh_q += alpha_i * curl_phi_i;
+      }
+
+      const auto & u_q = velocity_values[q];
+      local_error += (uh_q - u_q) * (uh_q - u_q) * phi.JxW(q);
+    }
+
+    AssertDimension(copy_data.cell_rhs.size(), 1U);
+    AssertDimension(copy_data.local_dof_indices.size(), 1U);
+    AssertIndexRange(cell->index(), norm_per_cell.size());
+
+    copy_data.local_dof_indices[0] = cell->index();
+    copy_data.cell_rhs(0)          = std::sqrt(local_error);
+  };
+
+  const auto copier = [&](const CopyData & copy_data) {
+    /// We first store cell-wise errors to avoid data races in the mesh_loop()
+    /// call and then accumulate the global error, instead of directly copying
+    /// all local errors to one global error field.
+    AssertDimension(copy_data.cell_rhs.size(), 1U);
+    AssertDimension(copy_data.local_dof_indices.size(), 1U);
+    const auto cell_index     = copy_data.local_dof_indices[0];
+    norm_per_cell(cell_index) = copy_data.cell_rhs(0);
+  };
+
+  const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
+  const UpdateFlags  update_flags =
+    update_values | update_gradients | update_quadrature_points | update_JxW_values;
+  const UpdateFlags interface_update_flags  = update_default;
+  const auto        n_error_values_per_cell = 1U;
+
+  ScratchData<dim> scratch_data(
+    mapping, dof_handler.get_fe(), n_gauss_points, update_flags, interface_update_flags);
+
+  CopyData copy_data(n_error_values_per_cell);
+
+  MeshWorker::mesh_loop(dof_handler.begin_active(),
+                        dof_handler.end(),
+                        cell_worker,
+                        copier,
+                        scratch_data,
+                        copy_data,
+                        MeshWorker::assemble_own_cells);
+
+  return VectorTools::compute_global_error(triangulation, norm_per_cell, VectorTools::L2_norm);
+}
+
+
+
 // The next function evaluates the error between the computed solution
 // and the exact solution (which is known here because we have chosen
 // the right hand side and boundary values in a way so that we know
@@ -823,8 +960,15 @@ template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::compute_errors()
 {
+  if(equation_data.is_stream_function)
   {
-    Vector<float> norm_per_cell(triangulation.n_active_cells());
+    const double l2_velocity_error = compute_stream_function_error();
+    print_parameter("L2 velocity error (stream function):", l2_velocity_error);
+    pp_data_stokes.L2_error.push_back(l2_velocity_error);
+  }
+
+  {
+    Vector<double> norm_per_cell(triangulation.n_active_cells());
     VectorTools::integrate_difference(mapping,
                                       dof_handler,
                                       system_u,
@@ -839,7 +983,7 @@ ModelProblem<dim, fe_degree>::compute_errors()
   }
 
   {
-    Vector<float> norm_per_cell(triangulation.n_active_cells());
+    Vector<double> norm_per_cell(triangulation.n_active_cells());
     VectorTools::integrate_difference(mapping,
                                       dof_handler,
                                       system_u,
@@ -911,7 +1055,9 @@ ModelProblem<dim, fe_degree>::output_results(const unsigned int iteration) const
   data_out.add_data_vector(system_u, "solution");
   data_out.build_patches();
 
-  std::ofstream output_vtk(("output_" + Utilities::int_to_string(iteration, 6) + ".vtk").c_str());
+  std::ofstream output_vtk(("biharm_" + equation_data.sstr_equation_variant() + "_" +
+                            Utilities::int_to_string(iteration, 6) + ".vtk")
+                             .c_str());
   data_out.write_vtk(output_vtk);
 }
 
