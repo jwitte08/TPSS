@@ -11,6 +11,7 @@
 #include <deal.II/base/convergence_table.h>
 
 
+#include "app_utilities.h"
 #include "ct_parameter.h"
 #include "stokes_problem.h"
 
@@ -20,9 +21,9 @@ namespace Stokes
 {
 struct StokesFlow
 {
-  static constexpr auto         dim         = CT::DIMENSION_;
-  static constexpr auto         fe_degree_p = CT::FE_DEGREE_;
-  static constexpr char const * skipper     = "o";
+  static constexpr auto dim         = CT::DIMENSION_;
+  static constexpr auto fe_degree_p = CT::FE_DEGREE_;
+  // static constexpr char const * skipper     = "o";
   // 0 : direct solver (UMFPACK)
   // 1 : flexible GMRES prec. by ILU (FGMRES_ILU)
   //     flexible GMRES prec. by Schur complement approximation ...

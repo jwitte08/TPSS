@@ -1,6 +1,7 @@
 #include <deal.II/base/convergence_table.h>
 
 
+#include "app_utilities.h"
 #include "biharmonic_problem.h"
 #include "ct_parameter.h"
 
@@ -101,14 +102,30 @@ main(int argc, char * argv[])
     using namespace dealii;
     using namespace Biharmonic;
 
-    deallog.depth_console(3);
+    const auto atoi_if = [&](auto & prm, const int index) {
+      Util::ConditionalAtoi(argc, argv)(prm, index);
+    };
+    const auto atof_if = [&](auto & prm, const int index) {
+      Util::ConditionalAtof(argc, argv)(prm, index);
+    };
+
+    //: default
+    unsigned int test_index  = 4;
+    unsigned int debug_depth = 0;
+    double       damping     = 0.;
+
+    //: parse arguments
+    atoi_if(test_index, 1);
+    atof_if(damping, 2);
+    atoi_if(debug_depth, 3);
+
+    deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
-    constexpr int                    dim       = CT::DIMENSION_;
-    constexpr int                    fe_degree = CT::FE_DEGREE_;
-    Assert(fe_degree >= 2,
-           ExcMessage("The C0IP formulation for the biharmonic problem "
-                      "only works if one uses elements of polynomial "
-                      "degree at least 2."));
+
+    constexpr int  dim              = CT::DIMENSION_;
+    constexpr int  fe_degree        = CT::FE_DEGREE_;
+    constexpr auto patch_variant    = CT::PATCH_VARIANT_;
+    constexpr auto smoother_variant = CT::SMOOTHER_VARIANT_;
 
     // 0: direct solver
     // 1: CG solver (no preconditioner)
@@ -116,7 +133,6 @@ main(int argc, char * argv[])
     // 3: CG solver (GMG preconditioner with symm. Gauss-Seidel smoothing)
     // 4: CG solver (GMG preconditioner with Schwarz smoothing)
     constexpr unsigned int test_index_max = 4;
-    const unsigned int     test_index     = argc > 2 ? std::atoi(argv[2]) : 4;
     AssertThrow(test_index <= test_index_max, ExcMessage("test_index is not valid"));
 
     RT::Parameter prms;
@@ -137,9 +153,8 @@ main(int argc, char * argv[])
       prms.solver.n_iterations_max = 200;
 
       //: multigrid
-      const double damping_factor =
-        (argc > 1) ? std::atof(argv[1]) :
-                     TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim);
+      if(damping == 0.)
+        damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
       prms.multigrid.coarse_level                 = 0;
       prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::FullSVD;
       prms.multigrid.coarse_grid.iterative_solver = "cg";
@@ -155,7 +170,7 @@ main(int argc, char * argv[])
       prms.multigrid.pre_smoother.schwarz.patch_variant      = CT::PATCH_VARIANT_;
       prms.multigrid.pre_smoother.schwarz.smoother_variant   = CT::SMOOTHER_VARIANT_;
       prms.multigrid.pre_smoother.schwarz.manual_coloring    = true;
-      prms.multigrid.pre_smoother.schwarz.damping_factor     = damping_factor;
+      prms.multigrid.pre_smoother.schwarz.damping_factor     = damping;
       prms.multigrid.post_smoother                           = prms.multigrid.pre_smoother;
       prms.multigrid.post_smoother.schwarz.reverse_smoothing = true;
     }

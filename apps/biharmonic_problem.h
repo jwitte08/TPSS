@@ -129,6 +129,11 @@ using CopyData = C0IP::MW::CopyData;
 template<int dim, int fe_degree = 2>
 class ModelProblem
 {
+  static_assert(dim == 2, "The model problem is implemented for 2D only.");
+  static_assert(
+    fe_degree >= 2,
+    "The C0IP formulation for the biharmonic problem is reasonable for finite elements of polynomial degree at least 2.");
+
 public:
   using VECTOR = Vector<double>;
   using MATRIX = SparseMatrixAugmented<dim, fe_degree, double>;
@@ -138,8 +143,6 @@ public:
   using PATCH_MATRIX          = Tensors::TensorProductMatrix<dim, VectorizedArray<double>>;
   using MG_SMOOTHER_SCHWARZ   = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
   using GMG_PRECONDITIONER    = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
-
-  static_assert(dim == 2, "only implemented in 2D");
 
   ModelProblem(const RT::Parameter & rt_parameters_in,
                const EquationData &  equation_data_in = EquationData{});
@@ -287,7 +290,7 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
       else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
         return std::make_shared<Clamped::GaussianBells::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
-        return std::make_shared<Clamped::StreamFunction::Solution<dim>>();
+        return std::make_shared<Clamped::NoSlip::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuille)
         return std::make_shared<Clamped::Poiseuille::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
@@ -317,7 +320,7 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
       else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
         return std::make_shared<Clamped::GaussianBells::Load<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
-        return std::make_shared<Clamped::StreamFunction::Load<dim>>();
+        return std::make_shared<Clamped::NoSlip::Load<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuille)
         return nullptr;
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)

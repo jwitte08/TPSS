@@ -10,20 +10,10 @@ main(int argc, char * argv[])
   try
   {
     const auto atoi_if = [&](auto & prm, const int index) {
-      if(index <= 0 || argc <= index)
-        return;
-      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
-        return;
-      std::cout << argv[index] << StokesFlow::skipper << std::endl;
-      prm = std::atoi(argv[index]);
+      Util::ConditionalAtoi(argc, argv)(prm, index);
     };
     const auto atof_if = [&](auto & prm, const int index) {
-      if(index <= 0 || argc <= index)
-        return;
-      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
-        return;
-      std::cout << argv[index] << std::endl;
-      prm = std::atof(argv[index]);
+      Util::ConditionalAtof(argc, argv)(prm, index);
     };
 
     //: default
@@ -54,7 +44,7 @@ main(int argc, char * argv[])
     options.prms.solver.use_right_preconditioning = true; // !!!
 
     EquationData equation_data;
-    equation_data.variant = EquationData::Variant::DivFreeHom;
+    equation_data.variant = EquationData::Variant::DivFreeNoSlipNormal;
     equation_data.force_mean_value_constraint =
       options.prms.solver.variant == "UMFPACK" ? true : false; // !!!
     equation_data.use_cuthill_mckee = options.prms.solver.variant == "FGMRES_ILU";

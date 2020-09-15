@@ -708,7 +708,7 @@ using Load = ManufacturedLoad<dim, Solution<dim>>;
 
 
 
-namespace StreamFunction
+namespace NoSlip
 {
 template<int dim>
 struct SolutionBase
@@ -821,7 +821,7 @@ private:
 
 template<int dim>
 using Load = ManufacturedLoad<dim, Solution<dim>>;
-} // namespace StreamFunction
+} // namespace NoSlip
 
 
 
@@ -2033,10 +2033,10 @@ namespace NoSlip
  */
 template<int dim>
 class SolutionVelocity : public Function<dim>,
-                         protected Biharmonic::Clamped::StreamFunction::SolutionBase<dim>
+                         protected Biharmonic::Clamped::NoSlip::SolutionBase<dim>
 {
   static_assert(dim == 2, "Implemented for two dimensions.");
-  using Biharmonic::Clamped::StreamFunction::SolutionBase<dim>::polynomial_coefficients;
+  using Biharmonic::Clamped::NoSlip::SolutionBase<dim>::polynomial_coefficients;
 
 public:
   SolutionVelocity() : Function<dim>(dim), poly(polynomial_coefficients)
@@ -2166,10 +2166,10 @@ using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>
  * velocity and pressure reference solutions from above.
  */
 template<int dim>
-class Load : public Function<dim>, protected Biharmonic::Clamped::StreamFunction::SolutionBase<dim>
+class Load : public Function<dim>, protected Biharmonic::Clamped::NoSlip::SolutionBase<dim>
 {
   static_assert(dim == 2, "Implemented for two dimensions.");
-  using Biharmonic::Clamped::StreamFunction::SolutionBase<dim>::polynomial_coefficients;
+  using Biharmonic::Clamped::NoSlip::SolutionBase<dim>::polynomial_coefficients;
 
 public:
   Load() : Function<dim>(dim + 1), poly(std::vector<double>{{0., 0., 1., -2., 1.}})

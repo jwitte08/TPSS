@@ -19,18 +19,10 @@ main(int argc, char * argv[])
   try
   {
     const auto atoi_if = [&](auto & prm, const int index) {
-      if(index <= 0 || argc <= index)
-        return;
-      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
-        return;
-      prm = std::atoi(argv[index]);
+      Util::ConditionalAtoi(argc, argv)(prm, index);
     };
     const auto atof_if = [&](auto & prm, const int index) {
-      if(index <= 0 || argc <= index)
-        return;
-      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
-        return;
-      prm = std::atof(argv[index]);
+      Util::ConditionalAtof(argc, argv)(prm, index);
     };
 
     //: default
@@ -67,7 +59,7 @@ main(int argc, char * argv[])
     options.prms.n_cycles = n_cycles;
 
     EquationData equation_data;
-    equation_data.variant           = EquationData::Variant::DivFreeHom; // !!!
+    equation_data.variant           = EquationData::Variant::DivFreeNoSlip; // !!!
     equation_data.use_cuthill_mckee = false;
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;

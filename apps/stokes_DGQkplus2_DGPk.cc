@@ -10,18 +10,10 @@ main(int argc, char * argv[])
   try
   {
     const auto atoi_if = [&](auto & prm, const int index) {
-      if(index <= 0 || argc <= index)
-        return;
-      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
-        return;
-      prm = std::atoi(argv[index]);
+      Util::ConditionalAtoi(argc, argv)(prm, index);
     };
     const auto atof_if = [&](auto & prm, const int index) {
-      if(index <= 0 || argc <= index)
-        return;
-      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
-        return;
-      prm = std::atof(argv[index]);
+      Util::ConditionalAtof(argc, argv)(prm, index);
     };
 
     //: default

@@ -10,18 +10,10 @@ main(int argc, char * argv[])
   try
   {
     const auto atoi_if = [&](auto & prm, const int index) {
-      if(index <= 0 || argc <= index)
-        return;
-      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
-        return;
-      prm = std::atoi(argv[index]);
+      Util::ConditionalAtoi(argc, argv)(prm, index);
     };
     const auto atof_if = [&](auto & prm, const int index) {
-      if(index <= 0 || argc <= index)
-        return;
-      if(std::strcmp(argv[index], StokesFlow::skipper) == 0)
-        return;
-      prm = std::atof(argv[index]);
+      Util::ConditionalAtof(argc, argv)(prm, index);
     };
 
     //: default
@@ -54,7 +46,7 @@ main(int argc, char * argv[])
     options.prms.n_cycles = n_cycles;
 
     EquationData equation_data;
-    equation_data.variant           = EquationData::Variant::DivFreeBell; // Bell !!!
+    equation_data.variant           = EquationData::Variant::DivFreeNoSlip; // NoSlip; // Bell !!!
     equation_data.use_cuthill_mckee = false;
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
@@ -70,7 +62,15 @@ main(int argc, char * argv[])
                                                                         equation_data);
 
     std::cout << std::endl;
-    stokes_problem.run();
+    // const auto sol = std::make_shared<DivergenceFree::NoSlip::Solution<dim>>();
+    // Point<dim> p({0.25, 0.5});
+    // for(auto c = 0U; c < dim + 1; ++c)
+    //   std::cout << sol->value(p, c) << std::endl;
+    // for(auto c = 0U; c < dim; ++c)
+    //   std::cout << sol->gradient(p, c) << std::endl;
+    // for(auto c = 0U; c < dim; ++c)
+    //   std::cout << sol->hessian(p, c) << std::endl;
+    stokes_problem.run(); // !!!
 
     std::cout << std::endl
               << std::endl
