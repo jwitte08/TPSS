@@ -366,7 +366,6 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
   if(equation_data.is_stream_function)
   {
     Assert(load_function_stokes, ExcMessage("load_function_stokes is required."));
-    AssertDimension(load_function_stokes->n_components, dim);
   }
   else
   {
@@ -461,7 +460,9 @@ template<bool is_stream>
 void
 ModelProblem<dim, fe_degree>::assemble_system_impl()
 {
-  const auto * load_function_ptr = is_stream ? load_function_stokes.get() : load_function.get();
+  const auto             component_range = std::make_pair<unsigned int>(0, dim);
+  Stokes::FunctionExtractor<dim> load_function_stream(load_function_stokes.get(), component_range);
+  const Function<dim> * load_function_ptr = is_stream ? &load_function_stream : load_function.get();
 
   using MatrixIntegrator = typename C0IP::MW::
     MatrixIntegrator<dim, /*is_multigrid*/ false, /*stream function?*/ is_stream>;
