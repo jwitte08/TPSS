@@ -958,6 +958,12 @@ struct EquationData
   }
 
   static std::string
+  sstr_equation_variant(const Variant variant);
+
+  std::string
+  sstr_equation_variant() const;
+
+  static std::string
   str_local_solver(const LocalSolver variant)
   {
     std::string str[] = {"exact", "velocity (block diagonal)"};
@@ -992,6 +998,21 @@ struct EquationData
   double                       local_kernel_threshold          = 0.;
   LocalSolver                  local_solver                    = LocalSolver::Exact;
 };
+
+
+std::string
+EquationData::sstr_equation_variant(const Variant variant)
+{
+  std::string str[] = {"tba", "noslipnormal", "bell", "poiseuille", "noslip"};
+  return str[static_cast<int>(variant)];
+}
+
+
+std::string
+EquationData::sstr_equation_variant() const
+{
+  return sstr_equation_variant(variant);
+}
 
 
 
