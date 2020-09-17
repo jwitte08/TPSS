@@ -60,7 +60,8 @@ struct MeshParameter
   int                       n_refinements    = -1;
   int                       n_repetitions    = -1;
   std::vector<unsigned int> n_subdivisions;
-  double                    distortion = -1.0;
+  double                    distortion      = -1.0;
+  bool                      do_colorization = false;
 };
 
 
@@ -130,7 +131,7 @@ create_unit_cube(Triangulation<dim> & tria, const MeshParameter & prm)
   oss << Util::parameter_to_fstring("Domain:", str_domain());
 
   // create root mesh
-  GridGenerator::subdivided_hyper_cube(tria, prm.n_repetitions, left, right);
+  GridGenerator::subdivided_hyper_cube(tria, prm.n_repetitions, left, right, prm.do_colorization);
   const auto str_root_mesh = [&]() {
     std::ostringstream oss;
     const unsigned     n_root_cells_per_dim = prm.n_repetitions;
@@ -180,7 +181,7 @@ create_distorted_cube(Triangulation<dim> & tria, const MeshParameter & prm)
   oss << Util::parameter_to_fstring("Domain:", str_domain());
 
   // create root mesh
-  GridGenerator::subdivided_hyper_cube(tria, prm.n_repetitions, left, right);
+  GridGenerator::subdivided_hyper_cube(tria, prm.n_repetitions, left, right, prm.do_colorization);
   GridTools::distort_random(prm.distortion,
                             tria,
                             /*keep_boundary*/ true);
@@ -234,7 +235,8 @@ create_subdivided_cuboid(Triangulation<dim> & tria, const MeshParameter & prm)
   oss << Util::parameter_to_fstring("Domain:", str_domain());
 
   // create root mesh
-  GridGenerator::subdivided_hyper_rectangle(tria, prm.n_subdivisions, left, right);
+  GridGenerator::subdivided_hyper_rectangle(
+    tria, prm.n_subdivisions, left, right, prm.do_colorization);
   const auto str_root_mesh = [&]() {
     std::ostringstream oss;
     for(unsigned int d = 0; d < dim; ++d)
