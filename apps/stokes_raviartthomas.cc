@@ -30,7 +30,7 @@ main(int argc, char * argv[])
     unsigned int debug_depth                 = 0;
     double       damping                     = 0.;
     unsigned int force_mean_value_constraint = false;
-    double       ip_factor                   = 0.;
+    double       ip_factor                   = 1.;
     unsigned int n_cycles                    = 3;
     unsigned int local_solver_variant        = 0;
 
@@ -57,23 +57,28 @@ main(int argc, char * argv[])
 
     options.setup(test_index, damping);
     options.prms.n_cycles = n_cycles;
+    /// each side of the rectangular domain needs its own boundary_id (otherwise
+    /// MGConstrainedDoFs::make_no_normal_zero_flux() is not supported)
+    options.prms.mesh.do_colorization = true;
 
     EquationData equation_data;
-    equation_data.variant           = EquationData::Variant::DivFreeNoSlip; // !!!
+    equation_data.variant           = EquationData::Variant::DivFreeNoSlipNormal; // !!!
     equation_data.use_cuthill_mckee = false;
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
     AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
                 ExcMessage("Invalid."));
-    equation_data.force_mean_value_constraint =
-      options.prms.solver.variant == "UMFPACK" ?
-        true :
-        static_cast<bool>(force_mean_value_constraint); // !!!
-    equation_data.ip_factor    = ip_factor;             // !!!
+    equation_data.force_mean_value_constraint = force_mean_value_constraint;
+    if(options.prms.solver.variant == "UMFPACK")
+      equation_data.force_mean_value_constraint = true;
+    equation_data.ip_factor    = ip_factor;
     equation_data.local_solver = static_cast<LocalSolver>(local_solver_variant);
+    if(options.prms.mesh.do_colorization)
+      for(types::boundary_id id = 0; id < GeometryInfo<dim>::faces_per_cell; ++id)
+        equation_data.dirichlet_boundary_ids_velocity.insert(id);
 
     ModelProblem<dim, fe_degree_p, Method::RaviartThomas> stokes_problem(options.prms,
-                                                                         equation_data); // !!!
+                                                                         equation_data);
 
     std::cout << std::endl;
     stokes_problem.run();
