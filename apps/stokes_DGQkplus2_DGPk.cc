@@ -21,7 +21,7 @@ main(int argc, char * argv[])
     unsigned int debug_depth                 = 0;
     double       damping                     = 0.;
     unsigned int force_mean_value_constraint = 0;
-    double       ip_factor                   = 0.;
+    double       ip_factor                   = 1.;
     unsigned int n_cycles                    = 3;
     unsigned int local_solver_variant        = 0;
 

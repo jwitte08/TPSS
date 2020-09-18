@@ -31,8 +31,9 @@ struct StokesFlow
   // 3 : ... with GMG based on Schwarz smoothers for velocity (FGMRES_GMGvelocity)
   //     GMRES prec. by GMG ...
   // 4 : ...based on Gauss-Seidel smoothers for velocity-pressure (GMRES_GMG)
-  // 4 : ...based on Gauss-Seidel smoothers for velocity-pressure (GMRES_CG)
-  static constexpr unsigned int test_index_max = 5;
+  // 5 : ...based on Gauss-Seidel smoothers for velocity-pressure (GMRES_CG)
+  // 6 : unpreconditioned CG (CG)
+  static constexpr unsigned int test_index_max = 6;
 
   void
   setup(const unsigned int test_index, const double damping_factor)
@@ -47,11 +48,18 @@ struct StokesFlow
     prms.mesh.n_repetitions    = 2;
 
     //: solver
+    const SolverParameter::PreconditionVariant precondition_variant[test_index_max + 1] = {
+      SolverParameter::PreconditionVariant::None,
+      SolverParameter::PreconditionVariant::None,
+      SolverParameter::PreconditionVariant::GMG,
+      SolverParameter::PreconditionVariant::GMG,
+      SolverParameter::PreconditionVariant::GMG,
+      SolverParameter::PreconditionVariant::GMG,
+      SolverParameter::PreconditionVariant::None};
     prms.solver.variant              = str_solver_variant[test_index];
     prms.solver.rel_tolerance        = 1.e-8; // !!!
-    prms.solver.precondition_variant = test_index >= 2 ? SolverParameter::PreconditionVariant::GMG :
-                                                         SolverParameter::PreconditionVariant::None;
-    prms.solver.n_iterations_max = 100;
+    prms.solver.precondition_variant = precondition_variant[test_index];
+    prms.solver.n_iterations_max     = 200;
 
     //: multigrid
     //:: coarse grid
@@ -76,8 +84,13 @@ struct StokesFlow
     prms.multigrid.post_smoother.schwarz.reverse_smoothing = true;
   }
 
-  const std::string str_solver_variant[test_index_max + 1] =
-    {"UMFPACK", "FGMRES_ILU", "FGMRES_GMGvelocity", "FGMRES_GMGvelocity", "GMRES_GMG", "CG_GMG"};
+  const std::string str_solver_variant[test_index_max + 1] = {"UMFPACK",
+                                                              "FGMRES_ILU",
+                                                              "FGMRES_GMGvelocity",
+                                                              "FGMRES_GMGvelocity",
+                                                              "GMRES_GMG",
+                                                              "CG_GMG",
+                                                              "CG"};
 
   const SmootherParameter::SmootherVariant smoother_variant[test_index_max + 1] = {
     SmootherParameter::SmootherVariant::None,
@@ -85,7 +98,8 @@ struct StokesFlow
     SmootherParameter::SmootherVariant::GaussSeidel,
     SmootherParameter::SmootherVariant::Schwarz,
     SmootherParameter::SmootherVariant::Schwarz,
-    SmootherParameter::SmootherVariant::Schwarz};
+    SmootherParameter::SmootherVariant::Schwarz,
+    SmootherParameter::SmootherVariant::None};
 
   RT::Parameter prms;
 };

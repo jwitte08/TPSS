@@ -1009,14 +1009,13 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cellU,
 
   for(unsigned int q = 0; q < n_q_points; ++q)
   {
-    for(unsigned int i = 0; i < n_dofs_per_cellU; ++i)
+    for(unsigned int i = 0; i < n_dofs_per_cellU; ++i) // test
     {
       const auto div_phiU_i = compute_divergence(phiU, i, q);
-      for(unsigned int j = 0; j < n_dofs_per_cellP; ++j)
+      for(unsigned int j = 0; j < n_dofs_per_cellP; ++j) // ansatz
       {
         const auto phiP_j = phiP.shape_value(j, q);
 
-        /// assign to velocity-pressure block
         copy_data.cell_matrix(i, j) += -div_phiU_i * phiP_j * phiP.JxW(q);
       }
     }

@@ -1791,60 +1791,7 @@ SolutionVelocity<2>::hessian(const Point<2> & p, const unsigned int component) c
 
 
 template<int dim>
-class SolutionPressure : public Function<dim>
-{
-  static_assert(dim == 2, "Implemented for two dimensions.");
-
-public:
-  SolutionPressure() : Function<dim>(1)
-  {
-  }
-
-  virtual double
-  value(const Point<dim> & p, const unsigned int component = 0) const override;
-
-  virtual Tensor<1, dim>
-  gradient(const Point<dim> & p, const unsigned int component = 0) const override;
-
-  virtual SymmetricTensor<2, dim>
-  hessian(const Point<dim> & p, const unsigned int component = 0) const override;
-};
-
-template<>
-double
-SolutionPressure<2>::value(const Point<2> & p, const unsigned int) const
-{
-  using numbers::PI;
-  const double x = p(0);
-  const double y = p(1);
-
-  return cos(2. * PI * x) * cos(2. * PI * y);
-}
-
-template<>
-Tensor<1, 2>
-SolutionPressure<2>::gradient(const Point<2> & p, const unsigned int) const
-{
-  using numbers::PI;
-  const double x = p(0);
-  const double y = p(1);
-
-  Tensor<1, 2> grad;
-  {
-    grad[0] = -2. * PI * sin(2. * PI * x) * cos(2. * PI * y);
-    grad[1] = -2. * PI * cos(2. * PI * x) * sin(2. * PI * y);
-  }
-
-  return grad;
-}
-
-template<>
-SymmetricTensor<2, 2>
-SolutionPressure<2>::hessian(const Point<2> &, const unsigned int) const
-{
-  AssertThrow(false, ExcMessage("No need for this functionality..."));
-  return SymmetricTensor<2, 2>{};
-}
+using SolutionPressure =  NoSlipNormal::SolutionPressure<dim>;
 
 
 
@@ -1953,7 +1900,7 @@ SolutionPressureAlt<2>::hessian(const Point<2> &, const unsigned int) const
 
 
 template<int dim>
-using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
+using Solution = FunctionMerge<dim, SolutionVelocity<dim>, NoSlipNormal::SolutionPressure<dim>>;
 
 } // namespace GaussianBell
 

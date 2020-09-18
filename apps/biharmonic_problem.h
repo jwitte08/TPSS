@@ -460,7 +460,7 @@ template<bool is_stream>
 void
 ModelProblem<dim, fe_degree>::assemble_system_impl()
 {
-  const auto             component_range = std::make_pair<unsigned int>(0, dim);
+  const auto                     component_range = std::make_pair<unsigned int>(0, dim);
   Stokes::FunctionExtractor<dim> load_function_stream(load_function_stokes.get(), component_range);
   const Function<dim> * load_function_ptr = is_stream ? &load_function_stream : load_function.get();
 
@@ -1060,7 +1060,7 @@ ModelProblem<dim, fe_degree>::output_results(const unsigned int iteration) const
   data_out.build_patches();
 
   std::ofstream output_vtk(("biharm_" + equation_data.sstr_equation_variant() + "_" +
-                            Utilities::int_to_string(iteration, 6) + ".vtk")
+                            Utilities::int_to_string(iteration, 3) + ".vtk")
                              .c_str());
   data_out.write_vtk(output_vtk);
 }

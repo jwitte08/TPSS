@@ -25,10 +25,10 @@ main(int argc, char * argv[])
 
     //: parse arguments
     atoi_if(test_index, 1);
-    atof_if(damping, 5);
+    atoi_if(n_cycles, 2);
     atoi_if(force_mean_value_constraint, 3);
     atoi_if(debug_depth, 4);
-    atoi_if(n_cycles, 2);
+    atof_if(damping, 5);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
@@ -46,7 +46,7 @@ main(int argc, char * argv[])
     options.prms.n_cycles = n_cycles;
 
     EquationData equation_data;
-    equation_data.variant           = EquationData::Variant::DivFreeNoSlip; // NoSlip; // Bell !!!
+    equation_data.variant           = EquationData::Variant::DivFreeBell;
     equation_data.use_cuthill_mckee = false;
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
