@@ -44,6 +44,7 @@
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/solver_cg.h>
 #include <deal.II/lac/solver_gmres.h>
+#include <deal.II/lac/trilinos_precondition.h>
 
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/grid_refinement.h>
@@ -61,6 +62,7 @@
 #include <deal.II/fe/fe_dgq.h>
 #include <deal.II/fe/fe_interface_values.h>
 #include <deal.II/fe/fe_q.h>
+#include <deal.II/fe/fe_raviart_thomas.h>
 #include <deal.II/fe/fe_raviart_thomas_new.h>
 #include <deal.II/fe/fe_system.h>
 #include <deal.II/fe/fe_values.h>
@@ -171,6 +173,31 @@ public:
   }
 
   std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
+};
+
+
+
+template<typename Number>
+class BlockSparseMatrixFiltered : public BlockSparseMatrix<Number>
+{
+public:
+  using matrix_type = BlockSparseMatrix<Number>;
+
+  void
+  vmult(BlockVector<Number> & dst, const BlockVector<Number> & src) const
+  {
+    matrix_type::vmult(dst, src);
+
+    if(constant_pressure_mode)
+    {
+      auto & dst_pressure = dst.block(1);
+      AssertDimension(constant_pressure_mode->size(), dst_pressure.size());
+      const Number inner_product_value = (*constant_pressure_mode) * dst_pressure;
+      dst_pressure.add(-inner_product_value, *constant_pressure_mode);
+    }
+  }
+
+  const Vector<double> * constant_pressure_mode = nullptr;
 };
 
 
@@ -312,7 +339,7 @@ BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
   // or just apply one preconditioner sweep
   if(do_solve_A == true)
   {
-    SolverControl            solver_control(1000, utmp.l2_norm() * 1e-4);
+    SolverControl            solver_control(9999, utmp.l2_norm() * 1e-4); // !!!
     SolverCG<Vector<double>> cg(solver_control);
 
     dst.block(0) = 0.0;
@@ -439,6 +466,9 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_multigrid(
   if(dof_layout == TPSS::DoFLayout::Q)
     mg_constrained_dofs->make_zero_boundary_constraints(
       *dof_handler, equation_data.dirichlet_boundary_ids_velocity);
+  else if(dof_layout == TPSS::DoFLayout::RT) // !!!
+    for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+      mg_constrained_dofs->make_no_normal_flux_constraints(*dof_handler, boundary_id, 0U);
 
   // *** initialize level matrices A_l
   mg_matrices.resize(mg_level_min, mg_level_max);
@@ -580,7 +610,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid()
   for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
   {
     AffineConstraints<double> level_constraints;
-    if(dof_layout == TPSS::DoFLayout::Q)
+    if(dof_layout == TPSS::DoFLayout::Q || dof_layout == TPSS::DoFLayout::RT) // !!!
       level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
     level_constraints.close();
 
@@ -1347,7 +1377,8 @@ struct ModelProblemBase<Method::RaviartThomas, dim, fe_degree_p>
 {
   static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::RT;
   static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::DGQ;
-  using fe_type_v                               = FE_RaviartThomasNodal_new<dim>;
+  // using fe_type_v                               = FE_RaviartThomasNodal_new<dim>;
+  using fe_type_v                               = FE_RaviartThomas<dim>;
   using fe_type_p                               = FE_DGQ<dim>;
   static constexpr int           fe_degree_v    = fe_degree_p;
   static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
@@ -1484,16 +1515,17 @@ public:
   AffineConstraints<double> constraints_velocity;
   AffineConstraints<double> constraints_pressure;
 
-  Table<2, DoFTools::Coupling> cell_integrals_mask;
-  Table<2, DoFTools::Coupling> face_integrals_mask;
-  BlockSparsityPattern         sparsity_pattern;
-  BlockSparseMatrix<double>    system_matrix;
-  SparsityPattern              sparsity_pattern_pressure;
-  SparseMatrix<double>         pressure_mass_matrix;
+  Table<2, DoFTools::Coupling>      cell_integrals_mask;
+  Table<2, DoFTools::Coupling>      face_integrals_mask;
+  BlockSparsityPattern              sparsity_pattern;
+  BlockSparseMatrixFiltered<double> system_matrix; // !!!
+  SparsityPattern                   sparsity_pattern_pressure;
+  SparseMatrix<double>              pressure_mass_matrix;
 
   BlockVector<double> system_solution;
   BlockVector<double> system_delta_x;
   BlockVector<double> system_rhs;
+  Vector<double>      constant_pressure_mode;
 
   //: multigrid
   mutable std::shared_ptr<ColoringBase<dim>>           user_coloring;
@@ -1863,11 +1895,21 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
   zero_constraints_velocity.clear();
   if(dof_layout_v == TPSS::DoFLayout::Q)
   {
-    DoFTools::make_hanging_node_constraints(dof_handler_velocity, zero_constraints_velocity);
     for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
       DoFTools::make_zero_boundary_constraints(dof_handler_velocity,
                                                boundary_id,
                                                zero_constraints_velocity);
+  }
+  else if(dof_layout_v == TPSS::DoFLayout::RT)
+  {
+    ZeroFunction<dim> zero_velocity(dim);
+    /// We use dof_handler by purpose here bypassing the assertion in
+    /// project_boundary_values_div_conforming(), since the underlying finite
+    /// element is of type FE_System and therefore not checked (otherwise the
+    /// function asserts a finite element of type FE_RaviartThomas!).
+    for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+      VectorTools::project_boundary_values_div_conforming(
+        dof_handler, 0U, zero_velocity, boundary_id, zero_constraints_velocity, mapping);
   }
   zero_constraints_velocity.close();
 
@@ -1877,13 +1919,24 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
   {
     const auto             component_range = std::make_pair<unsigned int>(0, dim);
     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
-    DoFTools::make_hanging_node_constraints(dof_handler, constraints_velocity);
     std::map<types::boundary_id, const Function<dim, double> *> boundary_id_to_function;
     for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
       boundary_id_to_function.emplace(boundary_id, &analytical_solution_velocity);
     VectorTools::interpolate_boundary_values(dof_handler_velocity,
                                              boundary_id_to_function,
                                              constraints_velocity);
+  }
+  else if(dof_layout_v == TPSS::DoFLayout::RT)
+  {
+    const auto             component_range = std::make_pair<unsigned int>(0, dim);
+    FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
+    /// We use dof_handler by purpose here bypassing the assertion in
+    /// project_boundary_values_div_conforming(), since the underlying finite
+    /// element is of type FE_System and therefore not checked (otherwise the
+    /// function asserts a finite element of type FE_RaviartThomas!).
+    for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+      VectorTools::project_boundary_values_div_conforming(
+        dof_handler, 0U, analytical_solution_velocity, boundary_id, constraints_velocity, mapping);
   }
   constraints_velocity.close();
 
@@ -1995,21 +2048,26 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   zero_constraints.clear();
   if(dof_layout_v == TPSS::DoFLayout::Q)
   {
-    DoFTools::make_hanging_node_constraints(dof_handler, zero_constraints);
     const FEValuesExtractors::Vector velocities(0);
-    {
-      for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
-        DoFTools::make_zero_boundary_constraints(dof_handler,
-                                                 boundary_id,
-                                                 zero_constraints,
-                                                 fe->component_mask(velocities));
-    }
+    for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+      DoFTools::make_zero_boundary_constraints(dof_handler,
+                                               boundary_id,
+                                               zero_constraints,
+                                               fe->component_mask(velocities));
+  }
+  else if(dof_layout_v == TPSS::DoFLayout::RT)
+  {
+    ZeroFunction<dim> zero_velocity(dim);
+    for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+      VectorTools::project_boundary_values_div_conforming(
+        dof_handler, 0U, zero_velocity, boundary_id, zero_constraints, mapping);
   }
   zero_constraints.close();
 
-  /// Mean value boundary condition (pressure)
   {
     mean_value_constraints.clear();
+
+    /// Mean value condition (pressure) ...
     if(equation_data.force_mean_value_constraint)
     {
       const types::global_dof_index first_dof_index = n_dofs_velocity;
@@ -2023,6 +2081,25 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
       for(const auto & [column, value] : mean_value_free_entries)
         mean_value_constraints.add_entry(first_dof_index, first_dof_index + column, value);
     }
+    /// ... or mean value filter
+    else
+    {
+      constant_pressure_mode.reinit(n_dofs_pressure);
+      if(dof_layout_p == TPSS::DoFLayout::DGQ)
+      {
+        constant_pressure_mode = 1.;
+      }
+      else if(dof_layout_p == TPSS::DoFLayout::DGP)
+      {
+        const auto n_dofs_per_cell = dof_handler_pressure.get_fe().dofs_per_cell;
+        AssertDimension(n_dofs_pressure % n_dofs_per_cell, 0);
+        for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
+          constant_pressure_mode[i] = 1.;
+      }
+      else
+        AssertThrow(false, ExcMessage("This pressure dof layout is not supported."));
+    }
+
     mean_value_constraints.close();
     zero_constraints.merge(mean_value_constraints);
   }
@@ -2047,6 +2124,8 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   DoFTools::make_flux_sparsity_pattern(dof_handler, dsp, cell_integrals_mask, face_integrals_mask);
   zero_constraints.condense(dsp);
   sparsity_pattern.copy_from(dsp);
+  if(constant_pressure_mode.size() != 0U)
+    system_matrix.constant_pressure_mode = &constant_pressure_mode; // !!!
 
   system_matrix.reinit(sparsity_pattern);
   system_solution.reinit(dofs_per_block);
@@ -2055,10 +2134,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   zero_constraints.set_zero(system_solution);
   zero_constraints.set_zero(system_delta_x);
-  if(dof_layout_v == TPSS::DoFLayout::Q)
-  {
-    constraints_velocity.distribute(system_solution.block(0)); // particular velocity solution!
-  }
+  constraints_velocity.distribute(system_solution.block(0)); // particular velocity solution!
 
   print_parameter("Number of degrees of freedom (velocity):", n_dofs_velocity);
   print_parameter("Number of degrees of freedom (pressure):", n_dofs_pressure);
@@ -2645,10 +2721,7 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
     additional_data.max_n_tmp_vectors = rt_parameters.solver.n_iterations_max;
     iterative_solver.set_data(additional_data);
   }
-  iterative_solver.solve<BlockSparseMatrix<double>, PreconditionerType>(system_matrix,
-                                                                        system_delta_x,
-                                                                        system_rhs,
-                                                                        preconditioner);
+  iterative_solver.solve(system_matrix, system_delta_x, system_rhs, preconditioner);
   /// distribute() is needed to apply the mean value constraint (Dirichlet
   /// conditions of velocity have already been applied to system_solution)
   if(equation_data.force_mean_value_constraint)
@@ -2700,8 +2773,10 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     SparseILU<double> S_preconditioner;
     S_preconditioner.initialize(pressure_mass_matrix);
 
-    const BlockSchurPreconditioner<SparseILU<double>, SparseILU<double>> preconditioner(
-      system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner, use_expensive);
+    const BlockSchurPreconditioner<typename std::decay<decltype(A_preconditioner)>::type,
+                                   typename std::decay<decltype(S_preconditioner)>::type>
+      preconditioner(
+        system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner, use_expensive);
 
     iterative_solve_impl(preconditioner, "fgmres");
     *pcout << preconditioner.get_summary() << std::endl;
@@ -2727,7 +2802,6 @@ ModelProblem<dim, fe_degree_p, method>::solve()
   else if(rt_parameters.solver.variant == "GMRES_GMG")
   {
     prepare_multigrid_velocity_pressure();
-    // PreconditionIdentity prec_id;
     auto & preconditioner = mgc_velocity_pressure.get_preconditioner();
 
     iterative_solve_impl(preconditioner, "gmres");
@@ -2739,6 +2813,40 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     auto & preconditioner = mgc_velocity_pressure.get_preconditioner();
 
     iterative_solve_impl(preconditioner, "cg");
+  }
+
+  else if(rt_parameters.solver.variant == "CG")
+  {
+    PreconditionIdentity preconditioner;
+    rt_parameters.solver.n_iterations_max *= 100.;
+
+    iterative_solve_impl(preconditioner, "cg");
+
+    //   auto preconditioner_amg = std::make_shared<TrilinosWrappers::PreconditionAMG>();
+    //   std::vector<std::vector<bool>> constant_modes;
+    //   FEValuesExtractors::Vector     velocity_components(0);
+    //   DoFTools::extract_constant_modes(dof_handler,
+    // 				     dof_handler.get_fe().component_mask(
+    //                                    velocity_components),
+    //                                  constant_modes);
+
+    //   TrilinosWrappers::PreconditionAMG::AdditionalData amg_data;
+    // amg_data.constant_modes = constant_modes;
+    // amg_data.elliptic              = true;
+    // amg_data.higher_order_elements = true;
+    // amg_data.smoother_sweeps       = 2;
+    // amg_data.aggregation_threshold = 0.02;
+    // preconditioner_amg->initialize(system_matrix.block(0, 0),
+    //                                amg_data);
+
+    // SparseILU<double> S_preconditioner;
+    // S_preconditioner.initialize(pressure_mass_matrix);
+
+    // const BlockSchurPreconditioner<SparseILU<double>, SparseILU<double>> preconditioner(
+    //   system_matrix, pressure_mass_matrix, *preconditioner_amg, S_preconditioner, use_expensive);
+
+    // iterative_solve_impl(preconditioner, "fgmres");
+    // *pcout << preconditioner.get_summary();
   }
 
   else
@@ -2875,7 +2983,8 @@ ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refine
   data_out.add_data_vector(*H1semi_error_v, "velocity_H1semi_error", DataOut<dim>::type_cell_data);
   data_out.build_patches();
 
-  std::ofstream output("solution-" + Utilities::int_to_string(refinement_cycle, 2) + ".vtk");
+  std::ofstream output("stokes_" + equation_data.sstr_equation_variant() + "_" +
+                       Utilities::int_to_string(refinement_cycle, 3) + ".vtk");
   data_out.write_vtk(output);
 }
 
