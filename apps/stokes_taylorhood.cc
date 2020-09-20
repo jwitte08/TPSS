@@ -20,13 +20,15 @@ main(int argc, char * argv[])
     unsigned int test_index                  = 0;
     unsigned int debug_depth                 = 0;
     double       damping                     = 0.;
-    unsigned int force_mean_value_constraint = 0;
+    unsigned int force_mean_value_constraint = false;
+    unsigned int n_cycles                    = 3;
 
     //: parse arguments
     atoi_if(test_index, 1);
-    atof_if(damping, 2);
+    atoi_if(n_cycles, 2);
     atoi_if(force_mean_value_constraint, 3);
     atoi_if(debug_depth, 4);
+    atof_if(damping, 5);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
@@ -41,18 +43,19 @@ main(int argc, char * argv[])
       damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
 
     options.setup(test_index, damping);
-    options.prms.solver.use_right_preconditioning = true; // !!!
+    options.prms.n_cycles = n_cycles;
+    // options.prms.solver.use_right_preconditioning = true; // !!!
 
     EquationData equation_data;
-    equation_data.variant = EquationData::Variant::DivFreeNoSlipNormal;
-    equation_data.force_mean_value_constraint =
-      options.prms.solver.variant == "UMFPACK" ? true : false; // !!!
+    equation_data.variant           = EquationData::Variant::DivFreeBell;
     equation_data.use_cuthill_mckee = options.prms.solver.variant == "FGMRES_ILU";
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
     AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
                 ExcMessage("Invalid."));
-    equation_data.force_mean_value_constraint = static_cast<bool>(force_mean_value_constraint);
+    equation_data.force_mean_value_constraint = force_mean_value_constraint;
+    if(options.prms.solver.variant == "UMFPACK")
+      equation_data.force_mean_value_constraint = true;
 
     ModelProblem<dim, fe_degree_p, Method::TaylorHood> stokes_problem(options.prms, equation_data);
 

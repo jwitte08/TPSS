@@ -1791,7 +1791,7 @@ SolutionVelocity<2>::hessian(const Point<2> & p, const unsigned int component) c
 
 
 template<int dim>
-using SolutionPressure =  NoSlipNormal::SolutionPressure<dim>;
+using SolutionPressure = NoSlipNormal::SolutionPressure<dim>;
 
 
 

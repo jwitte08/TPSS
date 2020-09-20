@@ -57,7 +57,7 @@ struct StokesFlow
       SolverParameter::PreconditionVariant::GMG,
       SolverParameter::PreconditionVariant::None};
     prms.solver.variant              = str_solver_variant[test_index];
-    prms.solver.rel_tolerance        = 1.e-8; // !!!
+    prms.solver.rel_tolerance        = 1.e-10; // !!!
     prms.solver.precondition_variant = precondition_variant[test_index];
     prms.solver.n_iterations_max     = 200;
 
@@ -66,7 +66,7 @@ struct StokesFlow
     prms.multigrid.coarse_level               = 0;
     prms.multigrid.coarse_grid.solver_variant = CoarseGridParameter::SolverVariant::FullSVD;
     /// The threshold is crucial, if we do not impose any mean value
-    /// constraint on the coarse problem !!!
+    /// constraint on the coarse problem!
     prms.multigrid.coarse_grid.threshold_svd = 1.e-8;
     // prms.multigrid.coarse_grid.iterative_solver                                   = "cg";
     // prms.multigrid.coarse_grid.accuracy                                           = 1.e-12;
