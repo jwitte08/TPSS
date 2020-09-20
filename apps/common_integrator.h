@@ -600,6 +600,36 @@ compute_average_symgrad(const FEInterfaceValues<dim> & phi,
 
 
 /**
+ * Assuming that the normal n is constant, i.e. the interface flat-sided, the
+ * average of the symmetric gradient of the tangential vector field phit = phi -
+ * (phi*n) n reads
+ *
+ *    {{ symgrad(phit_i) }} = {{ symgrad(phi_i) }} (I - n(x)n)
+ *
+ * where (x) is the dyadic product of two vectors and I the identity matrix.
+ */
+template<int dim>
+Tensor<2, dim>
+compute_average_symgrad_tangential(const FEInterfaceValues<dim> & phi,
+                                   const unsigned int             i,
+                                   const unsigned int             q)
+{
+  Tensor<2, dim> av_symgrad_of_phi;
+  for(auto d = 0U; d < dim; ++d)
+    for(auto c = 0U; c < dim; ++c)
+      av_symgrad_of_phi[d][c] =
+        0.5 * (phi.average_gradient(i, q, c)[d] + phi.average_gradient(i, q, d)[c]);
+
+  const Tensor<1, dim> & n              = phi.normal(q);
+  Tensor<2, dim>         n_cross_n      = outer_product(n, n); // n(x)n
+  Tensor<2, dim>         normal_contrib = contract<1, 0>(av_symgrad_of_phi, n_cross_n);
+
+  return av_symgrad_of_phi - normal_contrib;
+}
+
+
+
+/**
  * [[ phi ]] = phi^+ - phi^-
  */
 template<int dim>
@@ -630,6 +660,26 @@ compute_vjump(const FEInterfaceValues<dim> & phi, const unsigned int i, const un
 
 
 /**
+ * The jump of the tangential vector field phit = phi - (phi*n) n reads
+ *
+ *    [[ phit ]] = [[ phi ]] - ([[ phi ]]*n) n
+ */
+template<int dim>
+Tensor<1, dim>
+compute_vjump_tangential(const FEInterfaceValues<dim> & phi,
+                         const unsigned int             i,
+                         const unsigned int             q)
+{
+  const Tensor<1, dim> & n = phi.normal(q);
+  Tensor<1, dim>         jump_phi;
+  for(auto c = 0; c < dim; ++c)
+    jump_phi[c] = phi.jump(i, q, c);
+  return jump_phi - (jump_phi * n) * n;
+}
+
+
+
+/**
  * [[ phi ]] (x) n
  */
 template<int dim>
@@ -640,6 +690,25 @@ compute_vjump_cross_normal(const FEInterfaceValues<dim> & phi,
 {
   const Tensor<1, dim> & n          = phi.normal(q);
   const Tensor<1, dim> & jump_value = compute_vjump(phi, i, q);
+  return outer_product(jump_value, n);
+}
+
+
+
+/**
+ *    [[ phit ]] (x) n
+ *
+ * where n defines the normal and phit the tangential vector field (phi -
+ * (phi*n) n). The jump of [[ phit ]] is defined in compute_vjump_tangential.
+ */
+template<int dim>
+Tensor<2, dim>
+compute_vjump_cross_normal_tangential(const FEInterfaceValues<dim> & phi,
+                                      const unsigned int             i,
+                                      const unsigned int             q)
+{
+  const Tensor<1, dim> & n          = phi.normal(q);
+  const Tensor<1, dim> & jump_value = compute_vjump_tangential(phi, i, q);
   return outer_product(jump_value, n);
 }
 
