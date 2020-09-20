@@ -1906,10 +1906,10 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
     /// We use dof_handler by purpose here bypassing the assertion in
     /// project_boundary_values_div_conforming(), since the underlying finite
     /// element is of type FE_System and therefore not checked (otherwise the
-    /// function asserts a finite element of type FE_RaviartThomas!).
+    /// function presumes a finite element of type FE_RaviartThomas!).
     for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
       VectorTools::project_boundary_values_div_conforming(
-        dof_handler, 0U, zero_velocity, boundary_id, zero_constraints_velocity, mapping);
+        dof_handler_velocity, 0U, zero_velocity, boundary_id, zero_constraints_velocity, mapping);
   }
   zero_constraints_velocity.close();
 
@@ -1933,10 +1933,14 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
     /// We use dof_handler by purpose here bypassing the assertion in
     /// project_boundary_values_div_conforming(), since the underlying finite
     /// element is of type FE_System and therefore not checked (otherwise the
-    /// function asserts a finite element of type FE_RaviartThomas!).
+    /// function presumes a finite element of type FE_RaviartThomas!).
     for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
-      VectorTools::project_boundary_values_div_conforming(
-        dof_handler, 0U, analytical_solution_velocity, boundary_id, constraints_velocity, mapping);
+      VectorTools::project_boundary_values_div_conforming(dof_handler_velocity,
+                                                          0U,
+                                                          analytical_solution_velocity,
+                                                          boundary_id,
+                                                          constraints_velocity,
+                                                          mapping); // !!!
   }
   constraints_velocity.close();
 
@@ -2031,7 +2035,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   // This ensures that all velocity DoFs are enumerated before the pressure
   // unknowns. This allows us to use blocks for vectors and matrices and allows
-  // us to get the same DoF numbering for dof_handler and its separated
+  // us to get the same DoF numbering for dof_handler and its unmerged
   // counterparts dof_handler_velocity and dof_handler_pressure.
   DoFRenumbering::block_wise(dof_handler);
   std::vector<unsigned int>                  block_component{0U, 1U};
@@ -2101,8 +2105,17 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     }
 
     mean_value_constraints.close();
-    zero_constraints.merge(mean_value_constraints);
   }
+
+  // // 2!!! clear all constraints
+  // zero_constraints.clear();
+  // zero_constraints.close();
+  // zero_constraints_velocity.clear();
+  // zero_constraints_velocity.close();
+  // constraints_velocity.clear();
+  // constraints_velocity.close();
+
+  zero_constraints.merge(mean_value_constraints);
 
   cell_integrals_mask.reinit(dim + 1, dim + 1);
   face_integrals_mask.reinit(dim + 1, dim + 1);
@@ -2134,7 +2147,8 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   zero_constraints.set_zero(system_solution);
   zero_constraints.set_zero(system_delta_x);
-  constraints_velocity.distribute(system_solution.block(0)); // particular velocity solution!
+  constraints_velocity.distribute(system_solution.block(0));     // particular velocity solution!
+  zero_constraints_velocity.distribute(system_delta_x.block(0)); // hom velocity solution !!!
 
   print_parameter("Number of degrees of freedom (velocity):", n_dofs_velocity);
   print_parameter("Number of degrees of freedom (pressure):", n_dofs_pressure);
@@ -2196,10 +2210,10 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 {
-  /// TODO discard redundant terms for Hdiv-conforming SIPG !!!
-  constexpr bool use_sipg_method =
-    dof_layout_v == TPSS::DoFLayout::DGQ || dof_layout_v == TPSS::DoFLayout::RT;
-  constexpr bool use_conf_method = dof_layout_v == TPSS::DoFLayout::Q;
+  constexpr bool use_sipg_method = dof_layout_v == TPSS::DoFLayout::DGQ;
+  // !!! || dof_layout_v == TPSS::DoFLayout::RT;
+  constexpr bool use_hdiv_ip_method = dof_layout_v == TPSS::DoFLayout::RT;
+  constexpr bool use_conf_method    = dof_layout_v == TPSS::DoFLayout::Q;
 
   /// Assemble the velocity block, here block(0,0).
   {
@@ -2212,7 +2226,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
 
     const auto * particular_solution_velocity =
-      use_conf_method ? &(system_solution.block(0)) : nullptr;
+      (use_conf_method || use_hdiv_ip_method) ? &(system_solution.block(0)) : nullptr;
 
     MatrixIntegrator matrix_integrator(&load_function_velocity,
                                        &analytical_solution_velocity,
@@ -2232,14 +2246,24 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                            const unsigned int & nsf,
                            ScratchData<dim> &   scratch_data,
                            CopyData &           copy_data) {
-      matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+      if(use_sipg_method)
+        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+      else if(use_hdiv_ip_method)
+        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+      else
+        AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
     };
 
     auto boundary_worker = [&](const auto &         cell,
                                const unsigned int & face_no,
                                ScratchData<dim> &   scratch_data,
                                CopyData &           copy_data) {
-      matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+      if(use_sipg_method)
+        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+      else if(use_hdiv_ip_method)
+        matrix_integrator.boundary_worker_tangential(cell, face_no, scratch_data, copy_data);
+      else
+        AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
     };
 
     const auto copier = [&](const CopyData & copy_data) {
@@ -2253,11 +2277,14 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
       for(auto & cdf : copy_data.face_data)
       {
-        AssertDimension(cdf.cell_rhs.size(), 0);
-        if(cdf.cell_rhs.size() == 0) // only filled on cells at the boundary
+        if(!use_hdiv_ip_method)
+          AssertDimension(cdf.cell_rhs.size(), 0);
+
+        if(cdf.cell_rhs.size() == 0)
           zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
             cdf.cell_matrix, cdf.joint_dof_indices, system_matrix.block(0, 0));
         else
+        {
           zero_constraints_velocity
             .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
               cdf.cell_matrix,
@@ -2265,6 +2292,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
               cdf.joint_dof_indices,
               system_matrix.block(0, 0),
               system_rhs.block(0));
+        }
       }
     };
 
@@ -2287,7 +2315,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                             scratch_data,
                             copy_data,
                             MeshWorker::assemble_own_cells);
-    else if(use_sipg_method)
+    else if(use_sipg_method || use_hdiv_ip_method)
       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
                             dof_handler_velocity.end(),
                             cell_worker,
@@ -2355,16 +2383,14 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     using CellIterator     = typename MatrixIntegrator::IteratorType;
 
     const auto * particular_solution_velocity =
-      use_conf_method ? &(system_solution.block(0)) : nullptr;
-    const auto * particular_solution_pressure =
-      use_conf_method ? &(system_solution.block(1)) : nullptr;
+      (use_conf_method || use_hdiv_ip_method) ? &(system_solution.block(0)) : nullptr;
 
     const auto             component_range_velocity = std::make_pair<unsigned int>(0, dim);
     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(),
                                                         component_range_velocity);
 
     MatrixIntegrator matrix_integrator(particular_solution_velocity,
-                                       particular_solution_pressure,
+                                       /*particular_solution_pressure*/ nullptr,
                                        &analytical_solution_velocity,
                                        /*&analytical_solution_pressure*/ nullptr,
                                        equation_data);
@@ -2394,8 +2420,15 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                 ncell->level(),
                                 ncell->index(),
                                 &dof_handler_pressure);
-      matrix_integrator.face_worker(
-        cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
+      if(use_sipg_method)
+        matrix_integrator.face_worker(
+          cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
+      else if(use_hdiv_ip_method)
+        // matrix_integrator.face_worker(
+        //   cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
+        ;
+      else
+        AssertThrow(false, ExcMessage("This FEM is not supported."));
     };
 
     auto boundary_worker = [&](const CellIterator & cell,
@@ -2406,7 +2439,13 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                cell->level(),
                                cell->index(),
                                &dof_handler_pressure);
-      matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
+      if(use_sipg_method)
+        matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
+      else if(use_hdiv_ip_method)
+        // matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
+        ;
+      else
+        AssertThrow(false, ExcMessage("This FEM is not supported."));
     };
 
     const auto copier = [&](const CopyData & copy_data) {
@@ -2430,10 +2469,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
       for(auto & cdf : copy_data.face_data)
       {
-        /// all rhs contributions are written to copy_data
-        AssertDimension(cdf.cell_rhs_test.size(), 0);
-        AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
-
         zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
           cdf.cell_matrix,
           cdf.joint_dof_indices_test,
@@ -2446,6 +2481,19 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
           zero_constraints_velocity,
           cdf.joint_dof_indices_test,
           system_matrix.block(1, 0));
+
+        /// For Hdiv-IP there might be liftings from the velocity written to the
+        /// pressure RHS.
+        AssertDimension(cdf.cell_rhs_test.size(), 0);
+        if(dof_layout_v != TPSS::DoFLayout::RT)
+          AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
+
+        if(cdf.cell_rhs_test.size() != 0)
+          zero_constraints_velocity.template distribute_local_to_global<Vector<double>>(
+            cdf.cell_rhs_test, cdf.joint_dof_indices_test, system_rhs.block(0));
+        if(cdf.cell_rhs_ansatz.size() != 0)
+          constraints_pressure.template distribute_local_to_global<Vector<double>>(
+            cdf.cell_rhs_ansatz, cdf.joint_dof_indices_ansatz, system_rhs.block(1));
       }
     };
 
@@ -2478,7 +2526,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                             scratch_data,
                             copy_data,
                             MeshWorker::assemble_own_cells);
-    else if(use_sipg_method)
+    else if(use_sipg_method || use_hdiv_ip_method)
       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
                             dof_handler_velocity.end(),
                             cell_worker,
@@ -2718,14 +2766,15 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
     SolverGMRES<BlockVector<double>>::AdditionalData additional_data;
     additional_data.right_preconditioning = rt_parameters.solver.use_right_preconditioning;
     // additional_data.use_default_residual = false;
-    additional_data.max_n_tmp_vectors = rt_parameters.solver.n_iterations_max;
+    additional_data.max_n_tmp_vectors = 100; // rt_parameters.solver.n_iterations_max;
     iterative_solver.set_data(additional_data);
   }
   iterative_solver.solve(system_matrix, system_delta_x, system_rhs, preconditioner);
   /// distribute() is needed to apply the mean value constraint (Dirichlet
   /// conditions of velocity have already been applied to system_solution)
   if(equation_data.force_mean_value_constraint)
-    zero_constraints.distribute(system_delta_x);
+    mean_value_constraints.distribute(system_delta_x);
+  // zero_constraints.distribute(system_delta_x); // !!!
   system_solution += system_delta_x;
 
   const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
@@ -2749,7 +2798,8 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     /// distribute() is needed to apply the mean value constraint (Dirichlet
     /// conditions of velocity have already been applied to system_solution)
     Assert(equation_data.force_mean_value_constraint, ExcMessage("Use mean value constraint."));
-    zero_constraints.distribute(system_delta_x);
+    zero_constraints.distribute(system_delta_x); // !!! no-normal flux + mean value
+    mean_value_constraints.distribute(system_delta_x);
     system_solution += system_delta_x;
 
     pp_data.average_reduction_system.push_back(0.);
@@ -2962,25 +3012,38 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refinement_cycle) const
 {
-  std::vector<std::string> solution_names(dim, "velocity");
-  solution_names.emplace_back("pressure");
-
   std::vector<DataComponentInterpretation::DataComponentInterpretation>
     data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
   data_component_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
 
   DataOut<dim> data_out;
   data_out.attach_dof_handler(dof_handler);
+
+  /// discrete solution (velocity, pressure): (u, p)
+  std::vector<std::string> solution_names(dim, "velocity");
+  solution_names.emplace_back("pressure");
   data_out.add_data_vector(system_solution,
                            solution_names,
                            DataOut<dim>::type_dof_data,
                            data_component_interpretation);
+
+  /// discrete right hand side (velocity, pressure): (Fu, Fp)
+  std::vector<std::string> rhs_names(dim, "rhs_velocity");
+  rhs_names.emplace_back("rhs_pressure");
+  data_out.add_data_vector(system_rhs,
+                           rhs_names,
+                           DataOut<dim>::type_dof_data,
+                           data_component_interpretation);
+
   const auto L2_error_v = compute_L2_error_velocity();
   data_out.add_data_vector(*L2_error_v, "velocity_L2_error", DataOut<dim>::type_cell_data);
+
   const auto L2_error_p = compute_L2_error_pressure();
   data_out.add_data_vector(*L2_error_p, "pressure_L2_error", DataOut<dim>::type_cell_data);
+
   const auto H1semi_error_v = compute_H1semi_error_velocity();
   data_out.add_data_vector(*H1semi_error_v, "velocity_H1semi_error", DataOut<dim>::type_cell_data);
+
   data_out.build_patches();
 
   std::ofstream output("stokes_" + equation_data.sstr_equation_variant() + "_" +
