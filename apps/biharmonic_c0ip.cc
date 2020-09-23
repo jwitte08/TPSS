@@ -113,11 +113,14 @@ main(int argc, char * argv[])
     unsigned int test_index  = 4;
     unsigned int debug_depth = 0;
     double       damping     = 0.;
+    double       ip_factor   = 1.;
+
 
     //: parse arguments
     atoi_if(test_index, 1);
     atof_if(damping, 2);
-    atoi_if(debug_depth, 3);
+    atof_if(ip_factor, 3);
+    atoi_if(debug_depth, 4);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
@@ -180,15 +183,17 @@ main(int argc, char * argv[])
     equation_data.local_solver_variant = LocalSolverVariant::Exact;
     equation_data.is_stream_function =
       equation_data.variant == EquationData::Variant::ClampedStreamNoSlip ||
-      equation_data.variant == EquationData::Variant::ClampedStreamPoiseuille ||
-      equation_data.variant == EquationData::Variant::ClampedStreamNoSlipNormal; // !!!
+      equation_data.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip ||
+      equation_data.variant == EquationData::Variant::ClampedStreamNoSlipNormal ||
+      equation_data.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom; // !!!
+    equation_data.ip_factor = ip_factor;
 
     ModelProblem<dim, fe_degree> biharmonic_problem(prms, equation_data);
 
     std::fstream fout;
     const auto   filename = get_filename(prms, equation_data, argc > 1);
     fout.open(filename + ".log", std::ios_base::out);
-    auto pcout               = std::make_shared<ConditionalOStream>(fout, true);
+    auto pcout               = std::make_shared<ConditionalOStream>(std::cout /*!!!fout*/, true);
     biharmonic_problem.pcout = pcout;
 
     biharmonic_problem.run();

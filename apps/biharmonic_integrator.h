@@ -200,7 +200,8 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::face_worker(const IteratorType &
   const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
   const auto   nh        = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
   const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
-  const double gamma_over_h = 0.5 * C0IP::compute_penalty_impl(fe_degree, h, nh);
+  const double gamma_over_h =
+    0.5 * equation_data.ip_factor * C0IP::compute_penalty_impl(fe_degree, h, nh);
 
   for(unsigned int qpoint = 0; qpoint < fe_interface_values.n_quadrature_points; ++qpoint)
   {
@@ -283,7 +284,7 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::boundary_worker(const IteratorTy
   /// gamma_over_h is interior penalty, thus, weighted by 0.5
   const auto   h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
   const auto   fe_degree    = scratch_data.fe_values.get_fe().degree;
-  const double gamma_over_h = 0.5 * C0IP::compute_penalty_impl(fe_degree, h, h);
+  const double gamma_over_h = equation_data.ip_factor * C0IP::compute_penalty_impl(fe_degree, h, h);
 
   for(unsigned int qpoint = 0; qpoint < q_points.size(); ++qpoint)
   {
@@ -307,7 +308,7 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::boundary_worker(const IteratorTy
                                              - av_hessian_j_dot_n_dot_n // - {grad^2 u n n}
                                                  * jump_grad_i_dot_n    //   [grad v n]
                                                                         //
-                                             + (2. * gamma_over_h)      //  gamma/h
+                                             + gamma_over_h             //  gamma/h
                                                  * jump_grad_i_dot_n    // [grad v n]
                                                  * jump_grad_j_dot_n    // [grad u n]
                                              ) *
@@ -318,7 +319,7 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::boundary_worker(const IteratorTy
         copy_data.cell_rhs(i) += (-av_hessian_i_dot_n_dot_n *       // - {grad^2 v n n }
                                     (exact_gradients[qpoint] * n)   //   (grad u_exact . n)
                                   +                                 // +
-                                  (2. * gamma_over_h)               //  gamma/h
+                                  gamma_over_h                      //  gamma/h
                                     * jump_grad_i_dot_n             // [grad v n]
                                     * (exact_gradients[qpoint] * n) // (grad u_exact . n)
                                   ) *
@@ -447,7 +448,7 @@ public:
       [&](const evaluator_type & eval, const int direction, const int cell_no, const int ncell_no) {
         const auto h  = eval.get_h(direction, cell_no);
         const auto nh = eval.get_h(direction, ncell_no);
-        return compute_penalty_impl(fe_degree, h, nh);
+        return equation_data.ip_factor * compute_penalty_impl(fe_degree, h, nh);
       };
 
     const auto face_nitsche = [&](const evaluator_type &              eval_u,
@@ -539,7 +540,9 @@ public:
     if constexpr(sipg)
     {
       Laplace::DG::FD::CellLaplace<evaluator_type> cell_laplace;
-      Laplace::DG::FD::FaceLaplace<evaluator_type> nitsche(Laplace::EquationData{});
+      Laplace::EquationData                        laplace_data;
+      laplace_data.ip_factor = equation_data.ip_factor;
+      Laplace::DG::FD::FaceLaplace<evaluator_type> nitsche(laplace_data);
       return eval.patch_action(cell_laplace, nitsche, nitsche);
     }
     return eval.patch_action(Laplace::DG::FD::CellLaplace<evaluator_type>{});

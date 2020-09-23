@@ -291,10 +291,12 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         return std::make_shared<Clamped::GaussianBells::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
         return std::make_shared<Clamped::NoSlip::Solution<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuille)
-        return std::make_shared<Clamped::Poiseuille::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip)
+        return std::make_shared<Clamped::Poiseuille::NoSlip::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
         return std::make_shared<Clamped::NoSlipNormal::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
+        return std::make_shared<Clamped::Poiseuille::Inhom::Solution<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -306,10 +308,13 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         return nullptr;
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
         return std::make_shared<Stokes::DivergenceFree::NoSlip::SolutionVelocity<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuille)
-        return std::make_shared<Stokes::DivergenceFree::Poiseuille::SolutionVelocity<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip)
+        return std::make_shared<
+          Stokes::DivergenceFree::Poiseuille::NoSlip::SolutionVelocity<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
         return std::make_shared<Stokes::DivergenceFree::NoSlipNormal::SolutionVelocity<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
+        return std::make_shared<Stokes::DivergenceFree::Poiseuille::Inhom::SolutionVelocity<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -321,10 +326,12 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         return std::make_shared<Clamped::GaussianBells::Load<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
         return std::make_shared<Clamped::NoSlip::Load<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuille)
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip)
         return nullptr;
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
         return std::make_shared<ManufacturedLoad<dim, Clamped::NoSlipNormal::Solution<dim>>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
+        return nullptr;
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -337,12 +344,15 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
         return std::make_shared<Stokes::ManufacturedLoad<dim>>(
           std::make_shared<Stokes::DivergenceFree::NoSlip::Solution<dim>>());
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuille)
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip)
         return std::make_shared<Stokes::ManufacturedLoad<dim>>(
-          std::make_shared<Stokes::DivergenceFree::Poiseuille::Solution<dim>>());
+          std::make_shared<Stokes::DivergenceFree::Poiseuille::NoSlip::Solution<dim>>());
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
         return std::make_shared<Stokes::ManufacturedLoad<dim>>(
           std::make_shared<Stokes::DivergenceFree::NoSlipNormal::Solution<dim>>());
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
+        return std::make_shared<Stokes::ManufacturedLoad<dim>>(
+          std::make_shared<Stokes::DivergenceFree::Poiseuille::Inhom::Solution<dim>>());
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -827,6 +837,8 @@ ModelProblem<dim, fe_degree>::solve()
     system_u += system_delta_u;
     pp_data.average_reduction_system.push_back(0.);
     pp_data.n_iterations_system.push_back(0.);
+    pp_data.n_colors_system.push_back(0);
+    pp_data.n_mg_levels.push_back(0);
     print_parameter("Average reduction (solver):", "direct solver");
     print_parameter("Number of iterations (solver):", "---");
     return;
@@ -931,7 +943,7 @@ ModelProblem<dim, fe_degree>::compute_stream_function_error()
     norm_per_cell(cell_index) = copy_data.cell_rhs(0);
   };
 
-  const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
+  const unsigned int n_gauss_points = dof_handler.get_fe().degree + 2;
   const UpdateFlags  update_flags =
     update_values | update_gradients | update_quadrature_points | update_JxW_values;
   const UpdateFlags interface_update_flags  = update_default;
