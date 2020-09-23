@@ -92,8 +92,8 @@
 #include "multigrid.h"
 #include "postprocess.h"
 #include "rt_parameter.h"
+#include "solvers_and_preconditioners/TPSS/move_to_deal_ii.h"
 #include "stokes_integrator.h"
-
 
 namespace Stokes
 {
@@ -1570,10 +1570,12 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
         return std::make_shared<DivergenceFree::NoSlipNormal::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::DivFreeBell)
         return std::make_shared<DivergenceFree::GaussianBell::Solution<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuille)
-        return std::make_shared<DivergenceFree::Poiseuille::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuilleNoSlip)
+        return std::make_shared<DivergenceFree::Poiseuille::NoSlip::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlip)
         return std::make_shared<DivergenceFree::NoSlip::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuilleInhom)
+        return std::make_shared<DivergenceFree::Poiseuille::Inhom::Solution<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -1585,11 +1587,13 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreeBell)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
-      else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuille)
+      else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuilleNoSlip)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlip)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution); // !!!
       // return std::make_shared<DivergenceFree::NoSlip::Load<dim>>(); // !!!
+      else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuilleInhom)
+        return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -1908,7 +1912,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
     /// element is of type FE_System and therefore not checked (otherwise the
     /// function presumes a finite element of type FE_RaviartThomas!).
     for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
-      VectorTools::project_boundary_values_div_conforming(
+      VectorToolsFix::project_boundary_values_div_conforming(
         dof_handler_velocity, 0U, zero_velocity, boundary_id, zero_constraints_velocity, mapping);
   }
   zero_constraints_velocity.close();
@@ -1935,12 +1939,12 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
     /// element is of type FE_System and therefore not checked (otherwise the
     /// function presumes a finite element of type FE_RaviartThomas!).
     for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
-      VectorTools::project_boundary_values_div_conforming(dof_handler_velocity,
-                                                          0U,
-                                                          analytical_solution_velocity,
-                                                          boundary_id,
-                                                          constraints_velocity,
-                                                          mapping); // !!!
+      VectorToolsFix::project_boundary_values_div_conforming(dof_handler_velocity,
+                                                             0U,
+                                                             analytical_solution_velocity,
+                                                             boundary_id,
+                                                             constraints_velocity,
+                                                             mapping); // !!!
   }
   constraints_velocity.close();
 
@@ -2063,7 +2067,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   {
     ZeroFunction<dim> zero_velocity(dim);
     for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
-      VectorTools::project_boundary_values_div_conforming(
+      VectorToolsFix::project_boundary_values_div_conforming(
         dof_handler, 0U, zero_velocity, boundary_id, zero_constraints, mapping);
   }
   zero_constraints.close();
@@ -2249,7 +2253,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
       if(use_sipg_method)
         matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
       else if(use_hdiv_ip_method)
-        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+        // matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+        matrix_integrator.face_worker_tangential(
+          cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
       else
         AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
     };
@@ -2261,7 +2267,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
       if(use_sipg_method)
         matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
       else if(use_hdiv_ip_method)
+        // matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
         matrix_integrator.boundary_worker_tangential(cell, face_no, scratch_data, copy_data);
+      // matrix_integrator.boundary_worker_tangential_old(cell, face_no, scratch_data, copy_data);
       else
         AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
     };
@@ -2423,10 +2431,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
       if(use_sipg_method)
         matrix_integrator.face_worker(
           cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
-      else if(use_hdiv_ip_method)
-        // matrix_integrator.face_worker(
-        //   cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
-        ;
       else
         AssertThrow(false, ExcMessage("This FEM is not supported."));
     };
@@ -2441,9 +2445,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                &dof_handler_pressure);
       if(use_sipg_method)
         matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
-      else if(use_hdiv_ip_method)
-        // matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
-        ;
       else
         AssertThrow(false, ExcMessage("This FEM is not supported."));
     };
@@ -2518,7 +2519,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell,
                        dof_handler_pressure.get_fe().dofs_per_cell);
 
-    if(use_conf_method)
+    if(use_conf_method || use_hdiv_ip_method)
       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
                             dof_handler_velocity.end(),
                             cell_worker,
@@ -2526,7 +2527,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                             scratch_data,
                             copy_data,
                             MeshWorker::assemble_own_cells);
-    else if(use_sipg_method || use_hdiv_ip_method)
+    else if(use_sipg_method)
       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
                             dof_handler_velocity.end(),
                             cell_worker,

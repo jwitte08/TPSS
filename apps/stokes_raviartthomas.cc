@@ -62,7 +62,7 @@ main(int argc, char * argv[])
     options.prms.mesh.do_colorization = true; // !!!
 
     EquationData equation_data;
-    equation_data.variant           = EquationData::Variant::DivFreeBell; // !!!
+    equation_data.variant           = EquationData::Variant::DivFreePoiseuilleInhom; // !!!
     equation_data.use_cuthill_mckee = false;
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;

@@ -110,10 +110,26 @@ struct MatrixIntegrator
               CopyData &           copy_data) const;
 
   void
+  face_worker_tangential(const IteratorType & cell,
+                         const unsigned int & f,
+                         const unsigned int & sf,
+                         const IteratorType & ncell,
+                         const unsigned int & nf,
+                         const unsigned int & nsf,
+                         ScratchData<dim> &   scratch_data,
+                         CopyData &           copy_data) const;
+
+  void
   boundary_worker(const IteratorType & cell,
                   const unsigned int & face_no,
                   ScratchData<dim> &   scratch_data,
                   CopyData &           copy_data) const;
+
+  void
+  boundary_worker_tangential_old(const IteratorType & cell,
+                                 const unsigned int & face_no,
+                                 ScratchData<dim> &   scratch_data,
+                                 CopyData &           copy_data) const;
 
   void
   boundary_worker_tangential(const IteratorType & cell,
@@ -191,6 +207,7 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
   if(!is_multigrid)
     if(discrete_solution && cell->at_boundary())
     {
+      // std::cout << "V::cell_worker @ cell " << cell->index() << std::endl;
       Vector<double> u0(copy_data.local_dof_indices.size());
       for(auto i = 0U; i < u0.size(); ++i)
         u0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
@@ -254,25 +271,102 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
     }
   }
 
-  /// Lifting of inhomogeneous boundary conditions.
-  if(!is_multigrid)
+  // /// Lifting of inhomogeneous boundary conditions.
+  // if(!is_multigrid)
+  // {
+  //   const bool cell_is_at_boundary      = cell->at_boundary();
+  //   const bool neighbor_is_at_boundary  = ncell->at_boundary();
+  //   const bool cell_pair_is_at_boundary = cell_is_at_boundary || neighbor_is_at_boundary;
+  //   /// Particular solution u0 is only non-zero at the physical boundary.
+  //   if(discrete_solution && cell_pair_is_at_boundary)
+  //   {
+  //     AssertDimension(n_interface_dofs, copy_data_face.joint_dof_indices.size());
+  //     Vector<double> u0(copy_data_face.joint_dof_indices.size());
+  //     for(auto i = 0U; i < u0.size(); ++i)
+  //       u0(i) = (*discrete_solution)(copy_data_face.joint_dof_indices[i]);
+  //     copy_data_face.cell_rhs.reinit(u0.size());
+  //     copy_data_face.cell_matrix.vmult(copy_data_face.cell_rhs, u0);
+  //     copy_data_face.cell_rhs *= -1.;
+  //   }
+  // }
+}
+
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::face_worker_tangential(const IteratorType & cell,
+                                                            const unsigned int & f,
+                                                            const unsigned int & sf,
+                                                            const IteratorType & ncell,
+                                                            const unsigned int & nf,
+                                                            const unsigned int & nsf,
+                                                            ScratchData<dim> &   scratch_data,
+                                                            CopyData &           copy_data) const
+{
+  FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
+  fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
+
+  copy_data.face_data.emplace_back();
+  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+
+  copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
+
+  const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
+  copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
+
+  const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
+  const auto   nh        = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
+  const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
+  const double gamma_over_h =
+    equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
+
+  const std::vector<Tensor<1, dim>> & normals = fe_interface_values.get_normal_vectors();
+
+  double integral_ijq = 0.;
+  for(unsigned int q = 0; q < fe_interface_values.n_quadrature_points; ++q)
   {
-    const bool cell_is_at_boundary      = cell->at_boundary();
-    const bool neighbor_is_at_boundary  = ncell->at_boundary();
-    const bool cell_pair_is_at_boundary = cell_is_at_boundary || neighbor_is_at_boundary;
-    /// Particular solution u0 is only non-zero at the physical boundary.
-    if(discrete_solution && cell_pair_is_at_boundary)
+    const auto & n = normals[q];
+    for(unsigned int i = 0; i < n_interface_dofs; ++i)
     {
-      AssertDimension(n_interface_dofs, copy_data_face.joint_dof_indices.size());
-      Vector<double> u0(copy_data_face.joint_dof_indices.size());
-      for(auto i = 0U; i < u0.size(); ++i)
-        u0(i) = (*discrete_solution)(copy_data_face.joint_dof_indices[i]);
-      copy_data_face.cell_rhs.reinit(u0.size());
-      copy_data_face.cell_matrix.vmult(copy_data_face.cell_rhs, u0);
-      copy_data_face.cell_rhs *= -1.;
+      const auto & av_symgrad_phi_i = compute_average_symgrad(fe_interface_values, i, q);
+      const auto & jump_phi_i       = compute_vjump(fe_interface_values, i, q);
+      const auto & jump_phit_i      = compute_vjump_tangential(fe_interface_values, i, q);
+      double       ncontrib_i       = n * av_symgrad_phi_i * n;
+      // SymmetricTensor<2, dim> grad_phin_i;
+      // for(unsigned int d = 0; d < dim; ++d)
+      //   for(unsigned int dd = 0; dd < dim; ++dd)
+      //     for(unsigned int k = 0; k < dim; ++k)
+      //       grad_phin_i[d][dd] +=
+      // 	      av_symgrad_phi_i[d][k] * n[k] * n[dd];
+      //         // fe_interface_values.average_gradient(i, q, k)[d] * n[k] * n[dd];
+
+      for(unsigned int j = 0; j < n_interface_dofs; ++j)
+      {
+        const auto & av_symgrad_phi_j = compute_average_symgrad(fe_interface_values, j, q);
+        const auto & jump_phi_j       = compute_vjump(fe_interface_values, j, q);
+        const auto & jump_phit_j      = compute_vjump_tangential(fe_interface_values, j, q);
+        double       ncontrib_j       = n * av_symgrad_phi_j * n;
+        // SymmetricTensor<2, dim> grad_phin_j;
+        // for(unsigned int d = 0; d < dim; ++d)
+        //   for(unsigned int dd = 0; dd < dim; ++dd)
+        //     for(unsigned int k = 0; k < dim; ++k)
+        //       grad_phin_j[d][dd] +=
+        // 	av_symgrad_phi_j[d][k] * n[k] * n[dd];
+        //         // fe_interface_values.average_gradient(j, q, k)[d] * n[k] * n[dd];
+
+        integral_ijq = -(n * av_symgrad_phi_j - ncontrib_j * n) * jump_phit_i;
+        integral_ijq += -(n * av_symgrad_phi_i - ncontrib_i * n) * jump_phit_j;
+        // integral_ijq = -n * (av_symgrad_phi_j - grad_phin_j) * jump_phit_i;
+        // integral_ijq += -n * (av_symgrad_phi_i - grad_phin_i) * jump_phit_j;
+        integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
+        integral_ijq *= 2. * fe_interface_values.JxW(q);
+
+        copy_data_face.cell_matrix(i, j) += integral_ijq;
+      }
     }
   }
 }
+
 
 template<int dim, bool is_multigrid>
 void
@@ -296,14 +390,14 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
   const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
   const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, h);
 
-  std::vector<Tensor<1, dim>> solution_values;
-  std::vector<Tensor<2, dim>> solution_cross_normals;
+  std::vector<Tensor<1, dim>>         solution_values;
+  std::vector<Tensor<2, dim>>         solution_cross_normals;
+  const std::vector<Tensor<1, dim>> & normals = fe_interface_values.get_normal_vectors();
   if(!is_multigrid)
   {
     Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
     AssertDimension(analytical_solution->n_components, dim);
-    const auto &                        q_points = fe_interface_values.get_quadrature_points();
-    const std::vector<Tensor<1, dim>> & normals  = fe_interface_values.get_normal_vectors();
+    const auto & q_points = fe_interface_values.get_quadrature_points();
     std::transform(q_points.cbegin(),
                    q_points.cend(),
                    std::back_inserter(solution_values),
@@ -332,6 +426,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
   double nitsche_iq   = 0.;
   for(unsigned int q = 0; q < fe_interface_values.n_quadrature_points; ++q)
   {
+    const auto n = normals[q];
     for(unsigned int i = 0; i < n_dofs; ++i)
     {
       const auto & av_symgrad_phi_i   = compute_average_symgrad(fe_interface_values, i, q);
@@ -345,7 +440,9 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
         const auto & jump_phi_j         = compute_vjump(fe_interface_values, j, q);
 
         integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
+        // integral_ijq = -jump_phi_i * (av_symgrad_phi_j * n);
         integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
+        // integral_ijq += -jump_phi_j * (av_symgrad_phi_i * n);
         integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
         integral_ijq *= 2. * fe_interface_values.JxW(q);
 
@@ -359,6 +456,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
         const auto & u_cross_n = solution_cross_normals[q];
 
         nitsche_iq = -scalar_product(u_cross_n, av_symgrad_phi_i);
+        // nitsche_iq = -u * (av_symgrad_phi_i * n);
         nitsche_iq += gamma_over_h * u * jump_phi_i;
         nitsche_iq *= 2. * fe_interface_values.JxW(q);
 
@@ -367,25 +465,26 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
     }
   }
 
-  /// Lifting of inhomogeneous boundary condition
-  if(!is_multigrid)
-    if(discrete_solution)
-    {
-      Vector<double> u0(copy_data.local_dof_indices.size());
-      for(auto i = 0U; i < u0.size(); ++i)
-        u0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
-      Vector<double> w0(copy_data.local_dof_indices.size());
-      copy_data.cell_matrix.vmult(w0, u0);
-      copy_data.cell_rhs -= w0;
-    }
+  // /// Lifting of inhomogeneous boundary condition
+  // if(!is_multigrid)
+  //   if(discrete_solution)
+  //   {
+  //     Vector<double> u0(copy_data.local_dof_indices.size());
+  //     for(auto i = 0U; i < u0.size(); ++i)
+  //       u0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
+  //     Vector<double> w0(copy_data.local_dof_indices.size());
+  //     copy_data.cell_matrix.vmult(w0, u0);
+  //     copy_data.cell_rhs -= w0;
+  //   }
 }
+
 
 template<int dim, bool is_multigrid>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential(const IteratorType & cell,
-                                                                const unsigned int & f,
-                                                                ScratchData<dim> &   scratch_data,
-                                                                CopyData & copy_data) const
+MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential_old(const IteratorType & cell,
+                                                                    const unsigned int & f,
+                                                                    ScratchData<dim> & scratch_data,
+                                                                    CopyData & copy_data) const
 {
   FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
   fe_interface_values.reinit(cell, f);
@@ -444,7 +543,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential(const IteratorTy
                    normals.cbegin(),
                    std::back_inserter(tangential_solution_cross_normals),
                    [](const auto & ut_q, const auto & normal) {
-                     return outer_product(ut_q, normal);
+                     return outer_product(normal, ut_q);
                    });
   }
 
@@ -487,8 +586,9 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential(const IteratorTy
         /// ut is the tangential vector field of the vector field u (which
         /// should not be confused with the tangential component of the vector
         /// field u!).
-        const auto & ut         = tangential_solution_values[q];
-        const auto & ut_cross_n = tangential_solution_cross_normals[q]; // TODO compute here !
+        const auto & ut = tangential_solution_values[q];
+        // !!! switched to n(x)ut
+        const auto & ut_cross_n = tangential_solution_cross_normals[q];
 
         nitsche_iq = -scalar_product(ut_cross_n, av_symgrad_phit_i);
         nitsche_iq += gamma_over_h * ut * jump_phit_i;
@@ -499,17 +599,132 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential(const IteratorTy
     }
   }
 
-  /// Lifting of inhomogeneous boundary condition
+  // /// Lifting of inhomogeneous boundary condition
+  // if(!is_multigrid)
+  //   if(discrete_solution)
+  //   {
+  //     Vector<double> u0(copy_data.local_dof_indices.size());
+  //     for(auto i = 0U; i < u0.size(); ++i)
+  //       u0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
+  //     Vector<double> w0(copy_data.local_dof_indices.size());
+  //     copy_data.cell_matrix.vmult(w0, u0);
+  //     copy_data.cell_rhs -= w0;
+  //   }
+}
+
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential(const IteratorType & cell,
+                                                                const unsigned int & f,
+                                                                ScratchData<dim> &   scratch_data,
+                                                                CopyData & copy_data) const
+{
+  FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
+  fe_interface_values.reinit(cell, f);
+
+  copy_data.face_data.emplace_back();
+  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+
+  copy_data_face.joint_dof_indices = fe_interface_values.get_interface_dof_indices();
+
+  const unsigned int n_dofs = fe_interface_values.n_current_interface_dofs();
+  copy_data_face.cell_matrix.reinit(n_dofs, n_dofs);
+
+  const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
+  const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
+  const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, h);
+
+  std::vector<Tensor<1, dim>>         solution_values;
+  std::vector<Tensor<1, dim>>         tangential_solution_values;
+  const std::vector<Tensor<1, dim>> & normals = fe_interface_values.get_normal_vectors();
   if(!is_multigrid)
-    if(discrete_solution)
+  {
+    Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
+    AssertDimension(analytical_solution->n_components, dim);
+    const auto &                        q_points = fe_interface_values.get_quadrature_points();
+    const std::vector<Tensor<1, dim>> & normals  = fe_interface_values.get_normal_vectors();
+    std::transform(q_points.cbegin(),
+                   q_points.cend(),
+                   std::back_inserter(solution_values),
+                   [this](const auto & x_q) {
+                     Tensor<1, dim> value;
+                     for(auto c = 0U; c < dim; ++c)
+                       value[c] = analytical_solution->value(x_q, c);
+                     return value;
+                   });
+    std::transform(solution_values.cbegin(),
+                   solution_values.cend(),
+                   normals.cbegin(),
+                   std::back_inserter(tangential_solution_values),
+                   [](const auto & u_q, const auto & normal) {
+                     return u_q - ((u_q * normal) * normal);
+                   });
+  }
+  AssertDimension(solution_values.size(), fe_interface_values.n_quadrature_points);
+  AssertDimension(tangential_solution_values.size(), fe_interface_values.n_quadrature_points);
+
+  AssertDimension(copy_data.cell_rhs.size(), n_dofs);
+  Assert(copy_data.local_dof_indices == copy_data_face.joint_dof_indices,
+         ExcMessage(
+           "copy_data.cell_rhs is incompatible compared to copy_data_face.joint_dof_indices."));
+
+  double integral_ijq = 0.;
+  double nitsche_iq   = 0.;
+  for(unsigned int q = 0; q < fe_interface_values.n_quadrature_points; ++q)
+  {
+    const auto & n = normals[q];
+    for(unsigned int i = 0; i < n_dofs; ++i)
     {
-      Vector<double> u0(copy_data.local_dof_indices.size());
-      for(auto i = 0U; i < u0.size(); ++i)
-        u0(i) = (*discrete_solution)(copy_data.local_dof_indices[i]);
-      Vector<double> w0(copy_data.local_dof_indices.size());
-      copy_data.cell_matrix.vmult(w0, u0);
-      copy_data.cell_rhs -= w0;
+      const auto & jump_phit_i      = compute_vjump_tangential(fe_interface_values, i, q);
+      const auto & av_symgrad_phi_i = compute_average_symgrad(fe_interface_values, i, q);
+      double       ncontrib_i       = n * av_symgrad_phi_i * n;
+      // SymmetricTensor<2, dim> grad_phin_i;
+      // for(unsigned int d = 0; d < dim; ++d)
+      //   for(unsigned int dd = 0; dd < dim; ++dd)
+      //     for(unsigned int k = 0; k < dim; ++k)
+      //       grad_phin_i[d][dd] +=
+      //         fe_interface_values.average_gradient(i, q, k)[d] * n[k] * n[dd];
+
+      for(unsigned int j = 0; j < n_dofs; ++j)
+      {
+        const auto & jump_phit_j      = compute_vjump_tangential(fe_interface_values, j, q);
+        const auto & av_symgrad_phi_j = compute_average_symgrad(fe_interface_values, j, q);
+        double       ncontrib_j       = n * av_symgrad_phi_j * n;
+        // SymmetricTensor<2, dim> grad_phin_j;
+        // for(unsigned int d = 0; d < dim; ++d)
+        //   for(unsigned int dd = 0; dd < dim; ++dd)
+        //     for(unsigned int k = 0; k < dim; ++k)
+        //       grad_phin_j[d][dd] +=
+        //         fe_interface_values.average_gradient(j, q, k)[d] * n[k] * n[dd];
+
+        integral_ijq = -(n * av_symgrad_phi_j - ncontrib_j * n) * jump_phit_i;
+        integral_ijq += -(n * av_symgrad_phi_i - ncontrib_i * n) * jump_phit_j;
+        // integral_ijq = -n * (av_symgrad_phi_j - grad_phin_j) * jump_phit_i;
+        // integral_ijq += -n * (av_symgrad_phi_i - grad_phin_i) * jump_phit_j;
+        integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
+        integral_ijq *= 2. * fe_interface_values.JxW(q);
+
+        copy_data_face.cell_matrix(i, j) += integral_ijq;
+      }
+
+      /// Nitsche method (weak Dirichlet conditions)
+      if(!is_multigrid)
+      {
+        /// ut is the tangential vector field of the vector field u (which
+        /// should not be confused with the tangential component of the vector
+        /// field u!).
+        const auto & ut = tangential_solution_values[q];
+
+        nitsche_iq = -(n * av_symgrad_phi_i - n * ncontrib_i) * ut;
+        // nitsche_iq = -n * (av_symgrad_phi_i - grad_phin_i) * ut;
+        nitsche_iq += gamma_over_h * ut * jump_phit_i;
+        nitsche_iq *= 2. * fe_interface_values.JxW(q);
+
+        copy_data.cell_rhs(i) += nitsche_iq;
+      }
     }
+  }
 }
 
 } // namespace MW
@@ -1218,9 +1433,10 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cellU,
   if(!is_multigrid)
     if(discrete_solutionU && cellU->at_boundary())
     {
-      AssertDimension(n_dofs_per_cellU, copy_data.local_dof_indices_test.size())
-        AssertDimension(n_dofs_per_cellP, copy_data.local_dof_indices_ansatz.size()) Vector<double>
-          u0(n_dofs_per_cellU);
+      // std::cout << "Mixed::cell_worker @ cell " << cellU->index() << std::endl;
+      AssertDimension(n_dofs_per_cellU, copy_data.local_dof_indices_test.size());
+      AssertDimension(n_dofs_per_cellP, copy_data.local_dof_indices_ansatz.size());
+      Vector<double> u0(n_dofs_per_cellU);
       for(auto i = 0U; i < u0.size(); ++i)
         u0(i) = (*discrete_solutionU)(copy_data.local_dof_indices_test[i]);
       Vector<double> w0(n_dofs_per_cellP);
@@ -1290,25 +1506,25 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cellU,
     for(unsigned int j = 0; j < n_dofsP; ++j)
       copy_data_face.cell_matrix_flipped(j, i) = copy_data_face.cell_matrix(i, j);
 
-  /// Lifting of inhomogeneous boundary conditions.
-  if(!is_multigrid)
-  {
-    const bool cell_is_at_boundary      = cellU->at_boundary();
-    const bool neighbor_is_at_boundary  = ncellU->at_boundary();
-    const bool cell_pair_is_at_boundary = cell_is_at_boundary || neighbor_is_at_boundary;
-    /// Particular solution u0 is only non-zero at the physical boundary.
-    if(discrete_solutionU && cell_pair_is_at_boundary)
-    {
-      AssertDimension(n_dofsU, copy_data_face.joint_dof_indices_test.size());
-      AssertDimension(n_dofsP, copy_data_face.joint_dof_indices_ansatz.size());
-      Vector<double> u0(n_dofsU);
-      for(auto i = 0U; i < u0.size(); ++i)
-        u0(i) = (*discrete_solutionU)(copy_data_face.joint_dof_indices_test[i]);
-      copy_data_face.cell_rhs_ansatz.reinit(n_dofsP);
-      copy_data_face.cell_matrix_flipped.vmult(copy_data_face.cell_rhs_ansatz, u0);
-      copy_data_face.cell_rhs_ansatz *= -1.;
-    }
-  }
+  // /// Lifting of inhomogeneous boundary conditions.
+  // if(!is_multigrid)
+  // {
+  //   const bool cell_is_at_boundary      = cellU->at_boundary();
+  //   const bool neighbor_is_at_boundary  = ncellU->at_boundary();
+  //   const bool cell_pair_is_at_boundary = cell_is_at_boundary || neighbor_is_at_boundary;
+  //   /// Particular solution u0 is only non-zero at the physical boundary.
+  //   if(discrete_solutionU && cell_pair_is_at_boundary)
+  //   {
+  //     AssertDimension(n_dofsU, copy_data_face.joint_dof_indices_test.size());
+  //     AssertDimension(n_dofsP, copy_data_face.joint_dof_indices_ansatz.size());
+  //     Vector<double> u0(n_dofsU);
+  //     for(auto i = 0U; i < u0.size(); ++i)
+  //       u0(i) = (*discrete_solutionU)(copy_data_face.joint_dof_indices_test[i]);
+  //     copy_data_face.cell_rhs_ansatz.reinit(n_dofsP);
+  //     copy_data_face.cell_matrix_flipped.vmult(copy_data_face.cell_rhs_ansatz, u0);
+  //     copy_data_face.cell_rhs_ansatz *= -1.;
+  //   }
+  // }
 }
 
 template<int dim, bool is_multigrid>
@@ -1402,17 +1618,17 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
     for(unsigned int j = 0; j < n_dofsP; ++j)
       copy_data.cell_matrix_flipped(j, i) = copy_data.cell_matrix(i, j);
 
-  /// Lifting of inhomogeneous boundary condition
-  if(!is_multigrid)
-    if(discrete_solutionU)
-    {
-      Vector<double> u0(copy_data.local_dof_indices_test.size());
-      for(auto i = 0U; i < u0.size(); ++i)
-        u0(i) = (*discrete_solutionU)(copy_data.local_dof_indices_test[i]);
-      Vector<double> w0(copy_data.local_dof_indices_ansatz.size());
-      copy_data.cell_matrix_flipped.vmult(w0, u0);
-      copy_data.cell_rhs_ansatz -= w0;
-    }
+  // /// Lifting of inhomogeneous boundary condition
+  // if(!is_multigrid)
+  //   if(discrete_solutionU)
+  //   {
+  //     Vector<double> u0(copy_data.local_dof_indices_test.size());
+  //     for(auto i = 0U; i < u0.size(); ++i)
+  //       u0(i) = (*discrete_solutionU)(copy_data.local_dof_indices_test[i]);
+  //     Vector<double> w0(copy_data.local_dof_indices_ansatz.size());
+  //     copy_data.cell_matrix_flipped.vmult(w0, u0);
+  //     copy_data.cell_rhs_ansatz -= w0;
+  //   }
 }
 
 } // namespace Mixed
