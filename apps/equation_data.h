@@ -534,8 +534,9 @@ struct EquationData
     ClampedHom,
     ClampedBell,
     ClampedStreamNoSlip,
-    ClampedStreamPoiseuille,
+    ClampedStreamPoiseuilleNoSlip,
     ClampedStreamNoSlipNormal,
+    ClampedStreamPoiseuilleInhom
   };
 
   static std::string
@@ -570,8 +571,9 @@ EquationData::str_equation_variant(const Variant variant)
   std::string str[] = {"clamped (homogeneous)",
                        "clamped (Gaussian bells)",
                        "clamped (stream function - no-slip)",
-                       "clamped (stream function - Poiseuille)",
-                       "clamped (stream function - no-slip-normal)"};
+                       "clamped (stream function - no-slip Poiseuille)",
+                       "clamped (stream function - no-slip-normal)",
+                       "clamped (stream function - inhom. Poiseuille)"};
   return str[static_cast<int>(variant)];
 }
 
@@ -579,8 +581,12 @@ EquationData::str_equation_variant(const Variant variant)
 std::string
 EquationData::sstr_equation_variant(const Variant variant)
 {
-  std::string str[] = {
-    "clamped_hom", "clamped_bell", "clamped_noslip", "clamped_poiseuille)", "clamped_noslipnormal"};
+  std::string str[] = {"clamped_hom",
+                       "clamped_bell",
+                       "clamped_noslip",
+                       "clamped_noslip_poiseuille",
+                       "clamped_noslipnormal",
+                       "clamped_inhom_poiseuille"};
   return str[static_cast<int>(variant)];
 }
 
@@ -827,9 +833,66 @@ using Load = ManufacturedLoad<dim, Solution<dim>>;
 
 namespace Poiseuille
 {
+namespace NoSlip
+{
 template<int dim>
 using Solution = ZeroFunction<dim>;
 }
+
+
+
+namespace Inhom
+{
+template<int dim>
+class Solution : public Function<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+  static constexpr auto PI = numbers::PI;
+
+public:
+  virtual double
+  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto y = p[1];
+
+    return y * y * y / 3. - y * y / 2.;
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto y = p[1];
+
+    Tensor<1, dim> grad;
+    grad[0] = 0.;
+    grad[1] = y * (y - 1.);
+
+    return grad;
+  }
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto y = p[1];
+
+    SymmetricTensor<2, dim> hess;
+    hess[0][0] = 0.;
+    hess[0][1] = 0.;
+    hess[1][1] = y - 1. + y;
+
+    return hess;
+  }
+
+  double
+  bilaplacian(const Point<dim> & p, const unsigned int /*component*/ = 0) const
+  {
+    return 0.;
+  }
+};
+
+} // namespace Inhom
+
+} // namespace Poiseuille
 
 
 
@@ -943,8 +1006,9 @@ struct EquationData
     DivFree,
     DivFreeNoSlipNormal,
     DivFreeBell,
-    DivFreePoiseuille,
-    DivFreeNoSlip
+    DivFreePoiseuilleNoSlip,
+    DivFreeNoSlip,
+    DivFreePoiseuilleInhom
   };
   static std::string
   str_equation_variant(const Variant variant)
@@ -952,8 +1016,9 @@ struct EquationData
     std::string str[] = {"divergence-free",
                          "divergence-free (no-slip-normal)",
                          "divergence-free (Gaussian bells)",
-                         "divergence-free (Poiseuille)",
-                         "divergence-free (no-slip)"};
+                         "divergence-free (no-slip Poiseuille)",
+                         "divergence-free (no-slip)",
+                         "divergence-free (inhom. Poiseuille)"};
     return str[static_cast<int>(variant)];
   }
 
@@ -1003,7 +1068,8 @@ struct EquationData
 std::string
 EquationData::sstr_equation_variant(const Variant variant)
 {
-  std::string str[] = {"tba", "noslipnormal", "bell", "poiseuille", "noslip"};
+  std::string str[] = {
+    "tba", "noslipnormal", "bell", "noslip_poiseuille", "noslip", "inhom_poiseuille"};
   return str[static_cast<int>(variant)];
 }
 
@@ -1908,19 +1974,6 @@ using Solution = FunctionMerge<dim, SolutionVelocity<dim>, NoSlipNormal::Solutio
 
 namespace Poiseuille
 {
-template<int dim>
-class SolutionVelocity : public ZeroFunction<dim>
-{
-  static_assert(dim == 2, "Implemented for two dimensions.");
-
-public:
-  SolutionVelocity() : ZeroFunction<dim>(dim)
-  {
-  }
-};
-
-
-
 /**
  * This class represents the scalar pressure field
  *
@@ -1976,8 +2029,106 @@ SolutionPressure<2>::hessian(const Point<2> &, const unsigned int) const
 
 
 
+namespace NoSlip
+{
+template<int dim>
+class SolutionVelocity : public ZeroFunction<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+
+public:
+  SolutionVelocity() : ZeroFunction<dim>(dim)
+  {
+  }
+};
+
+
+
 template<int dim>
 using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
+} // namespace NoSlip
+
+
+
+namespace Inhom
+{
+template<int dim>
+class SolutionVelocity : public Function<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+
+public:
+  SolutionVelocity() : Function<dim>(dim)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    const double y = p(1);
+
+    if(component == 0)
+      return y * (y - 1.);
+    if(component == 1)
+      return 0.;
+
+    AssertThrow(false, ExcMessage("Invalid component."));
+    return 0.;
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    AssertIndexRange(component, dim);
+
+    const double y = p(1);
+
+    Tensor<1, dim> grad;
+    if(component == 0)
+    {
+      grad[0] = 0.;
+      grad[1] = (y - 1.) + y;
+    }
+    else if(component == 1)
+    {
+      grad[0] = 0.;
+      grad[1] = 0.;
+    }
+    else
+      AssertThrow(false, ExcMessage("Invalid component."));
+
+    return grad;
+  }
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    SymmetricTensor<2, dim> hess;
+    if(component == 0)
+    {
+      hess[0][0] = 0.;
+      hess[0][1] = 0.;
+      hess[1][1] = 2.;
+    }
+    else if(component == 1)
+    {
+      hess[0][0] = 0.;
+      hess[0][1] = 0.;
+      hess[1][1] = 0.;
+    }
+
+    else
+      AssertThrow(false, ExcMessage("Invalid component."));
+
+    return hess;
+  }
+};
+
+
+
+template<int dim>
+using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
+} // namespace Inhom
 
 } // namespace Poiseuille
 
