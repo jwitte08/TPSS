@@ -614,6 +614,7 @@ compute_average_symgrad_tangential(const FEInterfaceValues<dim> & phi,
                                    const unsigned int             i,
                                    const unsigned int             q)
 {
+  AssertThrow(false, ExcMessage("TODO seems to be wrong !!!"));
   Tensor<2, dim> av_symgrad_of_phi;
   for(auto d = 0U; d < dim; ++d)
     for(auto c = 0U; c < dim; ++c)
