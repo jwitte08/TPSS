@@ -531,13 +531,14 @@ struct EquationData
 {
   enum class Variant
   {
-    ClampedHom,
-    ClampedBell,
-    ClampedStreamNoSlip,
-    ClampedStreamPoiseuilleNoSlip,
-    ClampedStreamNoSlipNormal,
-    ClampedStreamPoiseuilleInhom
+    ClampedHom,                    // 0
+    ClampedBell,                   // 1
+    ClampedStreamNoSlip,           // 2
+    ClampedStreamPoiseuilleNoSlip, // 3
+    ClampedStreamNoSlipNormal,     // 4
+    ClampedStreamPoiseuilleInhom   // 5
   };
+  static constexpr unsigned int n_variants = 6;
 
   static std::string
   str_equation_variant(const Variant variant);
@@ -557,23 +558,25 @@ struct EquationData
   std::string
   to_string() const;
 
+  bool
+  is_stream_function() const;
+
   Variant                      variant                = Variant::ClampedHom;
   std::set<types::boundary_id> dirichlet_boundary_ids = {0};
   double                       ip_factor              = 1.;
   LocalSolverVariant           local_solver_variant   = LocalSolverVariant::Exact;
-  bool                         is_stream_function     = false;
 };
 
 
 std::string
 EquationData::str_equation_variant(const Variant variant)
 {
-  std::string str[] = {"clamped (homogeneous)",
-                       "clamped (Gaussian bells)",
-                       "clamped (stream function - no-slip)",
-                       "clamped (stream function - no-slip Poiseuille)",
-                       "clamped (stream function - no-slip-normal)",
-                       "clamped (stream function - inhom. Poiseuille)"};
+  std::string str[n_variants] = {"clamped (homogeneous)",
+                                 "clamped (Gaussian bells)",
+                                 "clamped (stream function - no-slip)",
+                                 "clamped (stream function - no-slip Poiseuille)",
+                                 "clamped (stream function - no-slip-normal)",
+                                 "clamped (stream function - inhom. Poiseuille)"};
   return str[static_cast<int>(variant)];
 }
 
@@ -620,8 +623,18 @@ EquationData::to_string() const
   oss << Util::parameter_to_fstring("Equation Data:", str_equation_variant(variant));
   oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
   oss << Util::parameter_to_fstring("Local solver:", str_local_solver(local_solver_variant));
-  oss << Util::parameter_to_fstring("Stream function formulation (Stokes):", is_stream_function);
+  oss << Util::parameter_to_fstring("Stream function formulation (Stokes):", is_stream_function());
   return oss.str();
+}
+
+
+bool
+EquationData::is_stream_function() const
+{
+  return variant == EquationData::Variant::ClampedStreamNoSlip ||
+         variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip ||
+         variant == EquationData::Variant::ClampedStreamNoSlipNormal ||
+         variant == EquationData::Variant::ClampedStreamPoiseuilleInhom;
 }
 
 

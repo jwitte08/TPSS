@@ -114,13 +114,15 @@ main(int argc, char * argv[])
     unsigned int debug_depth = 0;
     double       damping     = 0.;
     double       ip_factor   = 1.;
+    unsigned int pde_index   = 0;
 
 
     //: parse arguments
     atoi_if(test_index, 1);
-    atof_if(damping, 2);
+    atoi_if(pde_index, 2);
     atof_if(ip_factor, 3);
     atoi_if(debug_depth, 4);
+    atof_if(damping, 5);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
@@ -179,14 +181,11 @@ main(int argc, char * argv[])
     }
 
     EquationData equation_data;
-    equation_data.variant              = EquationData::Variant::ClampedStreamNoSlip;
+    AssertThrow(pde_index < EquationData::n_variants,
+                ExcMessage("This equation is not implemented."));
+    equation_data.variant              = static_cast<EquationData::Variant>(pde_index);
     equation_data.local_solver_variant = LocalSolverVariant::Exact;
-    equation_data.is_stream_function =
-      equation_data.variant == EquationData::Variant::ClampedStreamNoSlip ||
-      equation_data.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip ||
-      equation_data.variant == EquationData::Variant::ClampedStreamNoSlipNormal ||
-      equation_data.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom; // !!!
-    equation_data.ip_factor = ip_factor;
+    equation_data.ip_factor            = ip_factor;
 
     ModelProblem<dim, fe_degree> biharmonic_problem(prms, equation_data);
 

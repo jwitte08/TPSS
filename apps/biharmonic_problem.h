@@ -373,7 +373,7 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
                 TPSS::PatchVariant::vertex,
               ExcMessage("Vertex patches only."));
 
-  if(equation_data.is_stream_function)
+  if(equation_data.is_stream_function())
   {
     Assert(load_function_stokes, ExcMessage("load_function_stokes is required."));
   }
@@ -559,7 +559,7 @@ template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::assemble_system()
 {
-  if(equation_data.is_stream_function)
+  if(equation_data.is_stream_function())
     assemble_system_impl<true>();
   else
     assemble_system_impl<false>();
@@ -976,7 +976,7 @@ template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::compute_errors()
 {
-  if(equation_data.is_stream_function)
+  if(equation_data.is_stream_function())
   {
     const double l2_velocity_error = compute_stream_function_error();
     print_parameter("L2 velocity error (stream function):", l2_velocity_error);
