@@ -1010,15 +1010,17 @@ struct EquationData
     DivFreeNoSlip,
     DivFreePoiseuilleInhom
   };
+  static constexpr unsigned int n_variants = 6;
+
   static std::string
   str_equation_variant(const Variant variant)
   {
-    std::string str[] = {"divergence-free",
-                         "divergence-free (no-slip-normal)",
-                         "divergence-free (Gaussian bells)",
-                         "divergence-free (no-slip Poiseuille)",
-                         "divergence-free (no-slip)",
-                         "divergence-free (inhom. Poiseuille)"};
+    std::string str[n_variants] = {"divergence-free",
+                                   "divergence-free (no-slip-normal)",
+                                   "divergence-free (Gaussian bells)",
+                                   "divergence-free (no-slip Poiseuille)",
+                                   "divergence-free (no-slip)",
+                                   "divergence-free (inhom. Poiseuille)"};
     return str[static_cast<int>(variant)];
   }
 

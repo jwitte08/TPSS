@@ -1379,7 +1379,7 @@ struct ModelProblemBase<Method::RaviartThomas, dim, fe_degree_p>
   static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::DGQ;
   // using fe_type_v                               = FE_RaviartThomasNodal_new<dim>;
   using fe_type_v                               = FE_RaviartThomas<dim>;
-  using fe_type_p                               = FE_DGQ<dim>;
+  using fe_type_p                               = FE_DGQLegendre<dim>;
   static constexpr int           fe_degree_v    = fe_degree_p;
   static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
 };
@@ -1998,13 +1998,16 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
     const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof();
     const auto & mass_foreach_dof     = *mass_foreach_dof_ptr;
 
-    const auto n_dofs_pressure = dof_handler_pressure.n_dofs();
+    const bool is_dgq_legendre =
+      dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
+    const bool is_legendre_type = is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP;
+    const auto n_dofs_pressure  = dof_handler_pressure.n_dofs();
     {
       const double mass_of_first_dof = mass_foreach_dof(0);
       constraints_pressure.add_line(0U);
       const auto         n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
-      const unsigned int stride = dof_layout_p == TPSS::DoFLayout::DGP ? n_dofs_per_cell : 1U;
-      const unsigned int start  = dof_layout_p == TPSS::DoFLayout::DGP ? stride : 1U;
+      const unsigned int stride          = is_legendre_type ? n_dofs_per_cell : 1U;
+      const unsigned int start           = is_legendre_type ? stride : 1U;
       for(auto i = start; i < n_dofs_pressure; i += stride)
         constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
     }
@@ -2093,16 +2096,20 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     else
     {
       constant_pressure_mode.reinit(n_dofs_pressure);
-      if(dof_layout_p == TPSS::DoFLayout::DGQ)
-      {
-        constant_pressure_mode = 1.;
-      }
-      else if(dof_layout_p == TPSS::DoFLayout::DGP)
+      const bool is_dgq_legendre =
+        dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
+      if(is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP)
       {
         const auto n_dofs_per_cell = dof_handler_pressure.get_fe().dofs_per_cell;
         AssertDimension(n_dofs_pressure % n_dofs_per_cell, 0);
         for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
           constant_pressure_mode[i] = 1.;
+      }
+      else if(dof_layout_p == TPSS::DoFLayout::DGQ)
+      {
+        AssertThrow(!is_dgq_legendre,
+                    ExcMessage("Legendre-type elements must be treated like DGP."));
+        constant_pressure_mode = 1.;
       }
       else
         AssertThrow(false, ExcMessage("This pressure dof layout is not supported."));
@@ -2214,8 +2221,7 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 {
-  constexpr bool use_sipg_method = dof_layout_v == TPSS::DoFLayout::DGQ;
-  // !!! || dof_layout_v == TPSS::DoFLayout::RT;
+  constexpr bool use_sipg_method    = dof_layout_v == TPSS::DoFLayout::DGQ;
   constexpr bool use_hdiv_ip_method = dof_layout_v == TPSS::DoFLayout::RT;
   constexpr bool use_conf_method    = dof_layout_v == TPSS::DoFLayout::Q;
 
@@ -2725,13 +2731,6 @@ ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity_pressure()
     if(equation_data.force_mean_value_constraint)
     {
       AssertThrow(false, ExcMessage("TODO..."));
-      //   const double mass_of_first_dof = mass_foreach_dof(0U);
-      //   level_constraints_pressure.add_line(0U);
-      //   const auto         n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
-      //   const unsigned int stride = dof_layout_p == TPSS::DoFLayout::DGP ? n_dofs_per_cell : 1U;
-      //   const unsigned int start  = dof_layout_p == TPSS::DoFLayout::DGP ? stride : 1U;
-      //   for(auto i = start; i < n_dofs_pressure; i += stride)
-      //     level_constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
     }
     level_constraints_pressure.close();
   }
@@ -2906,7 +2905,10 @@ ModelProblem<dim, fe_degree_p, method>::solve()
   /// Post processing of discrete solution
   const double mean_pressure =
     VectorTools::compute_mean_value(dof_handler, QGauss<dim>(n_q_points_1d), system_solution, dim);
-  if(dof_layout_p == TPSS::DoFLayout::DGP)
+  const bool is_dgq_legendre =
+    dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
+  const bool is_legendre_type = is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP;
+  if(is_legendre_type)
   {
     const auto n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
     const auto n_dofs_pressure = system_solution.block(1).size();
@@ -2915,8 +2917,10 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
       dof_values_pressure[i] -= mean_pressure;
   }
-  else
+  else if(dof_layout_p == TPSS::DoFLayout::DGQ)
     system_solution.block(1).add(-mean_pressure);
+  else
+    AssertThrow(false, ExcMessage("This dof layout is not supported."));
 
   print_parameter("Mean of pressure corrected by:", -mean_pressure);
   *pcout << std::endl;

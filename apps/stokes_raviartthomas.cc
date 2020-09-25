@@ -33,15 +33,17 @@ main(int argc, char * argv[])
     double       ip_factor                   = 1.;
     unsigned int n_cycles                    = 3;
     unsigned int local_solver_variant        = 0;
+    unsigned int pde_index                   = 4; // NoSlip
 
     //: parse arguments
     atoi_if(test_index, 1);
     atoi_if(ip_factor, 2);
     atoi_if(n_cycles, 3);
-    atoi_if(local_solver_variant, 4);
-    atoi_if(force_mean_value_constraint, 7);
+    atoi_if(pde_index, 4);
     atoi_if(debug_depth, 5);
     atof_if(damping, 6);
+    atoi_if(force_mean_value_constraint, 7);
+    atoi_if(local_solver_variant, 8);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
@@ -62,7 +64,9 @@ main(int argc, char * argv[])
     options.prms.mesh.do_colorization = true; // !!!
 
     EquationData equation_data;
-    equation_data.variant           = EquationData::Variant::DivFreePoiseuilleInhom; // !!!
+    AssertThrow(pde_index < EquationData::n_variants,
+                ExcMessage("This equation is not implemented."));
+    equation_data.variant           = static_cast<EquationData::Variant>(pde_index);
     equation_data.use_cuthill_mckee = false;
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
