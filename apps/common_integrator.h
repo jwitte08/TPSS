@@ -650,6 +650,21 @@ compute_vvalue(const FEValues<dim> & phi, const unsigned int i, const unsigned i
  */
 template<int dim>
 Tensor<1, dim>
+compute_vvalue(const FEFaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  Tensor<1, dim> value_phi;
+  for(auto c = 0; c < dim; ++c)
+    value_phi[c] = phi.shape_value_component(i, q, c);
+  return value_phi;
+}
+
+
+
+/**
+ * [[ phi ]] = phi^+ - phi^-
+ */
+template<int dim>
+Tensor<1, dim>
 compute_vjump(const FEInterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
 {
   Tensor<1, dim> jump_phi;
