@@ -108,6 +108,64 @@ visualize_dof_vector(const DoFHandler<dim> & dof_handler,
 
 template<int dim, typename VectorType>
 void
+visualize_dof_vector(const DoFHandler<dim> &        dof_handler,
+                     const VectorType &             dof_vector,
+                     const std::vector<std::string> names,
+                     const std::string              prefix         = "tba",
+                     const std::string              suffix         = "",
+                     const unsigned int             n_subdivisions = 1,
+                     std::vector<DataComponentInterpretation::DataComponentInterpretation>
+                                          data_component_interpretation = {},
+                     const Mapping<dim> & mapping                       = MappingQGeneric<dim>(1))
+{
+  AssertThrow(!names.empty(), ExcMessage("Insert names for each vector component."));
+
+  DataOut<dim> data_out;
+  data_out.attach_dof_handler(dof_handler);
+
+  const auto & tria         = dof_handler.get_triangulation();
+  const auto   global_level = tria.n_global_levels() - 1;
+  std::string  filename     = prefix + "_" + Utilities::int_to_string(dim) + "D";
+
+  data_out.add_data_vector(dof_vector,
+                           names,
+                           DataOut<dim>::type_dof_data,
+                           data_component_interpretation);
+  data_out.build_patches(mapping,
+                         n_subdivisions,
+                         DataOut<dim>::CurvedCellRegion::curved_inner_cells);
+
+  const auto filename_per_proc = [filename, global_level, suffix](const unsigned int proc_id) {
+    std::ostringstream oss;
+    oss << filename << "_" << Utilities::int_to_string(proc_id, 4) << "_"
+        << Utilities::int_to_string(global_level, 2) << (suffix != "" ? "_" : "") << suffix
+        << ".vtu";
+    return oss.str();
+  };
+
+  /// write process-specific paraview file
+  {
+    std::ofstream file(filename_per_proc(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)));
+    data_out.write_vtu(file);
+  }
+
+  /// process 0 writes master file
+  if(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1)
+    if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+    {
+      std::vector<std::string> filenames;
+      for(unsigned int i = 0; i < Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD); ++i)
+        filenames.push_back(filename_per_proc(i));
+      std::ostringstream oss;
+      oss << filename << "_" << Utilities::int_to_string(global_level, 2)
+          << (suffix != "" ? "_" : "") << suffix << ".pvtu";
+      std::ofstream master_file(oss.str());
+      data_out.write_pvtu_record(master_file, filenames);
+    }
+}
+
+template<int dim, typename VectorType>
+void
 visualize_cell_vector(const DoFHandler<dim> & dof_handler,
                       const VectorType &      dof_vector,
                       const std::string       name           = "tba",
