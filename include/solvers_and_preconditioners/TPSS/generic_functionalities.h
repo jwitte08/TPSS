@@ -109,6 +109,7 @@ compute_generalized_eigenvalues_symm(FullMatrix<Number> & A,
   return compute_generalized_eigenvalues_symm(A_lapack, B_lapack, Q);
 }
 
+
 template<typename Number>
 std::vector<Number>
 compute_singular_values(LAPACKFullMatrix<Number> & matrix)
@@ -132,6 +133,82 @@ compute_singular_values(const FullMatrix<Number> & matrix)
   LAPACKFullMatrix<Number> lapack_matrix(matrix.m());
   lapack_matrix = matrix;
   return compute_singular_values(lapack_matrix);
+}
+
+
+/**
+ * Computes and returns the singular value decomposition A = U Sigma VT as a
+ * triplet of matrices [U, Sigma, VT]. Note, that the input matrix @p matrix is
+ * modified by compute_svd().
+ */
+template<typename Number>
+std::array<LAPACKFullMatrix<Number>, 3>
+compute_svd(LAPACKFullMatrix<Number> & matrix)
+{
+  matrix.compute_svd();
+
+  std::array<LAPACKFullMatrix<Number>, 3> svd;
+  auto &                                  U     = svd[0];
+  auto &                                  Sigma = svd[1];
+  Sigma.reinit(matrix.m(), matrix.n());
+  auto & VT = svd[2];
+
+  U                                    = matrix.get_svd_u();
+  VT                                   = matrix.get_svd_vt();
+  const unsigned int n_singular_values = std::min(matrix.m(), matrix.n());
+  for(auto i = 0U; i < n_singular_values; ++i)
+    Sigma(i, i) = matrix.singular_value(i);
+
+  return svd;
+}
+
+
+/**
+ * Computes the singular value decomposition A = U Sigma VT and returns the
+ * inverse triplet of matrices [UT, Sigma^{-1}, V]. If singular values are below
+ * the given threshold @p threshold their reciprocal is set to zero, which
+ * avoids a division by (nearly) zero. Note, that the input matrix @p matrix is
+ * modified by compute_svd().
+ */
+template<typename Number>
+std::array<LAPACKFullMatrix<Number>, 3>
+compute_inverse_svd(LAPACKFullMatrix<Number> & matrix,
+                    const Number threshold = std::numeric_limits<Number>::epsilon() * 100.)
+{
+  matrix.compute_svd();
+
+  std::array<LAPACKFullMatrix<Number>, 3> svd;
+  auto &                                  V = svd[0];
+  V.reinit(matrix.n());
+  auto & invSigma = svd[1];
+  invSigma.reinit(matrix.n(), matrix.m());
+  auto & UT = svd[2];
+  UT.reinit(matrix.m());
+
+  matrix.get_svd_u().transpose(UT);
+  matrix.get_svd_vt().transpose(V);
+  const unsigned int n_singular_values = std::min(matrix.m(), matrix.n());
+  for(auto i = 0U; i < n_singular_values; ++i)
+    invSigma(i, i) = matrix.singular_value(i) < threshold ? 0. : 1. / matrix.singular_value(i);
+
+  return svd;
+}
+
+
+/**
+ * Computes and returns the triple matrix-matrix-product X*Y*Z.
+ */
+template<typename Number>
+LAPACKFullMatrix<Number>
+merge_lapack_decomposition(const LAPACKFullMatrix<Number> & X,
+                           const LAPACKFullMatrix<Number> & Y,
+                           const LAPACKFullMatrix<Number> & Z)
+{
+  LAPACKFullMatrix<double> YZ(Y.m(), Z.n());
+  LAPACKFullMatrix<double> XYZ(X.m(), Z.n());
+  Y.mmult(YZ, Z);
+  X.mmult(XYZ, YZ);
+  return XYZ;
 }
 
 
