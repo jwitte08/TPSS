@@ -1460,6 +1460,9 @@ public:
   void
   solve();
 
+  void
+  correct_mean_value_pressure();
+
   std::shared_ptr<Vector<double>>
   compute_L2_error_velocity() const;
 
@@ -2926,6 +2929,34 @@ ModelProblem<dim, fe_degree_p, method>::solve()
   *pcout << std::endl;
 }
 
+
+
+template<int dim, int fe_degree_p, Method method>
+void
+ModelProblem<dim, fe_degree_p, method>::correct_mean_value_pressure()
+{
+  const double mean_pressure =
+    VectorTools::compute_mean_value(dof_handler, QGauss<dim>(n_q_points_1d), system_solution, dim);
+  const bool is_dgq_legendre =
+    dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
+  const bool is_legendre_type = is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP;
+  if(is_legendre_type)
+  {
+    const auto n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
+    const auto n_dofs_pressure = system_solution.block(1).size();
+    AssertDimension(n_dofs_pressure % n_dofs_per_cell, 0);
+    Vector<double> & dof_values_pressure = system_solution.block(1);
+    for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
+      dof_values_pressure[i] -= mean_pressure;
+  }
+  else if(dof_layout_p == TPSS::DoFLayout::DGQ)
+    system_solution.block(1).add(-mean_pressure);
+  else
+    AssertThrow(false, ExcMessage("This dof layout is not supported."));
+
+  print_parameter("Mean of pressure corrected by:", -mean_pressure);
+  *pcout << std::endl;
+}
 
 
 template<int dim, int fe_degree_p, Method method>
