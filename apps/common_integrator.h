@@ -495,7 +495,7 @@ struct ScratchData
               const FiniteElement<dim> & fe,
               const unsigned int         quadrature_degree,
               const UpdateFlags          update_flags,
-              const UpdateFlags          interface_update_flags)
+              const UpdateFlags          interface_update_flags = UpdateFlags::update_default)
     : fe_values(mapping, fe, QGauss<dim>(quadrature_degree), update_flags),
       fe_interface_values(mapping, fe, QGauss<dim - 1>(quadrature_degree), interface_update_flags)
   {

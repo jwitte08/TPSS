@@ -1016,12 +1016,12 @@ struct EquationData
 {
   enum class Variant
   {
-    DivFree,                 // 1
-    DivFreeNoSlipNormal,     // 2
-    DivFreeBell,             // 3
-    DivFreePoiseuilleNoSlip, // 4
-    DivFreeNoSlip,           // 5
-    DivFreePoiseuilleInhom   // 6
+    DivFree,                 // 0
+    DivFreeNoSlipNormal,     // 1
+    DivFreeBell,             // 2
+    DivFreePoiseuilleNoSlip, // 3
+    DivFreeNoSlip,           // 4
+    DivFreePoiseuilleInhom   // 5
   };
   static constexpr unsigned int n_variants = 6;
 
