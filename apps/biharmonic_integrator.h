@@ -567,6 +567,540 @@ public:
 
 } // end namespace C0IP
 
+
+
+namespace Pressure
+{
+using InterfaceId = typename std::pair<CellId, CellId>;
+
+template<int dim>
+struct InterfaceHandler
+{
+  void
+  reinit(const DoFHandler<dim> & dof_handler_velocity)
+  {
+    const auto & triangulation = dof_handler_velocity.get_triangulation();
+    const auto   n_cells       = triangulation.n_global_active_cells();
+
+    std::set<CellId> marked_cells;
+
+    /// Choose a first cell with fixed constant mode.
+    const auto & first_cell = triangulation.begin_active();
+    fixed_cell_id           = first_cell->id();
+    interface_ids.emplace_back(first_cell->id(), first_cell->id());
+    marked_cells.emplace(first_cell->id());
+
+    /// For all remaining cells set one and only one "inflow"
+    /// interface. "Inflow" means that the neighboring cell has already a
+    /// "fixed" constant mode.
+    while(marked_cells.size() < triangulation.n_global_active_cells())
+      for(auto & cell : triangulation.active_cell_iterators())
+      {
+        const bool cell_is_marked = marked_cells.find(cell->id()) != marked_cells.cend();
+
+        for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
+        {
+          const bool there_is_no_neighbor = cell->neighbor_index(face_no) == -1;
+          if(there_is_no_neighbor)
+            continue;
+
+          const auto & ncell           = cell->neighbor(face_no);
+          const bool   ncell_is_marked = marked_cells.find(ncell->id()) != marked_cells.cend();
+
+          if(cell_is_marked && ncell_is_marked)
+            continue;
+
+          else if(cell_is_marked && !ncell_is_marked) // cell -> ncell
+          {
+            interface_ids.emplace_back(cell->id(), ncell->id());
+            const auto & [dummy_, has_been_inserted] = marked_cells.emplace(ncell->id());
+            (void)dummy_;
+            Assert(has_been_inserted, ExcMessage("Insertion failed."));
+          }
+
+          else if(!cell_is_marked && ncell_is_marked) // ncell -> cell
+          {
+            interface_ids.emplace_back(ncell->id(), cell->id());
+            const auto & [dummy_, has_been_inserted] = marked_cells.emplace(cell->id());
+            (void)dummy_;
+            Assert(has_been_inserted, ExcMessage("Insertion failed."));
+          }
+        }
+      } // end loop over cells
+
+    /// The second member of each interface id determines the new cell with
+    /// "inflow" interface. We use CellIds ordering to sort the interface ids.
+    std::sort(interface_ids.begin(), interface_ids.end());
+
+    /// TODO find an explicit way to convert CellId into a unique integer
+    std::copy(marked_cells.cbegin(), marked_cells.cend(), std::back_inserter(cell_ids));
+    /// this std::sort is not needed as the set is ordered !!!
+    // std::sort(cell_ids.begin(), cell_ids.end());
+
+    AssertDimension(cell_ids.size(), n_cells);
+    AssertDimension(cell_ids.size(), interface_ids.size());
+
+    // // DEBUG
+    // std::cout << "marked cells: " << std::endl;
+    // for(const auto & cell_id : cell_ids)
+    //   std::cout << cell_id << " ";
+    // std::cout << std::endl;
+    // std::cout << "marked interfaces: " << std::endl;
+    // for(const auto & interface_id : interface_ids)
+    //   std::cout << interface_id << std::endl;
+  }
+
+
+  std::vector<InterfaceId>::const_iterator
+  get_interface_iterator(const InterfaceId & id) const
+  {
+    Assert(!interface_ids.empty(), ExcMessage("Have you initialized this interface handler?"));
+    const bool is_contained = std::binary_search(interface_ids.cbegin(), interface_ids.cend(), id);
+    if(is_contained)
+      return std::lower_bound(interface_ids.cbegin(), interface_ids.cend(), id);
+    const InterfaceId flipped_id = {id.second, id.first};
+    const bool        is_flipped =
+      std::binary_search(interface_ids.cbegin(), interface_ids.cend(), flipped_id);
+    if(is_flipped)
+      return std::lower_bound(interface_ids.cbegin(), interface_ids.cend(), flipped_id);
+    return interface_ids.cend();
+  }
+
+  unsigned int
+  get_interface_index(const InterfaceId & id) const
+  {
+    const auto interface_iterator = get_interface_iterator(id);
+    const bool id_isnt_contained  = interface_ids.cend() == interface_iterator;
+    if(id_isnt_contained)
+      return numbers::invalid_unsigned_int;
+    const auto index = std::distance(interface_ids.cbegin(), interface_iterator);
+    AssertIndexRange(index, interface_ids.size());
+    return index;
+  }
+
+  unsigned int
+  get_cell_index(const CellId & id) const
+  {
+    Assert(!cell_ids.empty(), ExcMessage("Have you initialized this interface handler?"));
+    const auto it = std::lower_bound(cell_ids.cbegin(), cell_ids.cend(), id);
+    // if(it == cell_ids.cend())
+    //   return numbers::invalid_unsigned_int;
+    const auto index = std::distance(cell_ids.cbegin(), it);
+    AssertIndexRange(index, cell_ids.size());
+    return index;
+    // const auto it =
+    //   std::lower_bound(interface_ids.cbegin(),
+    //                    interface_ids.cend(),
+    //                    InterfaceId{id, id},
+    //                    [](const auto & lhs, const auto & rhs) { return lhs.second < rhs.second;
+    //                    });
+    // if(it == interface_ids.cend())
+    //   return numbers::invalid_unsigned_int;
+    // const auto index = std::distance(interface_ids.cbegin(), it);
+    // AssertIndexRange(index, interface_ids.size());
+    // return index;
+  }
+
+  std::pair<unsigned int, unsigned int>
+  get_cell_index_pair(const InterfaceId & id) const
+  {
+    return {get_cell_index(id.first), get_cell_index(id.second)};
+  }
+
+  unsigned int
+  get_fixed_cell_index() const
+  {
+    const auto index = get_cell_index(fixed_cell_id);
+    Assert(index != numbers::invalid_unsigned_int, ExcMessage("Fixed cell isnt contained!?"));
+    return index;
+  }
+
+  unsigned int
+  get_fixed_interface_index() const
+  {
+    const auto index = get_interface_index({fixed_cell_id, fixed_cell_id});
+    Assert(index != numbers::invalid_unsigned_int, ExcMessage("Fixed cell isnt contained!?"));
+    return index;
+  }
+
+  unsigned int
+  n_interfaces() const
+  {
+    return interface_ids.size();
+  }
+
+  std::vector<InterfaceId> interface_ids; // sorted
+  std::vector<CellId>      cell_ids;      // sorted
+  CellId                   fixed_cell_id;
+};
+
+
+
+namespace Interior
+{
+namespace MW
+{
+using ::MW::ScratchData;
+
+using ::MW::Mixed::CopyData;
+
+
+
+template<int dim, bool is_multigrid = false>
+struct MatrixIntegrator
+{
+  using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
+
+  MatrixIntegrator(const Function<dim> *            load_function_in,
+                   const Vector<double> *           stream_function_solution,
+                   const LAPACKFullMatrix<double> * transformation_matrix,
+                   const InterfaceHandler<dim> *    interface_handler_in,
+                   const Stokes::EquationData &     equation_data_in)
+    : load_function(load_function_in),
+      discrete_velocity(stream_function_solution),
+      interior_rt_to_test_functions(transformation_matrix),
+      interface_handler(interface_handler_in),
+      equation_data(equation_data_in)
+  {
+  }
+
+  void
+  cell_worker(const IteratorType & cell,
+              const IteratorType & cellP,
+              ScratchData<dim> &   scratch_data,
+              CopyData &           copy_data) const;
+
+  const Function<dim> *            load_function;
+  const Vector<double> *           discrete_velocity;
+  const LAPACKFullMatrix<double> * interior_rt_to_test_functions;
+  const InterfaceHandler<dim> *    interface_handler;
+  const Stokes::EquationData       equation_data;
+};
+
+
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
+                                                 const IteratorType & cellP,
+                                                 ScratchData<dim> &   scratch_data,
+                                                 CopyData &           copy_data) const
+{
+  copy_data.cell_rhs_test = 0.;
+
+  cellP->get_active_or_mg_dof_indices(copy_data.local_dof_indices_test);
+  const auto n_dofs_per_cell_p            = copy_data.local_dof_indices_test.size();
+  const auto n_interior_nodes_by_pressure = n_dofs_per_cell_p - 1;
+
+  const unsigned int cell_index = interface_handler->get_cell_index(cell->id());
+  AssertDimension(copy_data.local_dof_indices_ansatz.size(), 1U);
+  copy_data.local_dof_indices_ansatz[0U] = cell_index;
+
+  FEValues<dim> & phi = scratch_data.fe_values;
+  phi.reinit(cell);
+
+  const auto n_dofs_per_cell_v = phi.get_fe().dofs_per_cell;
+  AssertThrow(dim == 2, ExcMessage("dofs_per_quad only correct in 2D"));
+  const auto n_interior_dofs_v = phi.get_fe().dofs_per_quad;
+  const auto n_face_dofs_v     = GeometryInfo<dim>::faces_per_cell * phi.get_fe().dofs_per_face;
+  AssertDimension(n_interior_dofs_v + n_face_dofs_v, n_dofs_per_cell_v);
+  (void)n_dofs_per_cell_v;
+  AssertDimension(interior_rt_to_test_functions->m(), n_interior_nodes_by_pressure);
+  AssertDimension(interior_rt_to_test_functions->n(), n_interior_dofs_v);
+
+  std::vector<Tensor<1, dim>> load_values;
+  {
+    Assert(load_function, ExcMessage("load_function is not set."));
+    AssertDimension(load_function->n_components, dim);
+    const auto & q_points = phi.get_quadrature_points();
+    std::transform(q_points.cbegin(),
+                   q_points.cend(),
+                   std::back_inserter(load_values),
+                   [&](const auto & x_q) {
+                     Tensor<1, dim> value;
+                     for(auto c = 0U; c < dim; ++c)
+                       value[c] = load_function->value(x_q, c);
+                     return value;
+                   });
+  }
+
+  /// Evaluate test function v_i (which is generated by grad p_i) at quadrature
+  /// point x_q.
+  const auto & compute_v_i = [&](const unsigned int i, const unsigned int q) {
+    AssertIndexRange(i, n_interior_nodes_by_pressure);
+    Tensor<1, dim> value;
+    for(auto j = 0U; j < n_interior_dofs_v; ++j)
+    {
+      const auto jj = n_face_dofs_v + j; // shift to interior dofs
+      for(auto d = 0U; d < dim; ++d)
+        value[d] += (*interior_rt_to_test_functions)(i, j) * phi.shape_value_component(jj, q, d);
+    }
+    return value;
+  };
+
+  double integral_iq;
+  for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
+  {
+    const auto & f  = load_values[q];
+    const auto & dx = phi.JxW(q);
+
+    for(auto i = 0U; i < n_interior_nodes_by_pressure; ++i)
+    {
+      const auto & v_i = compute_v_i(i, q);
+      integral_iq      = v_i * f * dx;
+
+      AssertIndexRange(i + 1, copy_data.cell_rhs_test.size());
+      copy_data.cell_rhs_test(i + 1) += integral_iq; // skip constant mode
+    }
+  }
+}
+
+} // namespace MW
+
+} // namespace Interior
+
+namespace Interface
+{
+namespace MW
+{
+using ::MW::Mixed::ScratchData;
+
+using ::MW::Mixed::CopyData;
+
+
+
+template<int dim, bool is_multigrid = false>
+struct MatrixIntegrator
+{
+  using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
+
+
+  /// This integrator assumes that the coefficients of the discrete pressure
+  /// associated to the constant modes are set to zero!
+  MatrixIntegrator(const Function<dim> *            load_function_in,
+                   const Vector<double> *           stream_function_solution,
+                   const Vector<double> *           pressure_solution,
+                   const LAPACKFullMatrix<double> * transformation_matrix,
+                   const InterfaceHandler<dim> *    interface_handler_in,
+                   const Stokes::EquationData &     equation_data_in)
+    : load_function(load_function_in),
+      discrete_velocity(stream_function_solution),
+      discrete_pressure(pressure_solution),
+      face_rt_to_test_functions(transformation_matrix),
+      interface_handler(interface_handler_in),
+      equation_data(equation_data_in)
+  {
+    AssertDimension(face_rt_to_test_functions->m(), GeometryInfo<dim>::faces_per_cell);
+  }
+
+  void
+  cell_worker(const IteratorType & cell,
+              ScratchData<dim> &   scratch_data,
+              CopyData &           copy_data) const;
+
+  void
+  face_worker(const IteratorType & cell,
+              const IteratorType & cellP,
+              const unsigned int & face_no,
+              const unsigned int & sface_no,
+              const IteratorType & ncell,
+              const IteratorType & ncellP,
+              const unsigned int & nface_no,
+              const unsigned int & nsface_no,
+              ScratchData<dim> &   scratch_data,
+              CopyData &           copy_data) const;
+
+  template<typename EvaluatorType>
+  Tensor<1, dim>
+  compute_v_face(const EvaluatorType & phi, const unsigned int face_no, const unsigned int q) const;
+
+  const Function<dim> *            load_function;
+  const Vector<double> *           discrete_velocity;
+  const Vector<double> *           discrete_pressure;
+  const LAPACKFullMatrix<double> * face_rt_to_test_functions;
+  const InterfaceHandler<dim> *    interface_handler;
+  const Stokes::EquationData       equation_data;
+};
+
+
+
+template<int dim, bool is_multigrid>
+template<typename EvaluatorType>
+Tensor<1, dim>
+MatrixIntegrator<dim, is_multigrid>::compute_v_face(const EvaluatorType & phi,
+                                                    const unsigned int    face_no,
+                                                    const unsigned int    q) const
+{
+  AssertIndexRange(face_no, GeometryInfo<dim>::faces_per_cell);
+  Tensor<1, dim> value;
+  const auto     n_face_dofs_v = face_rt_to_test_functions->n();
+  for(auto j = 0U; j < n_face_dofs_v; ++j)
+  {
+    for(auto d = 0U; d < dim; ++d)
+      value[d] += (*face_rt_to_test_functions)(face_no, j) * phi.shape_value_component(j, q, d);
+  }
+  return value;
+}
+
+
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
+                                                 ScratchData<dim> &   scratch_data,
+                                                 CopyData &           copy_data) const
+{
+  AssertDimension(copy_data.cell_rhs_test.size(), GeometryInfo<dim>::faces_per_cell);
+  copy_data.cell_rhs_test = 0.;
+  copy_data.local_dof_indices_test.resize(GeometryInfo<dim>::faces_per_cell, 0);
+
+  for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
+  {
+    const bool this_is_no_interface = cell->neighbor_index(face_no) == -1;
+    if(this_is_no_interface)
+      continue;
+
+    const auto ncell = cell->neighbor(face_no);
+
+    InterfaceId        interface_id{cell->id(), ncell->id()};
+    const unsigned int interface_index       = interface_handler->get_interface_index(interface_id);
+    const bool this_interface_isnt_contained = interface_index == numbers::invalid_unsigned_int;
+    if(this_interface_isnt_contained)
+      continue;
+
+    copy_data.local_dof_indices_test[face_no] = interface_index;
+
+    FEValues<dim> & phi = scratch_data.fe_values_test;
+    phi.reinit(cell);
+
+    std::vector<Tensor<1, dim>> load_values;
+    {
+      Assert(load_function, ExcMessage("load_function is not set."));
+      AssertDimension(load_function->n_components, dim);
+      const auto & q_points = phi.get_quadrature_points();
+      std::transform(q_points.cbegin(),
+                     q_points.cend(),
+                     std::back_inserter(load_values),
+                     [&](const auto & x_q) {
+                       Tensor<1, dim> value;
+                       for(auto c = 0U; c < dim; ++c)
+                         value[c] = load_function->value(x_q, c);
+                       return value;
+                     });
+    }
+    AssertDimension(load_values.size(), phi.n_quadrature_points);
+
+    double residual = 0.;
+    for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
+    {
+      {
+        const auto & f      = load_values[q];
+        const auto & dx     = phi.JxW(q);
+        const auto & v_face = compute_v_face(phi, face_no, q);
+
+        residual += v_face * f * dx;
+      }
+    }
+
+    copy_data.cell_rhs_test[face_no] = residual;
+  }
+}
+
+
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
+                                                 const IteratorType & cellP,
+                                                 const unsigned int & face_no,
+                                                 const unsigned int & sface_no,
+                                                 const IteratorType & ncell,
+                                                 const IteratorType & ncellP,
+                                                 const unsigned int & nface_no,
+                                                 const unsigned int & nsface_no,
+                                                 ScratchData<dim> &   scratch_data,
+                                                 CopyData &           copy_data) const
+{
+  InterfaceId        interface_id{cellP->id(), ncellP->id()};
+  const unsigned int interface_index       = interface_handler->get_interface_index(interface_id);
+  const bool this_interface_isnt_contained = interface_index == numbers::invalid_unsigned_int;
+  if(this_interface_isnt_contained)
+    return;
+
+  const auto cell_index  = interface_handler->get_cell_index(cell->id());
+  const auto ncell_index = interface_handler->get_cell_index(ncell->id());
+
+  FEInterfaceValues<dim> & phiV = scratch_data.fe_interface_values_test;
+  phiV.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no);
+
+  FEInterfaceValues<dim> & phiP = scratch_data.fe_interface_values_ansatz;
+  phiP.reinit(cellP, face_no, sface_no, ncellP, nface_no, nsface_no);
+
+  const unsigned int n_interface_dofs_p  = phiP.n_current_interface_dofs();
+  const auto &       joint_dof_indices_p = phiP.get_interface_dof_indices();
+
+  copy_data.face_data.emplace_back();
+  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+
+  copy_data_face.cell_matrix.reinit(GeometryInfo<dim>::faces_per_cell, 2U);
+  copy_data_face.joint_dof_indices_test.resize(GeometryInfo<dim>::faces_per_cell, 0U);
+  copy_data_face.joint_dof_indices_ansatz.resize(2, 0U);
+
+  copy_data_face.joint_dof_indices_test[face_no] = interface_index;
+  copy_data_face.joint_dof_indices_ansatz[0U]    = cell_index;
+  copy_data_face.joint_dof_indices_ansatz[1U]    = ncell_index;
+
+  std::vector<double> joint_dof_values_p;
+  for(const auto i : joint_dof_indices_p)
+    joint_dof_values_p.push_back((*discrete_pressure)(i));
+
+  /// Note that the constant mode should be currently set to zero, thus,
+  /// looping over the whole set of dof indices is valid.
+  const auto & compute_jump_pn = [&](const unsigned int q) {
+    double               value = 0.;
+    const Tensor<1, dim> n     = phiP.normal(q);
+    for(auto j = 0U; j < n_interface_dofs_p; ++j) // skip constant mode
+      value += joint_dof_values_p[j] * phiP.jump(j, q);
+    return value * n;
+  };
+
+  /// left refers to this cell and right to the neighbor
+  const auto & phiV_left = phiV.get_fe_face_values(0U);
+
+  double alpha_left  = 0.;
+  double alpha_right = 0.;
+  double pn_dot_v    = 0.;
+  for(unsigned int q = 0; q < phiP.n_quadrature_points; ++q)
+  {
+    const auto &           dx      = phiV.JxW(q);
+    const Tensor<1, dim> & v_face  = compute_v_face(phiV_left, face_no, q);
+    const Tensor<1, dim> & jump_pn = compute_jump_pn(q);
+    const Tensor<1, dim> & n_left  = phiP.normal(q);
+    const Tensor<1, dim> & n_right = -n_left;
+
+    pn_dot_v += jump_pn * v_face * dx;
+
+    alpha_left += -1. * n_left * v_face * dx;
+    alpha_right += -1. * n_right * v_face * dx;
+  }
+
+  // // DEBUG
+  // std::cout << "interface index " << interface_index << " pn_dot_v " << pn_dot_v << std::endl;
+  // std::cout << "interface index " << interface_index << " alpha_left " << alpha_left <<
+  // std::endl; std::cout << "interface index " << interface_index << " alpha_right " << alpha_right
+  // << std::endl;
+
+  copy_data.cell_rhs_test[face_no] += pn_dot_v;
+  copy_data_face.cell_matrix(face_no, 0U) = alpha_left;
+  copy_data_face.cell_matrix(face_no, 1U) = alpha_right;
+}
+
+} // namespace MW
+
+} // namespace Interface
+
+} // namespace Pressure
+
 } // end namespace Biharmonic
 
 
