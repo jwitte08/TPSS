@@ -108,27 +108,29 @@ main(int argc, char * argv[])
     auto pcout               = std::make_shared<ConditionalOStream>(std::cout, true);
     biharmonic_problem.pcout = pcout;
 
-    Stokes::StokesFlow options_stokes;
-    if(damping == 0.)
-      damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
-    options_stokes.setup(test_index_stokes, damping);
-    options_stokes.prms.n_cycles = prms.n_cycles;
-    options_stokes.prms.mesh     = prms.mesh;
+    // Stokes::StokesFlow options_stokes;
+    // if(damping == 0.)
+    //   damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
+    // options_stokes.setup(test_index_stokes, damping);
+    // options_stokes.prms.n_cycles = prms.n_cycles;
+    // options_stokes.prms.mesh     = prms.mesh;
 
-    Stokes::EquationData equation_data_stokes;
-    equation_data_stokes.variant = static_cast<Stokes::EquationData::Variant>(pde_index_stokes);
-    equation_data_stokes.use_cuthill_mckee = false;
-    if(options_stokes.prms.solver.variant == "GMRES_GMG" ||
-       options_stokes.prms.solver.variant == "CG_GMG")
-      equation_data_stokes.local_kernel_size = 1U;
-    if(options_stokes.prms.solver.variant == "UMFPACK")
-      equation_data_stokes.force_mean_value_constraint = true;
+    // Stokes::EquationData equation_data_stokes;
+    // equation_data_stokes.variant = static_cast<Stokes::EquationData::Variant>(pde_index_stokes);
+    // equation_data_stokes.use_cuthill_mckee = false;
+    // if(options_stokes.prms.solver.variant == "GMRES_GMG" ||
+    //    options_stokes.prms.solver.variant == "CG_GMG")
+    //   equation_data_stokes.local_kernel_size = 1U;
+    // if(options_stokes.prms.solver.variant == "UMFPACK")
+    //   equation_data_stokes.force_mean_value_constraint = true;
 
-    Stokes::ModelProblem<dim, fe_degree_pressure, Stokes::Method::RaviartThomas> stokes_problem(
-      options_stokes.prms, equation_data_stokes);
+    // Stokes::ModelProblem<dim, fe_degree_pressure, Stokes::Method::RaviartThomas> stokes_problem(
+    //   options_stokes.prms, equation_data_stokes);
 
     std::cout << std::endl;
+    // !!!
     biharmonic_problem.run();
+    auto & stokes_problem = *biharmonic_problem.stokes_problem;
     // biharmonic_problem.make_grid();
     // biharmonic_problem.setup_system();
     // biharmonic_problem.solve_pressure();
@@ -184,6 +186,95 @@ main(int argc, char * argv[])
     //                          stokes_problem.mapping);
     //   }
     // }
+
+
+
+    Triangulation<dim> unit_triangulation(Triangulation<dim>::maximum_smoothing);
+    {
+      MeshParameter mesh_prms;
+      mesh_prms.geometry_variant = MeshParameter::GeometryVariant::Cube;
+      mesh_prms.n_refinements    = 0U;
+      mesh_prms.n_repetitions    = 1U;
+      create_mesh(unit_triangulation, mesh_prms);
+      AssertDimension(unit_triangulation.n_active_cells(), 1U);
+    }
+
+    const auto &    fe_v = stokes_problem.dof_handler_velocity.get_fe();
+    DoFHandler<dim> unit_dofh_v;
+    const auto &    fe_p = stokes_problem.dof_handler_pressure.get_fe();
+    DoFHandler<dim> unit_dofh_p;
+    unit_dofh_v.initialize(unit_triangulation, fe_v);
+    unit_dofh_p.initialize(unit_triangulation, fe_p);
+
+    const auto n_q_points_1d     = stokes_problem.n_q_points_1d;
+    const auto n_dofs_per_cell_v = fe_v.dofs_per_cell;
+    const auto n_dofs_per_cell_p = fe_p.dofs_per_cell;
+
+    /// Display RT shape functions in ParaView.
+    {
+      AssertDimension(n_dofs_per_cell_v, unit_dofh_v.n_dofs()); // one cell
+      for(auto i = 0U; i < n_dofs_per_cell_v; ++i)
+      {
+        Vector<double> phi_i(n_dofs_per_cell_v);
+        phi_i[i] = 1.;
+
+        std::vector<std::string> names(dim, "shape_function");
+        const std::string        prefix         = "RT";
+        const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
+        const auto               n_subdivisions = 10U;
+        std::vector<DataComponentInterpretation::DataComponentInterpretation>
+          data_component_interpretation(dim,
+                                        DataComponentInterpretation::component_is_part_of_vector);
+        visualize_dof_vector(unit_dofh_v,
+                             phi_i,
+                             names,
+                             prefix,
+                             suffix,
+                             n_subdivisions,
+                             data_component_interpretation,
+                             stokes_problem.mapping);
+      }
+    }
+
+    {
+      AssertThrow(fe_v.has_generalized_support_points(), ExcMessage("Check the finite element."));
+      const auto &                support_points = fe_v.get_generalized_support_points();
+      std::vector<Vector<double>> support_values(support_points.size(), Vector<double>(dim));
+
+      const auto & fe_sf = biharmonic_problem.fe; // stream functions
+
+      const auto compute_curl_phi_j = [&](const unsigned int j, const auto & x_q) {
+        AssertThrow(dim == 2, ExcMessage("Only valid in 2D."));
+        Vector<double> curl(dim);
+        const auto &   grad = fe_sf.shape_grad(j, x_q);
+        curl[0]             = grad[1];
+        curl[1]             = -grad[0];
+        return curl;
+      };
+
+      LAPACKFullMatrix<double> node_values(fe_v.dofs_per_cell, fe_sf.dofs_per_cell);
+      std::vector<double>      node_values_of_curl_phi_j(fe_v.dofs_per_cell);
+      for(auto j = 0U; j < fe_sf.dofs_per_cell; ++j)
+      {
+        std::transform(support_points.cbegin(),
+                       support_points.cend(),
+                       support_values.begin(),
+                       [&](const auto & x_q) { return compute_curl_phi_j(j, x_q); });
+        fe_v.convert_generalized_support_point_values_to_dof_values(support_values,
+                                                                    node_values_of_curl_phi_j);
+
+        for(auto i = 0U; i < fe_v.dofs_per_cell; ++i)
+          node_values(i, j) = node_values_of_curl_phi_j[i];
+      }
+
+      const auto & [V, invSigma, UT]               = compute_inverse_svd(node_values);
+      const auto &             inverse_node_values = merge_lapack_decomposition(V, invSigma, UT);
+      LAPACKFullMatrix<double> trafomatrix(fe_v.dofs_per_cell, fe_sf.dofs_per_cell);
+      inverse_node_values.transpose(trafomatrix);
+      trafomatrix.print_formatted(std::cout);
+    }
+
+
 
     // AssertDimension(dim, 2U);
     // const auto n_faces_per_cell  = GeometryInfo<dim>::faces_per_cell;
