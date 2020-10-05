@@ -551,9 +551,9 @@ struct CopyData
 /**
  * symgrad(phi)_{d,c} = 0.5 (\partial_d phi_{i;c} + \partial_c phi_{i;d})
  */
-template<int dim>
+template<int dim, typename EvaluatorType>
 SymmetricTensor<2, dim>
-compute_symgrad(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
+compute_symgrad_impl(const EvaluatorType & phi, const unsigned int i, const unsigned int q)
 {
   SymmetricTensor<2, dim> symgrad_of_phi;
   for(auto d = 0U; d < dim; ++d)
@@ -561,6 +561,13 @@ compute_symgrad(const FEValues<dim> & phi, const unsigned int i, const unsigned 
       symgrad_of_phi[d][c] =
         0.5 * (phi.shape_grad_component(i, q, c)[d] + phi.shape_grad_component(i, q, d)[c]);
   return symgrad_of_phi;
+}
+
+template<int dim>
+SymmetricTensor<2, dim>
+compute_symgrad(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return compute_symgrad_impl<dim, FEValues<dim>>(phi, i, q);
 }
 
 
@@ -633,14 +640,21 @@ compute_average_symgrad_tangential(const FEInterfaceValues<dim> & phi,
 /**
  * [[ phi ]] = phi^+ - phi^-
  */
-template<int dim>
+template<int dim, typename EvaluatorType>
 Tensor<1, dim>
-compute_vvalue(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
+compute_vvalue_impl(const EvaluatorType & phi, const unsigned int i, const unsigned int q)
 {
   Tensor<1, dim> value_phi;
   for(auto c = 0; c < dim; ++c)
     value_phi[c] = phi.shape_value_component(i, q, c);
   return value_phi;
+}
+
+template<int dim>
+Tensor<1, dim>
+compute_vvalue(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return compute_vvalue_impl<dim, FEValues<dim>>(phi, i, q);
 }
 
 
@@ -793,6 +807,22 @@ struct ScratchData
   {
   }
 
+  ScratchData(const Mapping<dim> &       mapping,
+              const FiniteElement<dim> & fe,
+              const unsigned int         n_q_points_1d,
+              const UpdateFlags          update_flags,
+              const UpdateFlags          interface_update_flags = UpdateFlags::update_default)
+    : ScratchData(mapping,
+                  fe,
+                  fe,
+                  n_q_points_1d,
+                  update_flags,
+                  update_flags,
+                  interface_update_flags,
+                  interface_update_flags)
+  {
+  }
+
   ScratchData(const ScratchData<dim> & scratch_data)
     : fe_values_test(scratch_data.fe_values_test.get_mapping(),
                      scratch_data.fe_values_test.get_fe(),
@@ -841,6 +871,11 @@ struct CopyData
       cell_rhs_ansatz(n_dofs_per_cell_ansatz),
       local_dof_indices_test(n_dofs_per_cell_test),
       local_dof_indices_ansatz(n_dofs_per_cell_ansatz)
+  {
+  }
+
+  CopyData(const unsigned int n_dofs_per_cell)
+    : CopyData(n_dofs_per_cell, n_dofs_per_cell, numbers::invalid_unsigned_int)
   {
   }
 

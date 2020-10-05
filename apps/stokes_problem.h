@@ -651,12 +651,12 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid()
 
     const auto copier = [&](const CopyData & copy_data) {
       level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-        copy_data.cell_matrix, copy_data.local_dof_indices, mg_matrices[level]);
+        copy_data.cell_matrix, copy_data.local_dof_indices_test, mg_matrices[level]);
 
       for(auto & cdf : copy_data.face_data)
       {
         level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-          cdf.cell_matrix, cdf.joint_dof_indices, mg_matrices[level]);
+          cdf.cell_matrix, cdf.joint_dof_indices_test, mg_matrices[level]);
       }
     };
 
@@ -928,12 +928,12 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
       const auto copier = [&](const CopyData & copy_data) {
         level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-          copy_data.cell_matrix, copy_data.local_dof_indices, mg_matrices[level].block(0, 0));
+          copy_data.cell_matrix, copy_data.local_dof_indices_test, mg_matrices[level].block(0, 0));
 
         for(auto & cdf : copy_data.face_data)
         {
           level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-            cdf.cell_matrix, cdf.joint_dof_indices, mg_matrices[level].block(0, 0));
+            cdf.cell_matrix, cdf.joint_dof_indices_test, mg_matrices[level].block(0, 0));
         }
       };
 
@@ -2287,26 +2287,26 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
       zero_constraints_velocity
         .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
           copy_data.cell_matrix,
-          copy_data.cell_rhs,
-          copy_data.local_dof_indices,
+          copy_data.cell_rhs_test,
+          copy_data.local_dof_indices_test,
           system_matrix.block(0, 0),
           system_rhs.block(0));
 
       for(auto & cdf : copy_data.face_data)
       {
         if(!use_hdiv_ip_method)
-          AssertDimension(cdf.cell_rhs.size(), 0);
+          AssertDimension(cdf.cell_rhs_test.size(), 0);
 
-        if(cdf.cell_rhs.size() == 0)
+        if(cdf.cell_rhs_test.size() == 0)
           zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-            cdf.cell_matrix, cdf.joint_dof_indices, system_matrix.block(0, 0));
+            cdf.cell_matrix, cdf.joint_dof_indices_test, system_matrix.block(0, 0));
         else
         {
           zero_constraints_velocity
             .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
               cdf.cell_matrix,
-              cdf.cell_rhs,
-              cdf.joint_dof_indices,
+              cdf.cell_rhs_test,
+              cdf.joint_dof_indices_test,
               system_matrix.block(0, 0),
               system_rhs.block(0));
         }
@@ -2635,12 +2635,12 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity()
 
   const auto copier = [&](const CopyData & copy_data) {
     constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-      copy_data.cell_matrix, copy_data.local_dof_indices, mgc_velocity.system_matrix);
+      copy_data.cell_matrix, copy_data.local_dof_indices_test, mgc_velocity.system_matrix);
 
     for(auto & cdf : copy_data.face_data)
     {
       constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-        cdf.cell_matrix, cdf.joint_dof_indices, mgc_velocity.system_matrix);
+        cdf.cell_matrix, cdf.joint_dof_indices_test, mgc_velocity.system_matrix);
     }
   };
 
