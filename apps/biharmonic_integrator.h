@@ -682,23 +682,10 @@ struct InterfaceHandler
   get_cell_index(const CellId & id) const
   {
     Assert(!cell_ids.empty(), ExcMessage("Have you initialized this interface handler?"));
-    const auto it = std::lower_bound(cell_ids.cbegin(), cell_ids.cend(), id);
-    // if(it == cell_ids.cend())
-    //   return numbers::invalid_unsigned_int;
+    const auto it    = std::lower_bound(cell_ids.cbegin(), cell_ids.cend(), id);
     const auto index = std::distance(cell_ids.cbegin(), it);
     AssertIndexRange(index, cell_ids.size());
     return index;
-    // const auto it =
-    //   std::lower_bound(interface_ids.cbegin(),
-    //                    interface_ids.cend(),
-    //                    InterfaceId{id, id},
-    //                    [](const auto & lhs, const auto & rhs) { return lhs.second < rhs.second;
-    //                    });
-    // if(it == interface_ids.cend())
-    //   return numbers::invalid_unsigned_int;
-    // const auto index = std::distance(interface_ids.cbegin(), it);
-    // AssertIndexRange(index, interface_ids.size());
-    // return index;
   }
 
   std::pair<unsigned int, unsigned int>
