@@ -590,11 +590,9 @@ compute_divergence(const FEValues<dim> & phi, const unsigned int i, const unsign
 /**
  * {{ symgrad(phi_i) }} = 0.5 ({{ \partial_d phi_{i;c} }} + {{ \partial_c phi_{i;d} }})
  */
-template<int dim>
+template<int dim, typename EvaluatorType>
 SymmetricTensor<2, dim>
-compute_average_symgrad(const FEInterfaceValues<dim> & phi,
-                        const unsigned int             i,
-                        const unsigned int             q)
+compute_average_symgrad_impl(const EvaluatorType & phi, const unsigned int i, const unsigned int q)
 {
   SymmetricTensor<2, dim> av_symgrad_of_phi;
   for(auto d = 0U; d < dim; ++d)
@@ -604,7 +602,14 @@ compute_average_symgrad(const FEInterfaceValues<dim> & phi,
   return av_symgrad_of_phi;
 }
 
-
+template<int dim>
+SymmetricTensor<2, dim>
+compute_average_symgrad(const FEInterfaceValues<dim> & phi,
+                        const unsigned int             i,
+                        const unsigned int             q)
+{
+  return compute_average_symgrad_impl<dim, FEInterfaceValues<dim>>(phi, i, q);
+}
 
 /**
  * Assuming that the normal n is constant, i.e. the interface flat-sided, the
@@ -716,17 +721,24 @@ compute_vjump(const FEInterfaceValues<dim> & phi, const unsigned int i, const un
  *
  *    [[ phit ]] = [[ phi ]] - ([[ phi ]]*n) n
  */
-template<int dim>
+template<int dim, typename EvaluatorType>
 Tensor<1, dim>
-compute_vjump_tangential(const FEInterfaceValues<dim> & phi,
-                         const unsigned int             i,
-                         const unsigned int             q)
+compute_vjump_tangential_impl(const EvaluatorType & phi, const unsigned int i, const unsigned int q)
 {
   const Tensor<1, dim> & n = phi.normal(q);
   Tensor<1, dim>         jump_phi;
   for(auto c = 0; c < dim; ++c)
     jump_phi[c] = phi.jump(i, q, c);
   return jump_phi - (jump_phi * n) * n;
+}
+
+template<int dim>
+Tensor<1, dim>
+compute_vjump_tangential(const FEInterfaceValues<dim> & phi,
+                         const unsigned int             i,
+                         const unsigned int             q)
+{
+  return compute_vjump_tangential_impl<dim, FEInterfaceValues<dim>>(phi, i, q);
 }
 
 
