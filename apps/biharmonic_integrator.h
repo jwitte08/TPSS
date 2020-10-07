@@ -854,6 +854,105 @@ using ::MW::Mixed::ScratchData;
 
 using ::MW::Mixed::CopyData;
 
+template<int dim>
+struct TestFunctionInterfaceValues
+{
+  static_assert(dim == 2, "Implemented for 2D only.");
+
+  TestFunctionInterfaceValues(const FEValues<dim> &          fe_values_in,
+                              const FEInterfaceValues<dim> & fe_interface_values_in,
+                              const FullMatrix<double> &     left_shape_to_test_functions_in,
+                              const FullMatrix<double> &     right_shape_to_test_functions_in)
+    : fe_values(fe_values_in.get_mapping(),
+                fe_values_in.get_fe(),
+                fe_values_in.get_quadrature(),
+                fe_values_in.get_update_flags()),
+      fe_interface_values(fe_values_in.get_mapping(),
+                          fe_values_in.get_fe(),
+                          fe_interface_values_in.get_quadrature(),
+                          fe_interface_values_in.get_update_flags()),
+      left_shape_to_test_functions(left_shape_to_test_functions_in),
+      right_shape_to_test_functions(right_shape_to_test_functions_in),
+      n_quadrature_points(fe_interface_values_in.n_quadrature_points),
+      index_helper(GeometryInfo<dim>::faces_per_cell)
+  {
+    AssertDimension(left_shape_to_test_functions.n(), fe_values.get_fe().dofs_per_cell);
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType & cell,
+         const unsigned int       face_no,
+         const unsigned int       subface_no,
+         const CellIteratorType & ncell,
+         const unsigned int       nface_no,
+         const unsigned int       nsubface_no)
+  {
+    fe_interface_values.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no);
+  }
+
+  const FiniteElement<dim> &
+  get_fe() const
+  {
+    return fe_values.get_fe();
+  }
+
+  const std::vector<Point<dim>> &
+  get_quadrature_points() const
+  {
+    return fe_interface_values.get_quadrature_points();
+  }
+
+  double
+  JxW(const unsigned int q) const
+  {
+    return fe_interface_values.JxW(q);
+  }
+
+  double
+  get_coefficient(const unsigned int i, const unsigned int j) const
+  {
+    const auto [li, ri] = index_helper.multi_index(i);
+    AssertIndexRange(li, left_shape_to_test_functions.m());
+    AssertIndexRange(ri, right_shape_to_test_functions.m());
+
+    AssertIndexRange(j, fe_interface_values.n_current_interface_dofs());
+    const auto [lj, rj] = fe_interface_values.interface_dof_to_dof_indices(j);
+    if(lj == numbers::invalid_unsigned_int)
+      return right_shape_to_test_functions(ri, rj);
+
+    return left_shape_to_test_functions(li, lj);
+  }
+
+  double
+  average(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    double value = 0.;
+    for(auto j = 0U; j < left_shape_to_test_functions.n(); ++j)
+    {
+      value += get_coefficient(i, j) * fe_interface_values.average(j, q, c);
+    }
+    return value;
+  }
+
+  FEValues<dim>                  fe_values;
+  FEInterfaceValues<dim>         fe_interface_values;
+  const FullMatrix<double> &     left_shape_to_test_functions;
+  const FullMatrix<double> &     right_shape_to_test_functions;
+  unsigned int                   n_quadrature_points;
+  std::vector<bool>              is_left_mask;
+  const Tensors::TensorHelper<2> index_helper;
+};
+
+template<int dim>
+Tensor<1, dim>
+compute_vaverage(const TestFunctionInterfaceValues<dim> & phi,
+                 const unsigned int                       i,
+                 const unsigned int                       q)
+{
+  return ::MW::compute_vaverage_impl<dim, TestFunctionInterfaceValues<dim>>(phi, i, q);
+}
+
 
 
 template<int dim, bool is_multigrid = false>
@@ -1017,11 +1116,20 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   const auto cell_index  = interface_handler->get_cell_index(cell->id());
   const auto ncell_index = interface_handler->get_cell_index(ncell->id());
 
-  FEInterfaceValues<dim> & phiV = scratch_data.fe_interface_values_test;
-  phiV.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no);
-
   FEInterfaceValues<dim> & phiP = scratch_data.fe_interface_values_ansatz;
   phiP.reinit(cellP, face_no, sface_no, ncellP, nface_no, nsface_no);
+
+  FullMatrix<double> shape_to_test_functions(GeometryInfo<dim>::faces_per_cell,
+                                             cell->get_fe().dofs_per_cell);
+  FullMatrix<double> tmp(face_rt_to_test_functions->m(), face_rt_to_test_functions->n());
+  tmp = *face_rt_to_test_functions;
+  shape_to_test_functions.fill(tmp, 0U, 0U, 0U, 0U);
+
+  TestFunctionInterfaceValues phiV(scratch_data.fe_values_test,
+                                   scratch_data.fe_interface_values_test,
+                                   shape_to_test_functions,
+                                   shape_to_test_functions);
+  phiV.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no);
 
   const unsigned int n_interface_dofs_p  = phiP.n_current_interface_dofs();
   const auto &       joint_dof_indices_p = phiP.get_interface_dof_indices();
@@ -1051,16 +1159,14 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
     return value * n;
   };
 
-  /// left refers to this cell and right to the neighbor
-  const auto & phiV_left = phiV.get_fe_face_values(0U);
-
   double alpha_left  = 0.;
   double alpha_right = 0.;
   double pn_dot_v    = 0.;
   for(unsigned int q = 0; q < phiP.n_quadrature_points; ++q)
   {
-    const auto &           dx      = phiV.JxW(q);
-    const Tensor<1, dim> & v_face  = compute_v_face(phiV_left, face_no, q);
+    const auto & dx = phiV.JxW(q);
+    const Tensor<1, dim> & v_face =
+      compute_vaverage(phiV, phiV.index_helper.uni_index({face_no, nface_no}), q);
     const Tensor<1, dim> & jump_pn = compute_jump_pn(q);
     const Tensor<1, dim> & n_left  = phiP.normal(q);
     const Tensor<1, dim> & n_right = -n_left;

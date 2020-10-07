@@ -1213,14 +1213,96 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
   const auto n_q_points_1d = stokes_problem->n_q_points_1d;
 
+  // {
+  //   using Pressure::Interior::MW::ScratchData;
+
+  //   using Pressure::Interior::MW::CopyData;
+
+  //   using Pressure::Interior::MW::MatrixIntegrator;
+
+  //   using CellIterator = typename MatrixIntegrator<dim>::IteratorType;
+
+  //   const auto                     component_range = std::make_pair<unsigned int>(0, dim);
+  //   Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
+  //                                                         component_range);
+
+  //   MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
+  //                                           nullptr,
+  //                                           &trafomatrix_rt_to_gradp,
+  //                                           &interface_handler,
+  //                                           equation_data_stokes);
+
+  //   trafomatrix_rt_to_gradp.print_formatted(std::cout);
+
+  //   auto cell_worker =
+  //     [&](const CellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+  //       CellIterator cellP(&dof_handler_pressure.get_triangulation(),
+  //                          cell->level(),
+  //                          cell->index(),
+  //                          &dof_handler_pressure);
+  //       matrix_integrator.cell_worker(cell, cellP, scratch_data, copy_data);
+  //     };
+
+  //   AffineConstraints<double> empty_constraints;
+  //   empty_constraints.close();
+
+  //   const auto copier = [&](const CopyData & copy_data) {
+  //     empty_constraints.template distribute_local_to_global<Vector<double>>(
+  //       copy_data.cell_rhs_test, copy_data.local_dof_indices_test, discrete_pressure);
+
+  //     /// Book-keeping the dof indices of constant modes
+  //     constant_pressure_dof_indices[copy_data.local_dof_indices_ansatz[0]] =
+  //       copy_data.local_dof_indices_test[0];
+  //   };
+
+  //   const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
+
+  //   ScratchData<dim> scratch_data(mapping,
+  //                                 dof_handler_velocity.get_fe(),
+  //                                 n_q_points_1d,
+  //                                 update_flags);
+
+  //   CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell, 1U);
+
+  //   MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+  //                         dof_handler_velocity.end(),
+  //                         cell_worker,
+  //                         copier,
+  //                         scratch_data,
+  //                         copy_data,
+  //                         MeshWorker::assemble_own_cells);
+
+  //   // // DEBUG
+  //   // discrete_pressure.print(std::cout);
+  //   // std::cout << vector_to_string(constant_pressure_dof_indices) << std::endl;
+  // }
+
   {
-    using Pressure::Interior::MW::ScratchData;
+    using Stokes::Velocity::SIPG::MW::ScratchData;
 
-    using Pressure::Interior::MW::CopyData;
+    using Stokes::Velocity::SIPG::MW::CopyData;
 
-    using Pressure::Interior::MW::MatrixIntegrator;
+    using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
 
     using CellIterator = typename MatrixIntegrator<dim>::IteratorType;
+
+    const auto & fe_p              = dof_handler_pressure.get_fe();
+    const auto & fe_v              = dof_handler_velocity.get_fe();
+    const auto   n_face_dofs_v     = GeometryInfo<dim>::faces_per_cell * fe_v.dofs_per_face;
+    const auto   n_interior_dofs_v = fe_v.dofs_per_cell - n_face_dofs_v;
+
+    const auto         n_test_functions_v  = fe_p.dofs_per_cell - 1;
+    const auto         n_shape_functions_v = fe_v.dofs_per_cell;
+    FullMatrix<double> shape_to_test_functions(n_test_functions_v, n_shape_functions_v);
+
+    AssertDimension(trafomatrix_rt_to_gradp.m(), n_test_functions_v);
+    AssertDimension(trafomatrix_rt_to_gradp.n(), n_interior_dofs_v);
+
+    FullMatrix<double> tmp(trafomatrix_rt_to_gradp.m(), trafomatrix_rt_to_gradp.n());
+    tmp = trafomatrix_rt_to_gradp;
+    shape_to_test_functions.fill(tmp, 0U, n_face_dofs_v, 0U, 0U);
+    shape_to_test_functions.print_formatted(std::cout);
+    trafomatrix_rt_to_gradp.print_formatted(std::cout);
 
     const auto                     component_range = std::make_pair<unsigned int>(0, dim);
     Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
@@ -1228,17 +1310,23 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
     MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
                                             nullptr,
-                                            &trafomatrix_rt_to_gradp,
-                                            &interface_handler,
-                                            equation_data_stokes);
+                                            &system_u,
+                                            equation_data_stokes,
+                                            &shape_to_test_functions,
+                                            &interface_handler);
 
     auto cell_worker =
       [&](const CellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        CellIterator cellP(&dof_handler_pressure.get_triangulation(),
-                           cell->level(),
-                           cell->index(),
-                           &dof_handler_pressure);
-        matrix_integrator.cell_worker(cell, cellP, scratch_data, copy_data);
+        CellIterator cell_stream_function(&dof_handler.get_triangulation(),
+                                          cell->level(),
+                                          cell->index(),
+                                          &dof_handler);
+        CellIterator cell_pressure(&dof_handler_pressure.get_triangulation(),
+                                   cell->level(),
+                                   cell->index(),
+                                   &dof_handler_pressure);
+        matrix_integrator.cell_residual_worker(
+          cell, cell_stream_function, cell_pressure, scratch_data, copy_data);
       };
 
     AffineConstraints<double> empty_constraints;
@@ -1248,19 +1336,26 @@ ModelProblem<dim, fe_degree>::solve_pressure()
       empty_constraints.template distribute_local_to_global<Vector<double>>(
         copy_data.cell_rhs_test, copy_data.local_dof_indices_test, discrete_pressure);
 
-      /// Book-keeping the dof indices of constant modes
-      constant_pressure_dof_indices[copy_data.local_dof_indices_ansatz[0]] =
-        copy_data.local_dof_indices_test[0];
+      /// Book-keeping the (global) dof indices of each constant mode per cell
+      AssertDimension(copy_data.local_dof_indices_ansatz.size(), 2U);
+      const auto cell_index                     = copy_data.local_dof_indices_ansatz.back();
+      const auto dof_index                      = copy_data.local_dof_indices_ansatz.front();
+      constant_pressure_dof_indices[cell_index] = dof_index;
     };
 
-    const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
+    const UpdateFlags update_flags_v =
+      update_values | update_gradients | update_quadrature_points | update_JxW_values;
+    const UpdateFlags update_flags_sf = update_values | update_gradients | update_hessians |
+                                        update_quadrature_points | update_JxW_values;
 
     ScratchData<dim> scratch_data(mapping,
                                   dof_handler_velocity.get_fe(),
+                                  dof_handler.get_fe(),
                                   n_q_points_1d,
-                                  update_flags);
+                                  update_flags_v,
+                                  update_flags_sf);
 
-    CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell, 1U);
+    CopyData copy_data(n_test_functions_v, dof_handler.get_fe().dofs_per_cell);
 
     MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
                           dof_handler_velocity.end(),

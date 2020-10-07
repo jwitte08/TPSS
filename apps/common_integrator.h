@@ -638,6 +638,28 @@ compute_average_symgrad_tangential(const FEInterfaceValues<dim> & phi,
 
 
 /**
+ * {{ phi }} = 0.5 * (phi^+ + phi^-)
+ */
+template<int dim, typename EvaluatorType>
+Tensor<1, dim>
+compute_vaverage_impl(const EvaluatorType & phi, const unsigned int i, const unsigned int q)
+{
+  Tensor<1, dim> average_phi;
+  for(auto c = 0; c < dim; ++c)
+    average_phi[c] = phi.average(i, q, c);
+  return average_phi;
+}
+
+template<int dim>
+Tensor<1, dim>
+compute_vaverage(const FEInterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return compute_vaverage_impl<dim, FEInterfaceValues<dim>>(phi, i, q);
+}
+
+
+
+/**
  * [[ phi ]] = phi^+ - phi^-
  */
 template<int dim, typename EvaluatorType>
