@@ -240,6 +240,8 @@ compute_vvalue(const TestFunctionValues<dim> & phi, const unsigned int i, const 
 
 
 
+using Biharmonic::Pressure::TestFunctionInterfaceValues;
+
 using Biharmonic::Pressure::InterfaceId;
 
 using Biharmonic::Pressure::InterfaceHandler;
@@ -273,11 +275,10 @@ struct MatrixIntegrator
 
   template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
   void
-  cell_worker_impl(
-    const TestEvaluatorType &   phi_test,
-    const AnsatzEvaluatorType & phi_ansatz,
-    CopyData &                  copy_data,
-    std::vector<unsigned int>   subset_test_indices = std::vector<unsigned int>{}) const;
+  cell_worker_impl(const TestEvaluatorType &   phi_test,
+                   const AnsatzEvaluatorType & phi_ansatz,
+                   CopyData &                  copy_data,
+                   std::vector<unsigned int> testfunc_indices = std::vector<unsigned int>{}) const;
 
   void
   cell_residual_worker(const IteratorType & cell_velocity,
@@ -286,11 +287,11 @@ struct MatrixIntegrator
                        ScratchData<dim> &   scratch_data,
                        CopyData &           copy_data) const;
 
-  // void
-  // cell_residual_worker_interface(const IteratorType & cell_velocity,
-  //                                const IteratorType & cell_stream,
-  //                                ScratchData<dim> &   scratch_data,
-  //                                CopyData &           copy_data) const;
+  void
+  cell_residual_worker_interface(const IteratorType & cell_velocity,
+                                 const IteratorType & cell_stream,
+                                 ScratchData<dim> &   scratch_data,
+                                 CopyData &           copy_data) const;
 
   void
   face_worker(const IteratorType & cell,
@@ -317,17 +318,20 @@ struct MatrixIntegrator
   face_worker_tangential_impl(const TestEvaluatorType &   phi_test,
                               const AnsatzEvaluatorType & phi_ansatz,
                               const double                gamma_over_h,
-                              CopyData &                  copy_data) const;
+                              CopyData &                  copy_data,
+                              std::vector<unsigned int>   testfunc_indices) const;
 
-  // void
-  // face_residual_worker_tangential(const IteratorType & cell,
-  //                                 const unsigned int & f,
-  //                                 const unsigned int & sf,
-  //                                 const IteratorType & ncell,
-  //                                 const unsigned int & nf,
-  //                                 const unsigned int & nsf,
-  //                                 ScratchData<dim> &   scratch_data,
-  //                                 CopyData &           copy_data) const;
+  void
+  face_residual_worker_tangential_interface(const IteratorType & cell,
+                                            const IteratorType & cell_stream,
+                                            const unsigned int & f,
+                                            const unsigned int & sf,
+                                            const IteratorType & ncell,
+                                            const IteratorType & ncell_stream,
+                                            const unsigned int & nf,
+                                            const unsigned int & nsf,
+                                            ScratchData<dim> &   scratch_data,
+                                            CopyData &           copy_data) const;
 
   void
   boundary_worker(const IteratorType & cell,
@@ -450,61 +454,65 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker(const IteratorType & c
 }
 
 
-// template<int dim, bool is_multigrid>
-// void
-// MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
-//   const IteratorType & cell,
-//   const IteratorType & cell_stream,
-//   ScratchData<dim> &   scratch_data,
-//   CopyData &           copy_data) const
-// {
-//   copy_data.cell_matrix   = 0.;
-//   copy_data.cell_rhs_test = 0.;
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
+  const IteratorType & cell,
+  const IteratorType & cell_stream,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
+{
+  copy_data.cell_matrix   = 0.;
+  copy_data.cell_rhs_test = 0.;
 
-//   Assert(shape_to_test_functions, ExcMessage("Transformation matrix is not set."));
-//   Assert(shape_to_test_functions->m(), GeometryInfo<dim>::faces_per_cell);
-//   TestFunctionValues<dim> phi_test(scratch_data.fe_values_test, *shape_to_test_functions);
-//   phi_test.reinit(cell);
+  AssertDimension(copy_data.cell_matrix.m(), GeometryInfo<dim>::faces_per_cell);
+  AssertDimension(copy_data.cell_matrix.n(), cell_stream->get_fe().dofs_per_cell);
 
-//   AssertDimension(shape_to_test_functions->m(), copy_data.local_dof_indices_test.size());
-//   copy_data.local_dof_indices_test.fill(0U);
-//   std::vector<unsigned int> subset_of_test_indices;
-//   for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
-//   {
-//     const bool this_is_no_interface = cell->neighbor_index(face_no) == -1;
-//     if(this_is_no_interface)
-//       continue;
+  Assert(shape_to_test_functions, ExcMessage("Transformation matrix is not set."));
+  AssertDimension(shape_to_test_functions->m(), GeometryInfo<dim>::faces_per_cell);
+  TestFunctionValues<dim> phi_test(scratch_data.fe_values_test, *shape_to_test_functions);
+  phi_test.reinit(cell);
 
-//     const auto         ncell = cell->neighbor(face_no);
-//     InterfaceId        interface_id{cell->id(), ncell->id()};
-//     const unsigned int interface_index       =
-//     interface_handler->get_interface_index(interface_id); const bool
-//     this_interface_isnt_contained = interface_index == numbers::invalid_unsigned_int;
-//     if(this_interface_isnt_contained)
-//       continue;
+  AssertDimension(shape_to_test_functions->m(), copy_data.local_dof_indices_test.size());
+  // copy_data.local_dof_indices_test.fill(0U);
+  std::vector<unsigned int> subset_of_test_indices;
+  for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
+  {
+    const bool this_is_no_interface = cell->neighbor_index(face_no) == -1;
+    if(this_is_no_interface)
+      continue;
 
-//     copy_data.local_dof_indices_test[face_no] = interface_index;
-//     subset_of_test_indices.push_back(face_no);
-//   }
+    const auto         ncell = cell->neighbor(face_no);
+    InterfaceId        interface_id{cell->id(), ncell->id()};
+    const unsigned int interface_index       = interface_handler->get_interface_index(interface_id);
+    const bool this_interface_isnt_contained = interface_index == numbers::invalid_unsigned_int;
+    if(this_interface_isnt_contained)
+      continue;
 
-//   StreamFunctionValues<dim> phi_ansatz(scratch_data.fe_values_ansatz);
-//   phi_ansatz.reinit(cell_stream);
+    copy_data.local_dof_indices_test[face_no] = interface_index;
+    subset_of_test_indices.push_back(face_no);
+  }
 
-//   cell_stream->get_active_or_mg_dof_indices(copy_data.local_dof_indices_ansatz);
+  StreamFunctionValues<dim> phi_ansatz(scratch_data.fe_values_ansatz);
+  phi_ansatz.reinit(cell_stream);
 
-//   cell_worker_impl(phi_test, phi_ansatz, copy_data, subset_of_test_indices);
+  cell_stream->get_active_or_mg_dof_indices(copy_data.local_dof_indices_ansatz);
 
-//   Assert(discrete_solution, ExcMessage("Stream function coefficients are not set."));
-//   Vector<double> dof_values(copy_data.local_dof_indices_ansatz.size());
-//   std::transform(copy_data.local_dof_indices_ansatz.cbegin(),
-//                  copy_data.local_dof_indices_ansatz.cend(),
-//                  dof_values.begin(),
-//                  [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
+  cell_worker_impl(phi_test, phi_ansatz, copy_data, subset_of_test_indices);
 
-//   Vector<double> Ax(copy_data.cell_rhs_test.size());
-//   copy_data.cell_matrix.vmult(Ax, dof_values); // Ax
-//   copy_data.cell_rhs_test -= Ax;               // f - Ax
-// }
+  Assert(discrete_solution, ExcMessage("Stream function coefficients are not set."));
+  Vector<double> dof_values(copy_data.local_dof_indices_ansatz.size());
+  std::transform(copy_data.local_dof_indices_ansatz.cbegin(),
+                 copy_data.local_dof_indices_ansatz.cend(),
+                 dof_values.begin(),
+                 [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
+
+  Vector<double> Ax(copy_data.cell_rhs_test.size());
+  copy_data.cell_matrix.vmult(Ax, dof_values); // Ax
+  copy_data.cell_rhs_test -= Ax;               // f - Ax
+
+  copy_data.cell_rhs_test.print(std::cout);
+}
 
 
 template<int dim, bool is_multigrid>
@@ -514,14 +522,15 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker_impl(
   const TestEvaluatorType &   phi_test,
   const AnsatzEvaluatorType & phi_ansatz,
   CopyData &                  copy_data,
-  std::vector<unsigned int>   subset_test_indices) const
+  std::vector<unsigned int>   testfunc_indices) const
 {
-  if(subset_test_indices.empty())
+  if(testfunc_indices.empty())
   {
     const unsigned int n_dofs_per_cell_test = copy_data.local_dof_indices_test.size();
-    subset_test_indices.resize(n_dofs_per_cell_test);
-    std::iota(subset_test_indices.begin(), subset_test_indices.end(), 0U);
+    testfunc_indices.resize(n_dofs_per_cell_test);
+    std::iota(testfunc_indices.begin(), testfunc_indices.end(), 0U);
   }
+
   const unsigned int n_dofs_per_cell_ansatz = copy_data.local_dof_indices_ansatz.size();
 
   std::vector<Tensor<1, dim>> load_values;
@@ -544,7 +553,7 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker_impl(
   for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
   {
     // for(unsigned int i = 0; i < n_dofs_per_cell_test; ++i)
-    for(const auto i : subset_test_indices)
+    for(const auto i : testfunc_indices)
     {
       const SymmetricTensor<2, dim> symgrad_phi_i = compute_symgrad(phi_test, i, q);
       for(unsigned int j = 0; j < n_dofs_per_cell_ansatz; ++j)
@@ -669,7 +678,12 @@ MatrixIntegrator<dim, is_multigrid>::face_worker_tangential(const IteratorType &
   const double gamma_over_h =
     equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
-  face_worker_tangential_impl(fe_interface_values, fe_interface_values, gamma_over_h, copy_data);
+  const unsigned int        n_dofs_per_cell_test = fe_interface_values.n_current_interface_dofs();
+  std::vector<unsigned int> testfunc_indices(n_dofs_per_cell_test);
+  std::iota(testfunc_indices.begin(), testfunc_indices.end(), 0U);
+
+  face_worker_tangential_impl(
+    fe_interface_values, fe_interface_values, gamma_over_h, copy_data, testfunc_indices);
 }
 
 
@@ -680,12 +694,18 @@ MatrixIntegrator<dim, is_multigrid>::face_worker_tangential_impl(
   const TestEvaluatorType &   phi_test,
   const AnsatzEvaluatorType & phi_ansatz,
   const double                gamma_over_h,
-  CopyData &                  copy_data) const
+  CopyData &                  copy_data,
+  std::vector<unsigned int>   testfunc_indices) const
 {
-  const auto n_interface_dofs_test   = phi_test.n_current_interface_dofs();
+  AssertThrow(!testfunc_indices.empty(),
+              ExcMessage("You have to pass the relevant test function indices."));
+
+  const auto n_interface_dofs_test   = testfunc_indices.size();
   const auto n_interface_dofs_ansatz = phi_ansatz.n_current_interface_dofs();
 
   CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+  AssertDimension(copy_data_face.cell_matrix.m(), n_interface_dofs_test);
+  AssertDimension(copy_data_face.cell_matrix.n(), n_interface_dofs_ansatz);
 
   const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
 
@@ -693,8 +713,10 @@ MatrixIntegrator<dim, is_multigrid>::face_worker_tangential_impl(
   for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
   {
     const auto & n = normals[q];
-    for(unsigned int i = 0; i < n_interface_dofs_test; ++i)
+    for(unsigned int ii = 0; ii < n_interface_dofs_test; ++ii)
     {
+      const auto i = testfunc_indices[ii];
+
       const auto & av_symgrad_phi_i = compute_average_symgrad(phi_test, i, q);
       const auto & jump_phit_i      = compute_vjump_tangential(phi_test, i, q);
       double       ncontrib_i       = n * av_symgrad_phi_i * n;
@@ -726,87 +748,80 @@ MatrixIntegrator<dim, is_multigrid>::face_worker_tangential_impl(
         integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
         integral_ijq *= 2. * phi_test.JxW(q);
 
-        copy_data_face.cell_matrix(i, j) += integral_ijq;
+        copy_data_face.cell_matrix(ii, j) += integral_ijq;
       }
     }
   }
 }
 
 
-// template<int dim, bool is_multigrid>
-// void
-// MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential(
-//   const IteratorType & cell,
-//   const unsigned int & f,
-//   const unsigned int & sf,
-//   const IteratorType & ncell,
-//   const unsigned int & nf,
-//   const unsigned int & nsf,
-//   ScratchData<dim> &   scratch_data,
-//   CopyData &           copy_data) const
-// {
-//   InterfaceId        interface_id{cell->id(), ncell->id()};
-//   const unsigned int interface_index       =
-//   interface_handler->get_interface_index(interface_id); const bool this_interface_isnt_contained
-//   = interface_index == numbers::invalid_unsigned_int; if(this_interface_isnt_contained)
-//     return;
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential_interface(
+  const IteratorType & cell,
+  const IteratorType & cell_stream,
+  const unsigned int & f,
+  const unsigned int & sf,
+  const IteratorType & ncell,
+  const IteratorType & ncell_stream,
+  const unsigned int & nf,
+  const unsigned int & nsf,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
+{
+  InterfaceId        interface_id{cell->id(), ncell->id()};
+  const unsigned int interface_index       = interface_handler->get_interface_index(interface_id);
+  const bool this_interface_isnt_contained = interface_index == numbers::invalid_unsigned_int;
+  if(this_interface_isnt_contained)
+    return;
 
-//   Assert(shape_to_test_functions, ExcMessage("Transformation matrix is not set."));
-//   AssertDimension(shape_to_test_functions->m(), GeometryInfo<dim>::faces_per_cell);
-//   TestFunctionValues<dim> phi_test(scratch_data.fe_values_test, *shape_to_test_functions);
-//   phi_test.reinit(cell);
+  Assert(shape_to_test_functions, ExcMessage("Transformation matrix is not set."));
+  AssertDimension(shape_to_test_functions->m(), GeometryInfo<dim>::faces_per_cell);
+  TestFunctionInterfaceValues<dim> phi_test(scratch_data.fe_values_test,
+                                            scratch_data.fe_interface_values_test,
+                                            *shape_to_test_functions,
+                                            *shape_to_test_functions);
+  phi_test.reinit(cell, f, sf, ncell, nf, nsf);
 
-//   // std::vector<types::global_dof_index> local_dof_indices_pressure(
-//   //   copy_data.local_dof_indices_test.size() + 1);
-//   // cell_pressure->get_active_or_mg_dof_indices(local_dof_indices_pressure);
-//   // AssertDimension(local_dof_indices_pressure.size(), copy_data.local_dof_indices_test.size() +
-//   // 1); std::copy(local_dof_indices_pressure.cbegin() + 1,
-//   //           local_dof_indices_pressure.cend(),
-//   //           copy_data.local_dof_indices_test.begin());
+  auto & phi_ansatz = scratch_data.fe_interface_values_ansatz;
+  phi_ansatz.reinit(cell_stream, f, sf, ncell_stream, nf, nsf);
 
-//   // StreamFunctionValues<dim> phi_ansatz(scratch_data.fe_values_ansatz);
-//   // phi_ansatz.reinit(cell_stream);
+  const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
+  const auto   nh        = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
+  const auto   fe_degree = phi_test.get_fe().degree;
+  const double gamma_over_h =
+    equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
-//   // cell_stream->get_active_or_mg_dof_indices(copy_data.local_dof_indices_ansatz);
+  copy_data.face_data.emplace_back();
+  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
 
-//   // cell_worker_impl(phi_test, phi_ansatz, copy_data);
+  copy_data_face.joint_dof_indices_test.push_back(interface_index);
+  copy_data_face.joint_dof_indices_ansatz = phi_ansatz.get_interface_dof_indices();
+  copy_data_face.cell_matrix.reinit(copy_data_face.joint_dof_indices_test.size(),
+                                    copy_data_face.joint_dof_indices_ansatz.size());
+  copy_data_face.cell_rhs_test.reinit(copy_data_face.joint_dof_indices_test.size());
 
-//   // Assert(discrete_solution, ExcMessage("Stream function coefficients are not set."));
-//   // Vector<double> dof_values(copy_data.local_dof_indices_ansatz.size());
-//   // std::transform(copy_data.local_dof_indices_ansatz.cbegin(),
-//   //                copy_data.local_dof_indices_ansatz.cend(),
-//   //                dof_values.begin(),
-//   //                [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
+  std::vector<unsigned int> testfunc_indices;
+  testfunc_indices.push_back(phi_test.index_helper.uni_index({f, nf}));
 
-//   // Vector<double> Ax(copy_data.cell_rhs_test.size());
-//   // copy_data.cell_matrix.vmult(Ax, dof_values); // Ax
-//   // copy_data.cell_rhs_test -= Ax;               // f - Ax
+  AssertDimension(copy_data_face.joint_dof_indices_test.size(), testfunc_indices.size());
 
-//   // copy_data.local_dof_indices_ansatz.resize(2U);
-//   // copy_data.local_dof_indices_ansatz.front() = local_dof_indices_pressure.front();
-//   // copy_data.local_dof_indices_ansatz.back()  = interface_handler->get_cell_index(cell->id());
+  face_worker_tangential_impl(phi_test, phi_ansatz, gamma_over_h, copy_data, testfunc_indices);
 
-//   // FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values_test;
-//   // fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
+  AssertDimension(copy_data_face.cell_matrix.m(), copy_data_face.cell_rhs_test.size());
+  AssertDimension(copy_data_face.cell_matrix.n(), copy_data_face.joint_dof_indices_ansatz.size());
 
-//   // copy_data.face_data.emplace_back();
-//   // CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+  Assert(discrete_solution, ExcMessage("Stream function coefficients are not set."));
+  Vector<double> dof_values(copy_data_face.joint_dof_indices_ansatz.size());
+  std::transform(copy_data_face.joint_dof_indices_ansatz.cbegin(),
+                 copy_data_face.joint_dof_indices_ansatz.cend(),
+                 dof_values.begin(),
+                 [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
 
-//   // copy_data_face.joint_dof_indices_test = fe_interface_values.get_interface_dof_indices();
-
-//   // const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
-//   // copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
-
-//   // const auto   h         =
-//   // cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]); const auto   nh =
-//   // ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]); const auto
-//   fe_degree
-//   // = scratch_data.fe_values_test.get_fe().degree; const double gamma_over_h =
-//   //   equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
-
-//   // face_worker_tangential_impl(fe_interface_values, fe_interface_values, gamma_over_h,
-//   copy_data);
-// }
+  Vector<double> Ax(copy_data_face.cell_rhs_test.size());
+  copy_data_face.cell_matrix.vmult(Ax, dof_values); // Ax
+  copy_data_face.cell_rhs_test -= Ax;               // f - Ax
+}
 
 
 template<int dim, bool is_multigrid>
