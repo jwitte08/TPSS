@@ -2281,8 +2281,7 @@ private:
 
 
 /**
- * Choosing a constant zero pressure results in a divergence-free manufactured
- * load.
+ * Choosing a zero pressure results in a divergence-free manufactured load.
  */
 // template<int dim>
 // using SolutionPressure = ZeroFunction<dim>;
