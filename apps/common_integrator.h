@@ -815,6 +815,26 @@ compute_vcurl(const FEValues<dim> & phi, const unsigned int i, const unsigned in
 
 
 
+/**
+ * Jump of vector curl in 2D:   [[ curl(phi) ]] = (d/dy [[ phi ]], -d/dx [[ phi ]])^T
+ */
+template<int dim>
+Tensor<1, dim>
+compute_jump_vcurl(const FEInterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  static_assert(dim == 2, "vector curl is reasonable in 2D.");
+
+  /// See Guido's MFEM script for the vector curl definition.
+  Tensor<1, dim> jump_vcurl_of_phi;
+  const auto &   jump_grad_of_phi = phi.jump_gradient(i, q);
+  jump_vcurl_of_phi[0]            = jump_grad_of_phi[1];
+  jump_vcurl_of_phi[1]            = -jump_grad_of_phi[0];
+
+  return jump_vcurl_of_phi;
+}
+
+
+
 namespace Mixed
 {
 template<int dim>
