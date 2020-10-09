@@ -730,8 +730,8 @@ struct TestFunctionInterfaceValues
 
   TestFunctionInterfaceValues(const FEValues<dim> &          fe_values_in,
                               const FEInterfaceValues<dim> & fe_interface_values_in,
-                              const FullMatrix<double> &     left_shape_to_test_functions_in,
-                              const FullMatrix<double> &     right_shape_to_test_functions_in)
+                              const FullMatrix<double> &     shape_to_test_functions_left_in,
+                              const FullMatrix<double> &     shape_to_test_functions_right_in)
     : fe_values(fe_values_in.get_mapping(),
                 fe_values_in.get_fe(),
                 fe_values_in.get_quadrature(),
@@ -740,24 +740,48 @@ struct TestFunctionInterfaceValues
                           fe_values_in.get_fe(),
                           fe_interface_values_in.get_quadrature(),
                           fe_interface_values_in.get_update_flags()),
-      left_shape_to_test_functions(left_shape_to_test_functions_in),
-      right_shape_to_test_functions(right_shape_to_test_functions_in),
-      n_quadrature_points(fe_interface_values_in.n_quadrature_points),
-      index_helper(GeometryInfo<dim>::faces_per_cell)
+      shape_to_test_functions_left(shape_to_test_functions_left_in),
+      shape_to_test_functions_right(shape_to_test_functions_right_in),
+      n_quadrature_points(fe_interface_values_in.n_quadrature_points)
   {
-    AssertDimension(left_shape_to_test_functions.n(), fe_values.get_fe().dofs_per_cell);
   }
 
   template<typename CellIteratorType>
   void
-  reinit(const CellIteratorType & cell,
-         const unsigned int       face_no,
-         const unsigned int       subface_no,
-         const CellIteratorType & ncell,
-         const unsigned int       nface_no,
-         const unsigned int       nsubface_no)
+  reinit(const CellIteratorType &                         cell,
+         const unsigned int                               face_no,
+         const unsigned int                               subface_no,
+         const CellIteratorType &                         ncell,
+         const unsigned int                               nface_no,
+         const unsigned int                               nsubface_no,
+         const std::vector<std::array<unsigned int, 2>> & joint_to_cell_dof_indices_in)
   {
     fe_interface_values.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no);
+    joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
+    std::cout << "TFInterface:";
+    for(const auto liri : joint_to_cell_dof_indices_in)
+      std::cout << " (" << liri[0] << "," << liri[1] << ")";
+    std::cout << std::endl;
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType &                         cell,
+         const unsigned int                               face_no,
+         const std::vector<std::array<unsigned int, 2>> & joint_to_cell_dof_indices_in)
+  {
+    fe_interface_values.reinit(cell, face_no);
+    joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
+    std::cout << "TFface:";
+    for(const auto liri : joint_to_cell_dof_indices_in)
+      std::cout << " (" << liri[0] << "," << liri[1] << ")";
+    std::cout << std::endl;
+  }
+
+  unsigned int
+  n_current_interface_dofs() const
+  {
+    return joint_to_cell_dof_indices.size();
   }
 
   const FiniteElement<dim> &
@@ -778,20 +802,20 @@ struct TestFunctionInterfaceValues
     return fe_interface_values.get_normal_vectors();
   }
 
-  double
-  get_coefficient(const unsigned int i, const unsigned int j) const
-  {
-    const auto [li, ri] = index_helper.multi_index(i);
-    AssertIndexRange(li, left_shape_to_test_functions.m());
-    AssertIndexRange(ri, right_shape_to_test_functions.m());
+  // double
+  // get_coefficient(const unsigned int i, const unsigned int j) const
+  // {
+  //   const auto [li, ri] = index_helper.multi_index(i);
+  //   AssertIndexRange(li, shape_to_test_functions_left.m());
+  //   AssertIndexRange(ri, shape_to_test_functions_right.m());
 
-    AssertIndexRange(j, fe_interface_values.n_current_interface_dofs());
-    const auto [lj, rj] = fe_interface_values.interface_dof_to_dof_indices(j);
-    if(lj == numbers::invalid_unsigned_int)
-      return right_shape_to_test_functions(ri, rj);
+  //   AssertIndexRange(j, fe_interface_values.n_current_interface_dofs());
+  //   const auto [lj, rj] = fe_interface_values.interface_dof_to_dof_indices(j);
+  //   if(lj == numbers::invalid_unsigned_int)
+  //     return shape_to_test_functions_right(ri, rj);
 
-    return left_shape_to_test_functions(li, lj);
-  }
+  //   return shape_to_test_functions_left(li, lj);
+  // }
 
   double
   JxW(const unsigned int q) const
@@ -806,46 +830,115 @@ struct TestFunctionInterfaceValues
   }
 
   double
+  shape_value_component_left(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    if(i == numbers::invalid_unsigned_int)
+      return 0.;
+
+    AssertIndexRange(i, shape_to_test_functions_left.m());
+    const auto & fe_face_values_left = fe_interface_values.get_fe_face_values(0);
+
+    double value = 0.;
+    for(auto j = 0U; j < shape_to_test_functions_left.n(); ++j)
+      value +=
+        shape_to_test_functions_left(i, j) * fe_face_values_left.shape_value_component(j, q, c);
+    return value;
+  }
+
+  double
+  shape_value_component_right(const unsigned int i,
+                              const unsigned int q,
+                              const unsigned int c) const
+  {
+    if(i == numbers::invalid_unsigned_int)
+      return 0.;
+
+    AssertIndexRange(i, shape_to_test_functions_right.m());
+    const auto & fe_face_values_right = fe_interface_values.get_fe_face_values(1);
+
+    AssertDimension(fe_face_values_right.dofs_per_cell, shape_to_test_functions_right.n());
+    double value = 0.;
+    for(auto j = 0U; j < shape_to_test_functions_right.n(); ++j)
+      value +=
+        shape_to_test_functions_right(i, j) * fe_face_values_right.shape_value_component(j, q, c);
+    return value;
+  }
+
+  Tensor<1, dim>
+  shape_grad_component_left(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    if(i == numbers::invalid_unsigned_int)
+      return Tensor<1, dim>{};
+
+    AssertIndexRange(i, shape_to_test_functions_left.m());
+    const auto &   fe_face_values_left = fe_interface_values.get_fe_face_values(0);
+    Tensor<1, dim> grad;
+    for(auto j = 0U; j < fe_face_values_left.dofs_per_cell; ++j)
+      grad +=
+        shape_to_test_functions_left(i, j) * fe_face_values_left.shape_grad_component(j, q, c);
+    return grad;
+  }
+
+  Tensor<1, dim>
+  shape_grad_component_right(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    if(i == numbers::invalid_unsigned_int)
+      return Tensor<1, dim>{};
+
+    AssertIndexRange(i, shape_to_test_functions_right.m());
+    const auto &   fe_face_values_right = fe_interface_values.get_fe_face_values(1);
+    Tensor<1, dim> grad;
+    for(auto j = 0U; j < fe_face_values_right.dofs_per_cell; ++j)
+      grad +=
+        shape_to_test_functions_right(i, j) * fe_face_values_right.shape_grad_component(j, q, c);
+    return grad;
+  }
+
+  double
   average(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    double value = 0.;
-    // for(auto j = 0U; j < left_shape_to_test_functions.n(); ++j) // !!! wrong ?
-    for(auto j = 0U; j < fe_interface_values.n_current_interface_dofs(); ++j)
-    {
-      value += get_coefficient(i, j) * fe_interface_values.average(j, q, c);
-    }
+    AssertIndexRange(i, joint_to_cell_dof_indices.size());
+    const auto [li, ri] = joint_to_cell_dof_indices[i];
+
+    const double value_left = shape_value_component_left(li, q, c);
+    const double value_right =
+      fe_interface_values.at_boundary() ? value_left : shape_value_component_right(ri, q, c);
+    double value = 0.5 * (value_left + value_right);
     return value;
   }
 
   Tensor<1, dim>
   average_gradient(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    Tensor<1, dim> av_grad;
-    for(auto j = 0U; j < fe_interface_values.n_current_interface_dofs(); ++j)
-    {
-      av_grad += get_coefficient(i, j) * fe_interface_values.average_gradient(j, q, c);
-    }
+    AssertIndexRange(i, joint_to_cell_dof_indices.size());
+    const auto [li, ri] = joint_to_cell_dof_indices[i];
+
+    const Tensor<1, dim> & grad_left = shape_grad_component_left(li, q, c);
+    const Tensor<1, dim> & grad_right =
+      fe_interface_values.at_boundary() ? grad_left : shape_grad_component_right(ri, q, c);
+    Tensor<1, dim> av_grad = 0.5 * (grad_left + grad_right);
     return av_grad;
   }
 
   double
   jump(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    double value = 0.;
-    for(auto j = 0U; j < fe_interface_values.n_current_interface_dofs(); ++j)
-    {
-      value += get_coefficient(i, j) * fe_interface_values.jump(j, q, c);
-    }
+    AssertIndexRange(i, joint_to_cell_dof_indices.size());
+    const auto [li, ri] = joint_to_cell_dof_indices[i];
+
+    const double value_left = shape_value_component_left(li, q, c);
+    const double value_right =
+      fe_interface_values.at_boundary() ? 0. : shape_value_component_right(ri, q, c);
+    double value = value_left - value_right;
     return value;
   }
 
-  FEValues<dim>                  fe_values;
-  FEInterfaceValues<dim>         fe_interface_values;
-  const FullMatrix<double> &     left_shape_to_test_functions;
-  const FullMatrix<double> &     right_shape_to_test_functions;
-  unsigned int                   n_quadrature_points;
-  std::vector<bool>              is_left_mask;
-  const Tensors::TensorHelper<2> index_helper;
+  FEValues<dim>                            fe_values;
+  FEInterfaceValues<dim>                   fe_interface_values;
+  const FullMatrix<double> &               shape_to_test_functions_left;
+  const FullMatrix<double> &               shape_to_test_functions_right;
+  unsigned int                             n_quadrature_points;
+  std::vector<std::array<unsigned int, 2>> joint_to_cell_dof_indices;
 };
 
 template<int dim>
@@ -1183,11 +1276,13 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   tmp = *face_rt_to_test_functions;
   shape_to_test_functions.fill(tmp, 0U, 0U, 0U, 0U);
 
-  TestFunctionInterfaceValues phiV(scratch_data.fe_values_test,
+  TestFunctionInterfaceValues              phiV(scratch_data.fe_values_test,
                                    scratch_data.fe_interface_values_test,
                                    shape_to_test_functions,
                                    shape_to_test_functions);
-  phiV.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no);
+  std::vector<std::array<unsigned int, 2>> testfunc_indices;
+  testfunc_indices.push_back({face_no, nface_no});
+  phiV.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no, testfunc_indices);
 
   const unsigned int n_interface_dofs_p  = phiP.n_current_interface_dofs();
   const auto &       joint_dof_indices_p = phiP.get_interface_dof_indices();
@@ -1223,9 +1318,8 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   double pn_dot_v    = 0.;
   for(unsigned int q = 0; q < phiP.n_quadrature_points; ++q)
   {
-    const auto &           dx = phiV.JxW(q);
-    const Tensor<1, dim> & v_face =
-      compute_vaverage(phiV, phiV.index_helper.uni_index({face_no, nface_no}), q);
+    const auto &           dx      = phiV.JxW(q);
+    const Tensor<1, dim> & v_face  = compute_vaverage(phiV, 0, q);
     const Tensor<1, dim> & jump_pn = compute_jump_pn(q);
     const Tensor<1, dim> & n_left  = phiP.normal(q);
     const Tensor<1, dim> & n_right = -n_left;
