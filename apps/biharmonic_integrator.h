@@ -38,19 +38,22 @@ using namespace dealii;
  */
 namespace C0IP
 {
-/**
- * Standard (interior) penalty to obtain well-posedness of the Nitsche
- * method. The penalty is weighted for face integrals at the physical
- * boundary. The interior penalty is obtained by multiplying with 1/2.
- */
-template<typename Number>
-Number
-compute_penalty_impl(const int degree, const Number h_left, const Number h_right)
-{
-  const auto one_over_h = (0.5 / h_left) + (0.5 / h_right);
-  const auto gamma      = degree == 0 ? 1 : degree * (degree + 1);
-  return 2.0 * gamma * one_over_h;
-}
+// /**
+//  * Standard (interior) penalty to obtain well-posedness of the Nitsche
+//  * method. The penalty is weighted for face integrals at the physical
+//  * boundary. The interior penalty is obtained by multiplying with 1/2.
+//  */
+// template<typename Number>
+// Number
+// compute_penalty_impl(const int degree, const Number h_left, const Number h_right)
+// {
+//   const auto one_over_h = (0.5 / h_left) + (0.5 / h_right);
+//   const auto gamma      = degree == 0 ? 1 : degree * (degree + 1);
+//   return 2.0 * gamma * one_over_h;
+// }
+using ::Nitsche::compute_penalty_impl;
+
+
 
 namespace MW
 {
@@ -197,11 +200,14 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::face_worker(const IteratorType &
   const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
   copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
 
-  const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
-  const auto   nh        = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
-  const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
+  const auto h  = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
+  const auto nh = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
+  // !!!
+  const auto fe_degree = scratch_data.fe_values.get_fe().degree - (is_stream ? 1U : 0U);
+  // const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
   const double gamma_over_h =
     0.5 * equation_data.ip_factor * C0IP::compute_penalty_impl(fe_degree, h, nh);
+  std::cout << "bi:face:gamma(: " << gamma_over_h << " " << fe_degree << " " << h << std::endl;
 
   for(unsigned int qpoint = 0; qpoint < fe_interface_values.n_quadrature_points; ++qpoint)
   {
@@ -281,10 +287,12 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::boundary_worker(const IteratorTy
   std::vector<Tensor<1, dim>> exact_gradients(q_points.size());
   analytical_solution->gradient_list(q_points, exact_gradients);
 
-  /// gamma_over_h is interior penalty, thus, weighted by 0.5
-  const auto   h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
-  const auto   fe_degree    = scratch_data.fe_values.get_fe().degree;
+  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  // !!!
+  const auto fe_degree = scratch_data.fe_values.get_fe().degree - (is_stream ? 1U : 0U);
+  // const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
   const double gamma_over_h = equation_data.ip_factor * C0IP::compute_penalty_impl(fe_degree, h, h);
+  std::cout << "bi:bdry:gamma: " << gamma_over_h << " " << fe_degree << " " << h << std::endl;
 
   for(unsigned int qpoint = 0; qpoint < q_points.size(); ++qpoint)
   {
@@ -762,6 +770,14 @@ struct TestFunctionInterfaceValues
     for(const auto liri : joint_to_cell_dof_indices_in)
       std::cout << " (" << liri[0] << "," << liri[1] << ")";
     std::cout << std::endl;
+
+    std::vector<std::array<unsigned int, 2>> jtc_rt;
+    for(auto i = 0; i < fe_interface_values.n_current_interface_dofs(); ++i)
+      jtc_rt.push_back(fe_interface_values.interface_dof_to_dof_indices(i));
+    std::cout << "TFInterface::RT:";
+    for(const auto liri : jtc_rt)
+      std::cout << " (" << liri[0] << "," << liri[1] << ")";
+    std::cout << std::endl;
   }
 
   template<typename CellIteratorType>
@@ -832,8 +848,8 @@ struct TestFunctionInterfaceValues
   double
   shape_value_component_left(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    if(i == numbers::invalid_unsigned_int)
-      return 0.;
+    // if(i == numbers::invalid_unsigned_int)
+    //   return 0.;
 
     AssertIndexRange(i, shape_to_test_functions_left.m());
     const auto & fe_face_values_left = fe_interface_values.get_fe_face_values(0);
@@ -850,8 +866,8 @@ struct TestFunctionInterfaceValues
                               const unsigned int q,
                               const unsigned int c) const
   {
-    if(i == numbers::invalid_unsigned_int)
-      return 0.;
+    // if(i == numbers::invalid_unsigned_int)
+    //   return 0.;
 
     AssertIndexRange(i, shape_to_test_functions_right.m());
     const auto & fe_face_values_right = fe_interface_values.get_fe_face_values(1);
@@ -867,8 +883,8 @@ struct TestFunctionInterfaceValues
   Tensor<1, dim>
   shape_grad_component_left(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    if(i == numbers::invalid_unsigned_int)
-      return Tensor<1, dim>{};
+    // if(i == numbers::invalid_unsigned_int)
+    //   return Tensor<1, dim>{};
 
     AssertIndexRange(i, shape_to_test_functions_left.m());
     const auto &   fe_face_values_left = fe_interface_values.get_fe_face_values(0);
@@ -882,8 +898,8 @@ struct TestFunctionInterfaceValues
   Tensor<1, dim>
   shape_grad_component_right(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    if(i == numbers::invalid_unsigned_int)
-      return Tensor<1, dim>{};
+    // if(i == numbers::invalid_unsigned_int)
+    //   return Tensor<1, dim>{};
 
     AssertIndexRange(i, shape_to_test_functions_right.m());
     const auto &   fe_face_values_right = fe_interface_values.get_fe_face_values(1);
@@ -900,10 +916,26 @@ struct TestFunctionInterfaceValues
     AssertIndexRange(i, joint_to_cell_dof_indices.size());
     const auto [li, ri] = joint_to_cell_dof_indices[i];
 
-    const double value_left = shape_value_component_left(li, q, c);
-    const double value_right =
-      fe_interface_values.at_boundary() ? value_left : shape_value_component_right(ri, q, c);
-    double value = 0.5 * (value_left + value_right);
+    // const double value_left = shape_value_component_left(li, q, c);
+    // const double value_right =
+    //   fe_interface_values.at_boundary() ? value_left : shape_value_component_right(ri, q, c);
+    // double value = 0.5 * (value_left + value_right);
+    // return value;
+
+    if(fe_interface_values.at_boundary())
+    {
+      Assert(li != numbers::invalid_unsigned_int,
+             ExcMessage("invalid test function index on the left cell"));
+      return shape_value_component_left(li, q, c);
+    }
+
+    double value = 0.;
+
+    if(li != numbers::invalid_unsigned_int)
+      value += 0.5 * shape_value_component_left(li, q, c);
+    if(ri != numbers::invalid_unsigned_int)
+      value += 0.5 * shape_value_component_right(ri, q, c);
+
     return value;
   }
 
@@ -913,10 +945,26 @@ struct TestFunctionInterfaceValues
     AssertIndexRange(i, joint_to_cell_dof_indices.size());
     const auto [li, ri] = joint_to_cell_dof_indices[i];
 
-    const Tensor<1, dim> & grad_left = shape_grad_component_left(li, q, c);
-    const Tensor<1, dim> & grad_right =
-      fe_interface_values.at_boundary() ? grad_left : shape_grad_component_right(ri, q, c);
-    Tensor<1, dim> av_grad = 0.5 * (grad_left + grad_right);
+    // const Tensor<1, dim> & grad_left = shape_grad_component_left(li, q, c);
+    // const Tensor<1, dim> & grad_right =
+    //   fe_interface_values.at_boundary() ? grad_left : shape_grad_component_right(ri, q, c);
+    // Tensor<1, dim> av_grad = 0.5 * (grad_left + grad_right);
+    // return av_grad;
+
+    if(fe_interface_values.at_boundary())
+    {
+      Assert(li != numbers::invalid_unsigned_int,
+             ExcMessage("invalid test function index on the left cell"));
+      return shape_grad_component_left(li, q, c);
+    }
+
+    Tensor<1, dim> av_grad;
+
+    if(li != numbers::invalid_unsigned_int)
+      av_grad += 0.5 * shape_grad_component_left(li, q, c);
+    if(ri != numbers::invalid_unsigned_int)
+      av_grad += 0.5 * shape_grad_component_right(ri, q, c);
+
     return av_grad;
   }
 
@@ -926,11 +974,27 @@ struct TestFunctionInterfaceValues
     AssertIndexRange(i, joint_to_cell_dof_indices.size());
     const auto [li, ri] = joint_to_cell_dof_indices[i];
 
-    const double value_left = shape_value_component_left(li, q, c);
-    const double value_right =
-      fe_interface_values.at_boundary() ? 0. : shape_value_component_right(ri, q, c);
-    double value = value_left - value_right;
-    return value;
+    // const double value_left = shape_value_component_left(li, q, c);
+    // const double value_right =
+    //   fe_interface_values.at_boundary() ? 0. : shape_value_component_right(ri, q, c);
+    // double value = value_left - value_right;
+    // return value;
+
+    if(fe_interface_values.at_boundary())
+    {
+      Assert(li != numbers::invalid_unsigned_int,
+             ExcMessage("invalid test function index on the left cell"));
+      return shape_value_component_left(li, q, c);
+    }
+
+    double jump = 0.;
+
+    if(li != numbers::invalid_unsigned_int)
+      jump += shape_value_component_left(li, q, c);
+    if(ri != numbers::invalid_unsigned_int)
+      jump -= shape_value_component_right(ri, q, c);
+
+    return jump;
   }
 
   FEValues<dim>                            fe_values;
@@ -957,6 +1021,15 @@ compute_average_symgrad(const TestFunctionInterfaceValues<dim> & phi,
                         const unsigned int                       q)
 {
   return ::MW::compute_average_symgrad_impl<dim, TestFunctionInterfaceValues<dim>>(phi, i, q);
+}
+
+template<int dim>
+Tensor<1, dim>
+compute_vjump(const TestFunctionInterfaceValues<dim> & phi,
+              const unsigned int                       i,
+              const unsigned int                       q)
+{
+  return ::MW::compute_vjump_impl<dim, TestFunctionInterfaceValues<dim>>(phi, i, q);
 }
 
 template<int dim>

@@ -38,7 +38,7 @@ main(int argc, char * argv[])
     //: parse arguments
     atoi_if(test_index, 1);
     atoi_if(n_cycles, 2);
-    // atoi_if(pde_index, 2);
+    atoi_if(pde_index, 3);
     // atof_if(ip_factor, 3);
     // atoi_if(debug_depth, 4);
     // atof_if(damping, 5);

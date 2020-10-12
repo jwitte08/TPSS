@@ -1243,9 +1243,11 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     const auto                     component_range = std::make_pair<unsigned int>(0, dim);
     Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
                                                           component_range);
+    Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
+                                                       component_range);
 
     MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
-                                            nullptr,
+                                            &analytical_velocity,
                                             &system_u,
                                             equation_data_stokes,
                                             &shape_to_test_functions,
@@ -1345,6 +1347,9 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                                  update_normal_vectors;
     const UpdateFlags interface_update_flags_sf = interface_update_flags_v | update_hessians;
 
+    std::cout << dof_handler_velocity.get_fe().get_name() << std::endl;
+    std::cout << dof_handler.get_fe().get_name() << std::endl;
+
     ScratchData<dim> scratch_data(mapping,
                                   dof_handler_velocity.get_fe(),
                                   dof_handler.get_fe(),
@@ -1368,8 +1373,8 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                           face_worker);
 
     // // DEBUG
-    // discrete_pressure.print(std::cout);
-    // std::cout << vector_to_string(constant_pressure_dof_indices) << std::endl;
+    discrete_pressure.print(std::cout);
+    std::cout << vector_to_string(constant_pressure_dof_indices) << std::endl;
   }
 
   // {
