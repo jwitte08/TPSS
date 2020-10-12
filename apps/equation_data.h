@@ -8,6 +8,7 @@
 #ifndef EQUATION_DATA_H_
 #define EQUATION_DATA_H_
 
+#include <deal.II/base/function_lib.h>
 #include <deal.II/base/polynomial.h>
 #include <deal.II/base/tensor_function.h>
 
@@ -1263,6 +1264,47 @@ private:
 
 
 
+template<int dim>
+struct PolynomialPressureBase
+{
+  static const std::vector<double> polynomial_coefficients;
+
+  static Table<2, double>
+  get_exponents();
+};
+
+template<>
+const std::vector<double> PolynomialPressureBase<2>::polynomial_coefficients = {
+  {-0.5, 1.}}; // <--- set mean to zero !
+
+template<int dim>
+Table<2, double>
+PolynomialPressureBase<dim>::get_exponents()
+{
+  Table<2, double> exp;
+  exp.reinit(polynomial_coefficients.size(), dim);
+  exp(0, 0) = 0.; // x^0 y^0 z^0 <--- set mean to zero !
+  exp(1, 0) = 1.; // x^1 y^0 z^0
+  return exp;
+}
+
+
+
+template<int dim>
+class PolynomialPressure : public Functions::Polynomial<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+
+public:
+  PolynomialPressure()
+    : Functions::Polynomial<dim>(PolynomialPressureBase<dim>::get_exponents(),
+                                 PolynomialPressureBase<dim>::polynomial_coefficients)
+  {
+  }
+};
+
+
+
 namespace DivergenceFree
 {
 template<int dim>
@@ -2058,7 +2100,6 @@ public:
 };
 
 
-
 template<int dim>
 using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
 } // namespace NoSlip
@@ -2280,14 +2321,19 @@ private:
 
 
 
-/**
- * Choosing a zero pressure results in a divergence-free manufactured load.
- */
+// /**
+//  * Choosing a zero pressure results in a divergence-free manufactured load.
+//  */
 // template<int dim>
 // using SolutionPressure = ZeroFunction<dim>;
+
+// !!!
 template<int dim>
 using SolutionPressure = NoSlipNormal::SolutionPressure<dim>;
 
+// !!!
+//   template<int dim>
+// using SolutionPressure = PolynomialPressure<dim>;
 
 template<int dim>
 using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;

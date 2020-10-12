@@ -200,14 +200,12 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::face_worker(const IteratorType &
   const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
   copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
 
-  const auto h  = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
-  const auto nh = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
-  // !!!
-  const auto fe_degree = scratch_data.fe_values.get_fe().degree - (is_stream ? 1U : 0U);
-  // const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
+  const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
+  const auto   nh        = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
+  const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
   const double gamma_over_h =
     0.5 * equation_data.ip_factor * C0IP::compute_penalty_impl(fe_degree, h, nh);
-  std::cout << "bi:face:gamma(: " << gamma_over_h << " " << fe_degree << " " << h << std::endl;
+  // std::cout << "bi:face:gamma(: " << gamma_over_h << " " << fe_degree << " " << h << std::endl;
 
   for(unsigned int qpoint = 0; qpoint < fe_interface_values.n_quadrature_points; ++qpoint)
   {
@@ -287,12 +285,10 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::boundary_worker(const IteratorTy
   std::vector<Tensor<1, dim>> exact_gradients(q_points.size());
   analytical_solution->gradient_list(q_points, exact_gradients);
 
-  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
-  // !!!
-  const auto fe_degree = scratch_data.fe_values.get_fe().degree - (is_stream ? 1U : 0U);
-  // const auto   fe_degree = scratch_data.fe_values.get_fe().degree;
+  const auto   h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  const auto   fe_degree    = scratch_data.fe_values.get_fe().degree;
   const double gamma_over_h = equation_data.ip_factor * C0IP::compute_penalty_impl(fe_degree, h, h);
-  std::cout << "bi:bdry:gamma: " << gamma_over_h << " " << fe_degree << " " << h << std::endl;
+  // std::cout << "bi:bdry:gamma: " << gamma_over_h << " " << fe_degree << " " << h << std::endl;
 
   for(unsigned int qpoint = 0; qpoint < q_points.size(); ++qpoint)
   {
@@ -766,18 +762,18 @@ struct TestFunctionInterfaceValues
   {
     fe_interface_values.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no);
     joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
-    std::cout << "TFInterface:";
-    for(const auto liri : joint_to_cell_dof_indices_in)
-      std::cout << " (" << liri[0] << "," << liri[1] << ")";
-    std::cout << std::endl;
+    // std::cout << "TFInterface:";
+    // for(const auto liri : joint_to_cell_dof_indices_in)
+    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
+    // std::cout << std::endl;
 
-    std::vector<std::array<unsigned int, 2>> jtc_rt;
-    for(auto i = 0; i < fe_interface_values.n_current_interface_dofs(); ++i)
-      jtc_rt.push_back(fe_interface_values.interface_dof_to_dof_indices(i));
-    std::cout << "TFInterface::RT:";
-    for(const auto liri : jtc_rt)
-      std::cout << " (" << liri[0] << "," << liri[1] << ")";
-    std::cout << std::endl;
+    // std::vector<std::array<unsigned int, 2>> jtc_rt;
+    // for(auto i = 0U; i < fe_interface_values.n_current_interface_dofs(); ++i)
+    //   jtc_rt.push_back(fe_interface_values.interface_dof_to_dof_indices(i));
+    // std::cout << "TFInterface::RT:";
+    // for(const auto liri : jtc_rt)
+    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
+    // std::cout << std::endl;
   }
 
   template<typename CellIteratorType>
@@ -788,10 +784,10 @@ struct TestFunctionInterfaceValues
   {
     fe_interface_values.reinit(cell, face_no);
     joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
-    std::cout << "TFface:";
-    for(const auto liri : joint_to_cell_dof_indices_in)
-      std::cout << " (" << liri[0] << "," << liri[1] << ")";
-    std::cout << std::endl;
+    // std::cout << "TFface:";
+    // for(const auto liri : joint_to_cell_dof_indices_in)
+    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
+    // std::cout << std::endl;
   }
 
   unsigned int
