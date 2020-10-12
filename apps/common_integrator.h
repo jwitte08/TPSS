@@ -704,14 +704,21 @@ compute_vvalue(const FEFaceValues<dim> & phi, const unsigned int i, const unsign
 /**
  * [[ phi ]] = phi^+ - phi^-
  */
-template<int dim>
+template<int dim, typename EvaluatorType>
 Tensor<1, dim>
-compute_vjump(const FEInterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+compute_vjump_impl(const EvaluatorType & phi, const unsigned int i, const unsigned int q)
 {
   Tensor<1, dim> jump_phi;
   for(auto c = 0; c < dim; ++c)
     jump_phi[c] = phi.jump(i, q, c);
   return jump_phi;
+}
+
+template<int dim>
+Tensor<1, dim>
+compute_vjump(const FEInterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return compute_vjump_impl<dim, FEInterfaceValues<dim>>(phi, i, q);
 }
 
 
@@ -797,20 +804,34 @@ compute_vjump_dot_normal(const FEInterfaceValues<dim> & phi,
 /**
  * Vector curl in 2D:   curl(phi) = (d/dy phi, -d/dx phi)^T
  */
-template<int dim>
+template<int dim, typename EvaluatorType>
 Tensor<1, dim>
-compute_vcurl(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
+compute_vcurl_impl(const EvaluatorType & phi, const unsigned int i, const unsigned int q)
 {
   AssertDimension(phi.get_fe().n_components(), 1U);
   static_assert(dim == 2, "vector curl is reasonable in 2D.");
 
   /// See Guido's MFEM script for the vector curl definition.
   Tensor<1, dim> vcurl_of_phi;
-  const auto &   grad_of_phi = phi.shape_grad(i, q);
+  const auto &   grad_of_phi = phi.shape_grad_component(i, q, 0U);
   vcurl_of_phi[0]            = grad_of_phi[1];
   vcurl_of_phi[1]            = -grad_of_phi[0];
 
   return vcurl_of_phi;
+}
+
+template<int dim>
+Tensor<1, dim>
+compute_vcurl(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return compute_vcurl_impl<dim, FEValues<dim>>(phi, i, q);
+}
+
+template<int dim>
+Tensor<1, dim>
+compute_vcurl(const FEFaceValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return compute_vcurl_impl<dim, FEFaceValuesBase<dim>>(phi, i, q);
 }
 
 
