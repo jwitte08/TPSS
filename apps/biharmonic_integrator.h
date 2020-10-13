@@ -727,446 +727,134 @@ struct InterfaceHandler
 
 
 
-template<int dim>
-struct TestFunctionInterfaceValues
-{
-  static_assert(dim == 2, "Implemented for 2D only.");
-
-  TestFunctionInterfaceValues(const FEValues<dim> &          fe_values_in,
-                              const FEInterfaceValues<dim> & fe_interface_values_in,
-                              const FullMatrix<double> &     shape_to_test_functions_left_in,
-                              const FullMatrix<double> &     shape_to_test_functions_right_in)
-    : fe_values(fe_values_in.get_mapping(),
-                fe_values_in.get_fe(),
-                fe_values_in.get_quadrature(),
-                fe_values_in.get_update_flags()),
-      fe_interface_values(fe_values_in.get_mapping(),
-                          fe_values_in.get_fe(),
-                          fe_interface_values_in.get_quadrature(),
-                          fe_interface_values_in.get_update_flags()),
-      shape_to_test_functions_left(shape_to_test_functions_left_in),
-      shape_to_test_functions_right(shape_to_test_functions_right_in),
-      n_quadrature_points(fe_interface_values_in.n_quadrature_points)
-  {
-  }
-
-  template<typename CellIteratorType>
-  void
-  reinit(const CellIteratorType &                         cell,
-         const unsigned int                               face_no,
-         const unsigned int                               subface_no,
-         const CellIteratorType &                         ncell,
-         const unsigned int                               nface_no,
-         const unsigned int                               nsubface_no,
-         const std::vector<std::array<unsigned int, 2>> & joint_to_cell_dof_indices_in)
-  {
-    fe_interface_values.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no);
-    joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
-    // std::cout << "TFInterface:";
-    // for(const auto liri : joint_to_cell_dof_indices_in)
-    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
-    // std::cout << std::endl;
-
-    // std::vector<std::array<unsigned int, 2>> jtc_rt;
-    // for(auto i = 0U; i < fe_interface_values.n_current_interface_dofs(); ++i)
-    //   jtc_rt.push_back(fe_interface_values.interface_dof_to_dof_indices(i));
-    // std::cout << "TFInterface::RT:";
-    // for(const auto liri : jtc_rt)
-    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
-    // std::cout << std::endl;
-  }
-
-  template<typename CellIteratorType>
-  void
-  reinit(const CellIteratorType &                         cell,
-         const unsigned int                               face_no,
-         const std::vector<std::array<unsigned int, 2>> & joint_to_cell_dof_indices_in)
-  {
-    fe_interface_values.reinit(cell, face_no);
-    joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
-    // std::cout << "TFface:";
-    // for(const auto liri : joint_to_cell_dof_indices_in)
-    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
-    // std::cout << std::endl;
-  }
-
-  unsigned int
-  n_current_interface_dofs() const
-  {
-    return joint_to_cell_dof_indices.size();
-  }
-
-  const FiniteElement<dim> &
-  get_fe() const
-  {
-    return fe_values.get_fe();
-  }
-
-  const std::vector<Point<dim>> &
-  get_quadrature_points() const
-  {
-    return fe_interface_values.get_quadrature_points();
-  }
-
-  const std::vector<Tensor<1, dim>> &
-  get_normal_vectors() const
-  {
-    return fe_interface_values.get_normal_vectors();
-  }
-
-  // double
-  // get_coefficient(const unsigned int i, const unsigned int j) const
-  // {
-  //   const auto [li, ri] = index_helper.multi_index(i);
-  //   AssertIndexRange(li, shape_to_test_functions_left.m());
-  //   AssertIndexRange(ri, shape_to_test_functions_right.m());
-
-  //   AssertIndexRange(j, fe_interface_values.n_current_interface_dofs());
-  //   const auto [lj, rj] = fe_interface_values.interface_dof_to_dof_indices(j);
-  //   if(lj == numbers::invalid_unsigned_int)
-  //     return shape_to_test_functions_right(ri, rj);
-
-  //   return shape_to_test_functions_left(li, lj);
-  // }
-
-  double
-  JxW(const unsigned int q) const
-  {
-    return fe_interface_values.JxW(q);
-  }
-
-  Tensor<1, dim>
-  normal(const unsigned int q) const
-  {
-    return fe_interface_values.normal(q);
-  }
-
-  double
-  shape_value_component_left(const unsigned int i, const unsigned int q, const unsigned int c) const
-  {
-    // if(i == numbers::invalid_unsigned_int)
-    //   return 0.;
-
-    AssertIndexRange(i, shape_to_test_functions_left.m());
-    const auto & fe_face_values_left = fe_interface_values.get_fe_face_values(0);
-
-    double value = 0.;
-    for(auto j = 0U; j < shape_to_test_functions_left.n(); ++j)
-      value +=
-        shape_to_test_functions_left(i, j) * fe_face_values_left.shape_value_component(j, q, c);
-    return value;
-  }
-
-  double
-  shape_value_component_right(const unsigned int i,
-                              const unsigned int q,
-                              const unsigned int c) const
-  {
-    // if(i == numbers::invalid_unsigned_int)
-    //   return 0.;
-
-    AssertIndexRange(i, shape_to_test_functions_right.m());
-    const auto & fe_face_values_right = fe_interface_values.get_fe_face_values(1);
-
-    AssertDimension(fe_face_values_right.dofs_per_cell, shape_to_test_functions_right.n());
-    double value = 0.;
-    for(auto j = 0U; j < shape_to_test_functions_right.n(); ++j)
-      value +=
-        shape_to_test_functions_right(i, j) * fe_face_values_right.shape_value_component(j, q, c);
-    return value;
-  }
-
-  Tensor<1, dim>
-  shape_grad_component_left(const unsigned int i, const unsigned int q, const unsigned int c) const
-  {
-    // if(i == numbers::invalid_unsigned_int)
-    //   return Tensor<1, dim>{};
-
-    AssertIndexRange(i, shape_to_test_functions_left.m());
-    const auto &   fe_face_values_left = fe_interface_values.get_fe_face_values(0);
-    Tensor<1, dim> grad;
-    for(auto j = 0U; j < fe_face_values_left.dofs_per_cell; ++j)
-      grad +=
-        shape_to_test_functions_left(i, j) * fe_face_values_left.shape_grad_component(j, q, c);
-    return grad;
-  }
-
-  Tensor<1, dim>
-  shape_grad_component_right(const unsigned int i, const unsigned int q, const unsigned int c) const
-  {
-    // if(i == numbers::invalid_unsigned_int)
-    //   return Tensor<1, dim>{};
-
-    AssertIndexRange(i, shape_to_test_functions_right.m());
-    const auto &   fe_face_values_right = fe_interface_values.get_fe_face_values(1);
-    Tensor<1, dim> grad;
-    for(auto j = 0U; j < fe_face_values_right.dofs_per_cell; ++j)
-      grad +=
-        shape_to_test_functions_right(i, j) * fe_face_values_right.shape_grad_component(j, q, c);
-    return grad;
-  }
-
-  double
-  average(const unsigned int i, const unsigned int q, const unsigned int c) const
-  {
-    AssertIndexRange(i, joint_to_cell_dof_indices.size());
-    const auto [li, ri] = joint_to_cell_dof_indices[i];
-
-    // const double value_left = shape_value_component_left(li, q, c);
-    // const double value_right =
-    //   fe_interface_values.at_boundary() ? value_left : shape_value_component_right(ri, q, c);
-    // double value = 0.5 * (value_left + value_right);
-    // return value;
-
-    if(fe_interface_values.at_boundary())
-    {
-      Assert(li != numbers::invalid_unsigned_int,
-             ExcMessage("invalid test function index on the left cell"));
-      return shape_value_component_left(li, q, c);
-    }
-
-    double value = 0.;
-
-    if(li != numbers::invalid_unsigned_int)
-      value += 0.5 * shape_value_component_left(li, q, c);
-    if(ri != numbers::invalid_unsigned_int)
-      value += 0.5 * shape_value_component_right(ri, q, c);
-
-    return value;
-  }
-
-  Tensor<1, dim>
-  average_gradient(const unsigned int i, const unsigned int q, const unsigned int c) const
-  {
-    AssertIndexRange(i, joint_to_cell_dof_indices.size());
-    const auto [li, ri] = joint_to_cell_dof_indices[i];
-
-    // const Tensor<1, dim> & grad_left = shape_grad_component_left(li, q, c);
-    // const Tensor<1, dim> & grad_right =
-    //   fe_interface_values.at_boundary() ? grad_left : shape_grad_component_right(ri, q, c);
-    // Tensor<1, dim> av_grad = 0.5 * (grad_left + grad_right);
-    // return av_grad;
-
-    if(fe_interface_values.at_boundary())
-    {
-      Assert(li != numbers::invalid_unsigned_int,
-             ExcMessage("invalid test function index on the left cell"));
-      return shape_grad_component_left(li, q, c);
-    }
-
-    Tensor<1, dim> av_grad;
-
-    if(li != numbers::invalid_unsigned_int)
-      av_grad += 0.5 * shape_grad_component_left(li, q, c);
-    if(ri != numbers::invalid_unsigned_int)
-      av_grad += 0.5 * shape_grad_component_right(ri, q, c);
-
-    return av_grad;
-  }
-
-  double
-  jump(const unsigned int i, const unsigned int q, const unsigned int c) const
-  {
-    AssertIndexRange(i, joint_to_cell_dof_indices.size());
-    const auto [li, ri] = joint_to_cell_dof_indices[i];
-
-    // const double value_left = shape_value_component_left(li, q, c);
-    // const double value_right =
-    //   fe_interface_values.at_boundary() ? 0. : shape_value_component_right(ri, q, c);
-    // double value = value_left - value_right;
-    // return value;
-
-    if(fe_interface_values.at_boundary())
-    {
-      Assert(li != numbers::invalid_unsigned_int,
-             ExcMessage("invalid test function index on the left cell"));
-      return shape_value_component_left(li, q, c);
-    }
-
-    double jump = 0.;
-
-    if(li != numbers::invalid_unsigned_int)
-      jump += shape_value_component_left(li, q, c);
-    if(ri != numbers::invalid_unsigned_int)
-      jump -= shape_value_component_right(ri, q, c);
-
-    return jump;
-  }
-
-  FEValues<dim>                            fe_values;
-  FEInterfaceValues<dim>                   fe_interface_values;
-  const FullMatrix<double> &               shape_to_test_functions_left;
-  const FullMatrix<double> &               shape_to_test_functions_right;
-  unsigned int                             n_quadrature_points;
-  std::vector<std::array<unsigned int, 2>> joint_to_cell_dof_indices;
-};
-
-template<int dim>
-Tensor<1, dim>
-compute_vaverage(const TestFunctionInterfaceValues<dim> & phi,
-                 const unsigned int                       i,
-                 const unsigned int                       q)
-{
-  return ::MW::compute_vaverage_impl<dim, TestFunctionInterfaceValues<dim>>(phi, i, q);
-}
-
-template<int dim>
-SymmetricTensor<2, dim>
-compute_average_symgrad(const TestFunctionInterfaceValues<dim> & phi,
-                        const unsigned int                       i,
-                        const unsigned int                       q)
-{
-  return ::MW::compute_average_symgrad_impl<dim, TestFunctionInterfaceValues<dim>>(phi, i, q);
-}
-
-template<int dim>
-Tensor<1, dim>
-compute_vjump(const TestFunctionInterfaceValues<dim> & phi,
-              const unsigned int                       i,
-              const unsigned int                       q)
-{
-  return ::MW::compute_vjump_impl<dim, TestFunctionInterfaceValues<dim>>(phi, i, q);
-}
-
-template<int dim>
-Tensor<1, dim>
-compute_vjump_tangential(const TestFunctionInterfaceValues<dim> & phi,
-                         const unsigned int                       i,
-                         const unsigned int                       q)
-{
-  return ::MW::compute_vjump_tangential_impl<dim, TestFunctionInterfaceValues<dim>>(phi, i, q);
-}
-
-
-
-namespace Interior
-{
-namespace MW
-{
-using ::MW::ScratchData;
-
-using ::MW::Mixed::CopyData;
-
-
-
-template<int dim, bool is_multigrid = false>
-struct MatrixIntegrator
-{
-  using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
-
-  MatrixIntegrator(const Function<dim> *            load_function_in,
-                   const Vector<double> *           stream_function_solution,
-                   const LAPACKFullMatrix<double> * transformation_matrix,
-                   const InterfaceHandler<dim> *    interface_handler_in,
-                   const Stokes::EquationData &     equation_data_in)
-    : load_function(load_function_in),
-      discrete_velocity(stream_function_solution),
-      interior_rt_to_test_functions(transformation_matrix),
-      interface_handler(interface_handler_in),
-      equation_data(equation_data_in)
-  {
-  }
-
-  void
-  cell_worker(const IteratorType & cell,
-              const IteratorType & cellP,
-              ScratchData<dim> &   scratch_data,
-              CopyData &           copy_data) const;
-
-  const Function<dim> *            load_function;
-  const Vector<double> *           discrete_velocity;
-  const LAPACKFullMatrix<double> * interior_rt_to_test_functions;
-  const InterfaceHandler<dim> *    interface_handler;
-  const Stokes::EquationData       equation_data;
-};
-
-
-
-template<int dim, bool is_multigrid>
-void
-MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
-                                                 const IteratorType & cellP,
-                                                 ScratchData<dim> &   scratch_data,
-                                                 CopyData &           copy_data) const
-{
-  copy_data.cell_rhs_test = 0.;
-
-  cellP->get_active_or_mg_dof_indices(copy_data.local_dof_indices_test);
-  const auto n_dofs_per_cell_p            = copy_data.local_dof_indices_test.size();
-  const auto n_interior_nodes_by_pressure = n_dofs_per_cell_p - 1;
-
-  const unsigned int cell_index = interface_handler->get_cell_index(cell->id());
-  AssertDimension(copy_data.local_dof_indices_ansatz.size(), 1U);
-  copy_data.local_dof_indices_ansatz[0U] = cell_index;
-
-  FEValues<dim> & phi = scratch_data.fe_values;
-  phi.reinit(cell);
-
-  const auto n_dofs_per_cell_v = phi.get_fe().dofs_per_cell;
-  AssertThrow(dim == 2, ExcMessage("dofs_per_quad only correct in 2D"));
-  const auto n_interior_dofs_v = phi.get_fe().dofs_per_quad;
-  const auto n_face_dofs_v     = GeometryInfo<dim>::faces_per_cell * phi.get_fe().dofs_per_face;
-  AssertDimension(n_interior_dofs_v + n_face_dofs_v, n_dofs_per_cell_v);
-  (void)n_dofs_per_cell_v;
-  AssertDimension(interior_rt_to_test_functions->m(), n_interior_nodes_by_pressure);
-  AssertDimension(interior_rt_to_test_functions->n(), n_interior_dofs_v);
-
-  std::vector<Tensor<1, dim>> load_values;
-  {
-    Assert(load_function, ExcMessage("load_function is not set."));
-    AssertDimension(load_function->n_components, dim);
-    const auto & q_points = phi.get_quadrature_points();
-    std::transform(q_points.cbegin(),
-                   q_points.cend(),
-                   std::back_inserter(load_values),
-                   [&](const auto & x_q) {
-                     Tensor<1, dim> value;
-                     for(auto c = 0U; c < dim; ++c)
-                       value[c] = load_function->value(x_q, c);
-                     return value;
-                   });
-  }
-
-  /// Evaluate test function v_i (which is generated by grad p_i) at quadrature
-  /// point x_q.
-  const auto & compute_v_i = [&](const unsigned int i, const unsigned int q) {
-    AssertIndexRange(i, n_interior_nodes_by_pressure);
-    Tensor<1, dim> value;
-    for(auto j = 0U; j < n_interior_dofs_v; ++j)
-    {
-      const auto jj = n_face_dofs_v + j; // shift to interior dofs
-      for(auto d = 0U; d < dim; ++d)
-        value[d] += (*interior_rt_to_test_functions)(i, j) * phi.shape_value_component(jj, q, d);
-    }
-    return value;
-  };
-
-  double integral_iq;
-  for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
-  {
-    const auto & f  = load_values[q];
-    const auto & dx = phi.JxW(q);
-
-    for(auto i = 0U; i < n_interior_nodes_by_pressure; ++i)
-    {
-      const auto & v_i = compute_v_i(i, q);
-      integral_iq      = v_i * f * dx;
-
-      AssertIndexRange(i + 1, copy_data.cell_rhs_test.size());
-      copy_data.cell_rhs_test(i + 1) += integral_iq; // skip constant mode
-    }
-  }
-}
-
-} // namespace MW
-
-} // namespace Interior
+// namespace Interior
+// {
+// namespace MW
+// {
+// using ::MW::ScratchData;
+
+// using ::MW::Mixed::CopyData;
+
+
+
+// template<int dim, bool is_multigrid = false>
+// struct MatrixIntegrator
+// {
+//   using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
+
+//   MatrixIntegrator(const Function<dim> *            load_function_in,
+//                    const Vector<double> *           stream_function_solution,
+//                    const LAPACKFullMatrix<double> * transformation_matrix,
+//                    const InterfaceHandler<dim> *    interface_handler_in,
+//                    const Stokes::EquationData &     equation_data_in)
+//     : load_function(load_function_in),
+//       discrete_velocity(stream_function_solution),
+//       interior_rt_to_test_functions(transformation_matrix),
+//       interface_handler(interface_handler_in),
+//       equation_data(equation_data_in)
+//   {
+//   }
+
+//   void
+//   cell_worker(const IteratorType & cell,
+//               const IteratorType & cellP,
+//               ScratchData<dim> &   scratch_data,
+//               CopyData &           copy_data) const;
+
+//   const Function<dim> *            load_function;
+//   const Vector<double> *           discrete_velocity;
+//   const LAPACKFullMatrix<double> * interior_rt_to_test_functions;
+//   const InterfaceHandler<dim> *    interface_handler;
+//   const Stokes::EquationData       equation_data;
+// };
+
+
+
+// template<int dim, bool is_multigrid>
+// void
+// MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
+//                                                  const IteratorType & cellP,
+//                                                  ScratchData<dim> &   scratch_data,
+//                                                  CopyData &           copy_data) const
+// {
+//   copy_data.cell_rhs_test = 0.;
+
+//   cellP->get_active_or_mg_dof_indices(copy_data.local_dof_indices_test);
+//   const auto n_dofs_per_cell_p            = copy_data.local_dof_indices_test.size();
+//   const auto n_interior_nodes_by_pressure = n_dofs_per_cell_p - 1;
+
+//   const unsigned int cell_index = interface_handler->get_cell_index(cell->id());
+//   AssertDimension(copy_data.local_dof_indices_ansatz.size(), 1U);
+//   copy_data.local_dof_indices_ansatz[0U] = cell_index;
+
+//   FEValues<dim> & phi = scratch_data.fe_values;
+//   phi.reinit(cell);
+
+//   const auto n_dofs_per_cell_v = phi.get_fe().dofs_per_cell;
+//   AssertThrow(dim == 2, ExcMessage("dofs_per_quad only correct in 2D"));
+//   const auto n_interior_dofs_v = phi.get_fe().dofs_per_quad;
+//   const auto n_face_dofs_v     = GeometryInfo<dim>::faces_per_cell * phi.get_fe().dofs_per_face;
+//   AssertDimension(n_interior_dofs_v + n_face_dofs_v, n_dofs_per_cell_v);
+//   (void)n_dofs_per_cell_v;
+//   AssertDimension(interior_rt_to_test_functions->m(), n_interior_nodes_by_pressure);
+//   AssertDimension(interior_rt_to_test_functions->n(), n_interior_dofs_v);
+
+//   std::vector<Tensor<1, dim>> load_values;
+//   {
+//     Assert(load_function, ExcMessage("load_function is not set."));
+//     AssertDimension(load_function->n_components, dim);
+//     const auto & q_points = phi.get_quadrature_points();
+//     std::transform(q_points.cbegin(),
+//                    q_points.cend(),
+//                    std::back_inserter(load_values),
+//                    [&](const auto & x_q) {
+//                      Tensor<1, dim> value;
+//                      for(auto c = 0U; c < dim; ++c)
+//                        value[c] = load_function->value(x_q, c);
+//                      return value;
+//                    });
+//   }
+
+//   /// Evaluate test function v_i (which is generated by grad p_i) at quadrature
+//   /// point x_q.
+//   const auto & compute_v_i = [&](const unsigned int i, const unsigned int q) {
+//     AssertIndexRange(i, n_interior_nodes_by_pressure);
+//     Tensor<1, dim> value;
+//     for(auto j = 0U; j < n_interior_dofs_v; ++j)
+//     {
+//       const auto jj = n_face_dofs_v + j; // shift to interior dofs
+//       for(auto d = 0U; d < dim; ++d)
+//         value[d] += (*interior_rt_to_test_functions)(i, j) * phi.shape_value_component(jj, q, d);
+//     }
+//     return value;
+//   };
+
+//   double integral_iq;
+//   for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
+//   {
+//     const auto & f  = load_values[q];
+//     const auto & dx = phi.JxW(q);
+
+//     for(auto i = 0U; i < n_interior_nodes_by_pressure; ++i)
+//     {
+//       const auto & v_i = compute_v_i(i, q);
+//       integral_iq      = v_i * f * dx;
+
+//       AssertIndexRange(i + 1, copy_data.cell_rhs_test.size());
+//       copy_data.cell_rhs_test(i + 1) += integral_iq; // skip constant mode
+//     }
+//   }
+// }
+
+// } // namespace MW
+
+// } // namespace Interior
 
 namespace Interface
 {
 namespace MW
 {
-using ::MW::Mixed::ScratchData;
+using ::MW::TestFunction::ScratchData;
 
 using ::MW::Mixed::CopyData;
 
@@ -1180,20 +868,17 @@ struct MatrixIntegrator
 
   /// This integrator assumes that the coefficients of the discrete pressure
   /// associated to the constant modes are set to zero!
-  MatrixIntegrator(const Function<dim> *            load_function_in,
-                   const Vector<double> *           stream_function_solution,
-                   const Vector<double> *           pressure_solution,
-                   const LAPACKFullMatrix<double> * transformation_matrix,
-                   const InterfaceHandler<dim> *    interface_handler_in,
-                   const Stokes::EquationData &     equation_data_in)
+  MatrixIntegrator(const Function<dim> *         load_function_in,
+                   const Vector<double> *        stream_function_solution,
+                   const Vector<double> *        pressure_solution,
+                   const InterfaceHandler<dim> * interface_handler_in,
+                   const Stokes::EquationData &  equation_data_in)
     : load_function(load_function_in),
       discrete_velocity(stream_function_solution),
       discrete_pressure(pressure_solution),
-      face_rt_to_test_functions(transformation_matrix),
       interface_handler(interface_handler_in),
       equation_data(equation_data_in)
   {
-    AssertDimension(face_rt_to_test_functions->m(), GeometryInfo<dim>::faces_per_cell);
   }
 
   void
@@ -1213,37 +898,12 @@ struct MatrixIntegrator
               ScratchData<dim> &   scratch_data,
               CopyData &           copy_data) const;
 
-  template<typename EvaluatorType>
-  Tensor<1, dim>
-  compute_v_face(const EvaluatorType & phi, const unsigned int face_no, const unsigned int q) const;
-
-  const Function<dim> *            load_function;
-  const Vector<double> *           discrete_velocity;
-  const Vector<double> *           discrete_pressure;
-  const LAPACKFullMatrix<double> * face_rt_to_test_functions;
-  const InterfaceHandler<dim> *    interface_handler;
-  const Stokes::EquationData       equation_data;
+  const Function<dim> *         load_function;
+  const Vector<double> *        discrete_velocity;
+  const Vector<double> *        discrete_pressure;
+  const InterfaceHandler<dim> * interface_handler;
+  const Stokes::EquationData    equation_data;
 };
-
-
-
-template<int dim, bool is_multigrid>
-template<typename EvaluatorType>
-Tensor<1, dim>
-MatrixIntegrator<dim, is_multigrid>::compute_v_face(const EvaluatorType & phi,
-                                                    const unsigned int    face_no,
-                                                    const unsigned int    q) const
-{
-  AssertIndexRange(face_no, GeometryInfo<dim>::faces_per_cell);
-  Tensor<1, dim> value;
-  const auto     n_face_dofs_v = face_rt_to_test_functions->n();
-  for(auto j = 0U; j < n_face_dofs_v; ++j)
-  {
-    for(auto d = 0U; d < dim; ++d)
-      value[d] += (*face_rt_to_test_functions)(face_no, j) * phi.shape_value_component(j, q, d);
-  }
-  return value;
-}
 
 
 
@@ -1255,7 +915,6 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
 {
   AssertDimension(copy_data.cell_rhs_test.size(), GeometryInfo<dim>::faces_per_cell);
   copy_data.cell_rhs_test = 0.;
-  // copy_data.local_dof_indices_test.resize(GeometryInfo<dim>::faces_per_cell, 0);
 
   for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
   {
@@ -1273,43 +932,6 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
 
     copy_data.local_dof_indices_test[face_no] = interface_index;
   }
-
-  //   FEValues<dim> & phi = scratch_data.fe_values_test;
-  //   phi.reinit(cell);
-
-  //   std::vector<Tensor<1, dim>> load_values;
-  //   {
-  //     Assert(load_function, ExcMessage("load_function is not set."));
-  //     AssertDimension(load_function->n_components, dim);
-  //     const auto & q_points = phi.get_quadrature_points();
-  //     std::transform(q_points.cbegin(),
-  //                    q_points.cend(),
-  //                    std::back_inserter(load_values),
-  //                    [&](const auto & x_q) {
-  //                      Tensor<1, dim> value;
-  //                      for(auto c = 0U; c < dim; ++c)
-  //                        value[c] = load_function->value(x_q, c);
-  //                      return value;
-  //                    });
-  //   }
-  //   AssertDimension(load_values.size(), phi.n_quadrature_points);
-
-  //   double residual = 0.;
-  //   for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
-  //   {
-  //     {
-  //       const auto & f      = load_values[q];
-  //       const auto & dx     = phi.JxW(q);
-  //       const auto & v_face = compute_v_face(phi, face_no, q);
-
-  //       residual += v_face * f * dx;
-  //     }
-  //   }
-
-  //   copy_data.cell_rhs_test[face_no] = residual;
-  // }
-  // std::cout << "Bi::cell_worker  ";
-  // copy_data.cell_rhs_test.print(std::cout);
 }
 
 
@@ -1336,48 +958,41 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   const auto cell_index  = interface_handler->get_cell_index(cell->id());
   const auto ncell_index = interface_handler->get_cell_index(ncell->id());
 
+  copy_data.face_data.emplace_back();
+  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+
   FEInterfaceValues<dim> & phiP = scratch_data.fe_interface_values_ansatz;
   phiP.reinit(cellP, face_no, sface_no, ncellP, nface_no, nsface_no);
 
-  FullMatrix<double> shape_to_test_functions(GeometryInfo<dim>::faces_per_cell,
-                                             cell->get_fe().dofs_per_cell);
-  FullMatrix<double> tmp(face_rt_to_test_functions->m(), face_rt_to_test_functions->n());
-  tmp = *face_rt_to_test_functions;
-  shape_to_test_functions.fill(tmp, 0U, 0U, 0U, 0U);
+  copy_data_face.joint_dof_indices_ansatz.resize(2, 0U);
+  copy_data_face.joint_dof_indices_ansatz[0U] = cell_index;
+  copy_data_face.joint_dof_indices_ansatz[1U] = ncell_index;
 
-  TestFunctionInterfaceValues              phiV(scratch_data.fe_values_test,
-                                   scratch_data.fe_interface_values_test,
-                                   shape_to_test_functions,
-                                   shape_to_test_functions);
   std::vector<std::array<unsigned int, 2>> testfunc_indices;
   testfunc_indices.push_back({face_no, nface_no});
+
+  auto & phiV = scratch_data.test_interface_values;
   phiV.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no, testfunc_indices);
 
   const unsigned int n_interface_dofs_p  = phiP.n_current_interface_dofs();
   const auto &       joint_dof_indices_p = phiP.get_interface_dof_indices();
 
-  copy_data.face_data.emplace_back();
-  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+  copy_data_face.joint_dof_indices_test.resize(GeometryInfo<dim>::faces_per_cell, 0U);
+  copy_data_face.joint_dof_indices_test[face_no] = interface_index;
 
   copy_data_face.cell_matrix.reinit(GeometryInfo<dim>::faces_per_cell, 2U);
   copy_data_face.cell_rhs_test.reinit(GeometryInfo<dim>::faces_per_cell);
-  copy_data_face.joint_dof_indices_test.resize(GeometryInfo<dim>::faces_per_cell, 0U);
-  copy_data_face.joint_dof_indices_ansatz.resize(2, 0U);
-
-  copy_data_face.joint_dof_indices_test[face_no] = interface_index;
-  copy_data_face.joint_dof_indices_ansatz[0U]    = cell_index;
-  copy_data_face.joint_dof_indices_ansatz[1U]    = ncell_index;
 
   std::vector<double> joint_dof_values_p;
   for(const auto i : joint_dof_indices_p)
     joint_dof_values_p.push_back((*discrete_pressure)(i));
 
-  /// Note that the constant mode should be currently set to zero, thus,
-  /// looping over the whole set of dof indices is valid.
+  /// As long as the constant pressure mode is set to zero looping over the
+  /// whole set of dof indices is valid.
   const auto & compute_jump_pn = [&](const unsigned int q) {
     double               value = 0.;
     const Tensor<1, dim> n     = phiP.normal(q);
-    for(auto j = 0U; j < n_interface_dofs_p; ++j) // skip constant mode
+    for(auto j = 0U; j < n_interface_dofs_p; ++j) // constant mode is zero !
       value += joint_dof_values_p[j] * phiP.jump(j, q);
     return value * n;
   };
@@ -1398,12 +1013,6 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
     alpha_left += -1. * n_left * v_face * dx;
     alpha_right += -1. * n_right * v_face * dx;
   }
-
-  // // DEBUG
-  // std::cout << "interface index " << interface_index << " pn_dot_v " << pn_dot_v << std::endl;
-  // std::cout << "interface index " << interface_index << " alpha_left " << alpha_left <<
-  // std::endl; std::cout << "interface index " << interface_index << " alpha_right " << alpha_right
-  // << std::endl;
 
   copy_data_face.cell_rhs_test[face_no] += pn_dot_v;
   copy_data_face.cell_matrix(face_no, 0U) = alpha_left;

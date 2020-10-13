@@ -968,6 +968,866 @@ struct CopyData
 
 } // namespace Mixed
 
+
+
+namespace StreamFunction
+{
+/**
+ * A helper struct which provides a FEValues-like interface for stream
+ * functions. A stream function is the vector curl of scalar polynomial shape
+ * functions in two space dimensions.
+ */
+template<int dim>
+struct Values
+{
+  static_assert(dim == 2, "Implemented for 2D only.");
+
+  Values(const FEValues<dim> & fe_values_in)
+    : fe_values(fe_values_in.get_mapping(),
+                fe_values_in.get_fe(),
+                fe_values_in.get_quadrature(),
+                fe_values_in.get_update_flags()),
+      n_quadrature_points(fe_values_in.n_quadrature_points)
+  {
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType & cell)
+  {
+    fe_values.reinit(cell);
+  }
+
+  const FiniteElement<dim> &
+  get_fe() const
+  {
+    return fe_values.get_fe();
+  }
+
+  const std::vector<Point<dim>> &
+  get_quadrature_points() const
+  {
+    return fe_values.get_quadrature_points();
+  }
+
+  double
+  JxW(const unsigned int q) const
+  {
+    return fe_values.JxW(q);
+  }
+
+  double
+  shape_value_component(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    const auto & curl_phi_i = compute_vcurl(fe_values, i, q);
+    return curl_phi_i[c];
+  }
+
+  Tensor<1, dim>
+  shape_grad_component(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    AssertIndexRange(c, dim);
+    const auto &   hess_phi_i = fe_values.shape_hessian(i, q);
+    Tensor<1, dim> grad;
+    if(c == 0U)
+    {
+      grad[0] = hess_phi_i[0][1];
+      grad[1] = hess_phi_i[1][1];
+    }
+    else if(c == 1U)
+    {
+      grad[0] = -hess_phi_i[0][0];
+      grad[1] = -hess_phi_i[1][0];
+    }
+    return grad;
+  }
+
+  FEValues<dim> fe_values;
+  unsigned int  n_quadrature_points;
+};
+
+
+
+template<int dim>
+SymmetricTensor<2, dim>
+compute_symgrad(const Values<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_symgrad_impl<dim, Values<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
+Tensor<1, dim>
+compute_vvalue(const Values<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_vvalue_impl<dim, Values<dim>>(phi, i, q);
+}
+
+
+
+/**
+ * A helper struct which provides a FEInterfaceValues-like interface for
+ * stream functions. A stream function is the vector curl of scalar polynomial
+ * shape functions in two space dimensions.
+ */
+template<int dim>
+struct InterfaceValues
+{
+  static_assert(dim == 2, "Implemented for 2D only.");
+
+  // TODO !!! in more recent deal.II versions FEInterfaceValues provides the
+  // interfaces get_mapping() and get_fe(), such that fe_values_in becomes
+  // obsolete
+  InterfaceValues(const FEValues<dim> &          fe_values_in,
+                  const FEInterfaceValues<dim> & fe_interface_values_in)
+    : fe_values(fe_values_in.get_mapping(),
+                fe_values_in.get_fe(),
+                fe_values_in.get_quadrature(),
+                fe_values_in.get_update_flags()),
+      fe_interface_values(fe_values_in.get_mapping(),
+                          fe_values_in.get_fe(),
+                          fe_interface_values_in.get_quadrature(),
+                          fe_interface_values_in.get_update_flags()),
+      n_quadrature_points(fe_interface_values_in.n_quadrature_points)
+  {
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType & cell,
+         const unsigned int       face_no,
+         const unsigned int       subface_no,
+         const CellIteratorType & ncell,
+         const unsigned int       nface_no,
+         const unsigned int       nsubface_no)
+  {
+    fe_interface_values.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no);
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType & cell, const unsigned int face_no)
+  {
+    fe_interface_values.reinit(cell, face_no);
+  }
+
+  unsigned int
+  n_current_interface_dofs() const
+  {
+    return fe_interface_values.n_current_interface_dofs();
+  }
+
+  const FiniteElement<dim> &
+  get_fe() const
+  {
+    return fe_values.get_fe();
+  }
+
+  std::vector<types::global_dof_index>
+  get_interface_dof_indices() const
+  {
+    return fe_interface_values.get_interface_dof_indices();
+  }
+
+  const std::vector<Point<dim>> &
+  get_quadrature_points() const
+  {
+    return fe_interface_values.get_quadrature_points();
+  }
+
+  const std::vector<Tensor<1, dim>> &
+  get_normal_vectors() const
+  {
+    return fe_interface_values.get_normal_vectors();
+  }
+
+  double
+  JxW(const unsigned int q) const
+  {
+    return fe_interface_values.JxW(q);
+  }
+
+  Tensor<1, dim>
+  normal(const unsigned int q) const
+  {
+    return fe_interface_values.normal(q);
+  }
+
+  double
+  shape_value_component_left(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    const auto & phi_left   = fe_interface_values.get_fe_face_values(0);
+    const auto & curl_phi_i = compute_vcurl(phi_left, i, q);
+    return curl_phi_i[c];
+  }
+
+  double
+  shape_value_component_right(const unsigned int i,
+                              const unsigned int q,
+                              const unsigned int c) const
+  {
+    const auto & phi_right  = fe_interface_values.get_fe_face_values(1);
+    const auto & curl_phi_i = compute_vcurl(phi_right, i, q);
+    return curl_phi_i[c];
+  }
+
+  Tensor<1, dim>
+  shape_grad_component_left(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    const auto & phi_left   = fe_interface_values.get_fe_face_values(0);
+    const auto & hess_phi_i = phi_left.shape_hessian(i, q);
+
+    Tensor<1, dim> grad;
+    if(c == 0U)
+    {
+      grad[0] = hess_phi_i[0][1];
+      grad[1] = hess_phi_i[1][1];
+    }
+    else if(c == 1U)
+    {
+      grad[0] = -hess_phi_i[0][0];
+      grad[1] = -hess_phi_i[1][0];
+    }
+
+    return grad;
+  }
+
+  Tensor<1, dim>
+  shape_grad_component_right(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    const auto & phi_right  = fe_interface_values.get_fe_face_values(1);
+    const auto & hess_phi_i = phi_right.shape_hessian(i, q);
+
+    Tensor<1, dim> grad;
+    if(c == 0U)
+    {
+      grad[0] = hess_phi_i[0][1];
+      grad[1] = hess_phi_i[1][1];
+    }
+    else if(c == 1U)
+    {
+      grad[0] = -hess_phi_i[0][0];
+      grad[1] = -hess_phi_i[1][0];
+    }
+
+    return grad;
+  }
+
+  double
+  jump(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    const auto [li, ri] = fe_interface_values.interface_dof_to_dof_indices(i);
+
+    if(fe_interface_values.at_boundary())
+    {
+      Assert(li != numbers::invalid_unsigned_int,
+             ExcMessage("invalid test function index on the left cell"));
+      return shape_value_component_left(li, q, c);
+    }
+
+    double jump = 0.;
+
+    if(li != numbers::invalid_unsigned_int)
+      jump += shape_value_component_left(li, q, c);
+    if(ri != numbers::invalid_unsigned_int)
+      jump -= shape_value_component_right(ri, q, c);
+
+    return jump;
+
+    // const auto & jump_curl_phi_i = ::MW::compute_jump_vcurl(fe_interface_values, i, q);
+    // return jump_curl_phi_i[c];
+  }
+
+  Tensor<1, dim>
+  average_gradient(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    const auto [li, ri] = fe_interface_values.interface_dof_to_dof_indices(i);
+
+    if(fe_interface_values.at_boundary())
+    {
+      Assert(li != numbers::invalid_unsigned_int,
+             ExcMessage("invalid test function index on the left cell"));
+      return shape_grad_component_left(li, q, c);
+    }
+
+    Tensor<1, dim> av_grad;
+
+    if(li != numbers::invalid_unsigned_int)
+      av_grad += 0.5 * shape_grad_component_left(li, q, c);
+    if(ri != numbers::invalid_unsigned_int)
+      av_grad += 0.5 * shape_grad_component_right(ri, q, c);
+
+    return av_grad;
+
+    // AssertIndexRange(c, dim);
+    // const auto &   av_hess_phi_i = fe_interface_values.average_hessian(i, q);
+    // Tensor<1, dim> grad;
+    // if(c == 0U)
+    // {
+    //   grad[0] = av_hess_phi_i[0][1];
+    //   grad[1] = av_hess_phi_i[1][1];
+    // }
+    // else if(c == 1U)
+    // {
+    //   grad[0] = -av_hess_phi_i[0][0];
+    //   grad[1] = -av_hess_phi_i[1][0];
+    // }
+    // return grad;
+  }
+
+  FEValues<dim>          fe_values;
+  FEInterfaceValues<dim> fe_interface_values;
+  unsigned int           n_quadrature_points;
+};
+
+
+
+template<int dim>
+SymmetricTensor<2, dim>
+compute_average_symgrad(const InterfaceValues<dim> & phi,
+                        const unsigned int           i,
+                        const unsigned int           q)
+{
+  return ::MW::compute_average_symgrad_impl<dim, InterfaceValues<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
+Tensor<1, dim>
+compute_vjump(const InterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_vjump_impl<dim, InterfaceValues<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
+Tensor<1, dim>
+compute_vjump_tangential(const InterfaceValues<dim> & phi,
+                         const unsigned int           i,
+                         const unsigned int           q)
+{
+  return ::MW::compute_vjump_tangential_impl<dim, InterfaceValues<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
+struct ScratchData : public Mixed::ScratchData<dim>
+{
+  ScratchData(const Mapping<dim> &       mapping,
+              const FiniteElement<dim> & fe_test,
+              const FiniteElement<dim> & fe_ansatz,
+              const unsigned int         n_q_points_1d,
+              const UpdateFlags          update_flags_test,
+              const UpdateFlags          update_flags_ansatz,
+              const UpdateFlags          interface_update_flags_test = UpdateFlags::update_default,
+              const UpdateFlags interface_update_flags_ansatz        = UpdateFlags::update_default)
+    : Mixed::ScratchData<dim>(mapping,
+                              fe_test,
+                              fe_ansatz,
+                              n_q_points_1d,
+                              update_flags_test,
+                              update_flags_ansatz,
+                              interface_update_flags_test,
+                              interface_update_flags_ansatz),
+      stream_values(Mixed::ScratchData<dim>::fe_values_test),
+      stream_interface_values(Mixed::ScratchData<dim>::fe_values_test,
+                              Mixed::ScratchData<dim>::fe_interface_values_test),
+      stream_values_ansatz(Mixed::ScratchData<dim>::fe_values_ansatz),
+      stream_interface_values_ansatz(Mixed::ScratchData<dim>::fe_values_ansatz,
+                                     Mixed::ScratchData<dim>::fe_interface_values_ansatz)
+  {
+  }
+
+  ScratchData(const ScratchData<dim> & scratch_data_in)
+    : Mixed::ScratchData<dim>(scratch_data_in),
+      stream_values(scratch_data_in.fe_values_test),
+      stream_interface_values(scratch_data_in.fe_values_test,
+                              scratch_data_in.fe_interface_values_test),
+      stream_values_ansatz(scratch_data_in.fe_values_ansatz),
+      stream_interface_values_ansatz(scratch_data_in.fe_values_ansatz,
+                                     scratch_data_in.fe_interface_values_ansatz)
+  {
+  }
+
+  StreamFunction::Values<dim>          stream_values;
+  StreamFunction::InterfaceValues<dim> stream_interface_values;
+  StreamFunction::Values<dim>          stream_values_ansatz;
+  StreamFunction::InterfaceValues<dim> stream_interface_values_ansatz;
+};
+
+} // namespace StreamFunction
+
+
+
+namespace TestFunction
+{
+/**
+ * A helper struct which provides a FEValues-like interface for arbitrary test
+ * functions. The test functions are determined by the basis transformation
+ * matrix @p shape_to_test_functions mapping shape to test functions. By a call
+ * to reinit() one might select a subset of those test functions.
+ */
+template<int dim>
+struct Values
+{
+  static_assert(dim == 2, "Implemented for 2D only.");
+
+  Values(const FEValues<dim> & fe_values_in, const FullMatrix<double> & shape_to_test_functions_in)
+    : fe_values(fe_values_in.get_mapping(),
+                fe_values_in.get_fe(),
+                fe_values_in.get_quadrature(),
+                fe_values_in.get_update_flags()),
+      shape_to_test_functions(shape_to_test_functions_in),
+      n_quadrature_points(fe_values_in.n_quadrature_points)
+  {
+    AssertDimension(shape_to_test_functions.n(), fe_values_in.dofs_per_cell);
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType &          cell,
+         const std::vector<unsigned int> & local_dof_indices_in = std::vector<unsigned int>{})
+  {
+    AssertDimension(shape_to_test_functions.n(), fe_values.dofs_per_cell);
+
+    fe_values.reinit(cell);
+    if(local_dof_indices_in.empty())
+    {
+      local_dof_indices.resize(shape_to_test_functions.m());
+      std::iota(local_dof_indices.begin(), local_dof_indices.end(), 0U);
+    }
+    else
+      local_dof_indices = local_dof_indices_in;
+
+    AssertIndexRange(*std::max_element(local_dof_indices.cbegin(), local_dof_indices.cend()),
+                     shape_to_test_functions.m());
+  }
+
+  unsigned int
+  n_dofs_on_cell() const
+  {
+    return local_dof_indices.size();
+  }
+
+  const FiniteElement<dim> &
+  get_fe() const
+  {
+    return fe_values.get_fe();
+  }
+
+  const std::vector<Point<dim>> &
+  get_quadrature_points() const
+  {
+    return fe_values.get_quadrature_points();
+  }
+
+  double
+  JxW(const unsigned int q) const
+  {
+    return fe_values.JxW(q);
+  }
+
+  double
+  shape_value_component(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    AssertIndexRange(i, local_dof_indices.size());
+    const auto ii = local_dof_indices[i];
+
+    double value = 0.;
+    for(auto j = 0U; j < shape_to_test_functions.n(); ++j)
+    {
+      value += shape_to_test_functions(ii, j) * fe_values.shape_value_component(j, q, c);
+    }
+    return value;
+  }
+
+  Tensor<1, dim>
+  shape_grad_component(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    AssertIndexRange(i, local_dof_indices.size());
+    const auto ii = local_dof_indices[i];
+
+    Tensor<1, dim> grad;
+    for(auto j = 0U; j < shape_to_test_functions.n(); ++j)
+      grad += shape_to_test_functions(ii, j) * fe_values.shape_grad_component(j, q, c);
+    return grad;
+  }
+
+  FEValues<dim>              fe_values;
+  const FullMatrix<double> & shape_to_test_functions;
+  unsigned int               n_quadrature_points;
+  std::vector<unsigned int>  local_dof_indices;
+};
+
+
+
+template<int dim>
+SymmetricTensor<2, dim>
+compute_symgrad(const Values<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_symgrad_impl<dim, Values<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
+Tensor<1, dim>
+compute_vvalue(const Values<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_vvalue_impl<dim, Values<dim>>(phi, i, q);
+}
+
+
+
+/**
+ * A helper struct which provides a FEInterfaceValues-like interface for
+ * arbitrary test functions. The test functions are determined by the basis
+ * transformation matrices @p shape_to_test_functions_left and @p
+ * shape_to_test_functions_right mapping shape to test functions on the left and
+ * right cell, respectively.
+ *
+ * By passing the mapping of joint dof indices to the pair of indices on the
+ * left and right cell, respectively, to the reinit() call it is possible to
+ * activate only a subset of test functions. This mapping @p
+ * joint_to_cell_dof_indices_in is mandatory and has to be passed by the user to
+ * identify joint test functions.
+ */
+template<int dim>
+struct InterfaceValues
+{
+  static_assert(dim == 2, "Implemented for 2D only.");
+
+  InterfaceValues(const FEValues<dim> &          fe_values_in,
+                  const FEInterfaceValues<dim> & fe_interface_values_in,
+                  const FullMatrix<double> &     shape_to_test_functions_left_in,
+                  const FullMatrix<double> &     shape_to_test_functions_right_in)
+    : fe_values(fe_values_in.get_mapping(),
+                fe_values_in.get_fe(),
+                fe_values_in.get_quadrature(),
+                fe_values_in.get_update_flags()),
+      fe_interface_values(fe_values_in.get_mapping(),
+                          fe_values_in.get_fe(),
+                          fe_interface_values_in.get_quadrature(),
+                          fe_interface_values_in.get_update_flags()),
+      shape_to_test_functions_left(shape_to_test_functions_left_in),
+      shape_to_test_functions_right(shape_to_test_functions_right_in),
+      n_quadrature_points(fe_interface_values_in.n_quadrature_points)
+  {
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType &                         cell,
+         const unsigned int                               face_no,
+         const unsigned int                               subface_no,
+         const CellIteratorType &                         ncell,
+         const unsigned int                               nface_no,
+         const unsigned int                               nsubface_no,
+         const std::vector<std::array<unsigned int, 2>> & joint_to_cell_dof_indices_in)
+  {
+    fe_interface_values.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no);
+    joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
+
+    // DEBUG
+    // std::cout << "TFInterface:";
+    // for(const auto liri : joint_to_cell_dof_indices_in)
+    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
+    // std::cout << std::endl;
+    // std::vector<std::array<unsigned int, 2>> jtc_rt;
+    // for(auto i = 0U; i < fe_interface_values.n_current_interface_dofs(); ++i)
+    //   jtc_rt.push_back(fe_interface_values.interface_dof_to_dof_indices(i));
+    // std::cout << "TFInterface::RT:";
+    // for(const auto liri : jtc_rt)
+    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
+    // std::cout << std::endl;
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType &                         cell,
+         const unsigned int                               face_no,
+         const std::vector<std::array<unsigned int, 2>> & joint_to_cell_dof_indices_in)
+  {
+    fe_interface_values.reinit(cell, face_no);
+    joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
+
+    // DEBUG
+    // std::cout << "TFface:";
+    // for(const auto liri : joint_to_cell_dof_indices_in)
+    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
+    // std::cout << std::endl;
+  }
+
+  unsigned int
+  n_current_interface_dofs() const
+  {
+    return joint_to_cell_dof_indices.size();
+  }
+
+  const FiniteElement<dim> &
+  get_fe() const
+  {
+    return fe_values.get_fe();
+  }
+
+  const std::vector<Point<dim>> &
+  get_quadrature_points() const
+  {
+    return fe_interface_values.get_quadrature_points();
+  }
+
+  const std::vector<Tensor<1, dim>> &
+  get_normal_vectors() const
+  {
+    return fe_interface_values.get_normal_vectors();
+  }
+
+  double
+  JxW(const unsigned int q) const
+  {
+    return fe_interface_values.JxW(q);
+  }
+
+  Tensor<1, dim>
+  normal(const unsigned int q) const
+  {
+    return fe_interface_values.normal(q);
+  }
+
+  double
+  shape_value_component_left(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    AssertIndexRange(i, shape_to_test_functions_left.m());
+
+    const auto & fe_face_values_left = fe_interface_values.get_fe_face_values(0);
+    double       value               = 0.;
+    for(auto j = 0U; j < shape_to_test_functions_left.n(); ++j)
+      value +=
+        shape_to_test_functions_left(i, j) * fe_face_values_left.shape_value_component(j, q, c);
+
+    return value;
+  }
+
+  double
+  shape_value_component_right(const unsigned int i,
+                              const unsigned int q,
+                              const unsigned int c) const
+  {
+    AssertIndexRange(i, shape_to_test_functions_right.m());
+
+    const auto & fe_face_values_right = fe_interface_values.get_fe_face_values(1);
+    AssertDimension(fe_face_values_right.dofs_per_cell, shape_to_test_functions_right.n());
+
+    double value = 0.;
+    for(auto j = 0U; j < shape_to_test_functions_right.n(); ++j)
+      value +=
+        shape_to_test_functions_right(i, j) * fe_face_values_right.shape_value_component(j, q, c);
+
+    return value;
+  }
+
+  Tensor<1, dim>
+  shape_grad_component_left(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    AssertIndexRange(i, shape_to_test_functions_left.m());
+
+    const auto &   fe_face_values_left = fe_interface_values.get_fe_face_values(0);
+    Tensor<1, dim> grad;
+    for(auto j = 0U; j < fe_face_values_left.dofs_per_cell; ++j)
+      grad +=
+        shape_to_test_functions_left(i, j) * fe_face_values_left.shape_grad_component(j, q, c);
+
+    return grad;
+  }
+
+  Tensor<1, dim>
+  shape_grad_component_right(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    AssertIndexRange(i, shape_to_test_functions_right.m());
+
+    const auto &   fe_face_values_right = fe_interface_values.get_fe_face_values(1);
+    Tensor<1, dim> grad;
+    for(auto j = 0U; j < fe_face_values_right.dofs_per_cell; ++j)
+      grad +=
+        shape_to_test_functions_right(i, j) * fe_face_values_right.shape_grad_component(j, q, c);
+
+    return grad;
+  }
+
+  double
+  average(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    AssertIndexRange(i, joint_to_cell_dof_indices.size());
+    const auto [li, ri] = joint_to_cell_dof_indices[i];
+
+    if(fe_interface_values.at_boundary())
+    {
+      Assert(li != numbers::invalid_unsigned_int,
+             ExcMessage("invalid test function index on the left cell"));
+      return shape_value_component_left(li, q, c);
+    }
+
+    double value = 0.;
+
+    if(li != numbers::invalid_unsigned_int)
+      value += 0.5 * shape_value_component_left(li, q, c);
+    if(ri != numbers::invalid_unsigned_int)
+      value += 0.5 * shape_value_component_right(ri, q, c);
+
+    return value;
+  }
+
+  Tensor<1, dim>
+  average_gradient(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    AssertIndexRange(i, joint_to_cell_dof_indices.size());
+    const auto [li, ri] = joint_to_cell_dof_indices[i];
+
+    if(fe_interface_values.at_boundary())
+    {
+      Assert(li != numbers::invalid_unsigned_int,
+             ExcMessage("invalid test function index on the left cell"));
+      return shape_grad_component_left(li, q, c);
+    }
+
+    Tensor<1, dim> av_grad;
+
+    if(li != numbers::invalid_unsigned_int)
+      av_grad += 0.5 * shape_grad_component_left(li, q, c);
+    if(ri != numbers::invalid_unsigned_int)
+      av_grad += 0.5 * shape_grad_component_right(ri, q, c);
+
+    return av_grad;
+  }
+
+  double
+  jump(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    AssertIndexRange(i, joint_to_cell_dof_indices.size());
+    const auto [li, ri] = joint_to_cell_dof_indices[i];
+
+    if(fe_interface_values.at_boundary())
+    {
+      Assert(li != numbers::invalid_unsigned_int,
+             ExcMessage("Invalid test function index on the left cell"));
+      return shape_value_component_left(li, q, c);
+    }
+
+    double jump = 0.;
+
+    if(li != numbers::invalid_unsigned_int)
+      jump += shape_value_component_left(li, q, c);
+    if(ri != numbers::invalid_unsigned_int)
+      jump -= shape_value_component_right(ri, q, c);
+
+    return jump;
+  }
+
+  FEValues<dim>                            fe_values;
+  FEInterfaceValues<dim>                   fe_interface_values;
+  const FullMatrix<double> &               shape_to_test_functions_left;
+  const FullMatrix<double> &               shape_to_test_functions_right;
+  unsigned int                             n_quadrature_points;
+  std::vector<std::array<unsigned int, 2>> joint_to_cell_dof_indices;
+};
+
+
+
+template<int dim>
+Tensor<1, dim>
+compute_vaverage(const InterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_vaverage_impl<dim, InterfaceValues<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
+SymmetricTensor<2, dim>
+compute_average_symgrad(const InterfaceValues<dim> & phi,
+                        const unsigned int           i,
+                        const unsigned int           q)
+{
+  return ::MW::compute_average_symgrad_impl<dim, InterfaceValues<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
+Tensor<1, dim>
+compute_vjump(const InterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_vjump_impl<dim, InterfaceValues<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
+Tensor<1, dim>
+compute_vjump_tangential(const InterfaceValues<dim> & phi,
+                         const unsigned int           i,
+                         const unsigned int           q)
+{
+  return ::MW::compute_vjump_tangential_impl<dim, InterfaceValues<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
+struct ScratchData : public StreamFunction::ScratchData<dim>
+{
+  using Base = typename StreamFunction::ScratchData<dim>;
+
+  ScratchData(const Mapping<dim> &       mapping,
+              const FiniteElement<dim> & fe_test,
+              const FiniteElement<dim> & fe_ansatz,
+              const unsigned int         n_q_points_1d,
+              const FullMatrix<double> & shape_to_test_functions_in,
+              const UpdateFlags          update_flags_test,
+              const UpdateFlags          update_flags_ansatz,
+              const UpdateFlags          interface_update_flags_test = UpdateFlags::update_default,
+              const UpdateFlags interface_update_flags_ansatz        = UpdateFlags::update_default)
+    : StreamFunction::ScratchData<dim>(mapping,
+                                       fe_test,
+                                       fe_ansatz,
+                                       n_q_points_1d,
+                                       update_flags_test,
+                                       update_flags_ansatz,
+                                       interface_update_flags_test,
+                                       interface_update_flags_ansatz),
+      test_values(StreamFunction::ScratchData<dim>::fe_values_test, shape_to_test_functions_in),
+      test_interface_values(StreamFunction::ScratchData<dim>::fe_values_test,
+                            StreamFunction::ScratchData<dim>::fe_interface_values_test,
+                            shape_to_test_functions_in,
+                            shape_to_test_functions_in)
+  {
+  }
+
+  ScratchData(const ScratchData<dim> & scratch_data_in)
+    : StreamFunction::ScratchData<dim>(scratch_data_in),
+      test_values(scratch_data_in.fe_values_test,
+                  scratch_data_in.test_values.shape_to_test_functions),
+      test_interface_values(scratch_data_in.fe_values_test,
+                            scratch_data_in.fe_interface_values_test,
+                            scratch_data_in.test_values.shape_to_test_functions,
+                            scratch_data_in.test_values.shape_to_test_functions)
+  {
+  }
+
+  TestFunction::Values<dim>          test_values;
+  TestFunction::InterfaceValues<dim> test_interface_values;
+};
+
+
+
+} // namespace TestFunction
+
+
+
 } // namespace MW
 
 #endif /* APPS_COMMONINTEGRATOR_H_ */
