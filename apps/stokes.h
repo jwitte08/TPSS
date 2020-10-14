@@ -112,11 +112,16 @@ write_ppdata_to_string(const PostProcessData & pp_data, const PostProcessData & 
   std::ostringstream oss;
   ConvergenceTable   info_table;
   Assert(!pp_data.n_cells_global.empty(), ExcMessage("No cells to post process."));
+  AssertDimension(pp_data.n_dofs_global.size(), pp_data_pressure.n_dofs_global.size());
   for(unsigned run = 0; run < pp_data.n_cells_global.size(); ++run)
   {
     // info_table.add_value("n_levels", pp_data.n_mg_levels.at(run));
     info_table.add_value("n_cells", pp_data.n_cells_global.at(run));
-    info_table.add_value("n_dofs", pp_data.n_dofs_global.at(run));
+    const auto n_dofs_total =
+      pp_data.n_dofs_global.at(run) + pp_data_pressure.n_dofs_global.at(run);
+    info_table.add_value("n_dofs", n_dofs_total);
+    info_table.add_value("n_dofs_u", pp_data.n_dofs_global.at(run));
+    info_table.add_value("n_dofs_p", pp_data_pressure.n_dofs_global.at(run));
     // info_table.add_value("n_colors", pp_data.n_colors_system.at(run));
     info_table.add_value("n_iter", pp_data.n_iterations_system.at(run));
     info_table.add_value("reduction", pp_data.average_reduction_system.at(run));
@@ -130,21 +135,21 @@ write_ppdata_to_string(const PostProcessData & pp_data, const PostProcessData & 
   info_table.set_precision("L2_error_u", 3);
   info_table.evaluate_convergence_rates("L2_error_u", ConvergenceTable::reduction_rate);
   info_table.evaluate_convergence_rates("L2_error_u",
-                                        "n_dofs",
+                                        "n_dofs_u",
                                         ConvergenceTable::reduction_rate_log2,
                                         pp_data.n_dimensions);
   info_table.set_scientific("H1semi_error_u", true);
   info_table.set_precision("H1semi_error_u", 3);
   info_table.evaluate_convergence_rates("H1semi_error_u", ConvergenceTable::reduction_rate);
   info_table.evaluate_convergence_rates("H1semi_error_u",
-                                        "n_dofs",
+                                        "n_dofs_u",
                                         ConvergenceTable::reduction_rate_log2,
                                         pp_data.n_dimensions);
   info_table.set_scientific("L2_error_p", true);
   info_table.set_precision("L2_error_p", 3);
   info_table.evaluate_convergence_rates("L2_error_p", ConvergenceTable::reduction_rate);
   info_table.evaluate_convergence_rates("L2_error_p",
-                                        "n_dofs",
+                                        "n_dofs_p",
                                         ConvergenceTable::reduction_rate_log2,
                                         pp_data.n_dimensions);
 

@@ -665,8 +665,14 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid()
     const UpdateFlags interface_update_flags = update_values | update_gradients |
                                                update_quadrature_points | update_JxW_values |
                                                update_normal_vectors;
-    ScratchData<dim> scratch_data(
-      *mapping, dof_handler->get_fe(), n_q_points_1d, update_flags, interface_update_flags);
+    ScratchData<dim> scratch_data(*mapping,
+                                  dof_handler->get_fe(),
+                                  dof_handler->get_fe(),
+                                  n_q_points_1d,
+                                  update_flags,
+                                  update_flags,
+                                  interface_update_flags,
+                                  interface_update_flags);
 
     CopyData copy_data(dof_handler->get_fe().dofs_per_cell);
 
@@ -944,8 +950,11 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                                  update_normal_vectors;
       ScratchData<dim> scratch_data(*mapping,
                                     dof_handler_velocity->get_fe(),
+                                    dof_handler_velocity->get_fe(),
                                     n_q_points_1d,
                                     update_flags,
+                                    update_flags,
+                                    interface_update_flags,
                                     interface_update_flags);
 
       CopyData copy_data(dof_handler_velocity->get_fe().dofs_per_cell);
@@ -2168,7 +2177,9 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   print_parameter("Number of degrees of freedom (pressure):", n_dofs_pressure);
   print_parameter("Number of degrees of freedom (total):", n_dofs_velocity + n_dofs_pressure);
   *pcout << std::endl;
-  pp_data.n_dofs_global.push_back(system_matrix.m());
+
+  pp_data.n_dofs_global.push_back(n_dofs_velocity);
+  pp_data_pressure.n_dofs_global.push_back(n_dofs_pressure);
 }
 
 
@@ -2319,8 +2330,14 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                                update_quadrature_points | update_JxW_values |
                                                update_normal_vectors;
 
-    ScratchData<dim> scratch_data(
-      mapping, dof_handler_velocity.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
+    ScratchData<dim> scratch_data(mapping,
+                                  dof_handler_velocity.get_fe(),
+                                  dof_handler_velocity.get_fe(),
+                                  n_q_points_1d,
+                                  update_flags,
+                                  update_flags,
+                                  interface_update_flags,
+                                  interface_update_flags);
 
     CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
 

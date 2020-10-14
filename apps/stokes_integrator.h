@@ -2248,15 +2248,11 @@ struct MatrixIntegrator
                    const Function<dim> *  analytical_solutionU_in,
                    const Function<dim> *  analytical_solutionP_in,
                    const EquationData &   equation_data_in)
-    // const FullMatrix<double> *    shape_to_test_functions_in = nullptr,
-    // const InterfaceHandler<dim> * interface_handler_in       = nullptr)
     : discrete_solutionU(particular_solutionU),
       discrete_solutionP(particular_solutionP),
       analytical_solutionU(analytical_solutionU_in),
       analytical_solutionP(analytical_solutionP_in),
       equation_data(equation_data_in)
-  // shape_to_test_functions(shape_to_test_functions_in),
-  // interface_handler(interface_handler_in)
   {
     AssertThrow(
       !particular_solutionP,
@@ -2304,8 +2300,6 @@ struct MatrixIntegrator
   const Function<dim> *  analytical_solutionU;
   const Function<dim> *  analytical_solutionP;
   const EquationData     equation_data;
-  // const FullMatrix<double> *    shape_to_test_functions;
-  // const InterfaceHandler<dim> * interface_handler;
 };
 
 
@@ -2389,53 +2383,6 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cellU,
       copy_data.cell_rhs_ansatz -= w0;
     }
 }
-
-
-// template<int dim, bool is_multigrid>
-// void
-// MatrixIntegrator<dim, is_multigrid>::cell_residual_worker(const IteratorType & cellU,
-//                                                  const IteratorType & cellP,
-//                                                  ScratchData<dim> &   scratch_data,
-//                                                  CopyData &           copy_data) const
-// {
-//   AssertDimension(cellU->index(), cellP->index());
-
-//   Assert(shape_to_test_functions, ExcMessage("Transformation matrix is not set."));
-//   AssertDimension(shape_to_test_functions->m(), GeometryInfo<dim>::faces_per_cell);
-
-//   ::MW::TestFunction::Values<dim> phiU(scratch_data.fe_values_test, *shape_to_test_functions);
-
-//   auto [testfunc_indices, dof_indices_on_lcell] =
-//   get_interface_testfunc_indices(*interface_handler, cellU); phiU.reinit(cellU,
-//   testfunc_indices);
-
-//   std::swap(copy_data.local_dof_indices_test, dof_indices_on_lcell);
-
-//   auto & phiP = scratch_data.fe_values_ansatz;
-
-//   phiP.reinit(cellP);
-
-//   cellP->get_active_or_mg_dof_indices(copy_data.local_dof_indices_ansatz);
-
-//   copy_data.cell_matrix.reinit(copy_data.local_dof_indices_test.size(),
-//   copy_data.local_dof_indices_ansatz.size());
-//   copy_data.cell_rhs_test.reinit(copy_data.local_dof_indices_test.size());
-
-//   cell_worker_impl(phiU, phiP, copy_data);
-
-//   AssertDimension(copy_data.cell_matrix.n(), copy_data.local_dof_indices_ansatz.size());
-//   Assert(discrete_solutionP, ExcMessage("Stream function coefficients are not set."));
-//   Vector<double> dof_values(copy_data.local_dof_indices_ansatz.size());
-//   std::transform(copy_data.local_dof_indices_ansatz.cbegin(),
-//                  copy_data.local_dof_indices_ansatz.cend(),
-//                  dof_values.begin(),
-//                  [&](const auto dof_index) { return (*discrete_solutionP)[dof_index]; });
-
-//   AssertDimension(copy_data.cell_matrix.m(), copy_data.cell_rhs_test.size());
-//   Vector<double> Ax(copy_data.cell_rhs_test.size());
-//   copy_data.cell_matrix.vmult(Ax, dof_values); // Ax
-//   copy_data.cell_rhs_test -= Ax;               // f - Ax
-// }
 
 
 template<int dim, bool is_multigrid>
