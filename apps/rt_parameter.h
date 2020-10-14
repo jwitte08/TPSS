@@ -197,11 +197,19 @@ Parameter::to_string() const
 {
   std::ostringstream oss;
   oss << Util::parameter_to_fstring("Number of run cycles:", n_cycles);
+  const auto [n_dofs_min, n_dofs_max] = dof_limits;
+  if(n_dofs_min != numbers::invalid_dof_index && n_dofs_max != numbers::invalid_dof_index)
+  {
+    oss << Util::parameter_to_fstring("Lower dof limit:", n_dofs_min);
+    oss << Util::parameter_to_fstring("Upper dof limit:", n_dofs_max);
+  }
   oss << std::endl;
+
   oss << mesh.to_string() << std::endl;
   oss << solver.to_string() << std::endl;
   if(solver.precondition_variant == SolverParameter::PreconditionVariant::GMG)
     oss << multigrid.to_string();
+
   return oss.str();
 }
 } // namespace RT
