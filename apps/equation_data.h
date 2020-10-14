@@ -2157,7 +2157,7 @@ public:
   }
 
   virtual SymmetricTensor<2, dim>
-  hessian(const Point<dim> & p, const unsigned int component = 0) const override
+  hessian(const Point<dim> &, const unsigned int component = 0) const override
   {
     SymmetricTensor<2, dim> hess;
     if(component == 0)

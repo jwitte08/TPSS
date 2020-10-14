@@ -11,7 +11,7 @@
 #define POSTPROCESS_H_
 
 #include <deal.II/lac/solver_control.h>
-
+#include <deal.II/numerics/data_postprocessor.h>
 
 
 struct PostProcessData
@@ -209,5 +209,73 @@ visualize_cell_vector(const DoFHandler<dim> & dof_handler,
     data_out.write_pvtu_record(master_file, filenames);
   }
 }
+
+
+
+namespace Biharmonic
+{
+/**
+ * Cell-wise visualization of the vector curl of a stream function.
+ */
+template<int dim>
+class StreamVelocityPP : public DataPostprocessorVector<dim>
+{
+  static_assert(dim == 2, "implemented for 2D");
+
+public:
+  StreamVelocityPP() : DataPostprocessorVector<dim>("stream_velocity", update_gradients)
+  {
+  }
+
+  virtual void
+  evaluate_scalar_field(const DataPostprocessorInputs::Scalar<dim> & input_data,
+                        std::vector<Vector<double>> & computed_quantities) const override
+  {
+    AssertDimension(input_data.solution_gradients.size(), computed_quantities.size());
+
+    const auto n_q_points = input_data.solution_gradients.size();
+    for(auto q = 0U; q < n_q_points; ++q)
+    {
+      const auto & grad_phi = input_data.solution_gradients[q];
+      AssertDimension(grad_phi.size(), dim);
+      auto & curl_phi = computed_quantities[q];
+      AssertDimension(curl_phi.size(), dim);
+      curl_phi[0] = grad_phi[1];
+      curl_phi[1] = -grad_phi[0];
+    }
+  }
+};
+
+
+
+/**
+ * Cell-wise visualization of the (reconstructed) pressure.
+ */
+template<int dim>
+class PressurePP : public DataPostprocessorScalar<dim>
+{
+public:
+  PressurePP() : DataPostprocessorScalar<dim>("pressure", update_values)
+  {
+  }
+
+  virtual void
+  evaluate_scalar_field(const DataPostprocessorInputs::Scalar<dim> & input_data,
+                        std::vector<Vector<double>> & computed_quantities) const override
+  {
+    AssertDimension(input_data.solution_values.size(), computed_quantities.size());
+    const auto n_q_points = input_data.solution_values.size();
+    for(auto q = 0U; q < n_q_points; ++q)
+    {
+      AssertDimension(input_data.solution_values[q].size(), 1U);
+      AssertDimension(input_data.solution_values[q].size(), computed_quantities[q].size());
+      computed_quantities[q] = input_data.solution_values[q];
+    }
+  }
+};
+
+} // namespace Biharmonic
+
+
 
 #endif /* POSTPROCESS_H_ */

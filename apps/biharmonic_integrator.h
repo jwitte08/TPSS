@@ -584,7 +584,6 @@ struct InterfaceHandler
   reinit(const DoFHandler<dim> & dof_handler_velocity)
   {
     const auto & triangulation = dof_handler_velocity.get_triangulation();
-    const auto   n_cells       = triangulation.n_global_active_cells();
 
     std::set<CellId> marked_cells;
 
@@ -618,7 +617,7 @@ struct InterfaceHandler
           {
             interface_ids.emplace_back(cell->id(), ncell->id());
             const auto & [dummy_, has_been_inserted] = marked_cells.emplace(ncell->id());
-            (void)dummy_;
+            (void)dummy_, (void)has_been_inserted;
             Assert(has_been_inserted, ExcMessage("Insertion failed."));
           }
 
@@ -626,7 +625,7 @@ struct InterfaceHandler
           {
             interface_ids.emplace_back(ncell->id(), cell->id());
             const auto & [dummy_, has_been_inserted] = marked_cells.emplace(cell->id());
-            (void)dummy_;
+            (void)dummy_, (void)has_been_inserted;
             Assert(has_been_inserted, ExcMessage("Insertion failed."));
           }
         }
@@ -641,7 +640,7 @@ struct InterfaceHandler
     /// this std::sort is not needed as the set is ordered !!!
     // std::sort(cell_ids.begin(), cell_ids.end());
 
-    AssertDimension(cell_ids.size(), n_cells);
+    AssertDimension(cell_ids.size(), triangulation.n_global_active_cells());
     AssertDimension(cell_ids.size(), interface_ids.size());
 
     // // DEBUG
@@ -726,129 +725,6 @@ struct InterfaceHandler
 };
 
 
-
-// namespace Interior
-// {
-// namespace MW
-// {
-// using ::MW::ScratchData;
-
-// using ::MW::Mixed::CopyData;
-
-
-
-// template<int dim, bool is_multigrid = false>
-// struct MatrixIntegrator
-// {
-//   using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
-
-//   MatrixIntegrator(const Function<dim> *            load_function_in,
-//                    const Vector<double> *           stream_function_solution,
-//                    const LAPACKFullMatrix<double> * transformation_matrix,
-//                    const InterfaceHandler<dim> *    interface_handler_in,
-//                    const Stokes::EquationData &     equation_data_in)
-//     : load_function(load_function_in),
-//       discrete_velocity(stream_function_solution),
-//       interior_rt_to_test_functions(transformation_matrix),
-//       interface_handler(interface_handler_in),
-//       equation_data(equation_data_in)
-//   {
-//   }
-
-//   void
-//   cell_worker(const IteratorType & cell,
-//               const IteratorType & cellP,
-//               ScratchData<dim> &   scratch_data,
-//               CopyData &           copy_data) const;
-
-//   const Function<dim> *            load_function;
-//   const Vector<double> *           discrete_velocity;
-//   const LAPACKFullMatrix<double> * interior_rt_to_test_functions;
-//   const InterfaceHandler<dim> *    interface_handler;
-//   const Stokes::EquationData       equation_data;
-// };
-
-
-
-// template<int dim, bool is_multigrid>
-// void
-// MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
-//                                                  const IteratorType & cellP,
-//                                                  ScratchData<dim> &   scratch_data,
-//                                                  CopyData &           copy_data) const
-// {
-//   copy_data.cell_rhs_test = 0.;
-
-//   cellP->get_active_or_mg_dof_indices(copy_data.local_dof_indices_test);
-//   const auto n_dofs_per_cell_p            = copy_data.local_dof_indices_test.size();
-//   const auto n_interior_nodes_by_pressure = n_dofs_per_cell_p - 1;
-
-//   const unsigned int cell_index = interface_handler->get_cell_index(cell->id());
-//   AssertDimension(copy_data.local_dof_indices_ansatz.size(), 1U);
-//   copy_data.local_dof_indices_ansatz[0U] = cell_index;
-
-//   FEValues<dim> & phi = scratch_data.fe_values;
-//   phi.reinit(cell);
-
-//   const auto n_dofs_per_cell_v = phi.get_fe().dofs_per_cell;
-//   AssertThrow(dim == 2, ExcMessage("dofs_per_quad only correct in 2D"));
-//   const auto n_interior_dofs_v = phi.get_fe().dofs_per_quad;
-//   const auto n_face_dofs_v     = GeometryInfo<dim>::faces_per_cell * phi.get_fe().dofs_per_face;
-//   AssertDimension(n_interior_dofs_v + n_face_dofs_v, n_dofs_per_cell_v);
-//   (void)n_dofs_per_cell_v;
-//   AssertDimension(interior_rt_to_test_functions->m(), n_interior_nodes_by_pressure);
-//   AssertDimension(interior_rt_to_test_functions->n(), n_interior_dofs_v);
-
-//   std::vector<Tensor<1, dim>> load_values;
-//   {
-//     Assert(load_function, ExcMessage("load_function is not set."));
-//     AssertDimension(load_function->n_components, dim);
-//     const auto & q_points = phi.get_quadrature_points();
-//     std::transform(q_points.cbegin(),
-//                    q_points.cend(),
-//                    std::back_inserter(load_values),
-//                    [&](const auto & x_q) {
-//                      Tensor<1, dim> value;
-//                      for(auto c = 0U; c < dim; ++c)
-//                        value[c] = load_function->value(x_q, c);
-//                      return value;
-//                    });
-//   }
-
-//   /// Evaluate test function v_i (which is generated by grad p_i) at quadrature
-//   /// point x_q.
-//   const auto & compute_v_i = [&](const unsigned int i, const unsigned int q) {
-//     AssertIndexRange(i, n_interior_nodes_by_pressure);
-//     Tensor<1, dim> value;
-//     for(auto j = 0U; j < n_interior_dofs_v; ++j)
-//     {
-//       const auto jj = n_face_dofs_v + j; // shift to interior dofs
-//       for(auto d = 0U; d < dim; ++d)
-//         value[d] += (*interior_rt_to_test_functions)(i, j) * phi.shape_value_component(jj, q, d);
-//     }
-//     return value;
-//   };
-
-//   double integral_iq;
-//   for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
-//   {
-//     const auto & f  = load_values[q];
-//     const auto & dx = phi.JxW(q);
-
-//     for(auto i = 0U; i < n_interior_nodes_by_pressure; ++i)
-//     {
-//       const auto & v_i = compute_v_i(i, q);
-//       integral_iq      = v_i * f * dx;
-
-//       AssertIndexRange(i + 1, copy_data.cell_rhs_test.size());
-//       copy_data.cell_rhs_test(i + 1) += integral_iq; // skip constant mode
-//     }
-//   }
-// }
-
-// } // namespace MW
-
-// } // namespace Interior
 
 namespace Interface
 {

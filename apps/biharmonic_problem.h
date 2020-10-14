@@ -183,6 +183,9 @@ public:
   double
   compute_stream_function_error();
 
+  std::shared_ptr<Vector<double>>
+  compute_L2_error_pressure() const;
+
   void
   compute_errors();
 
@@ -1028,12 +1031,9 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
   const auto & mapping       = stokes_problem->mapping;
   const auto   n_q_points_1d = stokes_problem->n_q_points_1d;
 
-  const auto n_dofs_per_cell_v = fe_v.dofs_per_cell;
-  const auto n_dofs_per_cell_p = fe_p.dofs_per_cell;
-  const auto n_faces_per_cell  = GeometryInfo<dim>::faces_per_cell;
-  const auto n_interior_dofs_v = fe_v.dofs_per_quad;
-  const auto n_face_dofs_v     = n_faces_per_cell * fe_v.dofs_per_face;
-  AssertDimension(n_interior_dofs_v + n_face_dofs_v, n_dofs_per_cell_v);
+  const auto n_dofs_per_cell_v            = fe_v.dofs_per_cell;
+  const auto n_dofs_per_cell_p            = fe_p.dofs_per_cell;
+  const auto n_faces_per_cell             = GeometryInfo<dim>::faces_per_cell;
   const auto n_interior_nodes_by_pressure = n_dofs_per_cell_p - 1;
 
   Triangulation<dim> unit_triangulation(Triangulation<dim>::maximum_smoothing);
@@ -1077,9 +1077,7 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
   //   }
   // }
 
-  trafomatrix_rt_to_gradp.reinit(n_interior_nodes_by_pressure, n_interior_dofs_v);
-
-  trafomatrix_rt_to_constp.reinit(n_faces_per_cell, n_face_dofs_v);
+  trafomatrix_rt_to_gradp.reinit(n_interior_nodes_by_pressure, n_dofs_per_cell_v);
 
   /**
    * Compute the application of the current RT shape functions to the interior
@@ -1125,13 +1123,13 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
       return node_value;
     };
 
-    LAPACKFullMatrix<double> node_value_weights(n_interior_nodes_by_pressure, n_interior_dofs_v);
+    LAPACKFullMatrix<double> node_value_weights(n_interior_nodes_by_pressure, n_dofs_per_cell_v);
     for(auto i = 0U; i < node_value_weights.m(); ++i)   // node functionals
-      for(auto j = 0U; j < node_value_weights.n(); ++j) // interior shape funcs
+      for(auto j = 0U; j < node_value_weights.n(); ++j) // RT shape funcs
       {
         Vector<double> phi_j(n_dofs_per_cell_v);
-        const auto     dof_index = n_face_dofs_v + j; // shift to interior dofs
-        phi_j[dof_index]         = 1.;
+        phi_j[j] = 1.;
+
         node_value_weights(i, j) = interior_node_functional(i, phi_j);
       }
 
@@ -1144,11 +1142,8 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
     for(auto i = 0U; i < n_interior_nodes_by_pressure; ++i)
     {
       Vector<double> phi_i(n_dofs_per_cell_v);
-      for(auto j = 0U; j < n_interior_dofs_v; ++j)
-      {
-        const auto dof_index = n_face_dofs_v + j; // shift to interior dofs
-        phi_i(dof_index)     = trafomatrix_rt_to_gradp(i, j);
-      }
+      for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
+        phi_i(j) = trafomatrix_rt_to_gradp(i, j);
 
       std::vector<std::string> names(dim, "shape_function");
       const std::string        prefix         = "tildev_interior";
@@ -1167,6 +1162,8 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
                            mapping);
     }
   }
+
+  trafomatrix_rt_to_constp.reinit(n_faces_per_cell, n_dofs_per_cell_v);
 
   /**
    * Compute the application of the given RT shape functions to the RT node
@@ -1209,7 +1206,7 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
       return node_value;
     };
 
-    LAPACKFullMatrix<double> node_value_weights(n_faces_per_cell, n_face_dofs_v);
+    LAPACKFullMatrix<double> node_value_weights(n_faces_per_cell, n_dofs_per_cell_v);
     for(auto i = 0U; i < node_value_weights.m(); ++i)   // node functionals
       for(auto j = 0U; j < node_value_weights.n(); ++j) // face shape funcs
       {
@@ -1226,7 +1223,7 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
     for(auto i = 0U; i < n_faces_per_cell; ++i)
     {
       Vector<double> phi_i(n_dofs_per_cell_v);
-      for(auto j = 0U; j < n_face_dofs_v; ++j)
+      for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
         phi_i(j) = trafomatrix_rt_to_constp(i, j);
 
       std::vector<std::string> names(dim, "shape_function");
@@ -1260,7 +1257,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
   AssertThrow(stokes_problem, ExcMessage("FEM for Stokes equations is uninitialized."));
 
-  // TODO share triangulations as shared_ptr
+  // TODO !!! share triangulations as shared_ptr
   stokes_problem->triangulation.clear();
   stokes_problem->triangulation.copy_triangulation(this->triangulation);
   stokes_problem->setup_system();
@@ -1275,46 +1272,21 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   const auto [trafomatrix_rt_to_gradp, trafomatrix_rt_to_constp] =
     compute_nondivfree_shape_functions();
 
-  FullMatrix<double> shape_to_test_functions_interface;
-  {
-    const auto & fe_v          = dof_handler_velocity.get_fe();
-    const auto   n_face_dofs_v = GeometryInfo<dim>::faces_per_cell * fe_v.dofs_per_face;
+  FullMatrix<double> shape_to_test_functions_interior(trafomatrix_rt_to_gradp.m(),
+                                                      trafomatrix_rt_to_gradp.n());
+  shape_to_test_functions_interior = trafomatrix_rt_to_gradp;
 
-    const auto n_test_functions_v  = GeometryInfo<dim>::faces_per_cell;
-    const auto n_shape_functions_v = fe_v.dofs_per_cell;
+  // DEBUG
+  // shape_to_test_functions_interior.print_formatted(std::cout);
+  // trafomatrix_rt_to_gradp.print_formatted(std::cout);
 
-    shape_to_test_functions_interface.reinit(n_test_functions_v, n_shape_functions_v);
+  FullMatrix<double> shape_to_test_functions_interface(trafomatrix_rt_to_constp.m(),
+                                                       trafomatrix_rt_to_constp.n());
+  shape_to_test_functions_interface = trafomatrix_rt_to_constp;
 
-    AssertDimension(trafomatrix_rt_to_constp.m(), n_test_functions_v);
-    AssertDimension(trafomatrix_rt_to_constp.n(), n_face_dofs_v);
-    FullMatrix<double> tmp(trafomatrix_rt_to_constp.m(), trafomatrix_rt_to_constp.n());
-    tmp = trafomatrix_rt_to_constp;
-
-    shape_to_test_functions_interface.fill(tmp, 0U, 0U, 0U, 0U);
-    shape_to_test_functions_interface.print_formatted(std::cout);
-    trafomatrix_rt_to_constp.print_formatted(std::cout);
-  }
-
-  FullMatrix<double> shape_to_test_functions_interior;
-  {
-    const auto & fe_p              = dof_handler_pressure.get_fe();
-    const auto & fe_v              = dof_handler_velocity.get_fe();
-    const auto   n_face_dofs_v     = GeometryInfo<dim>::faces_per_cell * fe_v.dofs_per_face;
-    const auto   n_interior_dofs_v = fe_v.dofs_per_cell - n_face_dofs_v;
-
-    const auto n_test_functions_v  = fe_p.dofs_per_cell - 1;
-    const auto n_shape_functions_v = fe_v.dofs_per_cell;
-    shape_to_test_functions_interior.reinit(n_test_functions_v, n_shape_functions_v);
-
-    AssertDimension(trafomatrix_rt_to_gradp.m(), n_test_functions_v);
-    AssertDimension(trafomatrix_rt_to_gradp.n(), n_interior_dofs_v);
-
-    FullMatrix<double> tmp(trafomatrix_rt_to_gradp.m(), trafomatrix_rt_to_gradp.n());
-    tmp = trafomatrix_rt_to_gradp;
-    shape_to_test_functions_interior.fill(tmp, 0U, n_face_dofs_v, 0U, 0U);
-    shape_to_test_functions_interior.print_formatted(std::cout);
-    trafomatrix_rt_to_gradp.print_formatted(std::cout);
-  }
+  // DEBUG
+  // shape_to_test_functions_interface.print_formatted(std::cout);
+  // trafomatrix_rt_to_constp.print_formatted(std::cout);
 
   Pressure::InterfaceHandler<dim> interface_handler;
   interface_handler.reinit(dof_handler_velocity);
@@ -1342,7 +1314,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     dsp.add(e, K_left);
     dsp.add(e, K_right);
 
-    // // DEBUG
+    // DEBUG
     // std::cout << "interface index (row): " << interface_handler.get_interface_index(id) << " ";
     // const auto [left_index, right_index] = interface_handler.get_cell_index_pair(id);
     // std::cout << "left cell index (column): " << left_index << " ";
@@ -1364,7 +1336,54 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
   const auto n_q_points_1d = stokes_problem->n_q_points_1d;
 
+  /**
+   * First, we compute all pressure coefficients except the constant mode
+   * coefficient. To this end, we construct a basis of cell-wise non-div-free
+   * test functions vv_j associated to the interior RT node functionals N_i as follows:
+   * as node functional generating polynomials from Q_k-1,k x Q_k,k-1 we
+   * substitute grad p_i, where p_i are the pressure shape functions, such that
+   *
+   *    N_i(vv_j) = \int_K vv_j * (grad p_i) dx   =!=   \delta_ij   (1)
+   *
+   * We see that the gradient of the constant pressure mode is zero and, thus,
+   * not contributing to the basis of non-div-free test functions. The new basis
+   * functions vv_j are a linear combination of the RT basis v_k given, that is
+   * vv_j = \sum_k \alpha_jk v_k. Equation (1) is converted one-to-one to the
+   * reference cell and reference functions, thus, it suffices to compute the
+   * transformation matrix A = (\alpha_jk)_jk, here @p
+   * shape_to_test_functions_interior, on the reference cell.
+   *
+   * Why does this determine the non-constant pressure modes? Given the stream
+   * function velocity u_h the discretization of the first Stokes equation reads
+   *
+   *    a_h(u_h, v) - (p, div v) = (f, v) + BDRY   (2)
+   *
+   * Integration by parts of the pressure term, (p, vv_j * n)_\face = 0 \forall
+   * vv_j and substituting \beta_j * p_j as pressure (\beta_j is the pressure
+   * coefficient) results in
+   *
+   *    -\beta_j * (grad p_j, vv_i) = (f, vv_i) + BDRY_i - a_h(u_h, vv_i),   (3)
+   *
+   * where the LHS (grad p_j, vv_i) = N_j(vv_i) = \delta_ij by definition of
+   * vv_i, thus, the non-constant pressure coefficients are computed as follows
+   *
+   *    -\beta_i = (f, vv_i) + BDRY_i - a_h(u_h, vv_i).   (4)
+   *
+   * The RHS is the residual of the discretized Stokes equations for the
+   * discrete stream function velocity u_h.
+   */
   {
+    const bool is_dgq_legendre =
+      dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
+    AssertThrow(
+      is_dgq_legendre,
+      ExcMessage(
+        "For this reconstruction method we assume that the pressure shape functions are of Legendre-type."));
+    AssertThrow(
+      TPSS::get_dof_layout(dof_handler_velocity.get_fe()) == TPSS::DoFLayout::RT,
+      ExcMessage(
+        "For this reconstruction method we assume that the velocity finite elements are of Raviart-Thomas-type."));
+
     using Stokes::Velocity::SIPG::MW::ScratchData;
 
     using Stokes::Velocity::SIPG::MW::CopyData;
@@ -1507,29 +1526,41 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     // std::cout << vector_to_string(constant_pressure_dof_indices) << std::endl;
   }
 
+  /**
+   * Second, it remains to determine the constant pressure mode on each cell to
+   * globally determine the discrete pressure. As discussed before, the constant
+   * pressure modes do not contribute to the cell-interior non-div-free velocity
+   * functions, thus, they are determined by the degrees of freedom on
+   * interfaces.
+   *
+   * The (#cells - 1) remaining test functions are constructed by the method
+   * described in [Caussignac'87]... TODO
+   */
   {
-    using Stokes::Velocity::SIPG::MW::ScratchData;
+    {
+      using Stokes::Velocity::SIPG::MW::ScratchData;
 
-    using Stokes::Velocity::SIPG::MW::CopyData;
+      using Stokes::Velocity::SIPG::MW::CopyData;
 
-    using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
+      using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
 
-    using CellIterator = typename MatrixIntegrator<dim>::IteratorType;
+      using CellIterator = typename MatrixIntegrator<dim>::IteratorType;
 
-    const auto                     component_range = std::make_pair<unsigned int>(0, dim);
-    Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
-                                                          component_range);
-    Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
-                                                       component_range);
+      const auto                     component_range = std::make_pair<unsigned int>(0, dim);
+      Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
+                                                            component_range);
+      Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
+                                                         component_range);
 
-    MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
-                                            &analytical_velocity,
-                                            &system_u,
-                                            equation_data_stokes,
-                                            &interface_handler);
+      MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
+                                              &analytical_velocity,
+                                              &system_u,
+                                              equation_data_stokes,
+                                              &interface_handler);
 
-    const auto cell_worker =
-      [&](const CellIterator & cell, ScratchData<dim, true> & scratch_data, CopyData & copy_data) {
+      const auto cell_worker = [&](const CellIterator &     cell,
+                                   ScratchData<dim, true> & scratch_data,
+                                   CopyData &               copy_data) {
         CellIterator cell_stream_function(&dof_handler.get_triangulation(),
                                           cell->level(),
                                           cell->index(),
@@ -1540,177 +1571,81 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                                          copy_data);
       };
 
-    const auto face_worker = [&](const CellIterator &     cell,
-                                 const unsigned int &     f,
-                                 const unsigned int &     sf,
-                                 const CellIterator &     ncell,
-                                 const unsigned int &     nf,
-                                 const unsigned int &     nsf,
-                                 ScratchData<dim, true> & scratch_data,
-                                 CopyData &               copy_data) {
-      CellIterator cell_stream(&dof_handler.get_triangulation(),
-                               cell->level(),
-                               cell->index(),
-                               &dof_handler);
-      CellIterator ncell_stream(&dof_handler.get_triangulation(),
-                                ncell->level(),
-                                ncell->index(),
-                                &dof_handler);
-      matrix_integrator.face_residual_worker_tangential_interface(
-        cell, cell_stream, f, sf, ncell, ncell_stream, nf, nsf, scratch_data, copy_data);
-    };
+      const auto face_worker = [&](const CellIterator &     cell,
+                                   const unsigned int &     f,
+                                   const unsigned int &     sf,
+                                   const CellIterator &     ncell,
+                                   const unsigned int &     nf,
+                                   const unsigned int &     nsf,
+                                   ScratchData<dim, true> & scratch_data,
+                                   CopyData &               copy_data) {
+        CellIterator cell_stream(&dof_handler.get_triangulation(),
+                                 cell->level(),
+                                 cell->index(),
+                                 &dof_handler);
+        CellIterator ncell_stream(&dof_handler.get_triangulation(),
+                                  ncell->level(),
+                                  ncell->index(),
+                                  &dof_handler);
+        matrix_integrator.face_residual_worker_tangential_interface(
+          cell, cell_stream, f, sf, ncell, ncell_stream, nf, nsf, scratch_data, copy_data);
+      };
 
-    const auto boundary_worker = [&](const CellIterator &     cell,
-                                     const unsigned int &     face_no,
-                                     ScratchData<dim, true> & scratch_data,
-                                     CopyData &               copy_data) {
-      CellIterator cell_stream(&dof_handler.get_triangulation(),
-                               cell->level(),
-                               cell->index(),
-                               &dof_handler);
-      matrix_integrator.boundary_residual_worker_tangential_interface(
-        cell, cell_stream, face_no, scratch_data, copy_data);
-    };
+      const auto boundary_worker = [&](const CellIterator &     cell,
+                                       const unsigned int &     face_no,
+                                       ScratchData<dim, true> & scratch_data,
+                                       CopyData &               copy_data) {
+        CellIterator cell_stream(&dof_handler.get_triangulation(),
+                                 cell->level(),
+                                 cell->index(),
+                                 &dof_handler);
+        matrix_integrator.boundary_residual_worker_tangential_interface(
+          cell, cell_stream, face_no, scratch_data, copy_data);
+      };
 
-    const auto copier = [&](const CopyData & copy_data) {
-      constraints_on_interface.template distribute_local_to_global<Vector<double>>(
-        copy_data.cell_rhs_test, copy_data.local_dof_indices_test, right_hand_side);
-
-      for(const auto & cdf : copy_data.face_data)
-      {
+      const auto copier = [&](const CopyData & copy_data) {
         constraints_on_interface.template distribute_local_to_global<Vector<double>>(
-          cdf.cell_rhs_test, cdf.joint_dof_indices_test, right_hand_side);
-      }
-    };
+          copy_data.cell_rhs_test, copy_data.local_dof_indices_test, right_hand_side);
 
-    const UpdateFlags update_flags_v =
-      update_values | update_gradients | update_quadrature_points | update_JxW_values;
-    const UpdateFlags update_flags_sf          = update_flags_v | update_hessians;
-    const UpdateFlags interface_update_flags_v = update_values | update_gradients |
-                                                 update_quadrature_points | update_JxW_values |
-                                                 update_normal_vectors;
-    const UpdateFlags interface_update_flags_sf = interface_update_flags_v | update_hessians;
+        for(const auto & cdf : copy_data.face_data)
+        {
+          constraints_on_interface.template distribute_local_to_global<Vector<double>>(
+            cdf.cell_rhs_test, cdf.joint_dof_indices_test, right_hand_side);
+        }
+      };
 
-    ScratchData<dim, true> scratch_data(mapping,
-                                        dof_handler_velocity.get_fe(),
-                                        dof_handler.get_fe(),
-                                        n_q_points_1d,
-                                        shape_to_test_functions_interface,
-                                        update_flags_v,
-                                        update_flags_sf,
-                                        interface_update_flags_v,
-                                        interface_update_flags_sf);
+      const UpdateFlags update_flags_v =
+        update_values | update_gradients | update_quadrature_points | update_JxW_values;
+      const UpdateFlags update_flags_sf          = update_flags_v | update_hessians;
+      const UpdateFlags interface_update_flags_v = update_values | update_gradients |
+                                                   update_quadrature_points | update_JxW_values |
+                                                   update_normal_vectors;
+      const UpdateFlags interface_update_flags_sf = interface_update_flags_v | update_hessians;
 
-    CopyData copy_data(shape_to_test_functions_interface.m(), dof_handler.get_fe().dofs_per_cell);
+      ScratchData<dim, true> scratch_data(mapping,
+                                          dof_handler_velocity.get_fe(),
+                                          dof_handler.get_fe(),
+                                          n_q_points_1d,
+                                          shape_to_test_functions_interface,
+                                          update_flags_v,
+                                          update_flags_sf,
+                                          interface_update_flags_v,
+                                          interface_update_flags_sf);
 
-    MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                          dof_handler_velocity.end(),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                            MeshWorker::assemble_own_interior_faces_once,
-                          boundary_worker,
-                          face_worker);
-  }
+      CopyData copy_data(shape_to_test_functions_interface.m(), dof_handler.get_fe().dofs_per_cell);
 
-  {
-    //   {
-    //   using Stokes::VelocityPressure::MW::Mixed::ScratchData;
+      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+                            dof_handler_velocity.end(),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                              MeshWorker::assemble_own_interior_faces_once,
+                            boundary_worker,
+                            face_worker);
+    }
 
-    //   using Stokes::VelocityPressure::MW::Mixed::CopyData;
-
-    //   using Stokes::VelocityPressure::MW::Mixed::MatrixIntegrator;
-
-    //   using CellIterator = typename MatrixIntegrator<dim>::IteratorType;
-
-    //   const auto                     component_range = std::make_pair<unsigned int>(0, dim);
-    //   Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
-    //                                                         component_range);
-
-    //   MatrixIntegrator<dim> matrix_integrator(nullptr,
-    // 					    &discrete_pressure,
-    // 					    nullptr,
-    //                                           nullptr,
-    //                                           equation_data_stokes,
-    // 					    &trafomatrix_rt_to_constp,
-    //                                           &interface_handler
-    //                                           );
-
-    //   const auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData &
-    //   copy_data) {
-    //     CellIterator cellP(&dof_handler_pressure.get_triangulation(),
-    //                        cell->level(),
-    //                        cell->index(),
-    //                        &dof_handler_pressure);
-    //     cell_residual_worker(cell, cellP, scratch_data, copy_data);
-    //   };
-
-    //   // const auto face_worker = [&](const CellIterator & cell,
-    //   //                              const unsigned int & f,
-    //   //                              const unsigned int & sf,
-    //   //                              const CellIterator & ncell,
-    //   //                              const unsigned int & nf,
-    //   //                              const unsigned int & nsf,
-    //   //                              ScratchData<dim> &   scratch_data,
-    //   //                              CopyData &           copy_data) {
-    //   //   CellIterator ncellP(&dof_handler_pressure.get_triangulation(),
-    //   //                       ncell->level(),
-    //   //                       ncell->index(),
-    //   //                       &dof_handler_pressure);
-    //   //   matrix_integrator.face_worker(
-    //   //     cell, cellP, f, sf, ncell, ncellP, nf, nsf, scratch_data, copy_data);
-    //   // };
-
-    //   const auto copier = [&](const CopyData & copy_data) {
-    //     constraints_on_interface.template distribute_local_to_global<Vector<double>>(
-    // 										   copy_data.cell_rhs_test, copy_data.local_dof_indices_test,
-    // right_hand_side);
-
-    //     for(const auto & cdf : copy_data.face_data)
-    //     {
-    //       constraints_on_interface.template distribute_local_to_global<Vector<double>>(
-    //         cdf.cell_rhs_test, cdf.joint_dof_indices_test, right_hand_side);
-
-    //       constraints_on_interface.template distribute_local_to_global<SparseMatrix<double>>(
-    //         cdf.cell_matrix,
-    //         cdf.joint_dof_indices_test,
-    //         constraints_on_cell,
-    //         cdf.joint_dof_indices_ansatz,
-    //         constant_pressure_matrix);
-    //     }
-    //   };
-
-    //   const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
-    //   const UpdateFlags update_flags_pressure = update_default;
-    //   const UpdateFlags interface_update_flags =
-    //     update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
-    //   const UpdateFlags interface_update_flags_pressure =
-    //     update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
-
-    //   ScratchData<dim> scratch_data(mapping,
-    //                                 dof_handler_velocity.get_fe(),
-    //                                 dof_handler_pressure.get_fe(),
-    //                                 n_q_points_1d,
-    //                                 update_flags,
-    //                                 update_flags_pressure,
-    //                                 interface_update_flags,
-    //                                 interface_update_flags_pressure);
-
-    //   CopyData copy_data(GeometryInfo<dim>::faces_per_cell, 1U);
-
-    //   MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-    //                         dof_handler_velocity.end(),
-    //                         cell_worker,
-    //                         copier,
-    //                         scratch_data,
-    //                         copy_data,
-    //                         MeshWorker::assemble_own_cells |
-    //                           MeshWorker::assemble_own_interior_faces_once,
-    //                         nullptr,
-    //                         face_worker);
-    // }
     {
       using Pressure::Interface::MW::ScratchData;
 
@@ -1729,8 +1664,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                               &discrete_pressure,
                                               &interface_handler,
                                               equation_data_stokes);
-
-      const auto cell_worker = [&](const auto &, ScratchData<dim> &, CopyData &) {};
 
       const auto face_worker = [&](const CellIterator & cell,
                                    const unsigned int & f,
@@ -1927,6 +1860,30 @@ ModelProblem<dim, fe_degree>::compute_stream_function_error()
 
 
 
+template<int dim, int fe_degree>
+std::shared_ptr<Vector<double>>
+ModelProblem<dim, fe_degree>::compute_L2_error_pressure() const
+{
+  AssertThrow(stokes_problem, ExcMessage("stokes_problem is not initialized"));
+
+  const auto component_range_pressure = std::make_pair<unsigned int>(dim, dim + 1);
+  Stokes::FunctionExtractor<dim> analytical_solution_pressure(
+    stokes_problem->analytical_solution.get(), component_range_pressure);
+  const auto & dof_handler_p     = stokes_problem->dof_handler_pressure;
+  const auto & discrete_pressure = stokes_problem->system_solution.block(1);
+
+  const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  VectorTools::integrate_difference(dof_handler_p,
+                                    discrete_pressure,
+                                    analytical_solution_pressure,
+                                    *difference_per_cell,
+                                    QGauss<dim>(stokes_problem->n_q_points_1d + 2),
+                                    VectorTools::L2_norm);
+  return difference_per_cell;
+}
+
+
+
 // The next function evaluates the error between the computed solution
 // and the exact solution (which is known here because we have chosen
 // the right hand side and boundary values in a way so that we know
@@ -1938,9 +1895,22 @@ ModelProblem<dim, fe_degree>::compute_errors()
 {
   if(equation_data.is_stream_function())
   {
-    const double l2_velocity_error = compute_stream_function_error();
-    print_parameter("L2 velocity error (stream function):", l2_velocity_error);
-    pp_data_stokes.L2_error.push_back(l2_velocity_error);
+    /// Velocity - L2
+    {
+      AssertThrow(stokes_problem, ExcMessage("stokes_problem isnt initialized"));
+      const double l2_velocity_error = compute_stream_function_error();
+      print_parameter("L2 velocity error (stream function):", l2_velocity_error);
+      stokes_problem->pp_data.L2_error.push_back(l2_velocity_error);
+    }
+
+    /// Pressure - L2
+    {
+      const auto   error_per_cell = compute_L2_error_pressure();
+      const double l2_pressure_error =
+        VectorTools::compute_global_error(triangulation, *error_per_cell, VectorTools::L2_norm);
+      print_parameter("L2 pressure error (stream function):", l2_pressure_error);
+      stokes_problem->pp_data_pressure.L2_error.push_back(l2_pressure_error);
+    }
   }
 
   {
@@ -2025,15 +1995,34 @@ ModelProblem<dim, fe_degree>::output_results(const unsigned int iteration) const
 {
   print_parameter("Writing graphical output", "...");
 
-  DataOut<dim> data_out;
+  const std::string filename = "biharm_" + equation_data.sstr_equation_variant() + "_" +
+                               Utilities::int_to_string(iteration, 3) + ".vtk";
+  std::ofstream output_vtk(filename);
+
+  StreamVelocityPP<dim> stream_velocity_pp;
+  PressurePP<dim>       pressure_pp;
+  DataOut<dim>          data_out;
+
+  // TODO requires ParaView 5.5.0
+  // DataOutBase::VtkFlags flags;
+  // flags.write_higher_order_cells = true;
+  // data_out.set_flags(flags);
 
   data_out.attach_dof_handler(dof_handler);
-  data_out.add_data_vector(system_u, "solution");
-  data_out.build_patches();
 
-  std::ofstream output_vtk(("biharm_" + equation_data.sstr_equation_variant() + "_" +
-                            Utilities::int_to_string(iteration, 3) + ".vtk")
-                             .c_str());
+  data_out.add_data_vector(system_u, "solution");
+  if(equation_data.is_stream_function())
+  {
+    data_out.add_data_vector(system_u, stream_velocity_pp);
+
+    Assert(stokes_problem, ExcMessage("stokes_problem isnt initialized"));
+    const auto & dof_handler_p     = stokes_problem->dof_handler_pressure;
+    const auto & discrete_pressure = stokes_problem->system_solution.block(1);
+    data_out.add_data_vector(dof_handler_p, discrete_pressure, pressure_pp);
+  }
+
+  data_out.build_patches(fe_degree);
+
   data_out.write_vtk(output_vtk);
 }
 

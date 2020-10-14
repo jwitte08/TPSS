@@ -8,11 +8,18 @@
 
 
 std::string
-write_ppdata_to_string(const PostProcessData & pp_data, const PostProcessData & pp_data_stokes)
+write_ppdata_to_string(const PostProcessData & pp_data,
+                       const PostProcessData & pp_data_velocity = PostProcessData{},
+                       const PostProcessData & pp_data_pressure = PostProcessData{})
 {
+  const bool has_velocity_data = !pp_data_velocity.L2_error.empty();
+  const bool has_pressure_data = !pp_data_pressure.L2_error.empty();
+
   std::ostringstream oss;
   ConvergenceTable   info_table;
   Assert(!pp_data.n_cells_global.empty(), ExcMessage("No cells to post process."));
+  if(has_pressure_data)
+    AssertDimension(pp_data_pressure.n_dofs_global.size(), pp_data.n_dofs_global.size());
   for(unsigned run = 0; run < pp_data.n_cells_global.size(); ++run)
   {
     info_table.add_value("n_levels", pp_data.n_mg_levels.at(run));
@@ -23,8 +30,13 @@ write_ppdata_to_string(const PostProcessData & pp_data, const PostProcessData & 
     info_table.add_value("reduction", pp_data.average_reduction_system.at(run));
     info_table.add_value("L2_error", pp_data.L2_error.at(run));
     info_table.add_value("H2semiO_error", pp_data.H2semi_error.at(run));
-    if(!pp_data_stokes.L2_error.empty())
-      info_table.add_value("L2_velocity_error", pp_data_stokes.L2_error.at(run));
+    if(has_velocity_data)
+      info_table.add_value("L2_velocity_error", pp_data_velocity.L2_error.at(run));
+    if(has_pressure_data)
+    {
+      info_table.add_value("n_dofs_p", pp_data_pressure.n_dofs_global.at(run));
+      info_table.add_value("L2_pressure_error", pp_data_pressure.L2_error.at(run));
+    }
   }
   info_table.set_scientific("reduction", true);
   info_table.set_precision("reduction", 3);
@@ -43,13 +55,24 @@ write_ppdata_to_string(const PostProcessData & pp_data, const PostProcessData & 
                                         ConvergenceTable::reduction_rate_log2,
                                         pp_data.n_dimensions);
 
-  if(!pp_data_stokes.L2_error.empty())
+  if(has_velocity_data)
   {
     info_table.set_scientific("L2_velocity_error", true);
     info_table.set_precision("L2_velocity_error", 3);
     info_table.evaluate_convergence_rates("L2_velocity_error", ConvergenceTable::reduction_rate);
     info_table.evaluate_convergence_rates("L2_velocity_error",
                                           "n_dofs",
+                                          ConvergenceTable::reduction_rate_log2,
+                                          pp_data.n_dimensions);
+  }
+
+  if(has_pressure_data)
+  {
+    info_table.set_scientific("L2_pressure_error", true);
+    info_table.set_precision("L2_pressure_error", 3);
+    info_table.evaluate_convergence_rates("L2_pressure_error", ConvergenceTable::reduction_rate);
+    info_table.evaluate_convergence_rates("L2_pressure_error",
+                                          "n_dofs_p",
                                           ConvergenceTable::reduction_rate_log2,
                                           pp_data.n_dimensions);
   }
@@ -196,13 +219,23 @@ main(int argc, char * argv[])
     biharmonic_problem.pcout = pcout;
 
     biharmonic_problem.run();
-    *pcout << std::endl
-           << std::endl
-           << write_ppdata_to_string(biharmonic_problem.pp_data, biharmonic_problem.pp_data_stokes);
+
+    std::string pp_output_as_string;
+    if(biharmonic_problem.equation_data.is_stream_function())
+    {
+      AssertThrow(biharmonic_problem.stokes_problem, ExcMessage("stokes_problem isnt initialized"));
+      const auto & stokes = *biharmonic_problem.stokes_problem;
+      pp_output_as_string =
+        write_ppdata_to_string(biharmonic_problem.pp_data, stokes.pp_data, stokes.pp_data_pressure);
+    }
+    else
+      pp_output_as_string = write_ppdata_to_string(biharmonic_problem.pp_data);
+
+    *pcout << std::endl << std::endl << pp_output_as_string;
     fout.close();
 
     fout.open(filename + ".tab", std::ios_base::out);
-    fout << write_ppdata_to_string(biharmonic_problem.pp_data, biharmonic_problem.pp_data_stokes);
+    fout << pp_output_as_string;
     fout.close();
   }
 
