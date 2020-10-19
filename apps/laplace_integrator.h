@@ -648,10 +648,12 @@ Operator<dim, fe_degree, Number>::apply_face(
     phi_outer.reinit(face);
     phi_outer.gather_evaluate(src, true, true);
 
-    const VectorizedArray<Number> inverse_length_normal_to_face =
-      0.5 * (std::abs((phi_inner.get_normal_vector(0) * phi_inner.inverse_jacobian(0))[dim - 1]) +
-             std::abs((phi_outer.get_normal_vector(0) * phi_outer.inverse_jacobian(0))[dim - 1]));
-    const VectorizedArray<Number> sigma = inverse_length_normal_to_face * get_penalty_factor();
+    const VectorizedArray<Number> h_inner =
+      1. / std::abs((phi_inner.get_normal_vector(0) * phi_inner.inverse_jacobian(0))[dim - 1]);
+    const VectorizedArray<Number> h_outer =
+      1. / std::abs((phi_outer.get_normal_vector(0) * phi_outer.inverse_jacobian(0))[dim - 1]);
+    const VectorizedArray<Number> sigma =
+      equation_data.ip_factor * 0.5 * ::Nitsche::compute_penalty_impl(fe_degree, h_inner, h_outer);
 
     for(unsigned int q = 0; q < phi_inner.n_q_points; ++q)
     {
@@ -688,9 +690,10 @@ Operator<dim, fe_degree, Number>::apply_boundary(
     phi_inner.reinit(face);
     phi_inner.gather_evaluate(src, true, true);
 
-    const VectorizedArray<Number> inverse_length_normal_to_face =
-      std::abs((phi_inner.get_normal_vector(0) * phi_inner.inverse_jacobian(0))[dim - 1]);
-    const VectorizedArray<Number> sigma = inverse_length_normal_to_face * get_penalty_factor();
+    const VectorizedArray<Number> h_inner =
+      1. / std::abs((phi_inner.get_normal_vector(0) * phi_inner.inverse_jacobian(0))[dim - 1]);
+    const VectorizedArray<Number> sigma =
+      equation_data.ip_factor * 0.5 * ::Nitsche::compute_penalty_impl(fe_degree, h_inner, h_inner);
 
     const bool is_dirichlet = true; //(data.get_boundary_id(face) == 0);
 
@@ -701,6 +704,7 @@ Operator<dim, fe_degree, Number>::apply_boundary(
       const VectorizedArray<Number> normal_derivative_inner = phi_inner.get_normal_derivative(q);
       const VectorizedArray<Number> normal_derivative_outer =
         is_dirichlet ? normal_derivative_inner : -normal_derivative_inner;
+      /// on dirichlet boundary: jump = 2u   -> scale penalty by 1/2
       const VectorizedArray<Number> solution_jump = (u_inner - u_outer);
       const VectorizedArray<Number> average_normal_gradient =
         (normal_derivative_inner + normal_derivative_outer) * Number(0.5);
