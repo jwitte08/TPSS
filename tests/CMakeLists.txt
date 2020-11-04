@@ -44,6 +44,8 @@ set (src_files
 
 add_custom_target(setup_tests)
 
+target_compile_features(gtest PUBLIC cxx_std_17)
+
 foreach(test ${src_files})
   string(REPLACE ".cc" "" target ${test})
   add_executable(${target} EXCLUDE_FROM_ALL ${test})

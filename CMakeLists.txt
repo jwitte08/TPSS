@@ -103,7 +103,7 @@ DEAL_II_INITIALIZE_CACHED_VARIABLES()
 
 ## TPSS is header-only, that is an INTERFACE library in cmake speak
 add_library(tpss INTERFACE)
-target_compile_features(tpss INTERFACE cxx_std_14)
+target_compile_features(tpss INTERFACE cxx_std_17)
 
 ## Set the include directory to be build from (BUILD_INTERFACE). Set the install
 ## path the includes are "copied" to (INSTALL_INTERFACE). The suffix
