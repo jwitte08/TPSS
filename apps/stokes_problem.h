@@ -1918,7 +1918,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
   }
   else if(dof_layout_v == TPSS::DoFLayout::RT)
   {
-    ZeroFunction<dim> zero_velocity(dim);
+    Functions::ZeroFunction<dim> zero_velocity(dim);
     /// We use dof_handler by purpose here bypassing the assertion in
     /// project_boundary_values_div_conforming(), since the underlying finite
     /// element is of type FE_System and therefore not checked (otherwise the
@@ -2080,7 +2080,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   }
   else if(dof_layout_v == TPSS::DoFLayout::RT)
   {
-    ZeroFunction<dim> zero_velocity(dim);
+    Functions::ZeroFunction<dim> zero_velocity(dim);
     for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
       VectorToolsFix::project_boundary_values_div_conforming(
         dof_handler, 0U, zero_velocity, boundary_id, zero_constraints, mapping);
@@ -2117,10 +2117,8 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
         for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
           constant_pressure_mode[i] = 1.;
       }
-      else if(dof_layout_p == TPSS::DoFLayout::DGQ)
+      else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
       {
-        AssertThrow(!is_dgq_legendre,
-                    ExcMessage("Legendre-type elements must be treated like DGP."));
         constant_pressure_mode = 1.;
       }
       else
@@ -2937,7 +2935,7 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
       dof_values_pressure[i] -= mean_pressure;
   }
-  else if(dof_layout_p == TPSS::DoFLayout::DGQ)
+  else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
     system_solution.block(1).add(-mean_pressure);
   else
     AssertThrow(false, ExcMessage("This dof layout is not supported."));
@@ -2966,7 +2964,7 @@ ModelProblem<dim, fe_degree_p, method>::correct_mean_value_pressure()
     for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
       dof_values_pressure[i] -= mean_pressure;
   }
-  else if(dof_layout_p == TPSS::DoFLayout::DGQ)
+  else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
     system_solution.block(1).add(-mean_pressure);
   else
     AssertThrow(false, ExcMessage("This dof layout is not supported."));

@@ -392,7 +392,6 @@ struct Test
   //       poisson_problem.build_schwarz_preconditioner(subdomain_handler, level_matrix,
   //       schwarz_data);
   //     typename SCHWARZ_SMOOTHER::AdditionalData smoother_data;
-  //     smoother_data.number_of_smoothing_steps = schwarz_data.number_of_smoothing_steps;
   //     SCHWARZ_SMOOTHER schwarz_smoother;
   //     schwarz_smoother.initialize(level_matrix, schwarz_preconditioner, smoother_data);
 
@@ -430,8 +429,7 @@ struct Test
       const auto   schwarz_preconditioner =
         poisson_problem.build_schwarz_preconditioner(subdomain_handler, level_matrix, schwarz_data);
       typename SCHWARZ_SMOOTHER::AdditionalData smoother_data;
-      smoother_data.number_of_smoothing_steps = schwarz_data.number_of_smoothing_steps;
-      SCHWARZ_SMOOTHER schwarz_smoother;
+      SCHWARZ_SMOOTHER                          schwarz_smoother;
       schwarz_smoother.initialize(level_matrix, schwarz_preconditioner, smoother_data);
       time.stop();
       timings_smooth.setup.push_back(time.get_last_lap_wall_time_data());

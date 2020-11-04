@@ -11,6 +11,7 @@
 
 /// apps/
 #include "linelasticity_problem.h"
+#include "stokes.h"
 #include "stokes_problem.h"
 
 /// tests/
@@ -44,12 +45,19 @@ protected:
     const bool is_higher_order = fe_degree_v > 2;
     pcout_owned = std::make_shared<ConditionalOStream>(ofs, !is_higher_order && is_first_proc);
 
+    // {
+    //   auto & pre_smoother                   = rt_parameters.multigrid.pre_smoother;
+    //   pre_smoother.variant                  = SmootherParameter::SmootherVariant::Schwarz;
+    //   pre_smoother.schwarz.patch_variant    = TPSS::PatchVariant::vertex;
+    //   pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
+    //   rt_parameters.multigrid.post_smoother = pre_smoother;
+    // }
+
     {
-      auto & pre_smoother                   = rt_parameters.multigrid.pre_smoother;
-      pre_smoother.variant                  = SmootherParameter::SmootherVariant::Schwarz;
-      pre_smoother.schwarz.patch_variant    = TPSS::PatchVariant::vertex;
-      pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
-      rt_parameters.multigrid.post_smoother = pre_smoother;
+      const auto patch_variant    = TPSS::PatchVariant::vertex;
+      const auto smoother_variant = TPSS::SmootherVariant::additive;
+      const auto damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
+      options.setup(/*FGRMES_GMGVelocity + Schwarz*/ 3, damping, patch_variant, smoother_variant);
     }
   }
 
@@ -66,10 +74,9 @@ protected:
   {
     *pcout_owned << "//////////   STOKES PROBLEM" << std::endl;
     EquationData equation_data;
-    rt_parameters.solver.variant = "FGMRES_GMGvelocity";
-    using StokesProblem          = ModelProblem<dim, fe_degree_p, Method::TaylorHoodDGQ>;
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::TaylorHoodDGQ>;
     std::shared_ptr<const StokesProblem> stokes_problem;
-    auto new_problem   = std::make_shared<StokesProblem>(rt_parameters, equation_data);
+    auto new_problem   = std::make_shared<StokesProblem>(options.prms, equation_data);
     new_problem->pcout = pcout_owned;
     new_problem->make_grid();
     new_problem->setup_system();
@@ -85,7 +92,7 @@ protected:
     equation_data_elasticity.ip_factor = 1.;
     using ElasticityProblem            = LinElasticity::ModelProblem<dim, fe_degree_p + 1>;
     const auto elasticity_problem =
-      std::make_shared<ElasticityProblem>(*pcout_owned, rt_parameters, equation_data_elasticity);
+      std::make_shared<ElasticityProblem>(*pcout_owned, options.prms, equation_data_elasticity);
     elasticity_problem->create_triangulation();
     elasticity_problem->assemble_matrix();
     elasticity_problem->print_informations();
@@ -103,12 +110,18 @@ protected:
   void
   check_system_matrix(const bool check_diagonal = false, const bool check_rhs = false)
   {
+    {
+      const auto patch_variant    = TPSS::PatchVariant::vertex;
+      const auto smoother_variant = TPSS::SmootherVariant::additive;
+      const auto damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
+      options.setup(/*GMRES_GMG + Schwarz*/ 4, damping, patch_variant, smoother_variant);
+    }
+
     EquationData equation_data;
-    rt_parameters.solver.variant = "GMRES_GMG";
-    using StokesProblem          = ModelProblem<dim, fe_degree_p, Method::TaylorHood>;
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::TaylorHood>;
 
     *pcout_owned << "//////////   STOKES PROBLEM (step-56)" << std::endl;
-    auto stokes_problem_step56   = std::make_shared<StokesProblem>(rt_parameters, equation_data);
+    auto stokes_problem_step56   = std::make_shared<StokesProblem>(options.prms, equation_data);
     stokes_problem_step56->pcout = pcout_owned;
     stokes_problem_step56->make_grid();
     stokes_problem_step56->setup_system();
@@ -116,7 +129,7 @@ protected:
     stokes_problem_step56->print_informations();
 
     *pcout_owned << "//////////   STOKES PROBLEM" << std::endl;
-    auto stokes_problem   = std::make_shared<StokesProblem>(rt_parameters, equation_data);
+    auto stokes_problem   = std::make_shared<StokesProblem>(options.prms, equation_data);
     stokes_problem->pcout = pcout_owned;
     stokes_problem->make_grid();
     stokes_problem->setup_system();
@@ -161,10 +174,9 @@ protected:
   check_local_solvers_velocity(const bool only_diagonal = false)
   {
     EquationData equation_data;
-    rt_parameters.solver.variant = "FGMRES_GMGvelocity";
-    using StokesProblem          = ModelProblem<dim, fe_degree_p, method>;
+    using StokesProblem = ModelProblem<dim, fe_degree_p, method>;
     std::shared_ptr<const StokesProblem> stokes_problem;
-    auto new_problem   = std::make_shared<StokesProblem>(rt_parameters, equation_data);
+    auto new_problem   = std::make_shared<StokesProblem>(options.prms, equation_data);
     new_problem->pcout = pcout_owned;
     new_problem->make_grid();
     new_problem->setup_system();
@@ -255,8 +267,14 @@ protected:
 
     constexpr auto method = Method::TaylorHood;
 
+    {
+      const auto patch_variant    = TPSS::PatchVariant::vertex;
+      const auto smoother_variant = TPSS::SmootherVariant::additive;
+      const auto damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
+      options.setup(/*GMRES_GMG + Schwarz*/ 4, damping, patch_variant, smoother_variant);
+    }
+
     EquationData equation_data;
-    rt_parameters.solver.variant = "GMRES_GMG";
 
     using StokesProblem = ModelProblem<dim, fe_degree_p, method>;
 
@@ -264,7 +282,7 @@ protected:
                  << check_diagonal << ", check_level_matrix = " << check_level_matrix << ")"
                  << std::endl
                  << std::endl;
-    const auto stokes_problem = std::make_shared<StokesProblem>(rt_parameters, equation_data);
+    const auto stokes_problem = std::make_shared<StokesProblem>(options.prms, equation_data);
     stokes_problem->pcout     = pcout_owned;
     stokes_problem->make_grid();
     stokes_problem->setup_system();
@@ -447,7 +465,8 @@ protected:
   std::ofstream                       ofs;
   std::shared_ptr<ConditionalOStream> pcout_owned;
 
-  RT::Parameter                                  rt_parameters;
+  StokesFlow<dim, fe_degree_p> options;
+  // RT::Parameter                                  options.prms;
   std::shared_ptr<const MatrixFree<dim, double>> mf_storage;
   std::shared_ptr<SubdomainHandler<dim, double>> subdomain_handler;
 };
@@ -458,85 +477,85 @@ TYPED_TEST_SUITE_P(TestStokesIntegrator);
 
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrixVelocity)
 {
-  using Fixture                                = TestStokesIntegrator<TypeParam>;
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  Fixture::rt_parameters.mesh.n_refinements    = 0;
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::check_system_matrix_velocity();
-  Fixture::rt_parameters.mesh.n_refinements = 1;
+  Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::check_system_matrix_velocity();
 }
 
 TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocity)
 {
-  using Fixture                                = TestStokesIntegrator<TypeParam>;
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  Fixture::rt_parameters.mesh.n_refinements    = 0;
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::check_local_solvers_velocity(true);
   Fixture::check_local_solvers_velocity(false);
-  Fixture::rt_parameters.mesh.n_refinements = 1;
+  Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::check_local_solvers_velocity(true);
   Fixture::check_local_solvers_velocity(false);
 }
 
 TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversDGVelocity)
 {
-  using Fixture                                = TestStokesIntegrator<TypeParam>;
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  Fixture::rt_parameters.mesh.n_refinements    = 0;
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::template check_local_solvers_velocity<Method::TaylorHoodDGQ>(true);
   Fixture::template check_local_solvers_velocity<Method::TaylorHoodDGQ>(false);
-  Fixture::rt_parameters.mesh.n_refinements = 1;
+  Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::template check_local_solvers_velocity<Method::TaylorHoodDGQ>(true);
   Fixture::template check_local_solvers_velocity<Method::TaylorHoodDGQ>(false);
 }
 
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrix)
 {
-  using Fixture                                = TestStokesIntegrator<TypeParam>;
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  Fixture::rt_parameters.mesh.n_refinements    = 0;
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::check_system_matrix(true);
   Fixture::check_system_matrix(false);
-  Fixture::rt_parameters.mesh.n_refinements = 1;
+  Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::check_system_matrix(true);
   Fixture::check_system_matrix(false);
 }
 
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemRHS)
 {
-  using Fixture                                = TestStokesIntegrator<TypeParam>;
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  Fixture::rt_parameters.mesh.n_refinements    = 0;
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::check_system_matrix(false, true);
-  Fixture::rt_parameters.mesh.n_refinements = 1;
+  Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::check_system_matrix(false, true);
 }
 
 TYPED_TEST_P(TestStokesIntegrator, CheckLevelMatrixVelocityPressure)
 {
-  using Fixture                                = TestStokesIntegrator<TypeParam>;
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  Fixture::rt_parameters.mesh.n_refinements    = 0;
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::check_local_solvers_block(false, true);
-  Fixture::rt_parameters.mesh.n_refinements = 1;
+  Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::check_local_solvers_block(false, true);
 }
 
 TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
 {
-  using Fixture                                = TestStokesIntegrator<TypeParam>;
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  Fixture::rt_parameters.mesh.n_refinements    = 0;
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::check_local_solvers_block(true);
   Fixture::check_local_solvers_block(false);
-  Fixture::rt_parameters.mesh.n_refinements = 1;
+  Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::check_local_solvers_block(true);
   Fixture::check_local_solvers_block(false);
 }

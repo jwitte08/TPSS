@@ -281,7 +281,8 @@ struct PackExpansionDelayed
   }
 
   template<std::size_t... index>
-  auto eval_impl(std::index_sequence<index...>)
+  auto
+  eval_impl(std::index_sequence<index...>)
   {
     return Func{}(std::get<index>(params)...);
   }

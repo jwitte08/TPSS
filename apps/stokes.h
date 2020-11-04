@@ -19,10 +19,12 @@
 
 namespace Stokes
 {
+template<int dimension_ = CT::DIMENSION_, int fe_degree_p_ = CT::FE_DEGREE_>
 struct StokesFlow
 {
-  static constexpr auto dim         = CT::DIMENSION_;
-  static constexpr auto fe_degree_p = CT::FE_DEGREE_;
+  static constexpr auto dim         = dimension_;
+  static constexpr auto fe_degree_p = fe_degree_p_;
+
   // static constexpr char const * skipper     = "o";
   // 0 : direct solver (UMFPACK)
   // 1 : flexible GMRES prec. by ILU (FGMRES_ILU)
@@ -36,7 +38,10 @@ struct StokesFlow
   static constexpr unsigned int test_index_max = 6;
 
   void
-  setup(const unsigned int test_index, const double damping_factor)
+  setup(const unsigned int          test_index,
+        const double                damping_factor,
+        const TPSS::PatchVariant    patch_variant    = CT::PATCH_VARIANT_,
+        const TPSS::SmootherVariant smoother_variant = CT::SMOOTHER_VARIANT_)
   {
     AssertThrow(test_index <= test_index_max, ExcMessage("test_index is not valid"));
 
@@ -72,10 +77,10 @@ struct StokesFlow
     // prms.multigrid.coarse_grid.accuracy                                           = 1.e-12;
 
     //:: pre-smoother
-    prms.multigrid.pre_smoother.variant                  = smoother_variant[test_index];
+    prms.multigrid.pre_smoother.variant                  = smoother_scheme[test_index];
     prms.multigrid.pre_smoother.n_smoothing_steps        = 2; // !!!
-    prms.multigrid.pre_smoother.schwarz.patch_variant    = CT::PATCH_VARIANT_;
-    prms.multigrid.pre_smoother.schwarz.smoother_variant = CT::SMOOTHER_VARIANT_;
+    prms.multigrid.pre_smoother.schwarz.patch_variant    = patch_variant;
+    prms.multigrid.pre_smoother.schwarz.smoother_variant = smoother_variant;
     prms.multigrid.pre_smoother.schwarz.manual_coloring  = true;
     prms.multigrid.pre_smoother.schwarz.damping_factor   = damping_factor;
 
@@ -92,7 +97,7 @@ struct StokesFlow
                                                               "CG_GMG",
                                                               "CG"};
 
-  const SmootherParameter::SmootherVariant smoother_variant[test_index_max + 1] = {
+  const SmootherParameter::SmootherVariant smoother_scheme[test_index_max + 1] = {
     SmootherParameter::SmootherVariant::None,
     SmootherParameter::SmootherVariant::None,
     SmootherParameter::SmootherVariant::GaussSeidel,

@@ -850,7 +850,7 @@ namespace Poiseuille
 namespace NoSlip
 {
 template<int dim>
-using Solution = ZeroFunction<dim>;
+using Solution = Functions::ZeroFunction<dim>;
 }
 
 
@@ -2089,12 +2089,12 @@ SolutionPressure<2>::hessian(const Point<2> &, const unsigned int) const
 namespace NoSlip
 {
 template<int dim>
-class SolutionVelocity : public ZeroFunction<dim>
+class SolutionVelocity : public Functions::ZeroFunction<dim>
 {
   static_assert(dim == 2, "Implemented for two dimensions.");
 
 public:
-  SolutionVelocity() : ZeroFunction<dim>(dim)
+  SolutionVelocity() : Functions::ZeroFunction<dim>(dim)
   {
   }
 };
@@ -2325,7 +2325,7 @@ private:
 //  * Choosing a zero pressure results in a divergence-free manufactured load.
 //  */
 // template<int dim>
-// using SolutionPressure = ZeroFunction<dim>;
+// using SolutionPressure = Functions::ZeroFunction<dim>;
 
 // !!!
 template<int dim>
