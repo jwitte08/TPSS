@@ -266,9 +266,9 @@ public:
 
   std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
 
-  Stokes::StokesFlow            options_stokes;
-  Stokes::EquationData          equation_data_stokes;
-  static constexpr unsigned int fe_degree_pressure = fe_degree - 1;
+  static constexpr unsigned int               fe_degree_pressure = fe_degree - 1;
+  Stokes::StokesFlow<dim, fe_degree_pressure> options_stokes;
+  Stokes::EquationData                        equation_data_stokes;
   std::shared_ptr<Stokes::ModelProblem<dim, fe_degree_pressure, Stokes::Method::RaviartThomas>>
     stokes_problem;
 

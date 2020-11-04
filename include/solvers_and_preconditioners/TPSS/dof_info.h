@@ -232,17 +232,17 @@ struct DoFInfo
   DoFLayout
   get_dof_layout() const;
 
-  DoFAccessor<dim, DoFHandler<dim>, true>
+  DoFAccessor<dim, dim, dim, true>
   get_level_dof_accessor(const unsigned int cell_position) const;
 
-  DoFAccessor<dim, DoFHandler<dim>, true>
+  DoFAccessor<dim, dim, dim, true>
   get_level_dof_accessor_impl(const unsigned int cell_index, const unsigned int level) const;
 
   std::vector<types::global_dof_index>
   fill_level_dof_indices(const unsigned int cell_position) const;
 
   std::vector<types::global_dof_index>
-  fill_level_dof_indices_impl(const DoFAccessor<dim, DoFHandler<dim>, true> & cell) const;
+  fill_level_dof_indices_impl(const DoFAccessor<dim, dim, dim, true> & cell) const;
 
   const DoFHandler<dim> * dof_handler = nullptr;
 
@@ -661,7 +661,7 @@ DoFInfo<dim, Number>::get_dof_layout() const
 
 
 template<int dim, typename Number>
-inline DoFAccessor<dim, DoFHandler<dim>, true>
+inline DoFAccessor<dim, dim, dim, true>
 DoFInfo<dim, Number>::get_level_dof_accessor(const unsigned int cell_position) const
 {
   Assert(patch_info, ExcMessage("Patch info not initialized."));
@@ -671,12 +671,12 @@ DoFInfo<dim, Number>::get_level_dof_accessor(const unsigned int cell_position) c
 
 
 template<int dim, typename Number>
-inline DoFAccessor<dim, DoFHandler<dim>, true>
+inline DoFAccessor<dim, dim, dim, true>
 DoFInfo<dim, Number>::get_level_dof_accessor_impl(const unsigned int cell_index,
                                                   const unsigned int level) const
 {
   const auto & tria = dof_handler->get_triangulation();
-  return DoFAccessor<dim, DoFHandler<dim>, true>(&tria, level, cell_index, dof_handler);
+  return DoFAccessor<dim, dim, dim, true>(&tria, level, cell_index, dof_handler);
 }
 
 
@@ -692,7 +692,7 @@ DoFInfo<dim, Number>::fill_level_dof_indices(const unsigned int cell_position) c
 template<int dim, typename Number>
 inline std::vector<types::global_dof_index>
 DoFInfo<dim, Number>::fill_level_dof_indices_impl(
-  const DoFAccessor<dim, DoFHandler<dim>, true> & cell) const
+  const DoFAccessor<dim, dim, dim, true> & cell) const
 {
   const auto                           n_dofs_per_cell = dof_handler->get_fe().n_dofs_per_cell();
   std::vector<types::global_dof_index> level_dof_indices(n_dofs_per_cell);
