@@ -32,6 +32,7 @@ struct SchwarzSmootherData
       reverse_smoothing(false),
       symmetrize_smoothing(false),
       caching_strategy(TPSS::CachingStrategy::Cached),
+      use_ras(false),
       print_details(false)
   {
   }
@@ -61,6 +62,7 @@ struct SchwarzSmootherData
     print_parameter(pcout, "Manual coloring", manual_coloring);
     print_parameter(pcout, "Symmetrized Schwarz operator", symmetrize_smoothing);
     print_parameter(pcout, "Reversed Schwarz operator", reverse_smoothing);
+    print_parameter(pcout, "Restricted Additive Schwarz", use_ras);
 
     print_parameter(pcout, "Number of quad points (surrogate)", n_q_points_surrogate);
     print_parameter(pcout, "Normalize surrogate patches", normalize_surrogate_patch);
@@ -82,6 +84,7 @@ struct SchwarzSmootherData
     is_equal &= use_arc_length == other.use_arc_length;
     is_equal &= reverse_smoothing == other.reverse_smoothing;
     is_equal &= symmetrize_smoothing == other.symmetrize_smoothing;
+    is_equal &= use_ras == other.use_ras;
     is_equal &= print_details == other.print_details;
     is_equal &= caching_strategy == other.caching_strategy;
     return is_equal;
@@ -124,6 +127,9 @@ struct SchwarzSmootherData
 
   // which patch related data is cached or computed on-the-fly
   TPSS::CachingStrategy caching_strategy;
+
+  // use restricted additive schwarz
+  bool use_ras;
 
   // print detailed information regarding the patch distribution, etc.
   bool print_details;

@@ -264,6 +264,7 @@ public:
     precondition_data.local_relaxation = schwarz_data.local_damping_factor;
     precondition_data.symmetrized      = schwarz_data.symmetrize_smoothing;
     precondition_data.reverse          = schwarz_data.reverse_smoothing;
+    precondition_data.use_ras          = schwarz_data.use_ras;
     typename smoother_type::AdditionalData smoother_data;
     smoother_data.number_of_smoothing_steps = prms.n_smoothing_steps;
 
