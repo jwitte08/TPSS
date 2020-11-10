@@ -74,10 +74,10 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
   const auto locally_owned_range_mg =
     filter_iterators(dof_handler->mg_cell_iterators_on_level(level),
                      IteratorFilters::LocallyOwnedLevelCell());
-  std::vector<std::vector<typename DoFHandler<dim>::level_cell_iterator>> cell_collections;
+  std::vector<std::vector<CellIterator>> cell_collections;
   for(const auto & cell : locally_owned_range_mg)
   {
-    std::vector<typename DoFHandler<dim>::level_cell_iterator> patch;
+    std::vector<CellIterator> patch;
     patch.push_back(cell);
     cell_collections.emplace_back(patch);
   }

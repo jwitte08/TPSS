@@ -156,8 +156,8 @@ SubdomainHandler<dim, Number>::guess_grain_size(const unsigned int n_subdomain_b
   unsigned int grain_size = additional_data.grain_size;
   if(grain_size == 0)
   {
-    // we would like to have enough work to do, so as first guess, try
-    // to get 16 times as many chunks as we have threads on the system.
+    /// we would like to have enough work to do, so as first guess, try to get
+    /// 16 times as many chunks as we have threads on the system.
     if(additional_data.n_threads > MultithreadInfo::n_threads())
       std::cout << "WARNING: AdditionalData::n_threads = " << additional_data.n_threads
                 << "is higher than MultithreadInfo::n_threads() = " << MultithreadInfo::n_threads()
@@ -165,12 +165,9 @@ SubdomainHandler<dim, Number>::guess_grain_size(const unsigned int n_subdomain_b
     const unsigned int n_threads =
       additional_data.n_threads == 0 ? MultithreadInfo::n_threads() : additional_data.n_threads;
     grain_size = n_subdomain_batches / (n_threads * 16);
-    /* if (additional_data.patch_variant == TPSS::PatchVariant::cell) */
-    /*   grain_size *= 1<<dim; */
 
-    // if there are too few degrees of freedom per cell, need to
-    // increase the grain size
-    //    const unsigned int minimum_parallel_grain_size = 400; //Martin:200 // J:?
+    /// if there are too few degrees of freedom per cell, need to
+    /// increase the grain size
     const unsigned int minimum_parallel_grain_size = 200; // Martin:200 // J:?
     const unsigned int dofs_per_cell               = get_dof_handler(0).get_fe().dofs_per_cell;
     if(dofs_per_cell * grain_size < minimum_parallel_grain_size)

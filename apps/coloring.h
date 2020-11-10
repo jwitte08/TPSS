@@ -225,6 +225,19 @@ struct ColoringBase
 };
 
 
+
+/**
+ * Red-black coloring for a uniformly refined hypercube.
+ *
+ * (1) Standard red-black coloring for cells.
+ *
+ * (2) Shifted red-black coloring for vertex patches: We choose a "starting"
+ * vertex patch in one corner of the hypercube. Each vertex patch is a 2x2x...x2
+ * mesh by itself. Therefore, we have 2^dim possibilities to shift this vertex
+ * patch by zero or one (in positive direction) in any dimension. Interpreting a
+ * vertex patch as a macro cell, for each shifted starting vertex patch we have
+ * a standard red-black coloring. In total this results in (2*2^dim) colors.
+ */
 template<int dim>
 struct RedBlackColoring : public ColoringBase<dim>
 {
@@ -317,6 +330,20 @@ struct RedBlackColoring : public ColoringBase<dim>
 
 
 
+/**
+ * The coloring used for H^1-conforming finite elements on a uniformly refined
+ * hypercube.
+ *
+ * (1) Coloring for cells: TODO (if needed)
+ *
+ * (2) Coloring for vertex patches: We choose a "starting" vertex patch in one
+ * corner of the hypercube. Each vertex patch is a 2x2x...x2 mesh by
+ * itself. Therefore, we have 2^dim possibilities to shift this vertex patch by
+ * zero or one (in positive direction) in any dimension. Starting with any of
+ * those shifted vertex patches, there is an obvious tiling of vertex patches
+ * avoiding any space in-between two adjacent. In total this results in 2^dim
+ * colors.
+ */
 template<int dim>
 struct TiledColoring : public ColoringBase<dim>
 {
