@@ -727,34 +727,48 @@ struct ModelProblem : public Subscriptor
   }
 
 
+  /// TODO fix this: for DGQ-elements we obtain super-convergence (one order higher)
+  // double
+  // compute_l2_error(const MatrixFree<dim, Number> * mf_storage,
+  //                  const VECTOR &                  discrete_solution,
+  //                  const Function<dim> *           analytic_solution) const
+  // {
+  //   double                                                     global_error = 0;
+  //   FEEvaluation<dim, fe_degree, n_q_points_static, 1, Number> phi(*mf_storage);
+  //   const auto & uh = discrete_solution;
+  //   for(unsigned int cell = 0; cell < mf_storage->n_macro_cells(); ++cell)
+  //   {
+  //     phi.reinit(cell);
+  //     phi.read_dof_values_plain(uh);
+  //     phi.evaluate(true, false);
+  //     VectorizedArray<Number> local_error = 0.;
+  //     for(unsigned int q = 0; q < phi.n_q_points; ++q)
+  //     {
+  //       const auto value_u  = VHelper::value(*analytic_solution, phi.quadrature_point(q));
+  //       const auto value_uh = phi.get_value(q);
+  //       local_error += (value_uh - value_u) * (value_uh - value_u) * phi.JxW(q);
+  //     }
+  //     for(unsigned int v = 0; v < mf_storage->n_active_entries_per_cell_batch(cell); ++v)
+  //     {
+  //       global_error += local_error[v];
+  //     }
+  //   }
+  //   global_error = Utilities::MPI::sum(global_error, MPI_COMM_WORLD);
+  //   return std::sqrt(global_error);
+  // }
+
+
   double
-  compute_l2_error(const MatrixFree<dim, Number> * mf_storage,
-                   const VECTOR &                  discrete_solution,
-                   const Function<dim> *           analytic_solution) const
+  compute_l2_error(const VECTOR & discrete_solution, const Function<dim> * analytic_solution) const
   {
-    double                                                     global_error = 0;
-    FEEvaluation<dim, fe_degree, n_q_points_static, 1, Number> phi(*mf_storage);
-    discrete_solution.update_ghost_values();
-    const auto & uh = discrete_solution;
-    for(unsigned int cell = 0; cell < mf_storage->n_macro_cells(); ++cell)
-    {
-      phi.reinit(cell);
-      phi.read_dof_values_plain(uh);
-      phi.evaluate(true, false);
-      VectorizedArray<Number> local_error = 0.;
-      for(unsigned int q = 0; q < phi.n_q_points; ++q)
-      {
-        const auto value_u  = VHelper::value(*analytic_solution, phi.quadrature_point(q));
-        const auto value_uh = phi.get_value(q);
-        local_error += (value_uh - value_u) * (value_uh - value_u) * phi.JxW(q);
-      }
-      for(unsigned int v = 0; v < mf_storage->n_active_entries_per_cell_batch(cell); ++v)
-      {
-        global_error += local_error[v];
-      }
-    }
-    global_error = Utilities::MPI::sum(global_error, MPI_COMM_WORLD);
-    return std::sqrt(global_error);
+    Vector<double> error_per_cell(triangulation.n_active_cells());
+    VectorTools::integrate_difference(dof_handler,
+                                      discrete_solution,
+                                      *analytic_solution,
+                                      error_per_cell,
+                                      QGauss<dim>(n_q_points_static + 2),
+                                      VectorTools::L2_norm);
+    return std::sqrt(Utilities::MPI::sum(error_per_cell.norm_sqr(), MPI_COMM_WORLD));
   }
 
 
@@ -762,7 +776,7 @@ struct ModelProblem : public Subscriptor
   compute_discretization_errors() const
   {
     const auto   mf_storage = system_matrix.get_matrix_free();
-    const double l2_error = compute_l2_error(mf_storage.get(), system_u, analytical_solution.get());
+    const double l2_error   = compute_l2_error(system_u, analytical_solution.get());
     pp_data.L2_error.push_back(l2_error);
     print_parameter("||u - uh||_L2 =", l2_error);
   }
@@ -834,7 +848,8 @@ struct ModelProblem : public Subscriptor
       if(rt_parameters.do_visualize)
         visualize_dof_vector(dof_handler, system_u, "solution", 1, mapping);
 
-      print_schwarz_preconditioner_times();
+      if(mg_schwarz_smoother_pre || mg_schwarz_smoother_post)
+        print_schwarz_preconditioner_times();
     }
   }
 };
