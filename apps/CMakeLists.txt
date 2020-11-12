@@ -18,6 +18,7 @@ set(sourcefiles
   poisson_distorted.cc
   poisson_mpiscaling.cc
   poisson_standard.cc
+  poisson_robin.cc
   biharmonic_c0ip.cc
   stokes_taylorhood.cc
   stokes_Qkplus2_DGPk.cc
