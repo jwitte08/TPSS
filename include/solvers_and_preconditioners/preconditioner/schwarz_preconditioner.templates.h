@@ -157,9 +157,11 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::compute_ras_we
                                                                    ras_weights,
                                                                    ras_weights,
                                                                    color);
-    /// compress add, i.e. transfer ghost values to their owners
+    /// transfer ghost values to their owners
     ras_weights.compress(VectorOperation::add);
   }
+
+  ras_weights.update_ghost_values();
 }
 
 

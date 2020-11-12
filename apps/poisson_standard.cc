@@ -8,6 +8,7 @@
 
 #include <deal.II/base/convergence_table.h>
 
+#include "app_utilities.h"
 #include "ct_parameter.h"
 #include "poisson_problem.h"
 
@@ -25,7 +26,7 @@ struct TestParameter
   double   cg_reduction         = 1.e-8;
   unsigned n_refinements        = 1;
   unsigned n_repetitions        = 2;
-  double   extra_damping        = 1.;
+  double   damping              = 0.;
   bool     use_ras              = false;
 
   std::string
@@ -83,7 +84,7 @@ struct Tester
   {
     //: discretization
     rt_parameters.n_cycles              = 10;
-    rt_parameters.dof_limits            = {1e1, 1e5}; //!!!{1e5, 2e7};
+    rt_parameters.dof_limits            = {1e1, 1e5}; // !!! {1e5, 2e7};
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
     rt_parameters.mesh.n_refinements    = testprms.n_refinements;
     rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;
@@ -95,9 +96,9 @@ struct Tester
     rt_parameters.solver.n_iterations_max     = 100;
 
     //: multigrid
-    const double damping_factor = testprms.extra_damping; // !!!
-    //*
-    // TPSS::lookup_damping_factor(testprms.patch_variant, testprms.smoother_variant, dim);
+    if(testprms.damping == 0.)
+      testprms.damping =
+        TPSS::lookup_damping_factor(testprms.patch_variant, testprms.smoother_variant, dim);
     rt_parameters.multigrid.coarse_level                 = 0;
     rt_parameters.multigrid.coarse_grid.solver_variant   = testprms.coarse_grid_variant;
     rt_parameters.multigrid.coarse_grid.iterative_solver = testprms.solver_variant;
@@ -107,7 +108,8 @@ struct Tester
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = testprms.smoother_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.use_ras              = testprms.use_ras; // !!!
     rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
-    rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
+    std::cout << "damp: " << testprms.damping << std::endl;
+    rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = testprms.damping;
     rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5, fe_degree + 1);
     rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
     rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
@@ -142,8 +144,8 @@ struct Tester
     oss << "_" << str_schwarz_variant;
     oss << "_" << dim << "D";
     oss << "_" << fe_degree << "deg";
-    if(testprms.extra_damping != 1.)
-      oss << "_" << testprms.extra_damping << "xdmp";
+    if(testprms.damping != 1.)
+      oss << "_" << testprms.damping << "xdmp";
     return oss.str();
   }
 
@@ -179,7 +181,7 @@ struct Tester
 
   std::shared_ptr<PoissonProblem>     poisson_problem;
   RT::Parameter                       rt_parameters;
-  const TestParameter &               testprms;
+  TestParameter                       testprms;
   const bool                          is_first_proc;
   std::fstream                        fout;
   std::shared_ptr<ConditionalOStream> pcout;
@@ -190,6 +192,16 @@ struct Tester
 int
 main(int argc, char * argv[])
 {
+  const auto atoi_if = [&](auto & prm, const int index) {
+    Util::ConditionalAtoi(argc, argv)(prm, index);
+  };
+  const auto atof_if = [&](auto & prm, const int index) {
+    Util::ConditionalAtof(argc, argv)(prm, index);
+  };
+
+  const unsigned int solver_index_max                     = 1;
+  const std::string  solver_variant[solver_index_max + 1] = {"cg", "gmres"};
+
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
   constexpr int                    dim        = CT::DIMENSION_;
   constexpr int                    fe_degree  = CT::FE_DEGREE_;
@@ -197,11 +209,22 @@ main(int argc, char * argv[])
   constexpr int                    n_patch_dofs_1d_static =
     TPSS::UniversalInfo<dim>::n_dofs_1d(CT::PATCH_VARIANT_, dof_layout, fe_degree);
 
+  //: default
   TestParameter testprms;
-  if(argc > 1)
-    testprms.extra_damping = std::atof(argv[1]);
-  if(argc > 2)
-    testprms.use_ras = std::atoi(argv[2]);
+  unsigned int  solver_index = 0;
+  unsigned int  use_ras      = 0;
+
+  //: parse runtime arguments
+  atoi_if(solver_index, 1);
+  atoi_if(use_ras, 2);
+  atof_if(testprms.damping, 3);
+
+  AssertThrow(solver_index <= solver_index_max, ExcMessage("Invalid solver index."));
+  AssertThrow(use_ras <= 1U, ExcMessage("Invalid integer value for use_ras."));
+  AssertThrow(testprms.damping <= 1., ExcMessage("No over-relaxation allowed."));
+
+  testprms.solver_variant = solver_variant[solver_index];
+  testprms.use_ras        = static_cast<bool>(use_ras);
 
   Tester<dim, fe_degree, dof_layout, n_patch_dofs_1d_static> tester(testprms);
   tester.run();
