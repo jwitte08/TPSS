@@ -73,11 +73,13 @@ main(int argc, char * argv[])
   unsigned int solver_index = 0;
   unsigned int use_ras      = 0;
   double       damping      = 0.;
+  unsigned int n_cycles     = numbers::invalid_unsigned_int;
 
   //: parse runtime arguments
   atoi_if(solver_index, 1);
   atoi_if(use_ras, 2);
   atof_if(damping, 3);
+  atoi_if(n_cycles, 4);
 
   AssertThrow(solver_index <= solver_index_max, ExcMessage("Invalid solver index."));
   AssertThrow(use_ras <= 1U, ExcMessage("Invalid integer value for use_ras."));
@@ -86,10 +88,11 @@ main(int argc, char * argv[])
   RT::Parameter rt_parameters;
   {
     //: discretization
-    rt_parameters.n_cycles              = 2;
+    rt_parameters.n_cycles              = n_cycles == numbers::invalid_unsigned_int ? 2 : n_cycles;
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
     rt_parameters.mesh.n_refinements    = 0;
     rt_parameters.mesh.n_repetitions    = 2;
+    rt_parameters.mesh.do_colorization  = true;
 
     //: solver
     rt_parameters.solver.variant              = solver_variant[solver_index];
@@ -118,6 +121,10 @@ main(int argc, char * argv[])
   }
 
   EquationData equation_data;
+  equation_data.neumann_boundary_ids = {0};
+  equation_data.dirichlet_boundary_ids.clear();
+  for(types::boundary_id id = 1; id < GeometryInfo<dim>::faces_per_cell; ++id)
+    equation_data.dirichlet_boundary_ids.insert(id);
 
   // const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
   // std::shared_ptr<ConditionalOStream> pcout;

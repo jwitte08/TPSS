@@ -21,8 +21,7 @@ using namespace dealii;
 namespace VHelper
 {
 /**
- * Calls value() of the function @p func for each vectorization lane
- * of @p macro_point.
+ * Calls @p func.value() for each vectorization lane of @p macro_point.
  */
 template<int dim, typename Number>
 VectorizedArray<Number>
@@ -40,6 +39,34 @@ value(const Function<dim, Number> &               func,
   }
   return value;
 }
+
+
+
+/**
+ * Calls @p func.gradient() for each vectorization lane of @p macro_point.
+ */
+template<int dim, typename Number>
+Tensor<1, dim, VectorizedArray<Number>>
+gradient(const Function<dim, Number> &               func,
+         const Point<dim, VectorizedArray<Number>> & macro_point,
+         const unsigned int                          component = 0)
+{
+  Tensor<1, dim, VectorizedArray<Number>> grad;
+
+  for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
+  {
+    Point<dim> single_point;
+    for(unsigned int d = 0; d < dim; ++d)
+      single_point[d] = macro_point[d][lane];
+    const auto & single_gradient = func.gradient(single_point, component);
+    for(auto d = 0U; d < dim; ++d)
+      grad[d][lane] = single_gradient[d];
+  }
+
+  return grad;
+}
+
+
 
 /**
  * Calls value() of the function @p func for each vectorization lane
@@ -62,6 +89,8 @@ value(const TensorFunction<1, dim, Number> &      func,
   }
   return value;
 }
+
+
 
 template<int dim, typename Number>
 std::string

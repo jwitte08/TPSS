@@ -466,31 +466,37 @@ struct ModelProblem : public Subscriptor
     {
       phi_face.reinit(face);
 
-      const VectorizedArray<double> inverse_length_normal_to_face =
-        std::abs((phi_face.get_normal_vector(0) * phi_face.inverse_jacobian(0))[dim - 1]);
-      const VectorizedArray<double> sigma =
-        inverse_length_normal_to_face * system_matrix.get_penalty_factor();
+      types::boundary_id bid = mf_storage->get_boundary_id(face);
+      std::cout << "bid: " << bid << std::endl;
+      const bool is_dirichlet = equation_data.dirichlet_boundary_ids.find(bid) !=
+                                equation_data.dirichlet_boundary_ids.cend();
+      const bool is_neumann =
+        equation_data.neumann_boundary_ids.find(bid) != equation_data.neumann_boundary_ids.cend();
+
+      const VectorizedArray<Number> h_inner =
+        1. / std::abs((phi_face.get_normal_vector(0) * phi_face.inverse_jacobian(0))[dim - 1]);
+      const VectorizedArray<Number> sigma =
+        equation_data.ip_factor * ::Nitsche::compute_penalty_impl(fe_degree, h_inner, h_inner);
 
       for(unsigned int q = 0; q < phi_face.n_q_points; ++q)
       {
-        VectorizedArray<double> test_value              = VectorizedArray<double>(),
-                                test_normal_gradient    = VectorizedArray<double>();
-        Point<dim, VectorizedArray<double>> point_batch = phi_face.quadrature_point(q);
+        auto ansatz_value           = make_vectorized_array<double>(0.);
+        auto ansatz_normal_gradient = make_vectorized_array<double>(0.);
 
-        for(unsigned int v = 0; v < VectorizedArray<double>::size(); ++v)
+        if(is_dirichlet)
+          ansatz_value += VHelper::value(exact_solution, phi_face.quadrature_point(q));
+        if(is_neumann)
         {
-          Point<dim> single_point;
-          for(unsigned int d = 0; d < dim; ++d)
-            single_point[d] = point_batch[d][v];
-
-          test_value[v] = 2.0 * exact_solution.value(single_point);
+          const auto & normal = phi_face.get_normal_vector(q);
+          ansatz_normal_gradient +=
+            -VHelper::gradient(exact_solution, phi_face.quadrature_point(q)) * normal;
         }
-        phi_face.submit_value(test_value * sigma - test_normal_gradient, q);
-        phi_face.submit_normal_derivative(-0.5 * test_value, q);
+
+        phi_face.submit_value(ansatz_value * sigma - ansatz_normal_gradient, q);
+        phi_face.submit_normal_derivative(-ansatz_value, q);
       }
       phi_face.integrate_scatter(true, true, discrete_rhs);
     }
-
     discrete_rhs.compress(VectorOperation::add);
   }
 

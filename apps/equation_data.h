@@ -35,6 +35,7 @@ namespace Laplace
 struct EquationData
 {
   std::set<types::boundary_id> dirichlet_boundary_ids = {0};
+  std::set<types::boundary_id> neumann_boundary_ids   = {};
   double                       ip_factor              = 1.;
 };
 
