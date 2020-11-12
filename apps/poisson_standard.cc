@@ -104,10 +104,10 @@ struct Tester
     rt_parameters.multigrid.coarse_grid.iterative_solver = testprms.solver_variant;
     rt_parameters.multigrid.coarse_grid.accuracy         = testprms.coarse_grid_accuracy;
     rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
-    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = testprms.patch_variant;
-    rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = testprms.smoother_variant;
-    rt_parameters.multigrid.pre_smoother.schwarz.use_ras              = testprms.use_ras; // !!!
-    rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
+    rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = testprms.patch_variant;
+    rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = testprms.smoother_variant;
+    rt_parameters.multigrid.pre_smoother.schwarz.use_ras          = testprms.use_ras; // !!!
+    rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring  = true;
     std::cout << "damp: " << testprms.damping << std::endl;
     rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = testprms.damping;
     rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5, fe_degree + 1);

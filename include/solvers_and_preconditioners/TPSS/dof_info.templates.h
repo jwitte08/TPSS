@@ -91,10 +91,10 @@ DoFInfo<dim, Number>::initialize_impl()
           const auto [cell_level, cell_index] = patch_info->get_cell_level_and_index(cell_position);
           (void)cell_level;
           AssertDimension(cell_level, additional_data.level);
-	  cell_index_to_cell_position[cell_index].push_back(cell_position);
+          cell_index_to_cell_position[cell_index].push_back(cell_position);
         }
     }
-    
+
     /// Cache global dof indices in @p global_dof_indices_cellwise cell by
     /// cell. For any cell identified by its @p cell_position we store the
     /// access points to the range of global dof indices in @p
@@ -102,29 +102,28 @@ DoFInfo<dim, Number>::initialize_impl()
     /// start_and_number_of_dof_indices_cellwise.
     global_dof_indices_cellwise.clear();
     start_and_number_of_dof_indices_cellwise.resize(n_cells_plain);
-    for (const auto & [cell_index, cell_positions] : cell_index_to_cell_position)
+    for(const auto & [cell_index, cell_positions] : cell_index_to_cell_position)
     {
       const auto & cell = get_level_dof_accessor_impl(cell_index, additional_data.level);
-        const auto   level_dof_indices = fill_level_dof_indices_impl(cell);
+      const auto   level_dof_indices = fill_level_dof_indices_impl(cell);
 
-        //: set dof start and quantity
-        const auto   dof_start      = global_dof_indices_cellwise.size();
-        const auto   n_dofs         = level_dof_indices.size(); // compress?
-        for(auto cell_position : cell_positions)
-          start_and_number_of_dof_indices_cellwise[cell_position] =
-            std::make_pair(dof_start, n_dofs);
+      //: set dof start and quantity
+      const auto dof_start = global_dof_indices_cellwise.size();
+      const auto n_dofs    = level_dof_indices.size(); // compress?
+      for(auto cell_position : cell_positions)
+        start_and_number_of_dof_indices_cellwise[cell_position] = std::make_pair(dof_start, n_dofs);
 
-        //: submit global dof indices
-        std::copy(level_dof_indices.cbegin(),
-                  level_dof_indices.cend(),
-                  std::back_inserter(global_dof_indices_cellwise));
+      //: submit global dof indices
+      std::copy(level_dof_indices.cbegin(),
+                level_dof_indices.cend(),
+                std::back_inserter(global_dof_indices_cellwise));
 
-        //: update index set of ghost dof indices
-        if(is_ghost_on_level(cell) || has_ghost_neighbor_on_level(cell))
-          for(const auto dof_index : level_dof_indices)
-            if(!owned_dof_indices.is_element(dof_index))
-              dof_indices_on_ghosts.push_back(dof_index);
-      }
+      //: update index set of ghost dof indices
+      if(is_ghost_on_level(cell) || has_ghost_neighbor_on_level(cell))
+        for(const auto dof_index : level_dof_indices)
+          if(!owned_dof_indices.is_element(dof_index))
+            dof_indices_on_ghosts.push_back(dof_index);
+    }
 
     /// First, sort and compress duplicates of ghosted global dof indices. Then,
     /// fill ghost index set.
