@@ -121,9 +121,11 @@ main(int argc, char * argv[])
   }
 
   EquationData equation_data;
-  equation_data.neumann_boundary_ids = {0};
+  // equation_data.neumann_boundary_ids = {0};
+  for(types::boundary_id id = 0; id < GeometryInfo<dim>::faces_per_cell; ++id)
+    equation_data.neumann_boundary_ids.insert(id);
   equation_data.dirichlet_boundary_ids.clear();
-  for(types::boundary_id id = 1; id < GeometryInfo<dim>::faces_per_cell; ++id)
+  for(types::boundary_id id = 0; id < GeometryInfo<dim>::faces_per_cell; ++id)
     equation_data.dirichlet_boundary_ids.insert(id);
 
   // const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;

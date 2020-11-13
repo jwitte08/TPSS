@@ -466,12 +466,15 @@ struct ModelProblem : public Subscriptor
     {
       phi_face.reinit(face);
 
-      types::boundary_id bid = mf_storage->get_boundary_id(face);
-      std::cout << "bid: " << bid << std::endl;
-      const bool is_dirichlet = equation_data.dirichlet_boundary_ids.find(bid) !=
+      types::boundary_id bid          = mf_storage->get_boundary_id(face);
+      const bool         is_dirichlet = equation_data.dirichlet_boundary_ids.find(bid) !=
                                 equation_data.dirichlet_boundary_ids.cend();
       const bool is_neumann =
         equation_data.neumann_boundary_ids.find(bid) != equation_data.neumann_boundary_ids.cend();
+
+      /// DEBUG
+      // std::cout << "bid: " << bid << (is_dirichlet ? " is_dirichlet " : "")
+      //         << (is_neumann ? " is_neumann " : "") << std::endl;
 
       const VectorizedArray<Number> h_inner =
         1. / std::abs((phi_face.get_normal_vector(0) * phi_face.inverse_jacobian(0))[dim - 1]);
@@ -480,20 +483,30 @@ struct ModelProblem : public Subscriptor
 
       for(unsigned int q = 0; q < phi_face.n_q_points; ++q)
       {
-        auto ansatz_value           = make_vectorized_array<double>(0.);
-        auto ansatz_normal_gradient = make_vectorized_array<double>(0.);
+        auto g          = make_vectorized_array<double>(0.);
+        auto normgrad_g = make_vectorized_array<double>(0.);
 
-        if(is_dirichlet)
-          ansatz_value += VHelper::value(exact_solution, phi_face.quadrature_point(q));
-        if(is_neumann)
+        if(is_dirichlet && is_neumann)
         {
           const auto & normal = phi_face.get_normal_vector(q);
-          ansatz_normal_gradient +=
-            -VHelper::gradient(exact_solution, phi_face.quadrature_point(q)) * normal;
+          g                   = 0.5 * VHelper::value(exact_solution, phi_face.quadrature_point(q));
+          normgrad_g =
+            -0.5 * VHelper::gradient(exact_solution, phi_face.quadrature_point(q)) * normal;
         }
+        else if(is_dirichlet && !is_neumann)
+        {
+          g = VHelper::value(exact_solution, phi_face.quadrature_point(q));
+        }
+        else if(is_neumann && !is_dirichlet)
+        {
+          const auto & normal = phi_face.get_normal_vector(q);
+          normgrad_g = -VHelper::gradient(exact_solution, phi_face.quadrature_point(q)) * normal;
+        }
+        else
+          Assert(false, ExcMessage("Boundary condition?"));
 
-        phi_face.submit_value(ansatz_value * sigma - ansatz_normal_gradient, q);
-        phi_face.submit_normal_derivative(-ansatz_value, q);
+        phi_face.submit_value(g * sigma - normgrad_g, q);
+        phi_face.submit_normal_derivative(-g, q);
       }
       phi_face.integrate_scatter(true, true, discrete_rhs);
     }

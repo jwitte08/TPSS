@@ -692,7 +692,7 @@ Operator<dim, fe_degree, Number>::apply_boundary(
     const VectorizedArray<Number> h_inner =
       1. / std::abs((phi_inner.get_normal_vector(0) * phi_inner.inverse_jacobian(0))[dim - 1]);
     const VectorizedArray<Number> sigma =
-      equation_data.ip_factor * 0.5 * ::Nitsche::compute_penalty_impl(fe_degree, h_inner, h_inner);
+      equation_data.ip_factor * ::Nitsche::compute_penalty_impl(fe_degree, h_inner, h_inner);
 
     types::boundary_id bid = data.get_boundary_id(face);
     const bool         is_dirichlet =
@@ -700,35 +700,42 @@ Operator<dim, fe_degree, Number>::apply_boundary(
     const bool is_neumann =
       equation_data.neumann_boundary_ids.find(bid) != equation_data.neumann_boundary_ids.cend();
 
-    std::cout << "bid: " << bid << (is_dirichlet ? " is_dirichlet " : "")
-              << (is_neumann ? " is_neumann " : "") << std::endl;
-
     for(unsigned int q = 0; q < phi_inner.n_q_points; ++q)
     {
       const VectorizedArray<Number> u_inner                 = phi_inner.get_value(q);
       const VectorizedArray<Number> normal_derivative_inner = phi_inner.get_normal_derivative(q);
 
-      auto u_outer = make_vectorized_array(0.);
-      if(is_dirichlet)
-        u_outer += -u_inner;
-      if(is_neumann)
-        u_outer += u_inner;
-
+      auto u_outer                 = make_vectorized_array(0.);
       auto normal_derivative_outer = make_vectorized_array(0.);
-      if(is_dirichlet)
-        normal_derivative_outer += normal_derivative_inner;
-      if(is_neumann)
-        normal_derivative_outer += -normal_derivative_inner;
+      if(is_dirichlet && is_neumann)
+      {
+        u_outer                 = 0.;
+        normal_derivative_outer = 0.;
+      }
+      else if(is_dirichlet && !is_neumann)
+      {
+        u_outer                 = -u_inner;
+        normal_derivative_outer = normal_derivative_inner;
+      }
+      else if(is_neumann && !is_dirichlet)
+      {
+        u_outer                 = u_inner;
+        normal_derivative_outer = -normal_derivative_inner;
+      }
+      else
+        Assert(false, ExcMessage("Boundary condition?"));
 
-      /// Dirichlet: jump = 2u   (NOTE penalty is scaled by 1/2)
-      /// Neumann: jump = 0
-      const VectorizedArray<Number> jump_u = (u_inner - u_outer);
-      /// Dirichlet: avg_normal_grad = grad(u) * n
-      /// Neumann: avg_normal_grad = 0
-      const VectorizedArray<Number> average_normal_gradient =
+      /// Dirichlet: [[ u ]] = u
+      /// Neumann: [[ u ]] = 0
+      /// Dirichlet + Neumann: [[ u ]] = 1/2 u
+      const VectorizedArray<Number> jump_u = (u_inner - u_outer) * Number(0.5);
+      /// Dirichlet: {{ grad(u) * n }} = grad(u) * n
+      /// Neumann: {{ grad(u) * n }} = 0
+      /// Dirichlet + Neumann: {{ grad(u) * n }} = 1/2 grad(u) * n
+      const VectorizedArray<Number> avg_normgrad_u =
         (normal_derivative_inner + normal_derivative_outer) * Number(0.5);
-      const VectorizedArray<Number> test_by_value = jump_u * sigma - average_normal_gradient;
-      phi_inner.submit_normal_derivative(-jump_u * Number(0.5), q);
+      const VectorizedArray<Number> test_by_value = jump_u * sigma - avg_normgrad_u;
+      phi_inner.submit_normal_derivative(-jump_u, q);
       phi_inner.submit_value(test_by_value, q);
     }
     phi_inner.integrate_scatter(true, true, dst);
