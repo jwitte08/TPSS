@@ -200,9 +200,11 @@ struct SubdomainHandler<dim, Number>::AdditionalData
     bool force_no_boundary_condition = false;
   };
 
-  unsigned int          level            = numbers::invalid_unsigned_int;
-  TPSS::PatchVariant    patch_variant    = TPSS::PatchVariant::invalid;
-  TPSS::SmootherVariant smoother_variant = TPSS::SmootherVariant::invalid;
+  unsigned int          level               = numbers::invalid_unsigned_int;
+  TPSS::PatchVariant    patch_variant       = TPSS::PatchVariant::invalid;
+  TPSS::SmootherVariant smoother_variant    = TPSS::SmootherVariant::invalid;
+  bool                  compute_ras_weights = false;
+
   std::function<std::vector<std::vector<PatchIterator>>(
     const std::vector<std::vector<CellIterator>> &      patches,
     const typename TPSS::PatchInfo<dim>::AdditionalData additional_data)>

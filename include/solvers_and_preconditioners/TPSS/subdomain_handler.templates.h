@@ -102,7 +102,8 @@ SubdomainHandler<dim, Number>::internal_reinit()
            ExcMessage("additional_data.foreach_dofh has an incompatible size"));
     unique_dof_infos.resize(unique_dof_handlers.size());
     typename TPSS::DoFInfo<dim, Number>::AdditionalData dof_info_data;
-    dof_info_data.level = additional_data.level;
+    dof_info_data.level               = additional_data.level;
+    dof_info_data.compute_ras_weights = additional_data.compute_ras_weights;
     std::set<unsigned int> initialized_indices;
     for(auto dofh_index = 0U; dofh_index < n_dof_handlers(); ++dofh_index)
     {

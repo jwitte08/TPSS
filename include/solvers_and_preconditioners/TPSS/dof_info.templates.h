@@ -95,12 +95,13 @@ DoFInfo<dim, Number>::initialize_impl()
         }
     }
 
-    /// Cache global dof indices in @p global_dof_indices_cellwise cell by
+    /// Cache global dof indices in @p global_dof_indices_cellwise (later
+    /// compressed to @p dof_indices_cellwise) cell by
     /// cell. For any cell identified by its @p cell_position we store the
     /// access points to the range of global dof indices in @p
     /// global_dof_indices_cellwise via @p
     /// start_and_number_of_dof_indices_cellwise.
-    global_dof_indices_cellwise.clear();
+    std::vector<types::global_dof_index> global_dof_indices_cellwise;
     start_and_number_of_dof_indices_cellwise.resize(n_cells_plain);
     for(const auto & [cell_index, cell_positions] : cell_index_to_cell_position)
     {
@@ -180,7 +181,108 @@ DoFInfo<dim, Number>::initialize_impl()
     start_of_dof_indices_patchwise.emplace_back(dof_indices_patchwise.size());
   }
 
-  // compress(); // TODO !!!
+  if(additional_data.compute_ras_weights)
+    initialize_restricted_dofs_impl();
+
+  /// TODO !!!
+  // compress();
+}
+
+
+
+template<int dim, typename Number>
+void
+DoFInfo<dim, Number>::initialize_restricted_dofs_impl()
+{
+  const auto n_components = shape_info->n_components;
+  AssertThrow(patch_info, ExcMessage("patch_info isn't set."));
+  AssertThrow(shape_info, ExcMessage("shape_info isn't set."));
+  AssertThrow(dof_handler, ExcMessage("dof_handler isn't set."));
+  AssertThrow(!dof_indices_patchwise.empty(),
+              ExcMessage("dof indices have to be cached patchwise."));
+
+  AssertThrow(n_components == 1U, ExcMessage("TODO more than scalar elements"));
+  const auto patch_variant    = patch_info->get_additional_data().patch_variant;
+  const auto smoother_variant = patch_info->get_additional_data().smoother_variant;
+  AssertThrow(patch_variant == TPSS::PatchVariant::vertex, ExcMessage("TODO"));
+  AssertThrow(smoother_variant == TPSS::SmootherVariant::additive,
+              ExcMessage("Additive scheme is only supported."));
+  AssertThrow(get_dof_layout() == TPSS::DoFLayout::Q, ExcMessage("TODO"));
+
+  PatchDoFWorker<dim, Number> patch_dof_worker(*this);
+  const auto &                partition_data   = patch_dof_worker.get_partition_data();
+  const auto                  n_subdomains     = partition_data.n_subdomains();
+  const auto &                patch_dof_tensor = patch_dof_worker.get_dof_tensor();
+
+  auto inner_sizes = patch_dof_tensor.size();
+  for(auto d = 0U; d < dim; ++d)
+    inner_sizes[d] -= 2U;
+  Tensors::TensorHelper<dim> dof_tensor_inner(inner_sizes);
+
+  const auto comp_distance_impl = [&](const unsigned int index, const unsigned int index_mid) {
+    const auto & mindex     = dof_tensor_inner.multi_index(index);
+    const auto & mindex_mid = dof_tensor_inner.multi_index(index_mid);
+    unsigned int dist       = 0U;
+    for(auto d = 0U; d < dim; ++d)
+      dist = std::max(dist,
+                      (mindex[d] < mindex_mid[d]) ? (mindex_mid[d] - mindex[d]) :
+                                                    (mindex[d] - mindex_mid[d]));
+    return dist;
+  };
+
+  std::map<unsigned int, std::vector<std::array<unsigned int, 5>>> dof_indices_to_weights;
+  unsigned int                                                     dof_index_max = 0U;
+  const unsigned int                                               comp          = 0; // TODO
+  for(auto patch_id = 0U; patch_id < n_subdomains; ++patch_id)
+  {
+    for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
+    {
+      const auto dof_indices_on_patch =
+        patch_dof_worker.get_dof_indices_on_patch(patch_id, lane, comp);
+
+      const auto n_dofs_on_patch = dof_indices_on_patch.size();
+
+      const auto comp_weight = [&](const unsigned int index) -> std::array<unsigned int, 5> {
+        AssertDimension(dof_tensor_inner.n_flat(), dof_indices_on_patch.size());
+        AssertDimension(dof_indices_on_patch.size() % 2, 1); // odd number of dofs
+
+        return {comp_distance_impl(index, n_dofs_on_patch / 2), index, patch_id, lane, comp};
+      };
+
+      for(auto i = 0U; i < n_dofs_on_patch; ++i)
+      {
+        const auto dof_index = dof_indices_on_patch[i];
+        dof_indices_to_weights[dof_index].emplace_back(comp_weight(i));
+        dof_index_max = std::max(dof_index, dof_index_max);
+      }
+    }
+  }
+
+  const auto get_dof_position_patchwise = [&](const unsigned int patch_id,
+                                              const unsigned int lane,
+                                              const unsigned int component,
+                                              const unsigned int dof_no) {
+    const auto [dof_start, n_dofs_at_comp] =
+      patch_dof_worker.get_dof_start_and_quantity_on_patch(patch_id, lane, component);
+    return dof_start + dof_no;
+  };
+
+  restricted_dof_flags_patchwise.clear();
+  restricted_dof_flags_patchwise.resize(dof_indices_patchwise.size(), true);
+
+  for(auto & [dof_index, weights] : dof_indices_to_weights)
+  {
+    Assert(!weights.empty(), ExcMessage("No weights stored."));
+    std::sort(weights.begin(), weights.end());
+
+    const auto & [ignore, dof_no, patch_id, lane, comp] = weights.front();
+    (void)ignore;
+    const auto dof_position = get_dof_position_patchwise(patch_id, lane, comp, dof_no);
+    AssertDimension(dof_indices_patchwise.at(dof_position), dof_index);
+    restricted_dof_flags_patchwise[dof_position] = false;
+  }
+
+  // TODO in case of MPI we have to communicate at this point or earlier ...
 }
 
 

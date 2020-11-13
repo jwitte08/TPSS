@@ -52,10 +52,11 @@ PatchTransfer<dim, Number>::gather_add(AlignedVector<VectorizedArray<Number>> & 
 
 
 template<int dim, typename Number>
-template<typename VectorType>
+template<typename VectorType, bool is_restricted>
 void
-PatchTransfer<dim, Number>::scatter_add(VectorType &                                   dst,
-                                        const ArrayView<const VectorizedArray<Number>> src) const
+PatchTransfer<dim, Number>::scatter_add_impl(
+  VectorType &                                   dst,
+  const ArrayView<const VectorizedArray<Number>> src) const
 {
   AssertIndexRange(patch_id, n_subdomains);
   AssertDimension(dst.size(), patch_dof_worker.n_global_dofs());
@@ -65,10 +66,36 @@ PatchTransfer<dim, Number>::scatter_add(VectorType &                            
   {
     const auto & global_dof_indices = get_dof_indices(lane);
     AssertDimension(src.size(), global_dof_indices.size());
-    auto dof_index = global_dof_indices.cbegin();
-    for(auto src_value = src.cbegin(); src_value != src.cend(); ++dof_index, ++src_value)
-      internal::local_element(dst, *dof_index) += (*src_value)[lane];
+
+    if(is_restricted)
+    {
+      const auto is_restricted_dof = patch_dof_worker.get_restricted_dof_flags(patch_id, lane);
+      AssertDimension(is_restricted_dof.size(), global_dof_indices.size());
+      auto i = 0U;
+      for(auto src_value = src.cbegin(); src_value != src.cend(); ++i, ++src_value)
+      {
+        const auto dof_index = global_dof_indices[i];
+        if(!is_restricted_dof[i])
+          internal::local_element(dst, dof_index) += (*src_value)[lane];
+      }
+    }
+    else
+    {
+      auto dof_index = global_dof_indices.cbegin();
+      for(auto src_value = src.cbegin(); src_value != src.cend(); ++dof_index, ++src_value)
+        internal::local_element(dst, *dof_index) += (*src_value)[lane];
+    }
   }
+}
+
+
+template<int dim, typename Number>
+template<typename VectorType>
+void
+PatchTransfer<dim, Number>::scatter_add(VectorType &                                   dst,
+                                        const ArrayView<const VectorizedArray<Number>> src) const
+{
+  scatter_add_impl<VectorType, false>(dst, src);
 }
 
 
@@ -80,6 +107,27 @@ PatchTransfer<dim, Number>::scatter_add(VectorType &                            
 {
   const auto src_view = make_array_view<const VectorizedArray<Number>>(src.begin(), src.end());
   scatter_add(dst, src_view);
+}
+
+
+template<int dim, typename Number>
+template<typename VectorType>
+void
+PatchTransfer<dim, Number>::rscatter_add(VectorType &                                   dst,
+                                         const ArrayView<const VectorizedArray<Number>> src) const
+{
+  scatter_add_impl<VectorType, true>(dst, src);
+}
+
+
+template<int dim, typename Number>
+template<typename VectorType>
+void
+PatchTransfer<dim, Number>::rscatter_add(VectorType &                                   dst,
+                                         const AlignedVector<VectorizedArray<Number>> & src) const
+{
+  const auto src_view = make_array_view<const VectorizedArray<Number>>(src.begin(), src.end());
+  rscatter_add(dst, src_view);
 }
 
 

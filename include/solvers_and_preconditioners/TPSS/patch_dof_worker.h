@@ -98,6 +98,15 @@ public:
   get_dof_start_and_quantity_on_patch(const unsigned int patch_id, const unsigned int lane) const;
 
   /**
+   * Same as above but we return only the start position and quantity of dofs
+   * for the specified component @p component.
+   */
+  std::pair<unsigned int, unsigned int>
+  get_dof_start_and_quantity_on_patch(const unsigned int patch_id,
+                                      const unsigned int lane,
+                                      const unsigned int component) const;
+
+  /**
    * Returns the start position of global dof indices on local cell @p cell_no
    * within patch @patch_id at vectorization lane @p lane which are stored in
    * the flat field @p dof_indices_cellwise of the underlying dof
@@ -107,6 +116,18 @@ public:
   get_dof_start_and_quantity_on_cell(const unsigned int patch_id,
                                      const unsigned int cell_no,
                                      const unsigned int lane) const;
+
+  /**
+   * For each dof in the range returned by @p get_dof_indices_on_patch() we
+   * return a boolean that indicates whether the dof is restricted or not. A
+   * restricted dof is ignored during prolongation of patch-local values into
+   * global values. For restricted additive Schwarz methods (RAS) we might use a
+   * partition of unity at the algebraic level: let $\tilde{R}_j^T$ denote the
+   * restricted prolongation operator associated to the standard prolongation
+   * $R_j^T$, then it holds $$\sum_j \R_j^T = id$$, where $id$ is the identity.
+   */
+  std::vector<bool>
+  get_restricted_dof_flags(const unsigned int patch_id, const unsigned int lane) const;
 
   /**
    * TODO ... this method is not tested
@@ -452,13 +473,25 @@ PatchDoFWorker<dim, Number>::get_dof_indices_on_patch(const unsigned int patch_i
   Assert(dof_info, ExcMessage("dof_info is not set."));
   Assert(!(dof_info->dof_indices_patchwise.empty()), ExcMessage("Dof indices aren't cached."));
 
+  const auto [dof_start, n_dofs] = get_dof_start_and_quantity_on_patch(patch_id, lane, component);
+  const auto begin               = dof_info->dof_indices_patchwise.data() + dof_start;
+  return ArrayView<const unsigned int>(begin, n_dofs);
+}
+
+
+template<int dim, typename Number>
+std::vector<bool>
+PatchDoFWorker<dim, Number>::get_restricted_dof_flags(const unsigned int patch_id,
+                                                      const unsigned int lane) const
+{
+  Assert(dof_info, ExcMessage("dof_info is not set."));
+  Assert(!(dof_info->dof_indices_patchwise.empty()), ExcMessage("Dof indices aren't cached."));
+
   const auto [dof_start, n_dofs] = get_dof_start_and_quantity_on_patch(patch_id, lane);
-  /// assume isotropy w.r.t. components
-  AssertDimension(n_dofs % n_components, 0U);
-  const auto n_dofs_per_component = n_dofs / n_components;
-  const auto begin =
-    dof_info->dof_indices_patchwise.data() + dof_start + component * n_dofs_per_component;
-  return ArrayView<const unsigned int>(begin, n_dofs_per_component);
+  std::vector<bool> flags;
+  const auto        begin = dof_info->restricted_dof_flags_patchwise.begin() + dof_start;
+  std::copy_n(begin, n_dofs, std::back_inserter(flags));
+  return flags;
 }
 
 
@@ -493,7 +526,7 @@ PatchDoFWorker<dim, Number>::get_dof_start_and_quantity_on_patch(const unsigned 
                                                                  const unsigned int lane) const
 {
   AssertIndexRange(lane, this->n_lanes_filled(patch_id));
-  Assert(dof_info, ExcMessage("DoF info is not set."));
+  Assert(dof_info, ExcMessage("DoFInfo is not set."));
   Assert(!(dof_info->dof_indices_patchwise.empty()), ExcMessage("No indices are cached."));
   AssertDimension(dof_info->start_of_dof_indices_patchwise.size(),
                   this->get_partition_data().n_subdomains() + 1);
@@ -507,6 +540,23 @@ PatchDoFWorker<dim, Number>::get_dof_start_and_quantity_on_patch(const unsigned 
   const unsigned int start_at_lane   = start + lane * n_dofs_per_lane;
   AssertIndexRange(end - 1, dof_info->dof_indices_patchwise.size());
   return std::make_pair(start_at_lane, n_dofs_per_lane);
+}
+
+
+template<int dim, typename Number>
+inline std::pair<unsigned int, unsigned int>
+PatchDoFWorker<dim, Number>::get_dof_start_and_quantity_on_patch(const unsigned int patch_id,
+                                                                 const unsigned int lane,
+                                                                 const unsigned int component) const
+{
+  const auto [dof_start, n_dofs] = get_dof_start_and_quantity_on_patch(patch_id, lane);
+  /// assume isotropy w.r.t. components
+  AssertDimension(n_dofs % n_components, 0U);
+  const auto n_dofs_per_component   = n_dofs / n_components;
+  const auto dof_start_at_component = dof_start + component * n_dofs_per_component;
+  AssertIndexRange(dof_start_at_component + n_dofs_per_component - 1,
+                   dof_info->dof_indices_patchwise.size());
+  return {dof_start_at_component, n_dofs_per_component};
 }
 
 

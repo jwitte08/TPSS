@@ -221,6 +221,9 @@ struct DoFInfo
   initialize_impl();
 
   void
+  initialize_restricted_dofs_impl();
+
+  void
   clear();
 
   void
@@ -248,18 +251,12 @@ struct DoFInfo
 
   /**
    * Stores the starting position of cached dof indices in @p
-   * global_dof_indices_cellwise for each patch local cell stored by @p
+   * dof_indices_cellwise for each patch local cell stored by @p
    * patch_info as well as the number of dofs. Each element of this array is
    * uniquely associated to patch local cell identified by @p
    * PatchWorker::cell_position()
    */
   std::vector<std::pair<unsigned int, unsigned int>> start_and_number_of_dof_indices_cellwise;
-
-  /**
-   * The flat array uniquely caches global dof indices subject to
-   * lexicographical for each cell stored in @p patch_info.
-   */
-  std::vector<types::global_dof_index> global_dof_indices_cellwise;
 
   /**
    * This flat array uniquely caches global dof indices subject to
@@ -272,10 +269,10 @@ struct DoFInfo
 
   /**
    * Stores the starting position of cached dof indices in @p
-   * dof_indices_patchwise for each patch stored by @p patch_info. Each
-   * element of this array is uniquely associated to patch identified by macro
-   * patch index and the vectorization lane. The lane index runs faster than the
-   * macro patch index.
+   * dof_indices_patchwise for each patch stored by @p patch_info. Each element
+   * of this array uniquely corresponds to a physical patch, which is identified
+   * by its macro patch index and vectorization lane. The lane index runs faster
+   * than the macro patch index.
    */
   std::vector<unsigned int> start_of_dof_indices_patchwise;
 
@@ -285,9 +282,11 @@ struct DoFInfo
    */
   std::vector<unsigned int> dof_indices_patchwise;
 
+  std::vector<bool> restricted_dof_flags_patchwise;
+
   const PatchInfo<dim> * patch_info = nullptr;
 
-  const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> * shape_info;
+  const internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> * shape_info = nullptr;
 
   std::shared_ptr<const Utilities::MPI::Partitioner> vector_partitioner;
 
@@ -307,6 +306,7 @@ struct DoFInfo<dim, Number>::AdditionalData
   std::set<types::boundary_id> dirichlet_ids;
   TPSS::CachingStrategy        caching_strategy            = TPSS::CachingStrategy::Cached;
   bool                         force_no_boundary_condition = false;
+  bool                         compute_ras_weights         = false;
 };
 
 
@@ -619,7 +619,7 @@ DoFInfo<dim, Number>::clear()
 {
   patch_info = nullptr;
   start_and_number_of_dof_indices_cellwise.clear();
-  global_dof_indices_cellwise.clear();
+  // global_dof_indices_cellwise.clear();
   dof_indices_cellwise.clear();
   start_of_dof_indices_patchwise.clear();
   dof_indices_patchwise.clear();
@@ -637,7 +637,7 @@ DoFInfo<dim, Number>::compress()
   if(additional_data.caching_strategy == TPSS::CachingStrategy::Cached)
   {
     start_and_number_of_dof_indices_cellwise.clear();
-    global_dof_indices_cellwise.clear();
+    // global_dof_indices_cellwise.clear();
     dof_indices_cellwise.clear();
   }
 }

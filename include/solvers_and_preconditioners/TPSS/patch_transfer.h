@@ -149,7 +149,7 @@ public:
   get_dof_indices(const unsigned int lane) const;
 
   /**
-   * Same as above, but this time only subset of degrees of freedom for vector
+   * Same as above, but this time only a subset of degrees of freedom for vector
    * component @p component is returned.
    */
   ArrayView<const unsigned int>
@@ -191,6 +191,23 @@ public:
   void
   scatter_add(VectorType & dst, const ArrayView<const VectorizedArray<Number>> src) const;
 
+  /**
+   * Add patch relevant dof values @p src to the global dof values @p dst for
+   * all dofs that are not restricted. This restricted prolongation is used for
+   * restricted additive Schwarz methods (RAS) defining a partition of unity at
+   * the algebraic level.
+   */
+  template<typename VectorType>
+  void
+  rscatter_add(VectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const;
+
+  /**
+   * Same as above, but @p dst is passed as ArrayView.
+   */
+  template<typename VectorType>
+  void
+  rscatter_add(VectorType & dst, const ArrayView<const VectorizedArray<Number>> src) const;
+
   unsigned int
   n_dofs_per_patch() const;
 
@@ -215,6 +232,13 @@ private:
 
   void
   fill_global_dof_indices(const unsigned int patch_id);
+
+  /**
+   * Add patch relevant dof values @p src to the global dof values @p dst.
+   */
+  template<typename VectorType, bool is_restricted>
+  void
+  scatter_add_impl(VectorType & dst, const ArrayView<const VectorizedArray<Number>> src) const;
 
   /**
    * An interface accessing dof-related patch information stored in PatchInfo

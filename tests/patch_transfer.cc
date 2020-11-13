@@ -12,6 +12,7 @@
  *    (4a) DGP cell patch (scalar) (MPI)
  *    (4b) DGP vertex patch (scalar) (MPI)
  *    (4c) Q^dim x DGP vertex patch (block) (MPI)
+ *    (5a) RAS Q vertex patch (scalar)
  *
  *  Created on: Feb 06, 2020
  *      Author: witte
@@ -1300,6 +1301,153 @@ INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransferget_dof_indices, TestP
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D,
                                TestPatchTransferget_dof_indices,
                                TestParamsHigherOrder3D);
+
+
+
+template<typename T>
+class TestPatchTransferrscatter : public TestPatchTransferBase<T>
+{
+protected:
+  using Base = TestPatchTransferBase<T>;
+  using Base::dim;
+  using Base::fe_degree;
+  using Base::pcout;
+  using Base::rt_parameters;
+
+  void
+  check_rscatter(std::shared_ptr<const FiniteElement<dim>> fe)
+  {
+    Base::rt_parameters.multigrid.post_smoother.schwarz =
+      Base::rt_parameters.multigrid.pre_smoother.schwarz;
+
+    //: generate mesh
+    parallel::distributed::Triangulation<dim> triangulation(
+      MPI_COMM_WORLD,
+      Triangulation<dim>::limit_level_difference_at_vertices,
+      parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy);
+    *pcout << create_mesh(triangulation, rt_parameters.mesh) << std::endl;
+    const unsigned int level = triangulation.n_global_levels() - 1;
+
+    //: initialize dof_handler
+    DoFHandler<dim> dof_handler;
+    *pcout << fe->get_name() << std::endl;
+    dof_handler.initialize(triangulation, *fe);
+    dof_handler.distribute_mg_dofs();
+
+    ASSERT_EQ(fe->n_base_elements(), 1U);
+    const auto n_components = fe->n_components();
+    ASSERT_EQ(n_components, 1U);
+
+    //: initialize zero-boundary constraints
+    AffineConstraints<double> zero_constraints;
+    if(TPSS::get_dof_layout(*fe) == TPSS::DoFLayout::Q)
+    {
+      IndexSet relevant_dofs;
+      DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, relevant_dofs);
+      zero_constraints.reinit(relevant_dofs);
+      DoFTools::make_zero_boundary_constraints(dof_handler, 0U, zero_constraints);
+    }
+    zero_constraints.close();
+
+    //: distribute subdomains
+    TPSS::PatchInfo<dim> patch_info;
+    {
+      typename TPSS::PatchInfo<dim>::AdditionalData additional_data;
+      const auto schwarz_data          = rt_parameters.multigrid.pre_smoother.schwarz;
+      additional_data.patch_variant    = schwarz_data.patch_variant;
+      additional_data.smoother_variant = schwarz_data.smoother_variant;
+      additional_data.level            = level;
+      patch_info.initialize(&dof_handler, additional_data); // raw
+      TPSS::PatchWorker<dim, double>{patch_info};           // vectorized
+    }
+
+    //: distribute dofs on subdomains
+    QGauss<1>                                                         quadrature(fe_degree + 1);
+    internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info;
+    shape_info.reinit(quadrature, *fe, /*base_element_index*/ 0);
+    TPSS::DoFInfo<dim, double> dof_info;
+    {
+      typename TPSS::DoFInfo<dim, double>::AdditionalData additional_data;
+      additional_data.level               = level;
+      additional_data.compute_ras_weights = true;
+      dof_info.initialize(&dof_handler, &patch_info, &shape_info, additional_data);
+    }
+
+    TPSS::PatchTransfer<dim, double> patch_transfer(dof_info);
+    const auto &                     patch_dof_worker = patch_transfer.get_patch_dof_worker();
+
+    LinearAlgebra::distributed::Vector<double> vec;
+    patch_transfer.initialize_dof_vector(vec);
+    LinearAlgebra::distributed::Vector<double> one_vector;
+    patch_transfer.initialize_dof_vector(one_vector);
+    std::fill(one_vector.begin(), one_vector.end(), 1.);
+    zero_constraints.distribute(one_vector);
+
+    *pcout << "NOTE use the Unix program tac to print the visualization upside down" << std::endl;
+    const auto n_subdomains = patch_dof_worker.get_partition_data().n_subdomains();
+    for(auto patch_index = 0U; patch_index < n_subdomains; ++patch_index)
+    {
+      /// DEBUG visualize
+      if(dim == 2)
+      {
+        for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_index); ++lane)
+        {
+          const auto & collect       = patch_dof_worker.get_cell_collection(patch_index, lane);
+          const auto & is_restricted = patch_dof_worker.get_restricted_dof_flags(patch_index, lane);
+          const auto   n_dofs_1d     = patch_dof_worker.n_dofs_1d(0);
+          AssertDimension(is_restricted.size() % n_dofs_1d, 0);
+          *pcout << "patch_id: " << patch_index << " lane: " << lane << " level: " << level << " "
+                 << collect.front()->vertex(3);
+          for(auto i = 0U; i < is_restricted.size(); ++i)
+          {
+            *pcout << (i % n_dofs_1d == 0 ? "\n" : "") << (is_restricted[i] ? "o " : "x ");
+          }
+          *pcout << std::endl;
+        }
+      }
+
+      patch_transfer.reinit(patch_index);
+      AlignedVector<VectorizedArray<double>> local_one_vector;
+      patch_transfer.reinit_local_vector(local_one_vector);
+      local_one_vector.fill(make_vectorized_array(1.));
+
+      patch_transfer.rscatter_add(vec, local_one_vector);
+    }
+
+    Util::compare_vector(vec, one_vector, *pcout);
+  }
+};
+
+TYPED_TEST_SUITE_P(TestPatchTransferrscatter);
+
+TYPED_TEST_P(TestPatchTransferrscatter, Q)
+{
+  constexpr auto dim       = TestFixture::dim;
+  constexpr auto fe_degree = TestFixture::fe_degree;
+
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  const auto fe = std::make_shared<FE_Q<dim>>(fe_degree);
+
+  /// vertex patch
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
+    TPSS::PatchVariant::vertex;
+
+  /// 3
+  TestFixture::check_rscatter(fe);
+  /// 4
+  TestFixture::rt_parameters.mesh.n_refinements = 2U;
+  TestFixture::check_rscatter(fe);
+}
+
+REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferrscatter, Q);
+
+INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestPatchTransferrscatter, TestParamsQuadratic2D);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferrscatter, TestParamsHigherOrder2D);
+
+INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic3D, TestPatchTransferrscatter, TestParamsQuadratic3D);
+INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestPatchTransferrscatter, TestParamsHigherOrder3D);
+
 
 
 int
