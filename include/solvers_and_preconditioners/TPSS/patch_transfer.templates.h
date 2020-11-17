@@ -52,7 +52,7 @@ PatchTransfer<dim, Number>::gather_add(AlignedVector<VectorizedArray<Number>> & 
 
 
 template<int dim, typename Number>
-template<typename VectorType, bool is_restricted>
+template<typename VectorType, bool is_restricted, bool do_add>
 void
 PatchTransfer<dim, Number>::scatter_add_impl(
   VectorType &                                   dst,
@@ -76,14 +76,20 @@ PatchTransfer<dim, Number>::scatter_add_impl(
       {
         const auto dof_index = global_dof_indices[i];
         if(!is_restricted_dof[i])
-          internal::local_element(dst, dof_index) += (*src_value)[lane];
+          if(do_add)
+            internal::local_element(dst, dof_index) += (*src_value)[lane];
+          else
+            internal::local_element(dst, dof_index) = (*src_value)[lane];
       }
     }
     else
     {
       auto dof_index = global_dof_indices.cbegin();
       for(auto src_value = src.cbegin(); src_value != src.cend(); ++dof_index, ++src_value)
-        internal::local_element(dst, *dof_index) += (*src_value)[lane];
+        if(do_add)
+          internal::local_element(dst, *dof_index) += (*src_value)[lane];
+        else
+          internal::local_element(dst, *dof_index) = (*src_value)[lane];
     }
   }
 }
@@ -107,6 +113,27 @@ PatchTransfer<dim, Number>::scatter_add(VectorType &                            
 {
   const auto src_view = make_array_view<const VectorizedArray<Number>>(src.begin(), src.end());
   scatter_add(dst, src_view);
+}
+
+
+template<int dim, typename Number>
+template<typename VectorType>
+void
+PatchTransfer<dim, Number>::scatter(VectorType &                                   dst,
+                                    const ArrayView<const VectorizedArray<Number>> src) const
+{
+  scatter_add_impl<VectorType, false, false>(dst, src);
+}
+
+
+template<int dim, typename Number>
+template<typename VectorType>
+void
+PatchTransfer<dim, Number>::scatter(VectorType &                                   dst,
+                                    const AlignedVector<VectorizedArray<Number>> & src) const
+{
+  const auto src_view = make_array_view<const VectorizedArray<Number>>(src.begin(), src.end());
+  scatter(dst, src_view);
 }
 
 

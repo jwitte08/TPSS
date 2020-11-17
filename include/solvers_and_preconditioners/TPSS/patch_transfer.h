@@ -192,6 +192,21 @@ public:
   scatter_add(VectorType & dst, const ArrayView<const VectorizedArray<Number>> src) const;
 
   /**
+   * Insert patch relevant dof values @p src into the global dof values @p dst,
+   * this means overwritting the previous values in @p dst.
+   */
+  template<typename VectorType>
+  void
+  scatter(VectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const;
+
+  /**
+   * Same as above, but @p dst is passed as ArrayView.
+   */
+  template<typename VectorType>
+  void
+  scatter(VectorType & dst, const ArrayView<const VectorizedArray<Number>> src) const;
+
+  /**
    * Add patch relevant dof values @p src to the global dof values @p dst for
    * all dofs that are not restricted. This restricted prolongation is used for
    * restricted additive Schwarz methods (RAS) defining a partition of unity at
@@ -236,7 +251,7 @@ private:
   /**
    * Add patch relevant dof values @p src to the global dof values @p dst.
    */
-  template<typename VectorType, bool is_restricted>
+  template<typename VectorType, bool is_restricted, bool do_add = true>
   void
   scatter_add_impl(VectorType & dst, const ArrayView<const VectorizedArray<Number>> src) const;
 
