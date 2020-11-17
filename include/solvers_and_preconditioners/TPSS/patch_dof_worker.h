@@ -138,14 +138,14 @@ public:
 
   /**
    * The MPI::Partitioner in the underlying DoFInfo is used to initialize global
-   * dof vectors (with the knowledge on ghosted dofs!) for convenience.
+   * dof vectors with respect to locally owned and ghosted dof indices.
    */
   void
   initialize_dof_vector(LinearAlgebra::distributed::Vector<Number> & vec) const;
 
   /**
    * Same as above except that in the serial case only the number of global dofs
-   * on the current level is required for initialization of dof vectors.
+   * on the current level suffices to initialize @p vec.
    */
   void
   initialize_dof_vector(Vector<Number> & vec) const;
@@ -158,15 +158,25 @@ public:
   n_dofs() const;
 
   /**
-   * Return the total number of global dofs on the current mesh level, that is
-   * the number of global dofs accumulated over all mpi processes.
+   * Return the total number of global dofs on the current mesh level. In case
+   * of a parallel distributed mesh this corresponds to the number of global
+   * dofs accumulated over all mpi processes.
    */
   types::global_dof_index
   n_global_dofs() const;
 
+  /**
+   * The actual number of degrees of freedom on a patch in dimension @p
+   * dimension. This excludes degrees of freedom at the boundary of a patch
+   * which are usually neglected in favor of homogeneous boundary conditions.
+   */
   unsigned int
   n_dofs_1d(const unsigned int dimension) const;
 
+  /**
+   * The number of degrees of freedom on a patch in dimension @p dimension if
+   * degrees of freedom at the boundary of a patch are not excluded.
+   */
   unsigned int
   n_dofs_plain_1d(const unsigned int dimension) const;
 

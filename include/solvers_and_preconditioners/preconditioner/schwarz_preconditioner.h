@@ -44,8 +44,11 @@ copy_locally_owned_data(LinearAlgebra::distributed::BlockVector<Number> &       
   for(unsigned int b = 0; b < src.n_blocks(); ++b)
     dst.block(b).copy_locally_owned_data_from(src.block(b));
 }
+
 } // namespace internal
+
 } // namespace TPSS
+
 
 
 /**
@@ -417,11 +420,12 @@ private:
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 struct SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::AdditionalData
 {
-  double relaxation       = 1.;
-  double local_relaxation = 1.;
-  bool   reverse          = false;
-  bool   symmetrized      = false;
-  bool   use_ras          = false;
+  double relaxation              = 1.;
+  double local_relaxation        = 1.;
+  bool   reverse                 = false;
+  bool   symmetrized             = false;
+  bool   use_ras_weights         = false;
+  bool   use_ras_boolean_weights = false;
 
   bool
   operator==(const AdditionalData & other_data) const
@@ -431,6 +435,8 @@ struct SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Additio
     is_equal &= local_relaxation == other_data.local_relaxation;
     is_equal &= reverse == other_data.reverse;
     is_equal &= symmetrized == other_data.symmetrized;
+    is_equal &= use_ras_weights == other_data.use_ras_weights;
+    is_equal &= use_ras_boolean_weights == other_data.use_ras_boolean_weights;
     return is_equal;
   }
 };

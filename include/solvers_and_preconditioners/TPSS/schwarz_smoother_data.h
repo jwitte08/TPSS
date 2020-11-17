@@ -32,7 +32,8 @@ struct SchwarzSmootherData
       reverse_smoothing(false),
       symmetrize_smoothing(false),
       caching_strategy(TPSS::CachingStrategy::Cached),
-      use_ras(false),
+      use_ras_weights(false),
+      use_ras_boolean_weights(false),
       print_details(false)
   {
   }
@@ -62,7 +63,8 @@ struct SchwarzSmootherData
     print_parameter(pcout, "Manual coloring", manual_coloring);
     print_parameter(pcout, "Symmetrized Schwarz operator", symmetrize_smoothing);
     print_parameter(pcout, "Reversed Schwarz operator", reverse_smoothing);
-    print_parameter(pcout, "Restricted Additive Schwarz", use_ras);
+    print_parameter(pcout, "RAS - weights", use_ras_weights);
+    print_parameter(pcout, "RAS - boolean weights", use_ras_boolean_weights);
 
     print_parameter(pcout, "Number of quad points (surrogate)", n_q_points_surrogate);
     print_parameter(pcout, "Normalize surrogate patches", normalize_surrogate_patch);
@@ -84,7 +86,8 @@ struct SchwarzSmootherData
     is_equal &= use_arc_length == other.use_arc_length;
     is_equal &= reverse_smoothing == other.reverse_smoothing;
     is_equal &= symmetrize_smoothing == other.symmetrize_smoothing;
-    is_equal &= use_ras == other.use_ras;
+    is_equal &= use_ras_weights == other.use_ras_weights;
+    is_equal &= use_ras_boolean_weights == other.use_ras_boolean_weights;
     is_equal &= print_details == other.print_details;
     is_equal &= caching_strategy == other.caching_strategy;
     return is_equal;
@@ -128,8 +131,11 @@ struct SchwarzSmootherData
   // which patch related data is cached or computed on-the-fly
   TPSS::CachingStrategy caching_strategy;
 
-  // use restricted additive schwarz
-  bool use_ras;
+  // use restricted additive schwarz (weighted partition of unity)
+  bool use_ras_weights;
+
+  // use restricted additive schwarz (boolean partition of unity)
+  bool use_ras_boolean_weights;
 
   // print detailed information regarding the patch distribution, etc.
   bool print_details;
@@ -143,8 +149,9 @@ fill_schwarz_smoother_data(typename SubdomainHandler<dim, Number>::AdditionalDat
                            const SchwarzSmootherData & schwarz_smoother_data)
 {
   /// Schwarz operator
-  additional_data.patch_variant    = schwarz_smoother_data.patch_variant;
-  additional_data.smoother_variant = schwarz_smoother_data.smoother_variant;
+  additional_data.patch_variant               = schwarz_smoother_data.patch_variant;
+  additional_data.smoother_variant            = schwarz_smoother_data.smoother_variant;
+  additional_data.compute_ras_boolean_weights = schwarz_smoother_data.use_ras_boolean_weights;
   /// Surrogates
   additional_data.n_q_points_surrogate      = schwarz_smoother_data.n_q_points_surrogate;
   additional_data.normalize_surrogate_patch = schwarz_smoother_data.normalize_surrogate_patch;

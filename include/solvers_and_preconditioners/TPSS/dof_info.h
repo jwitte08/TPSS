@@ -221,7 +221,7 @@ struct DoFInfo
   initialize_impl();
 
   void
-  initialize_restricted_dofs_impl();
+  compute_restricted_dofs_impl();
 
   void
   clear();
@@ -306,7 +306,7 @@ struct DoFInfo<dim, Number>::AdditionalData
   std::set<types::boundary_id> dirichlet_ids;
   TPSS::CachingStrategy        caching_strategy            = TPSS::CachingStrategy::Cached;
   bool                         force_no_boundary_condition = false;
-  bool                         compute_ras_weights         = false;
+  bool                         compute_ras_boolean_weights = false;
 };
 
 

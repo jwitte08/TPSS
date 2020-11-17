@@ -181,9 +181,8 @@ DoFInfo<dim, Number>::initialize_impl()
     start_of_dof_indices_patchwise.emplace_back(dof_indices_patchwise.size());
   }
 
-  if(additional_data.compute_ras_weights)
-    initialize_restricted_dofs_impl();
-
+  if(additional_data.compute_ras_boolean_weights)
+    compute_restricted_dofs_impl();
   /// TODO !!!
   // compress();
 }
@@ -192,7 +191,7 @@ DoFInfo<dim, Number>::initialize_impl()
 
 template<int dim, typename Number>
 void
-DoFInfo<dim, Number>::initialize_restricted_dofs_impl()
+DoFInfo<dim, Number>::compute_restricted_dofs_impl()
 {
   const auto n_components = shape_info->n_components;
   AssertThrow(patch_info, ExcMessage("patch_info isn't set."));
@@ -207,27 +206,55 @@ DoFInfo<dim, Number>::initialize_restricted_dofs_impl()
   AssertThrow(patch_variant == TPSS::PatchVariant::vertex, ExcMessage("TODO"));
   AssertThrow(smoother_variant == TPSS::SmootherVariant::additive,
               ExcMessage("Additive scheme is only supported."));
-  AssertThrow(get_dof_layout() == TPSS::DoFLayout::Q, ExcMessage("TODO"));
 
   PatchDoFWorker<dim, Number> patch_dof_worker(*this);
   const auto &                partition_data   = patch_dof_worker.get_partition_data();
   const auto                  n_subdomains     = partition_data.n_subdomains();
   const auto &                patch_dof_tensor = patch_dof_worker.get_dof_tensor();
 
-  auto inner_sizes = patch_dof_tensor.size();
+  std::array<unsigned int, dim> inner_sizes;
   for(auto d = 0U; d < dim; ++d)
-    inner_sizes[d] -= 2U;
+    inner_sizes[d] = patch_dof_worker.n_dofs_1d(d);
+
+  // auto inner_sizes = patch_dof_tensor.size();
+  // for(auto d = 0U; d < dim; ++d)
+  //   inner_sizes[d] -= 2U;
   Tensors::TensorHelper<dim> dof_tensor_inner(inner_sizes);
 
-  const auto comp_distance_impl = [&](const unsigned int index, const unsigned int index_mid) {
-    const auto & mindex     = dof_tensor_inner.multi_index(index);
-    const auto & mindex_mid = dof_tensor_inner.multi_index(index_mid);
-    unsigned int dist       = 0U;
+  const auto comp_distance_impl_q = [&](const unsigned int index) {
+    const auto & mindex = dof_tensor_inner.multi_index(index);
+    AssertDimension(dof_tensor_inner.n_flat() % 2, 1); // odd
+    const auto   index_at_vertex = dof_tensor_inner.n_flat() / 2;
+    const auto & mindex_mid      = dof_tensor_inner.multi_index(index_at_vertex);
+    unsigned int dist            = 0U;
     for(auto d = 0U; d < dim; ++d)
       dist = std::max(dist,
                       (mindex[d] < mindex_mid[d]) ? (mindex_mid[d] - mindex[d]) :
                                                     (mindex[d] - mindex_mid[d]));
     return dist;
+  };
+
+  const auto comp_distance_impl_dgq = [&](const unsigned int index) {
+    std::array<double, dim> mindex_mid;
+    for(auto d = 0U; d < dim; ++d)
+      mindex_mid[d] = patch_dof_worker.n_dofs_1d(d) / 2. - 0.5;
+    const auto & mindex = dof_tensor_inner.multi_index(index);
+    double       dist   = 0.;
+    for(auto d = 0U; d < dim; ++d)
+    {
+      const double diff = mindex_mid[d] - static_cast<double>(mindex[d]);
+      dist              = std::max<double>(dist, std::fabs(diff));
+    }
+    return static_cast<unsigned int>(dist);
+  };
+
+  const auto comp_distance = [&](const unsigned int index) {
+    if(get_dof_layout() == DoFLayout::Q)
+      return comp_distance_impl_q(index);
+    else if(get_dof_layout() == DoFLayout::DGQ)
+      return comp_distance_impl_dgq(index);
+    else
+      AssertThrow(false, ExcMessage("Dof layout isn't supported"));
   };
 
   std::map<unsigned int, std::vector<std::array<unsigned int, 5>>> dof_indices_to_weights;
@@ -240,16 +267,12 @@ DoFInfo<dim, Number>::initialize_restricted_dofs_impl()
       const auto dof_indices_on_patch =
         patch_dof_worker.get_dof_indices_on_patch(patch_id, lane, comp);
 
-      const auto n_dofs_on_patch = dof_indices_on_patch.size();
-
       const auto comp_weight = [&](const unsigned int index) -> std::array<unsigned int, 5> {
         AssertDimension(dof_tensor_inner.n_flat(), dof_indices_on_patch.size());
-        AssertDimension(dof_indices_on_patch.size() % 2, 1); // odd number of dofs
-
-        return {comp_distance_impl(index, n_dofs_on_patch / 2), index, patch_id, lane, comp};
+        return {comp_distance(index), index, patch_id, lane, comp};
       };
 
-      for(auto i = 0U; i < n_dofs_on_patch; ++i)
+      for(auto i = 0U; i < dof_indices_on_patch.size(); ++i)
       {
         const auto dof_index = dof_indices_on_patch[i];
         dof_indices_to_weights[dof_index].emplace_back(comp_weight(i));
