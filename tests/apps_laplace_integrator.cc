@@ -429,15 +429,9 @@ REGISTER_TYPED_TEST_SUITE_P(TestLaplaceIntegrator,
                             FDInverseVertexPatch,
                             MFPatchAssemblyVertexPatch);
 
-using TestParamsLinear = testing::Types<Util::NonTypeParams<2, 1>>;
-INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestLaplaceIntegrator, TestParamsLinear);
-using TestParamsHigherOrder = testing::Types<Util::NonTypeParams<2, 2>, Util::NonTypeParams<2, 4>>;
-INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestLaplaceIntegrator, TestParamsHigherOrder);
-using TestParamsLinear3D = testing::Types<Util::NonTypeParams<3, 1>>;
-INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestLaplaceIntegrator, TestParamsLinear3D);
-using TestParamsHigherOrder3D =
-  testing::Types<Util::NonTypeParams<3, 2>, Util::NonTypeParams<3, 4>>;
-INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestLaplaceIntegrator, TestParamsHigherOrder3D);
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear, TestLaplaceIntegrator, ABC::TestParamsLinear);
+INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic, TestLaplaceIntegrator, ABC::TestParamsQuadratic);
+INSTANTIATE_TYPED_TEST_SUITE_P(HighOrder, TestLaplaceIntegrator, ABC::TestParamsHighOrder);
 
 
 
