@@ -84,7 +84,7 @@ struct Test
     rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
     rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = CT::PATCH_VARIANT_;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = CT::SMOOTHER_VARIANT_;
-    rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      = true;
+    rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
     rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = outer_damping_factor;
     rt_parameters.multigrid.pre_smoother.schwarz.local_damping_factor = local_damping_factor;
     rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = prms.n_smoothing_steps;

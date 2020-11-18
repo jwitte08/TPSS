@@ -240,7 +240,7 @@ public:
     typename SubdomainHandler<dim, OtherNumber>::AdditionalData sd_handler_data;
     fill_schwarz_smoother_data<dim, OtherNumber>(sd_handler_data, prms.schwarz);
     sd_handler_data.level = level;
-    if(prms.schwarz.manual_coloring)
+    if(prms.schwarz.userdefined_coloring)
       sd_handler_data.coloring_func = additional_data.coloring_func;
     sd_handler_data.foreach_dofh = additional_data.foreach_dofh;
 
@@ -260,11 +260,12 @@ public:
 
     const auto &                                 schwarz_data = prms.schwarz;
     typename preconditioner_type::AdditionalData precondition_data;
-    precondition_data.relaxation       = schwarz_data.damping_factor;
-    precondition_data.local_relaxation = schwarz_data.local_damping_factor;
-    precondition_data.symmetrized      = schwarz_data.symmetrize_smoothing;
-    precondition_data.reverse          = schwarz_data.reverse_smoothing;
-    precondition_data.use_ras          = schwarz_data.use_ras;
+    precondition_data.relaxation              = schwarz_data.damping_factor;
+    precondition_data.local_relaxation        = schwarz_data.local_damping_factor;
+    precondition_data.symmetrized             = schwarz_data.symmetrize_smoothing;
+    precondition_data.reverse                 = schwarz_data.reverse_smoothing;
+    precondition_data.use_ras_weights         = schwarz_data.use_ras_weights;
+    precondition_data.use_ras_boolean_weights = schwarz_data.use_ras_boolean_weights;
     typename smoother_type::AdditionalData smoother_data;
     smoother_data.number_of_smoothing_steps = prms.n_smoothing_steps;
 
@@ -326,7 +327,7 @@ public:
     for(unsigned level = mg_level_min; level <= mg_level_max; ++level)
     {
       sd_handler_data.level = level;
-      if(prms.schwarz.manual_coloring)
+      if(prms.schwarz.userdefined_coloring)
         sd_handler_data.coloring_func = additional_data.coloring_func;
       AssertThrow(other.get_preconditioner(level)->is_shallow_copyable(sd_handler_data),
                   ExcMessage("Is not shallow copyable. Check the SchwarzSmootherData settings."));

@@ -77,12 +77,12 @@ struct StokesFlow
     // prms.multigrid.coarse_grid.accuracy                                           = 1.e-12;
 
     //:: pre-smoother
-    prms.multigrid.pre_smoother.variant                  = smoother_scheme[test_index];
-    prms.multigrid.pre_smoother.n_smoothing_steps        = 2; // !!!
-    prms.multigrid.pre_smoother.schwarz.patch_variant    = patch_variant;
-    prms.multigrid.pre_smoother.schwarz.smoother_variant = smoother_variant;
-    prms.multigrid.pre_smoother.schwarz.manual_coloring  = true;
-    prms.multigrid.pre_smoother.schwarz.damping_factor   = damping_factor;
+    prms.multigrid.pre_smoother.variant                      = smoother_scheme[test_index];
+    prms.multigrid.pre_smoother.n_smoothing_steps            = 2; // !!!
+    prms.multigrid.pre_smoother.schwarz.patch_variant        = patch_variant;
+    prms.multigrid.pre_smoother.schwarz.smoother_variant     = smoother_variant;
+    prms.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
+    prms.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
 
     //:: post_smoother
     prms.multigrid.post_smoother                           = prms.multigrid.pre_smoother;

@@ -193,14 +193,14 @@ main(int argc, char * argv[])
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::GaussSeidel,
         SmootherParameter::SmootherVariant::Schwarz};
-      prms.multigrid.pre_smoother.variant                    = smoother_variant[test_index];
-      prms.multigrid.pre_smoother.n_smoothing_steps          = 2;
-      prms.multigrid.pre_smoother.schwarz.patch_variant      = CT::PATCH_VARIANT_;
-      prms.multigrid.pre_smoother.schwarz.smoother_variant   = CT::SMOOTHER_VARIANT_;
-      prms.multigrid.pre_smoother.schwarz.manual_coloring    = true;
-      prms.multigrid.pre_smoother.schwarz.damping_factor     = damping;
-      prms.multigrid.post_smoother                           = prms.multigrid.pre_smoother;
-      prms.multigrid.post_smoother.schwarz.reverse_smoothing = true;
+      prms.multigrid.pre_smoother.variant                      = smoother_variant[test_index];
+      prms.multigrid.pre_smoother.n_smoothing_steps            = 2;
+      prms.multigrid.pre_smoother.schwarz.patch_variant        = CT::PATCH_VARIANT_;
+      prms.multigrid.pre_smoother.schwarz.smoother_variant     = CT::SMOOTHER_VARIANT_;
+      prms.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
+      prms.multigrid.pre_smoother.schwarz.damping_factor       = damping;
+      prms.multigrid.post_smoother                             = prms.multigrid.pre_smoother;
+      prms.multigrid.post_smoother.schwarz.reverse_smoothing   = true;
     }
 
     EquationData equation_data;

@@ -425,10 +425,10 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
    * gather_vertex_patches for more information.
    */
   std::vector<std::vector<CellIterator>> cell_collections;
-  if(!additional_data.manual_gathering_func)
+  if(!additional_data.patch_distribution_func)
     cell_collections = std::move(gather_vertex_patches(*dof_handler, additional_data));
   else
-    additional_data.manual_gathering_func(dof_handler, additional_data, cell_collections);
+    additional_data.patch_distribution_func(dof_handler, additional_data, cell_collections);
 
   time.stop();
   time_data.emplace_back(time.wall_time(), "Vertex patch gathering");

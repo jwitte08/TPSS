@@ -562,7 +562,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_schwarz_smoothers(
   {
     const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
     typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
-    if(parameters.pre_smoother.schwarz.manual_coloring)
+    if(parameters.pre_smoother.schwarz.userdefined_coloring)
     {
       Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
       additional_data.coloring_func = std::ref(*user_coloring);
@@ -578,7 +578,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_schwarz_smoothers(
   {
     const auto mgss_post = std::make_shared<MG_SMOOTHER_SCHWARZ>();
     typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
-    if(parameters.pre_smoother.schwarz.manual_coloring)
+    if(parameters.pre_smoother.schwarz.userdefined_coloring)
     {
       Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
       additional_data.coloring_func = std::ref(*user_coloring);
@@ -1133,7 +1133,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   {
     const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
     typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
-    if(parameters.pre_smoother.schwarz.manual_coloring)
+    if(parameters.pre_smoother.schwarz.userdefined_coloring)
     {
       Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
       additional_data.coloring_func = std::ref(*user_coloring);
@@ -1151,7 +1151,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   {
     const auto mgss_post = std::make_shared<MG_SMOOTHER_SCHWARZ>();
     typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
-    if(parameters.pre_smoother.schwarz.manual_coloring)
+    if(parameters.pre_smoother.schwarz.userdefined_coloring)
     {
       Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
       additional_data.coloring_func = std::ref(*user_coloring);

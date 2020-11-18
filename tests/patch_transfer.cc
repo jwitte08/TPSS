@@ -1368,8 +1368,8 @@ protected:
     TPSS::DoFInfo<dim, double> dof_info;
     {
       typename TPSS::DoFInfo<dim, double>::AdditionalData additional_data;
-      additional_data.level               = level;
-      additional_data.compute_ras_weights = true;
+      additional_data.level                       = level;
+      additional_data.compute_ras_boolean_weights = true;
       dof_info.initialize(&dof_handler, &patch_info, &shape_info, additional_data);
     }
 
@@ -1432,15 +1432,39 @@ TYPED_TEST_P(TestPatchTransferrscatter, Q)
   /// vertex patch
   TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
     TPSS::PatchVariant::vertex;
+  TestFixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  TestFixture::rt_parameters.mesh.n_repetitions    = 3U;
 
   /// 3
   TestFixture::check_rscatter(fe);
   /// 4
-  TestFixture::rt_parameters.mesh.n_refinements = 2U;
+  TestFixture::rt_parameters.mesh.n_refinements = 1U;
   TestFixture::check_rscatter(fe);
 }
 
-REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferrscatter, Q);
+TYPED_TEST_P(TestPatchTransferrscatter, DGQ)
+{
+  constexpr auto dim       = TestFixture::dim;
+  constexpr auto fe_degree = TestFixture::fe_degree;
+
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  const auto fe = std::make_shared<FE_DGQ<dim>>(fe_degree);
+
+  /// vertex patch
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
+    TPSS::PatchVariant::vertex;
+  TestFixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  TestFixture::rt_parameters.mesh.n_repetitions    = 3U;
+
+  /// 3
+  TestFixture::check_rscatter(fe);
+  /// 4
+  TestFixture::rt_parameters.mesh.n_refinements = 1U;
+  TestFixture::check_rscatter(fe);
+}
+
+REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferrscatter, Q, DGQ);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestPatchTransferrscatter, TestParamsQuadratic2D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferrscatter, TestParamsHigherOrder2D);

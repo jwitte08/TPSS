@@ -247,7 +247,7 @@ struct ModelProblem : public Subscriptor
     /// prepare additional data
     typename SubdomainHandler<dim, OtherNumber>::AdditionalData fdss_additional_data;
     fdss_additional_data.level = level;
-    if(rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring)
+    if(rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring)
       fdss_additional_data.coloring_func = std::ref(red_black_coloring);
     rt_parameters.template fill_schwarz_smoother_data<dim, OtherNumber>(fdss_additional_data,
                                                                         is_pre_smoother);

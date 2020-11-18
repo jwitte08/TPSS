@@ -212,7 +212,7 @@ struct SubdomainHandler<dim, Number>::AdditionalData
   std::function<void(const DoFHandler<dim> *                             dof_handler,
                      const typename TPSS::PatchInfo<dim>::AdditionalData additional_data,
                      std::vector<std::vector<CellIterator>> &            cell_collections)>
-    manual_gathering_func;
+    patch_distribution_func;
 
   std::vector<ForeachDoFHandler> foreach_dofh;
 

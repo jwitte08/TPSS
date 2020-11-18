@@ -25,7 +25,7 @@ struct SchwarzSmootherData
       // number_of_smoothing_steps(1),
       damping_factor(1.0),
       local_damping_factor(1.0),
-      manual_coloring(false),
+      userdefined_coloring(false),
       n_q_points_surrogate(5),
       normalize_surrogate_patch(false),
       use_arc_length(true),
@@ -60,7 +60,7 @@ struct SchwarzSmootherData
     print_parameter(pcout, "Damping factor", damping_factor);
     print_parameter(pcout, "Patch-local damping factor", local_damping_factor);
 
-    print_parameter(pcout, "Manual coloring", manual_coloring);
+    print_parameter(pcout, "User-defined coloring", userdefined_coloring);
     print_parameter(pcout, "Symmetrized Schwarz operator", symmetrize_smoothing);
     print_parameter(pcout, "Reversed Schwarz operator", reverse_smoothing);
     print_parameter(pcout, "RAS - weights", use_ras_weights);
@@ -81,7 +81,7 @@ struct SchwarzSmootherData
     is_equal &= smoother_variant == other.smoother_variant;
     is_equal &= damping_factor == other.damping_factor;
     is_equal &= local_damping_factor == other.local_damping_factor;
-    is_equal &= manual_coloring == other.manual_coloring;
+    is_equal &= userdefined_coloring == other.userdefined_coloring;
     is_equal &= n_q_points_surrogate == other.n_q_points_surrogate;
     is_equal &= use_arc_length == other.use_arc_length;
     is_equal &= reverse_smoothing == other.reverse_smoothing;
@@ -109,7 +109,7 @@ struct SchwarzSmootherData
   double local_damping_factor;
 
   // TODO ...
-  bool manual_coloring;
+  bool userdefined_coloring;
 
   // characterizing quadrature to compute surrogate patches
   unsigned int n_q_points_surrogate;

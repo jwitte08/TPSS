@@ -180,7 +180,7 @@ struct PatchInfo<dim>::AdditionalData
   std::function<void(const DoFHandler<dim> *                  dof_handler,
                      const AdditionalData                     additional_data,
                      std::vector<std::vector<CellIterator>> & cell_collections)>
-    manual_gathering_func;
+    patch_distribution_func;
   std::function<void(const DoFHandler<dim> & dof_handler_in,
                      const std::vector<std::vector<typename TPSS::PatchInfo<dim>::PatchIterator>> &
                        colored_iterators,

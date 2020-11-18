@@ -309,7 +309,7 @@ struct ModelProblem : public Subscriptor
 
     typename SubdomainHandler<dim, OtherNumber>::AdditionalData fdss_additional_data;
     fdss_additional_data.level = level;
-    if(rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring)
+    if(rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring)
       fdss_additional_data.coloring_func = std::ref(*user_coloring);
     rt_parameters.template fill_schwarz_smoother_data<dim, OtherNumber>(fdss_additional_data,
                                                                         is_pre_smoother);
@@ -595,7 +595,7 @@ struct ModelProblem : public Subscriptor
         rt_parameters.template fill_schwarz_smoother_data<dim, typename LEVEL_MATRIX::value_type>(
           sd_handler_data, false);
         sd_handler_data.level = mg_matrices.max_level();
-        if(rt_parameters.multigrid.post_smoother.schwarz.manual_coloring)
+        if(rt_parameters.multigrid.post_smoother.schwarz.userdefined_coloring)
           sd_handler_data.coloring_func = std::ref(*user_coloring);
         const bool is_shallow_copyable =
           mg_schwarz_smoother_pre->get_preconditioner(level)->is_shallow_copyable(sd_handler_data);

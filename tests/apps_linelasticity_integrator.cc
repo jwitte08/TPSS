@@ -617,7 +617,7 @@ protected:
   }
 
   // void
-  // manual_assembly(const TestVariant test_variant = TestVariant::matrix)
+  // userdefined_assembly(const TestVariant test_variant = TestVariant::matrix)
   // {
   //   using State = typename Tensors::TensorProductMatrix<dim, double>::State;
   //   initialize();
