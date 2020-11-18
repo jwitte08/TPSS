@@ -22,12 +22,13 @@ struct TestParameter
   std::string                        solver_variant   = "gmres"; //!!! see SolverSelector
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::IterativeAcc;
-  double   coarse_grid_accuracy = 1.e-12;
-  double   cg_reduction         = 1.e-8;
-  unsigned n_refinements        = 1;
-  unsigned n_repetitions        = 2;
-  double   damping              = 0.;
-  bool     use_ras              = false;
+  double   coarse_grid_accuracy    = 1.e-12;
+  double   cg_reduction            = 1.e-8;
+  unsigned n_refinements           = 1;
+  unsigned n_repetitions           = 2;
+  double   damping                 = 0.;
+  bool     use_ras_weights         = false;
+  bool     use_ras_boolean_weights = false;
 
   std::string
   to_string() const
@@ -36,7 +37,6 @@ struct TestParameter
     oss << Util::parameter_to_fstring("n_refinements (initial):", n_refinements);
     oss << Util::parameter_to_fstring("n_repetitions (initial):", n_repetitions);
     oss << Util::parameter_to_fstring(solver_variant + " solver reduction:", cg_reduction);
-    oss << Util::parameter_to_fstring("restricted additive Schwarz:", use_ras);
     return oss.str();
   }
 };
@@ -84,7 +84,7 @@ struct Tester
   {
     //: discretization
     rt_parameters.n_cycles              = 10;
-    rt_parameters.dof_limits            = {1e1, 1e5}; // !!! {1e5, 2e7};
+    rt_parameters.dof_limits            = {1e1, 1e6}; // !!! {1e5, 2e7};
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
     rt_parameters.mesh.n_refinements    = testprms.n_refinements;
     rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;
@@ -106,9 +106,10 @@ struct Tester
     rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
     rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = testprms.patch_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = testprms.smoother_variant;
-    rt_parameters.multigrid.pre_smoother.schwarz.use_ras          = testprms.use_ras; // !!!
-    rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring  = true;
-    std::cout << "damp: " << testprms.damping << std::endl;
+    rt_parameters.multigrid.pre_smoother.schwarz.use_ras_weights  = testprms.use_ras_weights; // !!!
+    rt_parameters.multigrid.pre_smoother.schwarz.use_ras_boolean_weights =
+      testprms.use_ras_boolean_weights; // !!!
+    rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
     rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = testprms.damping;
     rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5, fe_degree + 1);
     rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
@@ -146,6 +147,10 @@ struct Tester
     oss << "_" << fe_degree << "deg";
     if(testprms.damping != 1.)
       oss << "_" << testprms.damping << "xdmp";
+    if(testprms.use_ras_weights)
+      oss << "_RASw";
+    if(testprms.use_ras_boolean_weights)
+      oss << "_RASb";
     return oss.str();
   }
 
@@ -160,6 +165,7 @@ struct Tester
 
     //: run
     poisson_problem->pcout = this->pcout;
+    // poisson_problem->fe = std::make_shared<FE_DGQHermite<dim>>(fe_degree);
     poisson_problem->run();
 
     //: write post process data to logfile
@@ -211,20 +217,25 @@ main(int argc, char * argv[])
 
   //: default
   TestParameter testprms;
-  unsigned int  solver_index = 0;
-  unsigned int  use_ras      = 0;
+  unsigned int  solver_index            = 0;
+  unsigned int  use_ras_weights         = 0;
+  unsigned int  use_ras_boolean_weights = 0;
 
   //: parse runtime arguments
   atoi_if(solver_index, 1);
-  atoi_if(use_ras, 2);
-  atof_if(testprms.damping, 3);
+  atoi_if(use_ras_weights, 2);
+  atoi_if(use_ras_boolean_weights, 3);
+  atof_if(testprms.damping, 4);
 
   AssertThrow(solver_index <= solver_index_max, ExcMessage("Invalid solver index."));
-  AssertThrow(use_ras <= 1U, ExcMessage("Invalid integer value for use_ras."));
+  AssertThrow(use_ras_weights <= 1U, ExcMessage("Invalid integer value for use_ras_weights."));
+  AssertThrow(use_ras_boolean_weights <= 1U,
+              ExcMessage("Invalid integer value for use_ras_boolean_weights."));
   AssertThrow(testprms.damping <= 1., ExcMessage("No over-relaxation allowed."));
 
-  testprms.solver_variant = solver_variant[solver_index];
-  testprms.use_ras        = static_cast<bool>(use_ras);
+  testprms.solver_variant          = solver_variant[solver_index];
+  testprms.use_ras_weights         = static_cast<bool>(use_ras_weights);
+  testprms.use_ras_boolean_weights = static_cast<bool>(use_ras_boolean_weights);
 
   Tester<dim, fe_degree, dof_layout, n_patch_dofs_1d_static> tester(testprms);
   tester.run();

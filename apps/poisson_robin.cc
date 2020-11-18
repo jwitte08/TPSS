@@ -70,19 +70,19 @@ main(int argc, char * argv[])
     TPSS::UniversalInfo<dim>::n_dofs_1d(CT::PATCH_VARIANT_, dof_layout, fe_degree);
 
   //: default
-  unsigned int solver_index = 0;
-  unsigned int use_ras      = 0;
-  double       damping      = 0.;
-  unsigned int n_cycles     = numbers::invalid_unsigned_int;
+  unsigned int solver_index    = 0;
+  unsigned int use_ras_weights = 0;
+  double       damping         = 0.;
+  unsigned int n_cycles        = numbers::invalid_unsigned_int;
 
   //: parse runtime arguments
   atoi_if(solver_index, 1);
-  atoi_if(use_ras, 2);
+  atoi_if(use_ras_weights, 2);
   atof_if(damping, 3);
   atoi_if(n_cycles, 4);
 
   AssertThrow(solver_index <= solver_index_max, ExcMessage("Invalid solver index."));
-  AssertThrow(use_ras <= 1U, ExcMessage("Invalid integer value for use_ras."));
+  AssertThrow(use_ras_weights <= 1U, ExcMessage("Invalid integer value for use_ras_weights."));
   AssertThrow(damping <= 1., ExcMessage("No over-relaxation allowed."));
 
   RT::Parameter rt_parameters;
@@ -111,12 +111,12 @@ main(int argc, char * argv[])
     // rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
     // rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = testprms.patch_variant;
     // rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     =
-    // testprms.smoother_variant; rt_parameters.multigrid.pre_smoother.schwarz.use_ras =
-    // testprms.use_ras; // !!! rt_parameters.multigrid.pre_smoother.schwarz.manual_coloring      =
-    // true; std::cout << "damp: " << damping << std::endl;
-    // rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping;
-    // rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5, fe_degree +
-    // 1); rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
+    // testprms.smoother_variant; rt_parameters.multigrid.pre_smoother.schwarz.use_ras_weights =
+    // testprms.use_ras_weights; // !!!
+    // rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring = true; std::cout << "damp:
+    // " << damping << std::endl; rt_parameters.multigrid.pre_smoother.schwarz.damping_factor =
+    // damping; rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5,
+    // fe_degree + 1); rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
     // rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
   }
 
