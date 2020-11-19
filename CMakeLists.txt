@@ -62,6 +62,10 @@ configure_file(
   ${CMAKE_BINARY_DIR}/env.sh
   @ONLY
   )
+configure_file(
+  ${CMAKE_SOURCE_DIR}/scripts/run_exec.py.in
+  ${CMAKE_BINARY_DIR}/scripts/run_exec.py
+  )
 
 ################################################################################
 

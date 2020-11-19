@@ -1,0 +1,49 @@
+import argparse
+from argparse import RawTextHelpFormatter
+import sys
+import os
+import shutil
+import subprocess
+
+BUILD_DIR_  = os.path.abspath("@CMAKE_BINARY_DIR@") # @...@ replaced by CMake
+PWD_        = os.path.abspath(os.curdir)
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description=
+        """
+        Run this script from the build directory.
+        
+        Compiles the variants of maketarget and stores them in the
+        output directory.
+        """,
+        formatter_class=RawTextHelpFormatter
+    )
+    parser.add_argument('execs',
+                        nargs='+',
+                        type=str,
+                        help="list of relative paths to executable"
+    )
+    parser.add_argument('-a','--args',
+                        nargs='+',
+                        type=str,
+                        default="",
+                        help="""list of arguments passed to each executable.
+
+use quotes as delimiter for more than one pack of arguments, e.g.
+\'arg1A arg2A\' \'arg1B arg2B arg3B\' \'arg1C\'
+"""
+    )
+    args = parser.parse_args()
+    return args
+
+def main():
+    options = parse_args()
+                
+    for exe in options.execs:
+        subprocess.run([str(os.path.abspath(exe))] + options.args.split(' '))
+
+
+        
+if __name__ == '__main__':
+    main()
