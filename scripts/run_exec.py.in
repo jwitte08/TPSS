@@ -12,26 +12,31 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description=
         """
-        Run this script from the build directory.
-        
-        Compiles the variants of maketarget and stores them in the
-        output directory.
+        Runs each executable for each bundle of arguments.
         """,
         formatter_class=RawTextHelpFormatter
     )
     parser.add_argument('execs',
                         nargs='+',
                         type=str,
-                        help="list of relative paths to executable"
+                        help="List of relative paths to executable."
     )
     parser.add_argument('-a','--args',
                         nargs='+',
                         type=str,
                         default="",
-                        help="""list of arguments passed to each executable.
+                        help="""List of arguments passed to each executable.
 
-use quotes as delimiter for more than one pack of arguments, e.g.
+Use quotes as delimiter for more than one bundle of arguments, e.g.
 \'arg1A arg2A\' \'arg1B arg2B arg3B\' \'arg1C\'
+"""
+    )
+    parser.add_argument('-np','--nprocs',
+                        type=int,
+                        default=0,
+                        help="""Number of MPI processes.
+
+If 0 is passed programs are executed without MPI.
 """
     )
     args = parser.parse_args()
@@ -39,10 +44,14 @@ use quotes as delimiter for more than one pack of arguments, e.g.
 
 def main():
     options = parse_args()
-                
+    
     for exe in options.execs:
-        subprocess.run([str(os.path.abspath(exe))] + options.args.split(' '))
-
+        for args in options.args:
+            if options.nprocs == 0:
+                subprocess.run([str(os.path.abspath(exe))] + args.split())
+            else:
+                subprocess.run(['mpirun', '-np', str(options.nprocs), str(os.path.abspath(exe))] + args.split())
+            
 
         
 if __name__ == '__main__':
