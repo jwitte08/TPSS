@@ -226,6 +226,7 @@ public:
     UserColoring                       coloring_func;
     std::vector<DataForeachDoFHandler> foreach_dofh;
     SmootherParameter                  parameters;
+    bool                               use_tbb = false;
   };
 
   template<typename OtherNumber>
@@ -243,6 +244,7 @@ public:
     if(prms.schwarz.userdefined_coloring)
       sd_handler_data.coloring_func = additional_data.coloring_func;
     sd_handler_data.foreach_dofh = additional_data.foreach_dofh;
+    sd_handler_data.use_tbb      = additional_data.use_tbb;
 
     /// Initialize SubdomainHandler
     const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
@@ -318,8 +320,7 @@ public:
     this->mg_matrices = other.mg_matrices;
     Base::initialize(*mg_matrices, smoother_data);
 
-    /// initialize the smoothers within MGSmootherRelaxation by shallow copies
-    /// of underlying Schwarz preconditioners
+    /// check if shallow copyable
     const unsigned int mg_level_min = other.min_level();
     const unsigned int mg_level_max = other.max_level();
     typename SubdomainHandler<dim, typename MatrixType::value_type>::AdditionalData sd_handler_data;
@@ -329,10 +330,13 @@ public:
       sd_handler_data.level = level;
       if(prms.schwarz.userdefined_coloring)
         sd_handler_data.coloring_func = additional_data.coloring_func;
+      sd_handler_data.use_tbb = additional_data.use_tbb;
       AssertThrow(other.get_preconditioner(level)->is_shallow_copyable(sd_handler_data),
                   ExcMessage("Is not shallow copyable. Check the SchwarzSmootherData settings."));
     }
 
+    /// initialize the smoothers within MGSmootherRelaxation by shallow copies
+    /// of underlying Schwarz preconditioners
     mg_schwarz_precondition.resize(mg_level_min, mg_level_max);
     for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
     {

@@ -29,6 +29,8 @@ SubdomainHandler<dim, Number>::reinit(const dealii::MatrixFree<dim, Number> * mf
   internal_reinit();
 }
 
+
+
 template<int dim, typename Number>
 void
 SubdomainHandler<dim, Number>::internal_reinit()
@@ -88,6 +90,7 @@ SubdomainHandler<dim, Number>::internal_reinit()
   patch_info_data.level                   = additional_data.level;
   patch_info_data.coloring_func           = additional_data.coloring_func;
   patch_info_data.patch_distribution_func = additional_data.patch_distribution_func;
+  patch_info_data.use_tbb                 = additional_data.use_tbb;
   patch_info_data.print_details           = additional_data.print_details;
   patch_info.initialize(unique_dof_handlers.front(), patch_info_data);
   for(const auto & info : patch_info.time_data)
@@ -150,22 +153,19 @@ SubdomainHandler<dim, Number>::internal_reinit()
   //   patch_info.get_internal_data()->compress();
 }
 
+
+
 template<int dim, typename Number>
 unsigned int
 SubdomainHandler<dim, Number>::guess_grain_size(const unsigned int n_subdomain_batches) const
 {
-  unsigned int grain_size = additional_data.grain_size;
+  unsigned int grain_size = additional_data.tbb_grain_size;
   if(grain_size == 0)
   {
     /// we would like to have enough work to do, so as first guess, try to get
     /// 16 times as many chunks as we have threads on the system.
-    if(additional_data.n_threads > MultithreadInfo::n_threads())
-      std::cout << "WARNING: AdditionalData::n_threads = " << additional_data.n_threads
-                << "is higher than MultithreadInfo::n_threads() = " << MultithreadInfo::n_threads()
-                << std::endl;
-    const unsigned int n_threads =
-      additional_data.n_threads == 0 ? MultithreadInfo::n_threads() : additional_data.n_threads;
-    grain_size = n_subdomain_batches / (n_threads * 16);
+    const unsigned int n_threads = MultithreadInfo::n_threads();
+    grain_size                   = n_subdomain_batches / (n_threads * 16);
 
     /// if there are too few degrees of freedom per cell, need to
     /// increase the grain size
@@ -183,6 +183,59 @@ SubdomainHandler<dim, Number>::guess_grain_size(const unsigned int n_subdomain_b
   return grain_size;
 }
 
+
+
+template<int dim, typename Number>
+template<typename Input, typename Output>
+void
+SubdomainHandler<dim, Number>::serloop_impl(
+  const std::function<void(const SubdomainHandler<dim, Number> &,
+                           Output &,
+                           const Input &,
+                           const std::pair<unsigned int, unsigned int> &)> & patch_operation,
+  Output &                                                                   output,
+  const Input &                                                              input,
+  const std::pair<unsigned int, unsigned int> &                              range) const
+{
+  Assert(range.first <= range.second, ExcMessage("The range is invalid."));
+  const auto n_subdomain_batches = range.second - range.first;
+  if(n_subdomain_batches == 0)
+    return; // nothing to do
+
+  patch_operation(*this, output, input, range);
+}
+
+
+
+template<int dim, typename Number>
+template<typename Input, typename Output>
+void
+SubdomainHandler<dim, Number>::parloop_impl(
+  const std::function<void(const SubdomainHandler<dim, Number> &,
+                           Output &,
+                           const Input &,
+                           const std::pair<unsigned int, unsigned int> &)> & patch_operation,
+  Output &                                                                   output,
+  const Input &                                                              input,
+  const std::pair<unsigned int, unsigned int> &                              range) const
+{
+  Assert(range.first <= range.second, ExcMessage("The range is invalid."));
+  const auto n_subdomain_batches = range.second - range.first;
+  if(n_subdomain_batches == 0)
+    return; // nothing to do
+
+  const auto grain_size = guess_grain_size(n_subdomain_batches);
+
+  const auto & operation_on_subrange = [&](const unsigned int begin, const unsigned int end) {
+    const std::pair<unsigned int, unsigned int> subrange{begin, end};
+    patch_operation(*this, output, input, subrange);
+  };
+
+  parallel::apply_to_subranges(range.first, range.second, operation_on_subrange, grain_size);
+}
+
+
+
 template<int dim, typename Number>
 template<typename Input, typename Output>
 void
@@ -196,27 +249,15 @@ SubdomainHandler<dim, Number>::loop(
   const unsigned int                                                         color) const
 {
   const auto & subdomain_partition_data = patch_info.subdomain_partition_data;
-  const bool   contains_subdomains      = (subdomain_partition_data.n_subdomains(color) > 0);
-  if(!contains_subdomains)
-    return; //: nothing to do
+  const auto   colored_range            = subdomain_partition_data.get_patch_range(color);
 
-  // TODO use explicit coloring algorithm to avoid conflicts by means of overlaps
-  const bool is_AVP = (additional_data.patch_variant == TPSS::PatchVariant::vertex) &&
-                      (additional_data.smoother_variant == TPSS::SmootherVariant::additive);
-
-  const auto   range                 = subdomain_partition_data.get_patch_range(color);
-  const auto & operation_on_subrange = [&](const unsigned int begin_patch,
-                                           const unsigned int end_patch) {
-    const std::pair<unsigned int, unsigned int> subrange{begin_patch, end_patch};
-    patch_operation(*this, output, input, subrange);
-  };
-  const auto n_subdomain_batches = subdomain_partition_data.n_subdomains(color);
-  const auto grain_size          = guess_grain_size(n_subdomain_batches);
-  if(is_AVP) // serial, TODO implement a parallel scheme
-    operation_on_subrange(range.first, range.second);
-  else // parallel, e.g. multiplicative variant is non-conflicting due to the coloring
-    parallel::apply_to_subranges(range.first, range.second, operation_on_subrange, grain_size);
+  if(additional_data.use_tbb)
+    parloop_impl(patch_operation, output, input, colored_range);
+  else
+    serloop_impl(patch_operation, output, input, colored_range);
 }
+
+
 
 template<int dim, typename Number>
 template<typename Input, typename Output>
@@ -229,24 +270,8 @@ SubdomainHandler<dim, Number>::parloop(
   Output &                                                                   output,
   const Input &                                                              input) const
 {
-  using namespace dealii;
-
   const auto & subdomain_partition_data = patch_info.subdomain_partition_data;
-  const bool   contains_subdomains      = (subdomain_partition_data.n_subdomains() > 0);
-  if(!contains_subdomains)
-    return; //: nothing to do
+  const auto   uncolored_range          = subdomain_partition_data.get_patch_range();
 
-  const auto n_subdomain_batches = subdomain_partition_data.n_subdomains();
-  const auto grain_size          = guess_grain_size(n_subdomain_batches);
-  const auto total_range         = subdomain_partition_data.get_patch_range();
-  AssertThrow(total_range.second == n_subdomain_batches, ExcMessage("Invalid patch range."));
-  const auto operation_on_subrange = [&](const unsigned int begin_patch,
-                                         const unsigned int end_patch) {
-    const std::pair<unsigned int, unsigned int> subrange{begin_patch, end_patch};
-    patch_operation(*this, output, input, subrange);
-  };
-  parallel::apply_to_subranges(total_range.first,
-                               total_range.second,
-                               operation_on_subrange,
-                               grain_size);
+  parloop_impl(patch_operation, output, input, uncolored_range);
 }

@@ -88,6 +88,7 @@ struct Tester
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
     rt_parameters.mesh.n_refinements    = testprms.n_refinements;
     rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;
+    rt_parameters.use_tbb               = MultithreadInfo::n_threads() > 1;
 
     //: solver
     rt_parameters.solver.variant              = testprms.solver_variant;
@@ -134,13 +135,16 @@ struct Tester
   get_filename()
   {
     std::ostringstream oss;
-    const auto         n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
+    const auto         n_mpi_procs            = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
+    const auto         n_threads_per_mpi_proc = MultithreadInfo::n_threads();
     const std::string  str_schwarz_variant =
       TPSS::getstr_schwarz_variant(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_);
 
     oss << "poisson";
     oss << std::scientific << std::setprecision(2);
     oss << "_" << n_mpi_procs << "prcs";
+    if(n_threads_per_mpi_proc > 1)
+      oss << "_" << n_threads_per_mpi_proc << "tpp";
     oss << "_" << TPSS::str_dof_layout(dof_layout);
     oss << "_" << str_schwarz_variant;
     oss << "_" << dim << "D";
@@ -208,11 +212,10 @@ main(int argc, char * argv[])
   const unsigned int solver_index_max                     = 1;
   const std::string  solver_variant[solver_index_max + 1] = {"cg", "gmres"};
 
-  Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
-  constexpr int                    dim        = CT::DIMENSION_;
-  constexpr int                    fe_degree  = CT::FE_DEGREE_;
-  constexpr auto                   dof_layout = CT::DOF_LAYOUT_;
-  constexpr int                    n_patch_dofs_1d_static =
+  constexpr int  dim        = CT::DIMENSION_;
+  constexpr int  fe_degree  = CT::FE_DEGREE_;
+  constexpr auto dof_layout = CT::DOF_LAYOUT_;
+  constexpr int  n_patch_dofs_1d_static =
     TPSS::UniversalInfo<dim>::n_dofs_1d(CT::PATCH_VARIANT_, dof_layout, fe_degree);
 
   //: default
@@ -220,12 +223,20 @@ main(int argc, char * argv[])
   unsigned int  solver_index            = 0;
   unsigned int  use_ras_weights         = 0;
   unsigned int  use_ras_boolean_weights = 0;
+  int           n_threads_max           = 1;
 
   //: parse runtime arguments
   atoi_if(solver_index, 1);
   atoi_if(use_ras_weights, 2);
   atoi_if(use_ras_boolean_weights, 3);
-  atof_if(testprms.damping, 4);
+  atoi_if(n_threads_max, 4);
+  atof_if(testprms.damping, 5);
+
+  Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
+                                                      argv,
+                                                      n_threads_max == -1 ?
+                                                        numbers::invalid_unsigned_int :
+                                                        static_cast<unsigned int>(n_threads_max));
 
   AssertThrow(solver_index <= solver_index_max, ExcMessage("Invalid solver index."));
   AssertThrow(use_ras_weights <= 1U, ExcMessage("Invalid integer value for use_ras_weights."));

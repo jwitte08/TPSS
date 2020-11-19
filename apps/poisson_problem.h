@@ -152,7 +152,14 @@ struct ModelProblem : public Subscriptor
         if constexpr(dof_layout == TPSS::DoFLayout::Q)
           return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
         else if(dof_layout == TPSS::DoFLayout::DGQ)
+        {
+          const bool is_AVP =
+            rt_parameters.multigrid.pre_smoother.schwarz.is_additive_vertex_patch();
+          const bool is_multithreaded = MultithreadInfo::n_threads() > 1;
+          if(is_AVP && is_multithreaded)
+            return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
           return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
+        }
         return std::shared_ptr<ColoringBase<dim>>();
       }()),
       mg_smoother_pre(nullptr),
@@ -307,15 +314,16 @@ struct ModelProblem : public Subscriptor
   {
     AssertIndexRange(level, triangulation.n_global_levels());
 
-    typename SubdomainHandler<dim, OtherNumber>::AdditionalData fdss_additional_data;
-    fdss_additional_data.level = level;
+    typename SubdomainHandler<dim, OtherNumber>::AdditionalData additional_data;
+    additional_data.level   = level;
+    additional_data.use_tbb = rt_parameters.use_tbb;
     if(rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring)
-      fdss_additional_data.coloring_func = std::ref(*user_coloring);
-    rt_parameters.template fill_schwarz_smoother_data<dim, OtherNumber>(fdss_additional_data,
+      additional_data.coloring_func = std::ref(*user_coloring);
+    rt_parameters.template fill_schwarz_smoother_data<dim, OtherNumber>(additional_data,
                                                                         is_pre_smoother);
 
     const auto patch_storage = std::make_shared<SubdomainHandler<dim, OtherNumber>>();
-    patch_storage->reinit(mf_storage, fdss_additional_data);
+    patch_storage->reinit(mf_storage, additional_data);
     return patch_storage;
   }
 
@@ -561,6 +569,7 @@ struct ModelProblem : public Subscriptor
       const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
       typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
       mgss_data.coloring_func = std::ref(*user_coloring);
+      mgss_data.use_tbb       = rt_parameters.use_tbb;
       mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
       mgss_data.foreach_dofh.resize(1);
       mgss_data.foreach_dofh[0].dirichlet_ids = equation_data.dirichlet_boundary_ids;
@@ -594,7 +603,8 @@ struct ModelProblem : public Subscriptor
           sd_handler_data;
         rt_parameters.template fill_schwarz_smoother_data<dim, typename LEVEL_MATRIX::value_type>(
           sd_handler_data, false);
-        sd_handler_data.level = mg_matrices.max_level();
+        sd_handler_data.level   = mg_matrices.max_level();
+        sd_handler_data.use_tbb = rt_parameters.use_tbb;
         if(rt_parameters.multigrid.post_smoother.schwarz.userdefined_coloring)
           sd_handler_data.coloring_func = std::ref(*user_coloring);
         const bool is_shallow_copyable =
@@ -605,6 +615,7 @@ struct ModelProblem : public Subscriptor
           const auto mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
           typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
           mgss_data.coloring_func = std::ref(*user_coloring);
+          mgss_data.use_tbb       = rt_parameters.use_tbb;
           mgss_data.parameters    = rt_parameters.multigrid.post_smoother;
           mgss->initialize(*mg_schwarz_smoother_pre, mgss_data);
           mg_schwarz_smoother_post = mgss;

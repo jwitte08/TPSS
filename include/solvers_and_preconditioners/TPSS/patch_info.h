@@ -186,6 +186,7 @@ struct PatchInfo<dim>::AdditionalData
                        colored_iterators,
                      const std::string)>
        visualize_coloring;
+  bool use_tbb       = false;
   bool print_details = false; // DEBUG
 };
 

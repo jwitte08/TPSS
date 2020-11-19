@@ -130,11 +130,14 @@ public:
   guess_grain_size(const unsigned int n_subdomain_batches) const;
 
   /**
-   * The loop applies the user-defined function @p patch_operation
-   * successively to the half-open patch ranges (partitions)
-   * associated to color @color, whereby the patch operation results
-   * in the output @p output given the input @p input. If possible the
-   * operation is performed in parallel by means of threads.
+   * The loop applies the user-defined function @p patch_operation successively
+   * to the half-open patch range associated to color @color. The patch
+   * operation results in the output @p output given the input @p input and the
+   * subdomain data stored in this object. If @p AdditionalData::use_tbb is true
+   * the operation is performed in parallel by means of threads.
+   *
+   * NOTE The user is responsible to avoid race conditions, for instance with
+   * the help of a coloring scheme.
    */
   template<typename Input, typename Output>
   void
@@ -147,13 +150,12 @@ public:
        const unsigned int                                                         color) const;
 
   /**
-   * The loop applies the user-defined function @p patch_operation
-   * successively to the total range of patches, regardless of any
-   * color and partition, in parallel by means of
-   * thread-parallelism. However, this loop is merely feasible if the
-   * operation @p patch_operation does not come along with any mutual
-   * conflict between patches, e.g. a race condition occurs by writing
-   * data into the output @p output.
+   * The loop applies the user-defined function @p patch_operation successively
+   * to the complete range of patches in parallel by means of
+   * thread-parallelism, regardless of any color and partition. However, this
+   * loop is merely feasible if the operation @p patch_operation does not come
+   * along with any mutual conflict between patches, for example a race
+   * condition occurs by writing data into the output @p output.
    */
   template<typename Input, typename Output>
   void
@@ -164,6 +166,38 @@ public:
                              const std::pair<unsigned int, unsigned int> &)> & patch_operation,
     Output &                                                                   output,
     const Input &                                                              input) const;
+
+  /**
+   * Implementation of a serial loop, simply passing the range of patches @p
+   * range to the kernel function @p patch_operation.
+   */
+  template<typename Input, typename Output>
+  void
+  serloop_impl(
+    const std::function<void(const SubdomainHandler<dim, Number> &,
+                             Output &,
+                             const Input &,
+                             const std::pair<unsigned int, unsigned int> &)> & patch_operation,
+    Output &                                                                   output,
+    const Input &                                                              input,
+    const std::pair<unsigned int, unsigned int> &                              range) const;
+
+  /**
+   * Implementation of a parallel loop using TBB. The range of patches @p range
+   * is chopped up into small subranges. Each thread takes one of those
+   * subranges and applies the kernel function @p patch_operation until all
+   * subranges have been processed.
+   */
+  template<typename Input, typename Output>
+  void
+  parloop_impl(
+    const std::function<void(const SubdomainHandler<dim, Number> &,
+                             Output &,
+                             const Input &,
+                             const std::pair<unsigned int, unsigned int> &)> & patch_operation,
+    Output &                                                                   output,
+    const Input &                                                              input,
+    const std::pair<unsigned int, unsigned int> &                              range) const;
 
 private:
   /**
@@ -220,8 +254,8 @@ struct SubdomainHandler<dim, Number>::AdditionalData
   bool         normalize_surrogate_patch = false;
   bool         use_arc_length            = true;
 
-  unsigned int          n_threads        = 0;
-  unsigned int          grain_size       = 0;
+  bool                  use_tbb          = false;
+  unsigned int          tbb_grain_size   = 0;
   TPSS::CachingStrategy caching_strategy = TPSS::CachingStrategy::Cached;
 
   bool print_details = false;

@@ -74,6 +74,13 @@ struct SchwarzSmootherData
   }
 
   bool
+  is_additive_vertex_patch() const
+  {
+    return patch_variant == TPSS::PatchVariant::vertex &&
+           smoother_variant == TPSS::SmootherVariant::additive;
+  }
+
+  bool
   operator==(const SchwarzSmootherData & other) const
   {
     bool is_equal = true;

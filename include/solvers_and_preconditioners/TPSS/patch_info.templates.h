@@ -435,26 +435,40 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
   time.restart();
 
   /**
-   * Coloring of vertex patches. For the additive operator, we only
-   * require one color as long as we do not use thread-parallelism
-   * (TODO). In multi-threaded loops, race-conditions might occur due
-   * to overlapping cells: two local solvers sharing a common cell
-   * might simultaneously write to the same DoF entry in the
-   * destination vector. Therefore, two vertex patches are in conflict
-   * if they share a common cell.
+   * Coloring of vertex patches. For the additive operator we only require one
+   * color as long as we do not use thread parallelism. In multi-threaded loops
+   * race-conditions might occur due to overlap. Overlap means that two adjacent
+   * FE subspaces share a common global degree of freedom. Consequently, two
+   * local solvers might simultaneously write to the same DoF entry in the
+   * destination vector. At the moment the user has to provide a coloring scheme
+   * that prevents race conditions!
    */
-  AssertThrow(MultithreadInfo::n_threads() == 1, ExcMessage("TODO"));
   std::string                             str_coloring_algorithm = "TBA";
   std::vector<std::vector<PatchIterator>> colored_iterators;
   switch(color_scheme)
   {
     case TPSS::SmootherVariant::additive:
     {
-      str_coloring_algorithm = "none";
-      colored_iterators.resize(1);
-      auto & patch_iterators = colored_iterators.front();
-      for(auto it = cell_collections.cbegin(); it != cell_collections.cend(); ++it)
-        patch_iterators.emplace_back(it);
+      if(!additional_data.use_tbb)
+      {
+        str_coloring_algorithm = "none";
+        colored_iterators.resize(1);
+        auto & patch_iterators = colored_iterators.front();
+        for(auto it = cell_collections.cbegin(); it != cell_collections.cend(); ++it)
+          patch_iterators.emplace_back(it);
+      }
+
+      else
+      {
+        AssertThrow(
+          additional_data.coloring_func,
+          ExcMessage(
+            "The user is responsible to provide a coloring scheme avoiding race conditions in case of additive vertex patches."));
+        str_coloring_algorithm = "user_avoidrace";
+        colored_iterators =
+          std::move(additional_data.coloring_func(cell_collections, additional_data));
+      }
+
       break;
     }
     case TPSS::SmootherVariant::multiplicative:
@@ -477,6 +491,7 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
         colored_iterators =
           std::move(additional_data.coloring_func(cell_collections, additional_data));
       }
+
       break;
     }
     default:
@@ -513,9 +528,9 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
 
   // *** check if the InternalData is valid
   AssertDimension(internal_data.cell_iterators.size() % regular_vpatch_size, 0);
-  if(color_scheme == TPSS::SmootherVariant::additive)
-    // TODO more colors to avoid race conditions ?
-    AssertDimension(internal_data.n_colors(), 1);
+  // if(color_scheme == TPSS::SmootherVariant::additive)
+  //   // TODO more colors to avoid race conditions ?
+  //   AssertDimension(internal_data.n_colors(), 1);
   const unsigned int n_physical_subdomains =
     internal_data.subdomain_quantities_accumulated.n_interior +
     internal_data.subdomain_quantities_accumulated.n_boundary;

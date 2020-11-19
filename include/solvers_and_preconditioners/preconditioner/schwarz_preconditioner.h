@@ -131,6 +131,7 @@ public:
     is_copyable &= sdhandler.normalize_surrogate_patch == other_data.normalize_surrogate_patch;
     is_copyable &= sdhandler.use_arc_length == other_data.use_arc_length;
     is_copyable &= sdhandler.caching_strategy == other_data.caching_strategy;
+    is_copyable &= sdhandler.use_tbb == other_data.use_tbb;
     return is_copyable;
   }
 
@@ -367,12 +368,6 @@ private:
    * of patches, linking to MatrixFree infrastructure, etc ...
    */
   std::shared_ptr<const SubdomainHandler<dim, value_type>> subdomain_handler;
-
-  /**
-   * The transfer between global and patch-local unknowns defining the restriction and prolongation
-   * for each subdomain.
-   */
-  std::shared_ptr<typename OperatorType::transfer_type> transfer;
 
   /**
    * I forward problem:
