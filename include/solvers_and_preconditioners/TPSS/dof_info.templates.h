@@ -200,9 +200,9 @@ DoFInfo<dim, Number>::compute_restricted_dofs_impl()
   AssertThrow(patch_info, ExcMessage("patch_info isn't set."));
   AssertThrow(shape_info, ExcMessage("shape_info isn't set."));
   AssertThrow(dof_handler, ExcMessage("dof_handler isn't set."));
-  if (!patch_info->empty())
+  if(!patch_info->empty())
     AssertThrow(!dof_indices_patchwise.empty(),
-		ExcMessage("dof indices have to be cached patchwise."));
+                ExcMessage("dof indices have to be cached patchwise."));
 
   AssertThrow(n_components == 1U, ExcMessage("TODO more than scalar elements"));
   const auto patch_variant    = patch_info->get_additional_data().patch_variant;

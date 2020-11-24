@@ -51,8 +51,8 @@ struct SmootherParameter
   str_smoother_variant(const SmootherVariant variant);
 
   SmootherParameter::SmootherVariant variant = SmootherParameter::SmootherVariant::Schwarz;
-  int                                n_smoothing_steps = 1;
-  bool use_doubling_of_steps = false;
+  int                                n_smoothing_steps     = 1;
+  bool                               use_doubling_of_steps = false;
   SchwarzSmootherData                schwarz;
 
   bool
