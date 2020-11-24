@@ -205,8 +205,6 @@ Parameter::to_string() const
     oss << Util::parameter_to_fstring("Upper dof limit:", n_dofs_max);
   }
   oss << Util::parameter_to_fstring("Using TBB:", use_tbb);
-  if(use_tbb)
-    oss << Util::parameter_to_fstring("Number of threads:", MultithreadInfo::n_threads());
   oss << std::endl;
 
   oss << mesh.to_string() << std::endl;

@@ -52,6 +52,7 @@ generic_info_to_fstring()
   oss << Util::parameter_to_fstring("Date:", Utilities::System::get_date());
   oss << Util::parameter_to_fstring("Number of MPI processes:",
                                     Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD));
+  oss << Util::parameter_to_fstring("Number of threads per MPI proc:", MultithreadInfo::n_threads());
   oss << Util::parameter_to_fstring("Vectorization level:",
                                     Utilities::System::get_current_vectorization_level());
   const auto size_of_global_dof_index = sizeof(types::global_dof_index{0});

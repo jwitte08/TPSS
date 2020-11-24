@@ -83,8 +83,8 @@ struct Tester
       pcout(std::make_shared<ConditionalOStream>(std::cout, false))
   {
     //: discretization
-    rt_parameters.n_cycles              = 10;
-    rt_parameters.dof_limits            = {1e1, 1e6}; // !!! {1e5, 2e7};
+    rt_parameters.n_cycles              = 15;
+    rt_parameters.dof_limits            = {1e1, 2e5}; // {1e5, 1e8};
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
     rt_parameters.mesh.n_refinements    = testprms.n_refinements;
     rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;
@@ -98,8 +98,7 @@ struct Tester
 
     //: multigrid
     if(testprms.damping == 0.)
-      testprms.damping =
-        TPSS::lookup_damping_factor(testprms.patch_variant, testprms.smoother_variant, dim);
+      testprms.damping = (testprms.use_ras_weights || testprms.use_ras_boolean_weights)	? 1. : TPSS::lookup_damping_factor(testprms.patch_variant, testprms.smoother_variant, dim);
     rt_parameters.multigrid.coarse_level                 = 0;
     rt_parameters.multigrid.coarse_grid.solver_variant   = testprms.coarse_grid_variant;
     rt_parameters.multigrid.coarse_grid.iterative_solver = testprms.solver_variant;
@@ -113,8 +112,10 @@ struct Tester
     rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
     rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = testprms.damping;
     rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5, fe_degree + 1);
+    rt_parameters.multigrid.pre_smoother.n_smoothing_steps = 2;
+    // rt_parameters.multigrid.pre_smoother.use_doubling_of_steps = true;
     rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
-    rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
+    rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = (testprms.solver_variant == "cg");
 
     //: initialize output file
     if(is_first_proc)

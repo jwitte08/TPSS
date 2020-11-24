@@ -52,6 +52,7 @@ struct SmootherParameter
 
   SmootherParameter::SmootherVariant variant = SmootherParameter::SmootherVariant::Schwarz;
   int                                n_smoothing_steps = 1;
+  bool use_doubling_of_steps = false;
   SchwarzSmootherData                schwarz;
 
   bool
@@ -268,8 +269,11 @@ public:
     precondition_data.reverse                 = schwarz_data.reverse_smoothing;
     precondition_data.use_ras_weights         = schwarz_data.use_ras_weights;
     precondition_data.use_ras_boolean_weights = schwarz_data.use_ras_boolean_weights;
+
     typename smoother_type::AdditionalData smoother_data;
     smoother_data.number_of_smoothing_steps = prms.n_smoothing_steps;
+
+    this->set_variable(prms.use_doubling_of_steps);
 
     /// Initialize mg matrices within MGSmootherRelaxation (smoothers have
     /// to be set in an extra step)
@@ -436,6 +440,7 @@ SmootherParameter::to_string() const
 {
   std::ostringstream oss;
   oss << Util::parameter_to_fstring("Number of smoothing steps:", n_smoothing_steps);
+  oss << Util::parameter_to_fstring("Doubling of smoothing steps:", use_doubling_of_steps);
   oss << Util::parameter_to_fstring("Smoother:", str_smoother_variant(variant));
   if(variant == SmootherVariant::Schwarz)
   {
