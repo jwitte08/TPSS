@@ -46,6 +46,57 @@ using TestParamsConstant3D = testing::Types<Util::NonTypeParams<3, 0>>;
 
 
 
+/**
+ * Comparison functor struct to compare two Points and return if one is
+ * "less" than the other one. This can be used to use Point<dim> as a key in
+ * std::map.
+ *
+ * Comparison is done through an artificial downstream direction that
+ * tells directions apart through a factor of 1e-5. Once we got the
+ * direction, we check for its value. In case the distance is exactly zero
+ * (without an epsilon), we might still have the case that two points
+ * combine in a particular way, e.g. the points (1.0, 1.0) and (1.0+1e-5,
+ * 0.0). Thus, compare the points component by component in the second
+ * step. Thus, points need to have identical floating point components to
+ * be considered equal.
+ */
+template<int dim, typename Number = double>
+struct ComparisonHelper
+{
+  /**
+   * Comparison operator.
+   *
+   * Return true if @p lhs is considered less than @p rhs.
+   */
+  bool
+  operator()(const Point<dim, Number> & lhs, const Point<dim, Number> & rhs) const
+  {
+    double downstream_size = 0;
+    double weight          = 1.;
+    for(unsigned int d = 0; d < dim; ++d)
+    {
+      downstream_size += (rhs[d] - lhs[d]) * weight;
+      weight *= 1e-5;
+    }
+    if(downstream_size < 0)
+      return false;
+    else if(downstream_size > 0)
+      return true;
+    else
+    {
+      for(unsigned int d = 0; d < dim; ++d)
+      {
+        if(lhs[d] == rhs[d])
+          continue;
+        return lhs[d] < rhs[d];
+      }
+      return false;
+    }
+  }
+};
+
+
+
 ////////// TestPatchTransferBase
 
 
@@ -82,6 +133,7 @@ protected:
   std::ofstream                       ofs;
   std::shared_ptr<ConditionalOStream> pcout;
   RT::Parameter                       rt_parameters;
+  bool                                do_visualize = false;
 };
 
 
@@ -1383,38 +1435,121 @@ protected:
     std::fill(one_vector.begin(), one_vector.end(), 1.);
     zero_constraints.distribute(one_vector);
 
-    *pcout << "NOTE use the Unix program tac to print the visualization upside down" << std::endl;
+    std::vector<LinearAlgebra::distributed::Vector<double>> visual_vecs;
+
+    const auto write_gnuplot_restricted_dof_info =
+      [&](
+        std::ostream &                                                       out,
+        const std::map<types::global_dof_index, Point<dim>> &                support_points,
+        const std::map<types::global_dof_index, std::vector<unsigned int>> & dof_to_patch_indices) {
+        AssertDimension(support_points.size(), dof_to_patch_indices.size());
+        using point_map_t = std::map<Point<dim>, std::vector<unsigned int>, ComparisonHelper<dim>>;
+
+        point_map_t point_map;
+
+        // generate mapping from support points to associated patch indices (unique)
+        for(const auto & [dof_index, support_point] : support_points)
+        {
+          const auto & patch_indices = dof_to_patch_indices.at(dof_index);
+          std::copy(patch_indices.cbegin(),
+                    patch_indices.cend(),
+                    std::back_inserter(point_map[support_point]));
+        }
+
+        // print the newly created map:
+        for(typename point_map_t::iterator it = point_map.begin(); it != point_map.end(); ++it)
+        {
+          // const auto & v = std::vector<unsigned int>(it->second.cbegin(), it->second.cend());
+          const auto & v = it->second;
+          if(!v.empty())
+          {
+            out << it->first << " \"";
+            for(unsigned int i = 0; i < v.size(); ++i)
+            {
+              if(i > 0)
+                out << ",";
+              out << v[i];
+            }
+
+            out << "\"\n";
+          }
+        }
+        out << std::flush;
+      };
+
     const auto n_subdomains = patch_dof_worker.get_partition_data().n_subdomains();
     for(auto patch_index = 0U; patch_index < n_subdomains; ++patch_index)
     {
-      /// DEBUG visualize
-      if(dim == 2)
-      {
-        for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_index); ++lane)
-        {
-          const auto & collect       = patch_dof_worker.get_cell_collection(patch_index, lane);
-          const auto & is_restricted = patch_dof_worker.get_restricted_dof_flags(patch_index, lane);
-          const auto   n_dofs_1d     = patch_dof_worker.n_dofs_1d(0);
-          AssertDimension(is_restricted.size() % n_dofs_1d, 0);
-          *pcout << "patch_id: " << patch_index << " lane: " << lane << " level: " << level << " "
-                 << collect.front()->vertex(3);
-          for(auto i = 0U; i < is_restricted.size(); ++i)
-          {
-            *pcout << (i % n_dofs_1d == 0 ? "\n" : "") << (is_restricted[i] ? "o " : "x ");
-          }
-          *pcout << std::endl;
-        }
-      }
-
       patch_transfer.reinit(patch_index);
       AlignedVector<VectorizedArray<double>> local_one_vector;
       patch_transfer.reinit_local_vector(local_one_vector);
       local_one_vector.fill(make_vectorized_array(1.));
 
       patch_transfer.rscatter_add(vec, local_one_vector);
+
+      /// DEBUG visualize in paraview
+      if(dim == 2 && Base::do_visualize)
+      {
+        for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_index); ++lane)
+        {
+          LinearAlgebra::distributed::Vector<double> vvec;
+          patch_transfer.initialize_dof_vector(vvec);
+
+          auto one_on_lane  = make_vectorized_array<double>(0.);
+          one_on_lane[lane] = 1.;
+          AlignedVector<VectorizedArray<double>> local_one_vector_on_lane;
+          patch_transfer.reinit_local_vector(local_one_vector_on_lane);
+          local_one_vector_on_lane.fill(one_on_lane);
+
+          patch_transfer.rscatter_add(vvec, local_one_vector_on_lane);
+          visual_vecs.emplace_back(std::move(vvec));
+        }
+      }
     }
 
     Util::compare_vector(vec, one_vector, *pcout);
+
+    /// DEBUG visualize restricted dof distribution
+    if(dim == 2 && Base::do_visualize)
+    {
+      std::map<types::global_dof_index, std::vector<unsigned int>> dof_to_patch_indices;
+      for(types::global_dof_index i = 0; i < vec.size(); ++i)
+        dof_to_patch_indices[i] = std::vector<unsigned int>{};
+
+      for(auto patch = 0U; patch < visual_vecs.size(); ++patch)
+      {
+        const auto & vec = visual_vecs.at(patch);
+        for(types::global_dof_index i = 0; i < vec.size(); ++i)
+        {
+          if(vec(i) > 0.5)
+            dof_to_patch_indices[i].push_back(patch);
+        }
+      }
+
+      std::ostringstream oss;
+      oss << "gnuplot_RAS_" << TPSS::str_dof_layout(dof_handler.get_fe()) << Base::fe_degree;
+      std::ofstream                                 out(oss.str() + ".gpl");
+      std::map<types::global_dof_index, Point<dim>> support_points;
+      out << "set terminal svg size 800,800 enhanced font \"Helvetica,14\"\n"
+          << "set output \"" << oss.str() << ".svg\"\n"
+          << "set size square\n"
+          << "set view equal xy\n"
+          << "unset xtics\n"
+          << "unset ytics\n"
+          << "unset grid\n"
+          << "unset border\n"
+          << "set lmargin 1\n"
+          << "set rmargin 1\n"
+          << "set tmargin 2.5\n"
+          << "set bmargin 1\n"
+          << "plot '-' using 1:2 with lines notitle, "
+          << "'-' with labels point pt 2 offset 1,1 notitle" << std::endl;
+      GridOut().write_gnuplot(dof_handler.get_triangulation(), out);
+      out << "e" << std::endl;
+      DoFTools::map_dofs_to_support_points(MappingQ1<dim>(), dof_handler, support_points);
+      write_gnuplot_restricted_dof_info(out, support_points, dof_to_patch_indices);
+      out << "e" << std::endl;
+    }
   }
 };
 
@@ -1433,11 +1568,13 @@ TYPED_TEST_P(TestPatchTransferrscatter, Q)
   TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
     TPSS::PatchVariant::vertex;
   TestFixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  TestFixture::rt_parameters.mesh.n_repetitions    = 3U;
+  TestFixture::rt_parameters.mesh.n_repetitions    = 4U;
 
   /// 3
+  TestFixture::do_visualize = true;
   TestFixture::check_rscatter(fe);
   /// 4
+  TestFixture::do_visualize                     = false;
   TestFixture::rt_parameters.mesh.n_refinements = 1U;
   TestFixture::check_rscatter(fe);
 }
@@ -1455,11 +1592,13 @@ TYPED_TEST_P(TestPatchTransferrscatter, DGQ)
   TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
     TPSS::PatchVariant::vertex;
   TestFixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  TestFixture::rt_parameters.mesh.n_repetitions    = 3U;
+  TestFixture::rt_parameters.mesh.n_repetitions    = 4U;
 
   /// 3
+  TestFixture::do_visualize = true;
   TestFixture::check_rscatter(fe);
   /// 4
+  TestFixture::do_visualize                     = false;
   TestFixture::rt_parameters.mesh.n_refinements = 1U;
   TestFixture::check_rscatter(fe);
 }

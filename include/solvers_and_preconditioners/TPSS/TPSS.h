@@ -24,6 +24,8 @@ str_caching_strategy(CachingStrategy caching_strategy)
   return str[(int)caching_strategy];
 }
 
+
+
 enum class DoFLayout
 {
   invalid,
@@ -38,6 +40,7 @@ str_dof_layout(DoFLayout dof_layout)
   std::string str[] = {"invalid", "DGQ", "Q", "DGP", "RaviartThomas"};
   return str[(int)dof_layout];
 }
+
 
 
 template<int dim>
@@ -55,6 +58,17 @@ get_dof_layout(const FiniteElement<dim> & finite_element)
     dof_layout = DoFLayout::RT;
   return dof_layout;
 }
+
+
+
+template<int dim>
+std::string
+str_dof_layout(const FiniteElement<dim> & finite_element)
+{
+  return str_dof_layout(get_dof_layout(finite_element));
+}
+
+
 
 // *** ENUM: Patch Variant
 enum class PatchVariant
