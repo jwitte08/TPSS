@@ -25,9 +25,8 @@ struct TestParameter
   types::global_dof_index dof_limit_min = 1e4;
   types::global_dof_index dof_limit_max = 1e6;
   EquationData            equation_data;
-  double                  local_damping_factor = 1.;
-  unsigned                n_smoothing_steps    = 2;
-  std::string             solver_variant       = "cg";
+  unsigned                n_smoothing_steps = 2;
+  std::string             solver_variant    = "cg";
 };
 
 template<int dim, int fe_degree, typename value_type = double>
@@ -74,7 +73,6 @@ test(const TestParameter & prms = TestParameter{})
   oss << dim << "D_" << fe_degree << "deg_";
   oss << prms.n_smoothing_steps << "steps_";
   oss << std::scientific << std::setprecision(3);
-  oss << prms.local_damping_factor << "ldamp_";
   oss << prms.equation_data.mu << "mu_";
   oss << prms.equation_data.lambda << "lambda";
   const std::string filename = oss.str();
@@ -147,8 +145,6 @@ main(int argc, char * argv[])
   TestParameter test_prms;
   if(argc > 1)
     test_prms.n_smoothing_steps = std::atoi(argv[1]);
-  if(argc > 2)
-    test_prms.local_damping_factor = std::atof(argv[2]);
   if(argc > 3)
     test_prms.equation_data.mu = std::atof(argv[3]);
   if(argc > 4)

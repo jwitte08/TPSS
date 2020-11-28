@@ -53,14 +53,12 @@ struct Test
   RT::Parameter            rt_parameters;
   Laplace::EquationData    equation_data;
   const double             outer_damping_factor;
-  const double             local_damping_factor;
   const std::map<int, int> dim_to_repetitions;
 
   Test(const TestParameter & prms_in = TestParameter{})
     : prms(prms_in),
       outer_damping_factor(
         TPSS::lookup_damping_factor(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_, dim)),
-      local_damping_factor(prms_in.damping / outer_damping_factor),
       dim_to_repetitions({{2, 32}, {3, 8}})
   {
     //: discretization
@@ -86,7 +84,6 @@ struct Test
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = CT::SMOOTHER_VARIANT_;
     rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
     rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = outer_damping_factor;
-    rt_parameters.multigrid.pre_smoother.schwarz.local_damping_factor = local_damping_factor;
     rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = prms.n_smoothing_steps;
     rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(8, fe_degree + 1);
     rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
@@ -134,7 +131,7 @@ struct Test
   {
     std::ostringstream oss;
     const auto         n_mpi_procs    = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
-    const auto         damping_factor = outer_damping_factor * local_damping_factor;
+    const auto         damping_factor = outer_damping_factor;
 
     oss << std::scientific << std::setprecision(2);
     oss << n_mpi_procs << "procs";

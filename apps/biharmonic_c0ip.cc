@@ -90,8 +90,7 @@ get_filename(const RT::Parameter &            prms,
   const auto         n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
   const std::string  str_schwarz_variant =
     TPSS::getstr_schwarz_variant(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_);
-  const auto damping = prms.multigrid.pre_smoother.schwarz.damping_factor *
-                       prms.multigrid.pre_smoother.schwarz.local_damping_factor;
+  const auto damping    = prms.multigrid.pre_smoother.schwarz.damping_factor;
   const auto short_name = [](const std::string & str_in) {
     std::string sname = str_in.substr(0, 4);
     std::transform(sname.begin(), sname.end(), sname.begin(), [](auto c) {

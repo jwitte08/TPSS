@@ -335,11 +335,10 @@ struct ModelProblem : public Subscriptor
                                const SchwarzSmootherData & schwarz_data) const
   {
     typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data;
-    precondition_data.relaxation       = schwarz_data.damping_factor;
-    precondition_data.local_relaxation = schwarz_data.local_damping_factor;
-    precondition_data.reverse          = schwarz_data.reverse_smoothing;
-    precondition_data.symmetrized      = schwarz_data.symmetrize_smoothing;
-    const auto schwarz_preconditioner  = std::make_shared<SCHWARZ_PRECONDITIONER>();
+    precondition_data.relaxation      = schwarz_data.damping_factor;
+    precondition_data.reverse         = schwarz_data.reverse_smoothing;
+    precondition_data.symmetrized     = schwarz_data.symmetrize_smoothing;
+    const auto schwarz_preconditioner = std::make_shared<SCHWARZ_PRECONDITIONER>();
     schwarz_preconditioner->initialize(patch_storage, matrix, precondition_data);
     return schwarz_preconditioner;
   }
@@ -586,11 +585,10 @@ struct ModelProblem : public Subscriptor
     {
       AssertThrow(mg_schwarz_smoother_pre, ExcMessage("MG Schwarz pre-smoother not initialized."));
       typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data;
-      const auto schwarz_data_post       = rt_parameters.multigrid.post_smoother.schwarz;
-      precondition_data.relaxation       = schwarz_data_post.damping_factor;
-      precondition_data.local_relaxation = schwarz_data_post.local_damping_factor;
-      precondition_data.symmetrized      = schwarz_data_post.symmetrize_smoothing;
-      precondition_data.reverse          = schwarz_data_post.reverse_smoothing;
+      const auto schwarz_data_post  = rt_parameters.multigrid.post_smoother.schwarz;
+      precondition_data.relaxation  = schwarz_data_post.damping_factor;
+      precondition_data.symmetrized = schwarz_data_post.symmetrize_smoothing;
+      precondition_data.reverse     = schwarz_data_post.reverse_smoothing;
 
       /// use pre-smoother as well as post-smoother
       if(rt_parameters.multigrid.pre_smoother == rt_parameters.multigrid.post_smoother)

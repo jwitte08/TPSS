@@ -32,11 +32,10 @@ struct TestParameter
   types::global_dof_index dof_limit_min = 1e4;
   types::global_dof_index dof_limit_max = 1e6;
   EquationData            equation_data;
-  double                  local_damping_factor = 1.;
-  unsigned                n_smoothing_steps    = 2;
-  std::string             solver_variant       = "cg"; //"gmres";
-  unsigned                test_variant         = 0;
-  std::string             test_description     = "";
+  unsigned                n_smoothing_steps = 2;
+  std::string             solver_variant    = "cg"; //"gmres";
+  unsigned                test_variant      = 0;
+  std::string             test_description  = "";
 };
 
 template<typename ModelProblem, int dim, int fe_degree, typename value_type = double>
@@ -70,8 +69,6 @@ debug_impl(const TestParameter & prms = TestParameter{})
   rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = prms.patch_variant;
   rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = prms.smoother_variant;
   rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
-  // AssertThrow(prms.local_damping_factor <= 1., ExcMessage("Invalid local damping."));
-  rt_parameters.multigrid.pre_smoother.schwarz.local_damping_factor = prms.local_damping_factor;
   rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = prms.n_smoothing_steps;
   rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
   rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
@@ -93,8 +90,6 @@ debug_impl(const TestParameter & prms = TestParameter{})
   oss << prms.equation_data.lambda << "lambda";
   if(prms.equation_data.factor != 1.)
     oss << "_" << prms.equation_data.factor << "fctr";
-  if(prms.local_damping_factor < 1.)
-    oss << "_" << prms.local_damping_factor << "ldamp";
   if(prms.equation_data.ip_factor > 1.)
     oss << "_" << prms.equation_data.ip_factor << "ip";
   const std::string filename = oss.str();
@@ -168,8 +163,6 @@ test_impl(const TestParameter & prms = TestParameter{})
   rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = prms.patch_variant;
   rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = prms.smoother_variant;
   rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
-  // AssertThrow(prms.local_damping_factor <= 1., ExcMessage("Invalid local damping."));
-  rt_parameters.multigrid.pre_smoother.schwarz.local_damping_factor = prms.local_damping_factor;
   rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = prms.n_smoothing_steps;
   rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
   rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing = true;
@@ -189,8 +182,6 @@ test_impl(const TestParameter & prms = TestParameter{})
   oss << std::scientific << std::setprecision(3);
   oss << prms.equation_data.mu << "mu_";
   oss << prms.equation_data.lambda << "lambda";
-  if(prms.local_damping_factor < 1.)
-    oss << prms.local_damping_factor << "ldamp_";
   if(prms.equation_data.ip_factor > 1.)
     oss << prms.equation_data.ip_factor << "ip";
   const std::string filename = oss.str();
@@ -328,8 +319,6 @@ main(int argc, char * argv[])
     test_prms.equation_data.lambda = std::atof(argv[4]);
   if(argc > 5)
     test_prms.equation_data.ip_factor = std::atof(argv[5]);
-  if(argc > 6)
-    test_prms.local_damping_factor = std::atof(argv[6]);
   if(argc > 7)
     test_prms.equation_data.kronecker_rank = std::atoi(argv[7]);
   if(argc > 8)

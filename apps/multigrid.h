@@ -264,7 +264,6 @@ public:
     const auto &                                 schwarz_data = prms.schwarz;
     typename preconditioner_type::AdditionalData precondition_data;
     precondition_data.relaxation              = schwarz_data.damping_factor;
-    precondition_data.local_relaxation        = schwarz_data.local_damping_factor;
     precondition_data.symmetrized             = schwarz_data.symmetrize_smoothing;
     precondition_data.reverse                 = schwarz_data.reverse_smoothing;
     precondition_data.use_ras_weights         = schwarz_data.use_ras_weights;
@@ -312,10 +311,9 @@ public:
 
     const auto &                                 schwarz_data = prms.schwarz;
     typename preconditioner_type::AdditionalData precondition_data;
-    precondition_data.relaxation       = schwarz_data.damping_factor;
-    precondition_data.local_relaxation = schwarz_data.local_damping_factor;
-    precondition_data.symmetrized      = schwarz_data.symmetrize_smoothing;
-    precondition_data.reverse          = schwarz_data.reverse_smoothing;
+    precondition_data.relaxation  = schwarz_data.damping_factor;
+    precondition_data.symmetrized = schwarz_data.symmetrize_smoothing;
+    precondition_data.reverse     = schwarz_data.reverse_smoothing;
     typename smoother_type::AdditionalData smoother_data;
     smoother_data.number_of_smoothing_steps = prms.n_smoothing_steps;
 

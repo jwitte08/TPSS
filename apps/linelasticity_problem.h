@@ -437,11 +437,10 @@ struct ModelProblem : public Subscriptor
     {
       AssertThrow(mg_schwarz_smoother_pre, ExcMessage("MG Schwarz pre-smoother not initialized."));
       typename SCHWARZ_PRECONDITIONER::AdditionalData precondition_data;
-      const auto schwarz_data_post       = rt_parameters.multigrid.post_smoother.schwarz;
-      precondition_data.relaxation       = schwarz_data_post.damping_factor;
-      precondition_data.local_relaxation = schwarz_data_post.local_damping_factor;
-      precondition_data.symmetrized      = schwarz_data_post.symmetrize_smoothing;
-      precondition_data.reverse          = schwarz_data_post.reverse_smoothing;
+      const auto schwarz_data_post  = rt_parameters.multigrid.post_smoother.schwarz;
+      precondition_data.relaxation  = schwarz_data_post.damping_factor;
+      precondition_data.symmetrized = schwarz_data_post.symmetrize_smoothing;
+      precondition_data.reverse     = schwarz_data_post.reverse_smoothing;
 
       /// use pre-smoother as well as post-smoother
       if(rt_parameters.multigrid.pre_smoother == rt_parameters.multigrid.post_smoother)

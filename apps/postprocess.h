@@ -238,8 +238,7 @@ public:
     for(auto q = 0U; q < n_q_points; ++q)
     {
       const auto & grad_phi = input_data.solution_gradients[q];
-      AssertDimension(grad_phi.size(), dim);
-      auto & curl_phi = computed_quantities[q];
+      auto &       curl_phi = computed_quantities[q];
       AssertDimension(curl_phi.size(), dim);
       curl_phi[0] = grad_phi[1];
       curl_phi[1] = -grad_phi[0];
@@ -268,8 +267,8 @@ public:
     const auto n_q_points = input_data.solution_values.size();
     for(auto q = 0U; q < n_q_points; ++q)
     {
-      AssertDimension(input_data.solution_values[q].size(), 1U);
-      AssertDimension(input_data.solution_values[q].size(), computed_quantities[q].size());
+      AssertDimension(input_data.solution_values.size(), 1U);
+      AssertDimension(input_data.solution_values.size(), computed_quantities[q].size());
       computed_quantities[q] = input_data.solution_values[q];
     }
   }

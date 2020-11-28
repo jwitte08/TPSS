@@ -22,13 +22,14 @@ struct TestParameter
   std::string                        solver_variant   = "gmres"; //!!! see SolverSelector
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::IterativeAcc;
-  double   coarse_grid_accuracy    = 1.e-12;
-  double   cg_reduction            = 1.e-8;
-  unsigned n_refinements           = 1;
-  unsigned n_repetitions           = 2;
-  double   damping                 = 0.;
-  bool     use_ras_weights         = false;
-  bool     use_ras_boolean_weights = false;
+  double       coarse_grid_accuracy    = 1.e-12;
+  double       cg_reduction            = 1.e-8;
+  unsigned     n_refinements           = 1;
+  unsigned     n_repetitions           = 2;
+  double       damping                 = 0.;
+  bool         use_ras_weights         = false;
+  bool         use_ras_boolean_weights = false;
+  unsigned int n_smoothing_steps       = 1;
 
   std::string
   to_string() const
@@ -84,7 +85,7 @@ struct Tester
   {
     //: discretization
     rt_parameters.n_cycles              = 15;
-    rt_parameters.dof_limits            = {1e1, 2e5}; // {1e5, 1e8};
+    rt_parameters.dof_limits            = {1e1, 2e6}; // {1e5, 1e8};
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
     rt_parameters.mesh.n_refinements    = testprms.n_refinements;
     rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;
@@ -115,7 +116,7 @@ struct Tester
     rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
     rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = testprms.damping;
     rt_parameters.multigrid.pre_smoother.schwarz.n_q_points_surrogate = std::min(5, fe_degree + 1);
-    rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = 2;
+    rt_parameters.multigrid.pre_smoother.n_smoothing_steps            = testprms.n_smoothing_steps;
     // rt_parameters.multigrid.pre_smoother.use_doubling_of_steps = true;
     rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
     rt_parameters.multigrid.post_smoother.schwarz.reverse_smoothing =
@@ -235,7 +236,8 @@ main(int argc, char * argv[])
   atoi_if(use_ras_weights, 2);
   atoi_if(use_ras_boolean_weights, 3);
   atoi_if(n_threads_max, 4);
-  atof_if(testprms.damping, 5);
+  atoi_if(testprms.n_smoothing_steps, 5);
+  atof_if(testprms.damping, 6);
 
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
                                                       argv,
