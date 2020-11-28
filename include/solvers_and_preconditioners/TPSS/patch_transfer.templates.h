@@ -207,16 +207,42 @@ PatchTransferBlock<dim, Number>::scatter_add(
   BlockVectorType &                              dst,
   const AlignedVector<VectorizedArray<Number>> & src) const
 {
+  scatter_add_impl<BlockVectorType, false>(dst, src);
+}
+
+
+template<int dim, typename Number>
+template<typename BlockVectorType>
+void
+PatchTransferBlock<dim, Number>::rscatter_add(
+  BlockVectorType &                              dst,
+  const AlignedVector<VectorizedArray<Number>> & src) const
+{
+  AssertThrow(false, ExcMessage("This method is untested!"));
+  scatter_add_impl<BlockVectorType, true>(dst, src);
+}
+
+
+template<int dim, typename Number>
+template<typename BlockVectorType, bool is_restricted>
+void
+PatchTransferBlock<dim, Number>::scatter_add_impl(
+  BlockVectorType &                              dst,
+  const AlignedVector<VectorizedArray<Number>> & src) const
+{
   auto begin = src.begin();
   for(std::size_t b = 0; b < n_blocks; ++b)
   {
     const auto                               transfer = transfers[b];
     const auto                               size     = transfer->n_dofs_per_patch();
     ArrayView<const VectorizedArray<Number>> src_block{begin, size};
-    transfer->scatter_add(dst.block(b), src_block);
+    if(is_restricted)
+      transfer->rscatter_add(dst.block(b), src_block);
+    else
+      transfer->scatter_add(dst.block(b), src_block);
     begin += size;
   }
-  AssertThrow(begin == src.end(), ExcMessage("Inconsistent slicing."));
+  Assert(begin == src.end(), ExcMessage("Inconsistent slicing."));
 }
 
 

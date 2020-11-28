@@ -389,10 +389,22 @@ public:
   void
   scatter_add(BlockVectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const;
 
+  /**
+   * Add local dof values @p src for all non-restricted dofs to the global dof
+   * values @p dst.
+   */
+  template<typename BlockVectorType>
+  void
+  rscatter_add(BlockVectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const;
+
 private:
   template<typename BlockVectorType>
   void
   initialize_dof_vector_impl(BlockVectorType & vec) const;
+
+  template<typename BlockVectorType, bool is_restricted>
+  void
+  scatter_add_impl(BlockVectorType & dst, const AlignedVector<VectorizedArray<Number>> & src) const;
 
   const unsigned int n_blocks;
 
