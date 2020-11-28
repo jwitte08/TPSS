@@ -24,7 +24,6 @@ struct SchwarzSmootherData
       smoother_variant(TPSS::SmootherVariant::invalid),
       // number_of_smoothing_steps(1),
       damping_factor(1.0),
-      local_damping_factor(1.0),
       userdefined_coloring(false),
       n_q_points_surrogate(5),
       normalize_surrogate_patch(false),
@@ -58,7 +57,6 @@ struct SchwarzSmootherData
     print_parameter(pcout, "Schwarz operator", str_schwarz_operator);
     // print_parameter(pcout, "Number of smoothing steps", number_of_smoothing_steps);
     print_parameter(pcout, "Damping factor", damping_factor);
-    print_parameter(pcout, "Patch-local damping factor", local_damping_factor);
 
     print_parameter(pcout, "User-defined coloring", userdefined_coloring);
     print_parameter(pcout, "Symmetrized Schwarz operator", symmetrize_smoothing);
@@ -87,7 +85,6 @@ struct SchwarzSmootherData
     is_equal &= patch_variant == other.patch_variant;
     is_equal &= smoother_variant == other.smoother_variant;
     is_equal &= damping_factor == other.damping_factor;
-    is_equal &= local_damping_factor == other.local_damping_factor;
     is_equal &= userdefined_coloring == other.userdefined_coloring;
     is_equal &= n_q_points_surrogate == other.n_q_points_surrogate;
     is_equal &= use_arc_length == other.use_arc_length;
@@ -111,9 +108,6 @@ struct SchwarzSmootherData
 
   // damping factor
   double damping_factor;
-
-  // patch-wise damping factor to satisfy the local stability
-  double local_damping_factor;
 
   // TODO ...
   bool userdefined_coloring;

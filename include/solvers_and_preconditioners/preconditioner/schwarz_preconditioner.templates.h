@@ -151,7 +151,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::compute_ras_we
   const auto   n_colors       = partition_data.n_colors();
   for(unsigned int color = 0; color < n_colors; ++color)
   {
-    ras_weights.zero_out_ghosts();
+    TPSS::internal::zero_out_ghosts_if_needed(ras_weights);
     subdomain_handler->template loop<const VectorType, VectorType>(std::ref(count_appearances),
                                                                    ras_weights,
                                                                    ras_weights,
@@ -183,33 +183,36 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::clear()
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
-SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult(
-  VectorType &       dst,
-  const VectorType & src) const
-{
-  dst = 0.;
-  vmult_add(dst, src);
-}
-
-
-template<int dim, class OperatorType, typename VectorType, typename MatrixType>
-void
-SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Tvmult(
-  VectorType &       dst,
-  const VectorType & src) const
-{
-  dst = 0.;
-  Tvmult_add(dst, src);
-}
-
-
-template<int dim, class OperatorType, typename VectorType, typename MatrixType>
-void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult_add(
   VectorType &       dst,
   const VectorType & src) const
 {
+  const auto initial_dst = dst;
+  vmult(dst, src);
+  dst.add(1., initial_dst);
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Tvmult_add(
+  VectorType &       dst,
+  const VectorType & src) const
+{
+  const auto initial_dst = dst;
+  Tvmult(dst, src);
+  dst.add(1., initial_dst);
+}
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult(
+  VectorType &       dst,
+  const VectorType & src) const
+{
   Timer timer;
+
   timer.restart();
   switch(smoother_variant)
   {
@@ -231,14 +234,13 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::vmult_add(
   } // end switch
   time_data.at(4).add_time(timer.wall_time());
 
-  dst *= additional_data.relaxation;
   AssertIsFinite(dst.l2_norm());
 }
 
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
-SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Tvmult_add(
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Tvmult(
   VectorType &       dst,
   const VectorType & src) const
 {
@@ -261,7 +263,6 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Tvmult_add(
     }
   } // end switch (SmootherVariant)
 
-  dst *= additional_data.relaxation;
   AssertIsFinite(dst.l2_norm());
 }
 
@@ -562,12 +563,12 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   // *** pre-process solution and residual vectors (if needed)
   auto [solution, residual] = preprocess_solution_and_residual(solution_in, residual_in);
 
-  const bool use_ras_weights =
-    additional_data.use_ras_weights && smoother_variant == TPSS::SmootherVariant::additive;
-  const bool use_ras_boolean_weights =
-    additional_data.use_ras_boolean_weights && smoother_variant == TPSS::SmootherVariant::additive;
+  const bool is_additive             = smoother_variant == TPSS::SmootherVariant::additive;
+  const bool use_ras_weights         = additional_data.use_ras_weights && is_additive;
+  const bool use_ras_boolean_weights = additional_data.use_ras_boolean_weights && is_additive;
+
   AssertThrow(!(use_ras_weights && use_ras_boolean_weights),
-              ExcMessage("RAS by weights as well as by partition of unity isn't supported."))
+              ExcMessage("It isn't possible to use more than one RAS option."))
 
     // *** apply local inverses for all subdomains of the given color
     const auto apply_inverses_add =
@@ -597,26 +598,22 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
           const auto & inverse = (*subdomain_to_inverse)[patch_id];
           inverse.apply_inverse(local_solution_view, local_residual_view);
 
-          /// apply local relaxation parameter
+          /// apply local relaxation
+          if(additional_data.relaxation != 1.)
+            for(auto & elem : local_solution)
+              elem *= make_vectorized_array<value_type>(additional_data.relaxation);
+
+          /// apply weights if weighted RAS
           if(use_ras_weights)
           {
             local_ras_weights = std::move(transfer->gather(ras_weights));
-            // std::cout << "weights:\n";
-            // for (auto w : local_ras_weights)
-            //   std::cout << w[0] << " ";
-            // std::cout << std::endl;
             for(auto i = 0U; i < local_solution.size(); ++i)
-              local_solution[i] *=
-                make_vectorized_array<value_type>(additional_data.local_relaxation) /
-                local_ras_weights[i];
+              local_solution[i] /= local_ras_weights[i];
           }
-          else
-            for(auto & elem : local_solution)
-              elem *= make_vectorized_array<value_type>(additional_data.local_relaxation);
 
           /// prolongate and add local solution u_j, that is u += R_j^T u_j. in
-          /// case of RAS the prolongation operator R_j^T is modified to satisfy
-          /// a partition of unity
+          /// case of standard RAS the prolongation operator R_j^T satisfies a
+          /// partition of unity
           if(use_ras_boolean_weights)
             transfer->rscatter_add(solution, local_solution);
           else
@@ -640,18 +637,24 @@ template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 template<bool transpose>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::additive_schwarz_operation(
-  VectorType &       solution,
-  const VectorType & rhs) const
+  VectorType &       dst,
+  const VectorType & src) const
 {
   AssertThrow(!transpose, ExcMessage("TODO transpose operation is not implemented."));
 
-  // we separate the sum over subdomains with respect to colors avoiding race conditions
+  /// we separate the sum over subdomains with respect to colors avoiding race conditions
   const auto & partition_data = subdomain_handler->get_partition_data();
   const auto   n_colors       = partition_data.n_colors();
-  Timer        timer;
+
+  Timer timer;
+
+  /// apply_local_solvers() adds local coefficients to @p dst, thus, the initial
+  /// solution must be set to zero first.
+  dst = 0.;
+
   timer.restart();
   for(unsigned int color = 0; color < n_colors; ++color)
-    apply_local_solvers(solution, rhs, color);
+    apply_local_solvers(dst, src, color);
   time_data[1].add_time(timer.wall_time());
 }
 
@@ -665,18 +668,23 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::multiplicative
 {
   AssertThrow(!transpose, ExcMessage("TODO transpose operation is not implemented."));
 
+  Timer timer;
+
   const std::vector<unsigned int> color_sequence = get_color_sequence(transpose);
   AssertThrow(!color_sequence.empty(), ExcMessage("There are no colors."));
-  // std::cout << std::boolalpha << color_sequence.empty() << std::endl;
   VectorType residual(rhs);
-  Timer      timer;
 
-  // apply inverses of first color (no update of residual needed since the initial solution is zero)
+  /// apply_local_solvers() adds local coefficients to @p solution, thus, the
+  /// initial solution must be set to zero first.
+  solution = 0.;
+
+  /// apply inverses of first color (no update of residual needed since the initial solution is
+  /// zero)
   timer.restart();
   apply_local_solvers(solution, rhs, color_sequence.front());
   time_data[1].add_time(timer.wall_time());
 
-  // iterate over remaining colors
+  /// iterate over remaining colors
   const auto colors_without_first =
     make_array_view(++color_sequence.cbegin(), color_sequence.cend());
   for(const auto color : colors_without_first)
@@ -690,8 +698,6 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::multiplicative
     // *** apply inverses of given color
     timer.restart();
     apply_local_solvers(solution, residual, color);
-    // NOTE a call of apply_inverses includes all colors, such that we add the time to the opened
-    // call in additive_schwarz_operation
     time_data[1].time += timer.wall_time();
   }
 }

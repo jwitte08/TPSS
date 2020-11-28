@@ -79,14 +79,13 @@ public:
   void
   Tvmult(VectorType & dst, VectorType const & src) const
   {
-    Assert(false, dealii::ExcMessage("Not tested so far ... "));
+    AssertThrow(false, dealii::ExcMessage("This method is untested..."));
     vmult_impl<true>(dst, src);
   }
 
   virtual void
   step(VectorType & dst, VectorType const & src) const override
   {
-    VectorType tmp(src);
     step_impl<false>(dst, src);
   }
 
@@ -94,8 +93,7 @@ public:
   void
   Tstep(VectorType & dst, VectorType const & src) const
   {
-    Assert(false, dealii::ExcMessage("Not tested so far ... "));
-    VectorType tmp(src);
+    AssertThrow(false, dealii::ExcMessage("This method is untested..."));
     step_impl<true>(dst, src);
   }
 
@@ -138,7 +136,7 @@ private:
       // *** compute and add correction: x^{k+1} = x^{k} + omega * P * r^{k}
       if(transpose)
       {
-        AssertThrow(false, ExcMessage("TODO")); // TODO: preconditioner->Tvmult(tmp, residual);
+        AssertThrow(false, ExcMessage("TODO preconditioner->Tvmult(tmp, residual)"));
       }
       else
         preconditioner->vmult(tmp, residual);

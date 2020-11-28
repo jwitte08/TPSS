@@ -45,6 +45,36 @@ copy_locally_owned_data(LinearAlgebra::distributed::BlockVector<Number> &       
     dst.block(b).copy_locally_owned_data_from(src.block(b));
 }
 
+
+
+template<typename Number>
+void
+zero_out_ghosts_if_needed(Vector<Number> & vec)
+{
+  // nothing has to be done...
+}
+
+template<typename Number>
+void
+zero_out_ghosts_if_needed(BlockVector<Number> & vec)
+{
+  // nothing has to be done...
+}
+
+template<typename Number>
+void
+zero_out_ghosts_if_needed(LinearAlgebra::distributed::Vector<Number> & vec)
+{
+  vec.zero_out_ghosts();
+}
+
+template<typename Number>
+void
+zero_out_ghosts_if_needed(LinearAlgebra::distributed::BlockVector<Number> & vec)
+{
+  vec.zero_out_ghosts();
+}
+
 } // namespace internal
 
 } // namespace TPSS
@@ -149,22 +179,24 @@ public:
 
 private:
   /**
-   * Does one apply_local_solvers() on the first color regarding the right hand side @p rhs
-   * and adds the solution into @p solution. The first color is 0 if
-   * transpose/AdditionalData::reverse is false or n_colors-1 if transpose/AdditionalData::reverse
-   * is true.
+   * Implementing the application of the additive Schwarz preconditioner A^{-1}_{ad}:
    *
-   *  Since the previous solution is 0 our residual equals the right hand side @p dst.
-   *  Consequently, the compute-residual step can be omitted and we apply all subproblem inverses of
-   *  color 0 directly to the right hand side and store the new solution @p solution.  (See Toselli,
-   *  Widlund page 52 for details on multiplicative preconditioner!)
+   *    x = A^{-1}_{ad} b
+   *
+   * x : the result is passed to @p solution (note that @p solution is set to zero first)
+   *
+   * b : the vector @p rhs
+   *
+   * Internally this method calls apply_local_solvers(solution, rhs) for each
+   * color adding up all subspace corrections. Therefore, prior to calling
+   * apply_local_solvers() the first time @p solution is set to zero.
    */
   template<bool transpose = false>
   void
   additive_schwarz_operation(VectorType & solution, const VectorType & rhs) const;
 
   /**
-   * Computes the action: u_new = u_prev + sum_{j \in J(color)} R_j^T  A_j^{-1} R_j r
+   * Computes the action: u_new = u_prev + omega * sum_{j \in J(color)} R_j^T  A_j^{-1} R_j r
    *
    * u_new    : new solution vector after one colored smoothing step of r, which is returned by
    *            reference @p solution
@@ -184,6 +216,8 @@ private:
    *
    * r        : residual vector b - A u_prev. since u_prev might be zero the residual @p residual is not
    *            computed within this function.
+   *
+   * omega    : damping
    */
   void
   apply_local_solvers(VectorType &       solution,
@@ -349,15 +383,27 @@ private:
   is_globally_compatible(const LinearAlgebra::distributed::BlockVector<value_type> & vec) const;
 
   /**
-   *  Note that the first step in the multiplicative Schwarz smoothing algorithm is same we have to
-   *  do for the additive algorithm.
+   * Implementing the application of the multiplicative Schwarz preconditioner A^{-1}_{mu}:
    *
-   *  The remaining steps of the multiplicative algorithm consist of computing the residual
-   *  regarding the previous solution and applying all subproblem inverses of a given color to the
-   *  residual, afterwards. The latter step entails as well the update of the new solution
-   *  (apply_local_solvers()).  The right hand side is given by @p rhs and the action of
-   *  all successive operations regarding remaining colors is stored in @p solution.  (See Toselli,
-   *  Widlund page 52 for details on multiplicative preconditioner!)
+   *    x = A^{-1}_{mu} b
+   *
+   * x : the result is passed to @p solution (note that @p solution is set to zero first)
+   *
+   * b : the vector @p rhs
+   *
+   * Internally this method sets @p solution to zero and calls
+   * apply_local_solvers(solution, rhs) for the first color. For the
+   * intermediate solution x^{(c)} obtained from the previous call
+   * apply_local_solvers() we recursively compute the residual
+   *
+   *   r^{(c)} = b - A * x^{(c)}
+   *
+   * followed by the call
+   *
+   *   apply_local_solvers(x^{(c)}, r^{(c)})
+   *
+   * for each remaining color c.  Details on the recursive algorithm can be
+   * found in Toselli, Widlund page 52.
    */
   template<bool transpose = false>
   void
@@ -374,7 +420,7 @@ private:
    *
    * The linear operator should perform the global matrix-vector product A * u via methods @p vmult()
    * or @p vmult_add() (and maybe in the future also the transpose A^T * u via @p Tvmult() and @p
-   * Tvmult_add()
+   * Tvmult_add())
    *
    * II inverse problem:
    *
@@ -416,7 +462,6 @@ template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 struct SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::AdditionalData
 {
   double relaxation              = 1.;
-  double local_relaxation        = 1.;
   bool   reverse                 = false;
   bool   symmetrized             = false;
   bool   use_ras_weights         = false;
@@ -427,7 +472,6 @@ struct SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Additio
   {
     bool is_equal = true;
     is_equal &= relaxation == other_data.relaxation;
-    is_equal &= local_relaxation == other_data.local_relaxation;
     is_equal &= reverse == other_data.reverse;
     is_equal &= symmetrized == other_data.symmetrized;
     is_equal &= use_ras_weights == other_data.use_ras_weights;
