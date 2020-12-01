@@ -114,9 +114,16 @@ public:
   unsigned int
   n_cells_per_subdomain() const;
 
-  /*
-   * Return the number of physical subdomains (neglecting the vectorized batches
-   * of physical subdomains).
+  /**
+   * Return the number of macro subdomains. A macro subdomain consists of a
+   * vectorized batch of physical subdomains. How many vectorization lanes are
+   * filled with physical subdomains can be queried by @p n_lanes_filled().
+   */
+  unsigned int
+  n_subdomains() const;
+
+  /**
+   * Return the number of physical subdomains.
    */
   unsigned int
   n_physical_subdomains() const;
@@ -228,6 +235,14 @@ PatchWorker<dim, number>::n_cells_per_subdomain() const
   Assert(patch_info != nullptr, ExcNotInitialized());
   const auto n_cells = TPSS::UniversalInfo<dim>::n_cells(patch_variant);
   return n_cells;
+}
+
+
+template<int dim, typename number>
+inline unsigned int
+PatchWorker<dim, number>::n_subdomains() const
+{
+  return get_partition_data().n_subdomains();
 }
 
 
