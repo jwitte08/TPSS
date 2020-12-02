@@ -302,7 +302,7 @@ template<int dim, typename Number>
 inline unsigned int
 SubdomainHandler<dim, Number>::n_total_components() const
 {
-  const unsigned int n_components = 0;
+  unsigned int n_components = 0;
   for(auto dofh_index = 0U; dofh_index < n_dof_handlers(); ++dofh_index)
     n_components += this->n_components(dofh_index);
   return n_components;
