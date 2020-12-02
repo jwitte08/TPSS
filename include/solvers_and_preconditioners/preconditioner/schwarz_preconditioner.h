@@ -165,6 +165,26 @@ public:
     return is_copyable;
   }
 
+  /// TODO
+  types::global_dof_index
+  m() const
+  {
+    Assert(subdomain_handler, ExcMessage("subdomain_handler not initialized"));
+    AssertDimension(subdomain_handler->n_total_components(), 1U);
+    const auto              dof_infos = subdomain_handler->get_dof_infos();
+    types::global_dof_index n         = 0;
+    for(const auto & info : dof_infos)
+      n += info.vector_partitioner->size();
+    return n;
+  }
+
+  /// TODO
+  types::global_dof_index
+  n() const
+  {
+    return m();
+  }
+
   void
   vmult(VectorType & dst, const VectorType & src) const override;
 
