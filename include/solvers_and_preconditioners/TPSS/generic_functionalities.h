@@ -55,8 +55,11 @@ compute_eigenvalues_symm(LAPACKFullMatrix<Number> & matrix, FullMatrix<Number> &
 {
   AssertDimension(matrix.m(), matrix.n());
   Vector<Number> eigenvalues;
-  matrix.compute_eigenvalues_symmetric(
-    std::numeric_limits<Number>::lowest(), std::numeric_limits<Number>::max(), 0., eigenvalues, Q);
+  matrix.compute_eigenvalues_symmetric(std::numeric_limits<Number>::lowest(),
+                                       std::numeric_limits<Number>::max(),
+                                       2. * std::numeric_limits<Number>::epsilon(),
+                                       eigenvalues,
+                                       Q);
   return eigenvalues;
 }
 
@@ -98,9 +101,9 @@ compute_generalized_eigenvalues_symm(LAPACKFullMatrix<Number> & A,
 
 template<typename Number>
 std::vector<Number>
-compute_generalized_eigenvalues_symm(FullMatrix<Number> & A,
-                                     FullMatrix<Number> & B,
-                                     FullMatrix<Number> & Q)
+compute_generalized_eigenvalues_symm(const FullMatrix<Number> & A,
+                                     const FullMatrix<Number> & B,
+                                     FullMatrix<Number> &       Q)
 {
   LAPACKFullMatrix<Number> A_lapack(A.m(), A.n());
   A_lapack = A;
