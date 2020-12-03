@@ -306,25 +306,27 @@ main(int argc, char * argv[])
   level_fullprecond.mmult(BinvA, level_fullmatrix);
   print_fullmatrix(BinvA, "B^{-1}A:");
 
-  {
-    FullMatrix<double> ABinvA(level_fullmatrix.m());
-    level_fullmatrix.mmult(ABinvA, BinvA);
-    FullMatrix<double> Q(level_fullmatrix.m());
-    const auto & geigenvalues = compute_generalized_eigenvalues_symm(ABinvA, level_fullmatrix, Q);
-    std::cout
-      << "generalized eigenvalues for AB^{-1}Ax = Ax, i.e. eigenvalues of B^{-1}A in A-induced inner product:"
-      << std::endl;
-    std::cout << vector_to_string(geigenvalues) << std::endl;
-    std::cout << std::endl;
+  /// DEBUG
+  // {
+  //   FullMatrix<double> ABinvA(level_fullmatrix.m());
+  //   level_fullmatrix.mmult(ABinvA, BinvA);
+  //   FullMatrix<double> Q(level_fullmatrix.m());
+  //   const auto & geigenvalues = compute_generalized_eigenvalues_symm(ABinvA, level_fullmatrix,
+  //   Q); std::cout
+  //     << "generalized eigenvalues for AB^{-1}Ax = Ax, i.e. eigenvalues of B^{-1}A in A-induced
+  //     inner product:"
+  //     << std::endl;
+  //   std::cout << vector_to_string(geigenvalues) << std::endl;
+  //   std::cout << std::endl;
 
-    /// DEBUG
-    // FullMatrix<double> tmp(level_fullmatrix.m());
-    // FullMatrix<double> tmp2(level_fullmatrix.m());
-    // ABinvA.mmult(tmp, Q);
-    // Q.Tmmult(tmp2, tmp);
-    // tmp2.print_formatted(std::cout);
-    // std::cout << std::endl;
-  }
+  //   /// DEBUG
+  //   // FullMatrix<double> tmp(level_fullmatrix.m());
+  //   // FullMatrix<double> tmp2(level_fullmatrix.m());
+  //   // ABinvA.mmult(tmp, Q);
+  //   // Q.Tmmult(tmp2, tmp);
+  //   // tmp2.print_formatted(std::cout);
+  //   // std::cout << std::endl;
+  // }
 
   FullMatrix<double> E(IdentityMatrix(level_fullmatrix.m()));
   E.add(-1., BinvA);
@@ -350,8 +352,10 @@ main(int argc, char * argv[])
     // tmp2.print_formatted(std::cout);
     // std::cout << std::endl;
 
+    if (dim == 2)
+      {
     const auto & dofh = subdomain_handler->get_dof_handler();
-
+    
     std::cout << "visualize generalized eigenvectors Q..." << std::endl;
     {
       std::vector<LinearAlgebra::distributed::Vector<double>> eigenvectors;
@@ -393,6 +397,7 @@ main(int argc, char * argv[])
           dofh, v, "Aeigvecs", 10, MappingQGeneric<dim>(1), "_" + Utilities::int_to_string(i, 4));
       }
     }
+      }
   }
 
   return 0;
