@@ -258,6 +258,7 @@ main(int argc, char * argv[])
   const auto & level_matrix = poisson_problem->mg_matrices[level];
 
   const auto subdomain_handler = poisson_problem->mg_schwarz_smoother_pre->get_subdomain_handler();
+  const auto &     dofh        = subdomain_handler->get_dof_handler();
   SubmatrixHandler submatrix_handler(level_matrix, *subdomain_handler); // R_j A_l R_j^T
   const auto &     patch_dof_worker = submatrix_handler.left_transfer->get_patch_dof_worker();
   const auto & level_precond = *poisson_problem->mg_schwarz_smoother_pre->get_preconditioner(level);
@@ -295,7 +296,7 @@ main(int argc, char * argv[])
   }
 
   MatrixWrapper matrix_wrap(level_matrix);
-  const auto &  level_fullmatrix = matrix_wrap.as_fullmatrix();
+  auto          level_fullmatrix = matrix_wrap.as_fullmatrix();
   print_fullmatrix(level_fullmatrix, "level matrix A:");
 
   MatrixWrapper precond_wrap(level_precond);
@@ -332,6 +333,29 @@ main(int argc, char * argv[])
   E.add(-1., BinvA);
   print_fullmatrix(E, "error propagation matrix E=I-B^{-1}A:");
 
+  /// neglect dofs at the boundary if needed
+  std::vector<unsigned int> interior_dofs;
+  if(TPSS::get_dof_layout(dofh.get_fe()) == TPSS::DoFLayout::Q)
+  {
+    const auto        n_dofs = level_fullmatrix.m();
+    std::vector<bool> boundary_dof_masks(n_dofs);
+    DoFTools::extract_boundary_dofs(dofh, ComponentMask(1U, true), boundary_dof_masks);
+
+    for(auto i = 0U; i < n_dofs; ++i)
+      if(!boundary_dof_masks[i])
+        interior_dofs.push_back(i);
+
+    {
+      const auto copyof_A = level_fullmatrix;
+      level_fullmatrix.reinit(interior_dofs.size(), interior_dofs.size());
+      level_fullmatrix.extract_submatrix_from(copyof_A, interior_dofs, interior_dofs);
+
+      const auto copyof_E = E;
+      E.reinit(interior_dofs.size(), interior_dofs.size());
+      E.extract_submatrix_from(copyof_E, interior_dofs, interior_dofs);
+    }
+  }
+
   {
     FullMatrix<double> AE(level_fullmatrix.m());
     level_fullmatrix.mmult(AE, E);
@@ -352,52 +376,58 @@ main(int argc, char * argv[])
     // tmp2.print_formatted(std::cout);
     // std::cout << std::endl;
 
-    if (dim == 2)
-      {
-    const auto & dofh = subdomain_handler->get_dof_handler();
-    
-    std::cout << "visualize generalized eigenvectors Q..." << std::endl;
+    if(dim == 2)
     {
-      std::vector<LinearAlgebra::distributed::Vector<double>> eigenvectors;
-      for(auto i = 0U; i < Q.n(); ++i)
+      std::cout << "visualize generalized eigenvectors Q..." << std::endl;
       {
-        eigenvectors.emplace_back();
-        auto & v = eigenvectors.back();
-        level_matrix.initialize_dof_vector(v);
-        v = 0.;
-        AssertDimension(Q.m(), v.size());
-        AssertDimension(Q.n(), v.size());
+        std::vector<LinearAlgebra::distributed::Vector<double>> eigenvectors;
+        for(auto i = 0U; i < Q.n(); ++i)
+        {
+          eigenvectors.emplace_back();
+          auto & v = eigenvectors.back();
+          level_matrix.initialize_dof_vector(v);
+          v = 0.;
+          AssertDimension(Q.m(), v.size());
+          AssertDimension(Q.n(), v.size());
 
-        for(auto j = 0U; j < Q.m(); ++j)
-          v(j) = Q(j, i);
+          if(interior_dofs.empty())
+            for(auto j = 0U; j < Q.m(); ++j)
+              v(j) = Q(j, i);
+          else
+            for(auto j = 0U; j < Q.m(); ++j)
+              v(interior_dofs[j]) = Q(j, i);
 
-        visualize_dof_vector(
-          dofh, v, "eigvecs", 10, MappingQGeneric<dim>(1), "_" + Utilities::int_to_string(i, 4));
+          visualize_dof_vector(
+            dofh, v, "eigvecs", 10, MappingQGeneric<dim>(1), "_" + Utilities::int_to_string(i, 4));
+        }
+      }
+
+      std::cout << "visualize A-mapped eigenvectors AQ..." << std::endl;
+      {
+        FullMatrix<double> AQ(level_fullmatrix.m());
+        level_fullmatrix.mmult(AQ, Q);
+        std::vector<LinearAlgebra::distributed::Vector<double>> eigenvectors;
+        for(auto i = 0U; i < Q.n(); ++i)
+        {
+          eigenvectors.emplace_back();
+          auto & v = eigenvectors.back();
+          level_matrix.initialize_dof_vector(v);
+          v = 0.;
+          AssertDimension(AQ.m(), v.size());
+          AssertDimension(AQ.n(), v.size());
+
+          if(interior_dofs.empty())
+            for(auto j = 0U; j < AQ.m(); ++j)
+              v(j) = AQ(j, i);
+          else
+            for(auto j = 0U; j < AQ.m(); ++j)
+              v(interior_dofs[j]) = AQ(j, i);
+
+          visualize_dof_vector(
+            dofh, v, "Aeigvecs", 10, MappingQGeneric<dim>(1), "_" + Utilities::int_to_string(i, 4));
+        }
       }
     }
-
-    std::cout << "visualize A-mapped eigenvectors AQ..." << std::endl;
-    {
-      FullMatrix<double> AQ(level_fullmatrix.m());
-      level_fullmatrix.mmult(AQ, Q);
-      std::vector<LinearAlgebra::distributed::Vector<double>> eigenvectors;
-      for(auto i = 0U; i < Q.n(); ++i)
-      {
-        eigenvectors.emplace_back();
-        auto & v = eigenvectors.back();
-        level_matrix.initialize_dof_vector(v);
-        v = 0.;
-        AssertDimension(AQ.m(), v.size());
-        AssertDimension(AQ.n(), v.size());
-
-        for(auto j = 0U; j < AQ.m(); ++j)
-          v(j) = AQ(j, i);
-
-        visualize_dof_vector(
-          dofh, v, "Aeigvecs", 10, MappingQGeneric<dim>(1), "_" + Utilities::int_to_string(i, 4));
-      }
-    }
-      }
   }
 
   return 0;
