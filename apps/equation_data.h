@@ -1112,6 +1112,7 @@ public:
     : Function<dim>(range.second - range.first), function(function_in), shift(range.first)
   {
     Assert(range.first <= range.second, ExcMessage("Invalid range."));
+    Assert(function_in, ExcMessage("function_in is null"));
     AssertIndexRange(range.first, function_in->n_components);
     AssertIndexRange(range.second, function_in->n_components + 1);
   }
