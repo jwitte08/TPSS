@@ -357,14 +357,14 @@ private:
   get_color_sequence(const bool transpose) const;
 
   /**
-   * Does nothing. See specializations below.
+   * Does nothing. See overloaded methods...
    */
   template<typename OtherVectorType>
   void
   initialize_ghosted_vector_if_needed(OtherVectorType &) const;
 
   /**
-   * Initializes MPI vectors, here LinearAlgebra::distributed::Vector with
+   * Initializes MPI vectors (here LinearAlgebra::distributed::Vector) with
    * respect to the MPI partitioners stored in SubdomainHandler. This method
    * should only be used for 'private' vectors such that local compatibility
    * checks are sufficient.
@@ -373,11 +373,25 @@ private:
   initialize_ghosted_vector_if_needed(LinearAlgebra::distributed::Vector<value_type> & vec) const;
 
   /**
-   * Same as above, here for LinearAlgebra::distributed::BlockVector.
+   * Same as above, but for block vectors (here
+   * LinearAlgebra::distributed::BlockVector).
    */
   void
   initialize_ghosted_vector_if_needed(
     LinearAlgebra::distributed::BlockVector<value_type> & vec) const;
+
+  /**
+   * In case of serial vectors @p vec is simply resized with respect to the MPI
+   * partitioners stored in SubdomainHandler.
+   */
+  void
+  initialize_ghosted_vector_if_needed(Vector<value_type> & vec) const;
+
+  /**
+   * Same as above but for block vector type.
+   */
+  void
+  initialize_ghosted_vector_if_needed(BlockVector<value_type> & vec) const;
 
   /**
    * Does nothing. See specializations below.

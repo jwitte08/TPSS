@@ -45,7 +45,8 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   compute_inverses();
   time_data[2].add_time(timer.wall_time());
 
-  compute_ras_weights();
+  if(additional_data.use_ras_weights)
+    compute_ras_weights();
 
   /// instantiate ghosted vectors (initialization is postponed to the actual
   /// smoothing step)
@@ -316,6 +317,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
 }
 
 
+
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
@@ -325,7 +327,6 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
   if(vec.partitioners_are_compatible(*partitioner))
     return;
   vec.reinit(partitioner);
-  // std::cout << "initialize ghost on level " << level << std::endl;
 }
 
 
@@ -355,6 +356,34 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
   /// finalize the initialization by updating the intrinsic block sizes,
   /// calling collect_sizes()
   vec.collect_sizes();
+}
+
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
+  initialize_ghosted_vector_if_needed(Vector<value_type> & vec) const
+{
+  const auto partitioner = subdomain_handler->get_vector_partitioner();
+  if(vec.size() == partitioner->size())
+    return;
+  vec.reinit(partitioner->size());
+}
+
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
+  initialize_ghosted_vector_if_needed(BlockVector<value_type> & vec) const
+{
+  const auto & partitioners = subdomain_handler->get_vector_partitioners();
+  AssertDimension(vec.n_blocks(), partitioners.size());
+  std::vector<types::global_dof_index> size_foreach_block;
+  for(const auto & p : partitioners)
+    size_foreach_block.push_back(p->size());
+  vec.reinit(size_foreach_block);
 }
 
 
@@ -400,7 +429,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::preprocess_sol
   OtherVectorType &       solution_in,
   const OtherVectorType & residual_in) const
 {
-  AssertThrow(false, ExcMessage("Currently, OtherVectorType is not supported."));
+  AssertThrow(false, ExcMessage("VectorType is not supported."));
 }
 
 
@@ -498,7 +527,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::postprocess_so
   OtherVectorType &,
   const OtherVectorType &) const
 {
-  AssertThrow(false, ExcMessage("Currently, OtherVectorType is not supported."));
+  AssertThrow(false, ExcMessage("VectorType is not supported."));
 }
 
 
