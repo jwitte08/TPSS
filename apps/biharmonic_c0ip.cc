@@ -29,7 +29,7 @@ write_ppdata_to_string(const PostProcessData & pp_data,
     info_table.add_value("n_iter", pp_data.n_iterations_system.at(run));
     info_table.add_value("reduction", pp_data.average_reduction_system.at(run));
     info_table.add_value("L2_error", pp_data.L2_error.at(run));
-    info_table.add_value("H2semiO_error", pp_data.H2semi_error.at(run));
+    info_table.add_value("energy_error", pp_data.H2semi_error.at(run));
     if(has_velocity_data)
       info_table.add_value("L2_velocity_error", pp_data_velocity.L2_error.at(run));
     if(has_pressure_data)
@@ -47,10 +47,10 @@ write_ppdata_to_string(const PostProcessData & pp_data,
                                         "n_dofs",
                                         ConvergenceTable::reduction_rate_log2,
                                         pp_data.n_dimensions);
-  info_table.set_scientific("H2semiO_error", true);
-  info_table.set_precision("H2semiO_error", 3);
-  info_table.evaluate_convergence_rates("H2semiO_error", ConvergenceTable::reduction_rate);
-  info_table.evaluate_convergence_rates("H2semiO_error",
+  info_table.set_scientific("energy_error", true);
+  info_table.set_precision("energy_error", 3);
+  info_table.evaluate_convergence_rates("energy_error", ConvergenceTable::reduction_rate);
+  info_table.evaluate_convergence_rates("energy_error",
                                         "n_dofs",
                                         ConvergenceTable::reduction_rate_log2,
                                         pp_data.n_dimensions);
@@ -131,16 +131,17 @@ main(int argc, char * argv[])
       Util::ConditionalAtof(argc, argv)(prm, index);
     };
 
+
     //: default
-    unsigned int test_index  = 4;
-    unsigned int debug_depth = 0;
-    double       damping     = 0.;
-    double       ip_factor   = 1.;
-    unsigned int pde_index   = 0;
+    unsigned int solver_index = 4;
+    unsigned int debug_depth  = 0;
+    double       damping      = 0.;
+    double       ip_factor    = 1.;
+    unsigned int pde_index    = 1;
 
 
     //: parse arguments
-    atoi_if(test_index, 1);
+    atoi_if(solver_index, 1);
     atoi_if(pde_index, 2);
     atof_if(ip_factor, 3);
     atoi_if(debug_depth, 4);
@@ -159,8 +160,8 @@ main(int argc, char * argv[])
     // 2: CG solver (GMG preconditioner without smoothing)
     // 3: CG solver (GMG preconditioner with symm. Gauss-Seidel smoothing)
     // 4: CG solver (GMG preconditioner with Schwarz smoothing)
-    constexpr unsigned int test_index_max = 4;
-    AssertThrow(test_index <= test_index_max, ExcMessage("test_index is not valid"));
+    constexpr unsigned int solver_index_max = 4;
+    AssertThrow(solver_index <= solver_index_max, ExcMessage("solver_index is not valid"));
 
     RT::Parameter prms;
     {
@@ -172,9 +173,9 @@ main(int argc, char * argv[])
       prms.mesh.n_repetitions    = 2;
 
       //: solver
-      prms.solver.variant              = test_index == 0 ? "direct" : "cg";
-      prms.solver.rel_tolerance        = 1.e-8;
-      prms.solver.precondition_variant = test_index >= 2 ?
+      prms.solver.variant              = solver_index == 0 ? "direct" : "cg";
+      prms.solver.rel_tolerance        = 1.e-12; // !!! -8
+      prms.solver.precondition_variant = solver_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
       prms.solver.n_iterations_max = 200;
@@ -186,13 +187,13 @@ main(int argc, char * argv[])
       prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::FullSVD;
       prms.multigrid.coarse_grid.iterative_solver = "cg";
       prms.multigrid.coarse_grid.accuracy         = 1.e-12;
-      const SmootherParameter::SmootherVariant smoother_variant[test_index_max + 1] = {
+      const SmootherParameter::SmootherVariant smoother_variant[solver_index_max + 1] = {
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::GaussSeidel,
         SmootherParameter::SmootherVariant::Schwarz};
-      prms.multigrid.pre_smoother.variant                      = smoother_variant[test_index];
+      prms.multigrid.pre_smoother.variant                      = smoother_variant[solver_index];
       prms.multigrid.pre_smoother.n_smoothing_steps            = 2;
       prms.multigrid.pre_smoother.schwarz.patch_variant        = CT::PATCH_VARIANT_;
       prms.multigrid.pre_smoother.schwarz.smoother_variant     = CT::SMOOTHER_VARIANT_;

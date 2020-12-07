@@ -186,6 +186,16 @@ public:
   std::shared_ptr<Vector<double>>
   compute_L2_error_pressure() const;
 
+  /**
+   * Computes the energy (semi)norm induced by the C^0 interior penalty bilinear
+   * form. To be precise, we actually compute the mesh-dependent seminorm from
+   * equation (3.5) in BrennerSung05 which is equivalent to the energy norm
+   * (there given in equation (4.19)) on the finite element space. For smooth
+   * functions the mesh-dependent seminorm is equivalent to the H^2-seminorm.
+   */
+  double
+  compute_energy_error() const;
+
   void
   compute_errors();
 
@@ -613,16 +623,10 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
 
     using C0IP::MW::CopyData;
 
-    const auto                     component_range = std::make_pair<unsigned int>(0, dim);
-    Stokes::FunctionExtractor<dim> load_function_stream(load_function_stokes.get(),
-                                                        component_range);
-    const Function<dim> *          load_function_ptr =
-      is_stream ? &load_function_stream : load_function.get();
-
     using MatrixIntegrator = typename C0IP::MW::
       MatrixIntegrator<dim, /*is_multigrid*/ false, /*stream function?*/ is_stream>;
 
-    MatrixIntegrator matrix_integrator(load_function_ptr,
+    MatrixIntegrator matrix_integrator(load_function.get(),
                                        analytical_solution.get(),
                                        &system_u,
                                        equation_data);
@@ -1884,6 +1888,169 @@ ModelProblem<dim, fe_degree>::compute_L2_error_pressure() const
 
 
 
+template<int dim, int fe_degree>
+double
+ModelProblem<dim, fe_degree>::compute_energy_error() const
+{
+  using ::MW::ScratchData;
+
+  using ::MW::CopyData;
+
+  Vector<double> error_per_cell(triangulation.n_active_cells());
+
+  auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+    AssertDimension(copy_data.local_dof_indices.size(), 1U);
+    AssertDimension(copy_data.cell_rhs.size(), 1U);
+
+    FEValuesExtractors::Scalar scalar(0);
+    auto &                     fe_values = scratch_data.fe_values;
+    fe_values.reinit(cell);
+
+    copy_data.local_dof_indices[0] = cell->active_cell_index();
+
+    std::vector<Tensor<2, dim>> hessians(fe_values.n_quadrature_points);
+    fe_values[scalar].get_function_hessians(system_u, hessians);
+
+    std::vector<SymmetricTensor<2, dim>> exact_hessians(fe_values.n_quadrature_points);
+    analytical_solution->hessian_list(fe_values.get_quadrature_points(), exact_hessians);
+
+    double local_error = 0;
+    for(unsigned int q = 0; q < fe_values.n_quadrature_points; ++q)
+    {
+      const auto & hess_uh = hessians[q];
+      const auto & hess_u  = exact_hessians[q];
+
+      local_error += (hess_u - hess_uh).norm_square() * fe_values.JxW(q);
+    }
+
+    copy_data.cell_rhs = local_error;
+  };
+
+  auto face_worker = [&](const auto &         cell,
+                         const unsigned int & face_no,
+                         const unsigned int & sface_no,
+                         const auto &         ncell,
+                         const unsigned int & nface_no,
+                         const unsigned int & nsface_no,
+                         ScratchData<dim> &   scratch_data,
+                         CopyData &           copy_data) {
+    FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
+    fe_interface_values.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no);
+
+    AssertDimension(copy_data.local_dof_indices.size(), 1U);
+    AssertDimension(copy_data.local_dof_indices[0], cell->active_cell_index());
+
+    const unsigned int  n_interface_dofs  = fe_interface_values.n_current_interface_dofs();
+    const auto &        joint_dof_indices = fe_interface_values.get_interface_dof_indices();
+    std::vector<double> dof_values;
+    std::transform(joint_dof_indices.cbegin(),
+                   joint_dof_indices.cend(),
+                   std::back_inserter(dof_values),
+                   [&](const auto dof_index) { return system_u(dof_index); });
+
+    const auto h  = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+    const auto nh = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nface_no]);
+    const double gamma_over_h =
+      0.5 * equation_data.ip_factor * C0IP::compute_penalty_impl(fe_degree, h, nh);
+
+    const auto quadrature_points = fe_interface_values.get_quadrature_points();
+
+    double local_error = 0.;
+    for(unsigned int q = 0; q < fe_interface_values.n_quadrature_points; ++q)
+    {
+      const auto & n = fe_interface_values.normal(q);
+
+      double jump_grad_uh_dot_n = 0.;
+      for(unsigned int i = 0; i < n_interface_dofs; ++i)
+        jump_grad_uh_dot_n += dof_values[i] * fe_interface_values.jump_gradient(i, q) * n;
+
+      // assuming u is smooth its jump of the gradient is zero!
+      local_error += jump_grad_uh_dot_n * jump_grad_uh_dot_n * fe_interface_values.JxW(q);
+    }
+
+    local_error *= gamma_over_h;
+
+    copy_data.cell_rhs[0] += local_error;
+  };
+
+  auto boundary_worker = [&](const auto &         cell,
+                             const unsigned int & face_no,
+                             ScratchData<dim> &   scratch_data,
+                             CopyData &           copy_data) {
+    FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
+    fe_interface_values.reinit(cell, face_no);
+
+    AssertDimension(copy_data.local_dof_indices.size(), 1U);
+    AssertDimension(copy_data.local_dof_indices[0], cell->active_cell_index());
+
+    const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
+
+    const auto &        joint_dof_indices = fe_interface_values.get_interface_dof_indices();
+    std::vector<double> dof_values;
+    std::transform(joint_dof_indices.cbegin(),
+                   joint_dof_indices.cend(),
+                   std::back_inserter(dof_values),
+                   [&](const auto dof_index) { return system_u(dof_index); });
+
+    const auto   h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+    const double gamma_over_h =
+      equation_data.ip_factor * C0IP::compute_penalty_impl(fe_degree, h, h);
+
+    const auto quadrature_points = fe_interface_values.get_quadrature_points();
+
+    double local_error = 0.;
+    for(unsigned int q = 0; q < fe_interface_values.n_quadrature_points; ++q)
+    {
+      const auto & n            = fe_interface_values.normal(q);
+      const auto & x_q          = quadrature_points[q];
+      const double grad_u_dot_n = analytical_solution->gradient(x_q) * n;
+
+      double grad_uh_dot_n = 0.;
+      for(unsigned int i = 0; i < n_interface_dofs; ++i)
+        grad_uh_dot_n += dof_values[i] * fe_interface_values.jump_gradient(i, q) * n;
+
+      local_error += (grad_uh_dot_n - grad_u_dot_n) * (grad_uh_dot_n - grad_u_dot_n) *
+                     fe_interface_values.JxW(q);
+    }
+
+    local_error *= gamma_over_h;
+
+    copy_data.cell_rhs[0] += local_error;
+  };
+
+  const auto copier = [&](const CopyData & copy_data) {
+    AssertDimension(copy_data.local_dof_indices.size(), 1U);
+
+    const auto cell_index      = copy_data.local_dof_indices.front();
+    error_per_cell(cell_index) = copy_data.cell_rhs[0];
+  };
+
+  UpdateFlags update_flags =
+    update_values | update_hessians | update_quadrature_points | update_JxW_values;
+  UpdateFlags interface_update_flags = update_values | update_gradients | update_normal_vectors |
+                                       update_quadrature_points | update_JxW_values;
+  const unsigned int n_gauss_points = dof_handler.get_fe().degree + 2;
+
+  ScratchData<dim> scratch_data(
+    mapping, dof_handler.get_fe(), n_gauss_points, update_flags, interface_update_flags);
+
+  CopyData copy_data(1U);
+
+  MeshWorker::mesh_loop(dof_handler.begin_active(),
+                        dof_handler.end(),
+                        cell_worker,
+                        copier,
+                        scratch_data,
+                        copy_data,
+                        MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                          MeshWorker::assemble_own_interior_faces_once,
+                        boundary_worker,
+                        face_worker);
+
+  return std::sqrt(error_per_cell.l1_norm());
+}
+
+
 // The next function evaluates the error between the computed solution
 // and the exact solution (which is known here because we have chosen
 // the right hand side and boundary values in a way so that we know
@@ -1943,46 +2110,9 @@ ModelProblem<dim, fe_degree>::compute_errors()
     pp_data.H1semi_error.push_back(error_norm);
   }
 
-  // Now also compute an approximation to the $H^2$ seminorm error. The actual
-  // $H^2$ seminorm would require us to integrate second derivatives of the
-  // solution $u_h$, but given the Lagrange shape functions we use, $u_h$ of
-  // course has kinks at the interfaces between cells, and consequently second
-  // derivatives are singular at interfaces. As a consequence, we really only
-  // integrating over the interiors of the cells and ignore the interface
-  // contributions. This is *not* an equivalent norm to the energy norm for
-  // the problem, but still gives us an idea of how fast the error converges.
   {
-    const QGauss<dim> quadrature_formula(fe.degree + 2);
-    Vector<double>    error_per_cell(triangulation.n_active_cells());
-
-    FEValues<dim> fe_values(mapping,
-                            fe,
-                            quadrature_formula,
-                            update_values | update_hessians | update_quadrature_points |
-                              update_JxW_values);
-
-    FEValuesExtractors::Scalar scalar(0);
-    const unsigned int         n_q_points = quadrature_formula.size();
-
-    std::vector<SymmetricTensor<2, dim>> exact_hessians(n_q_points);
-    std::vector<Tensor<2, dim>>          hessians(n_q_points);
-    for(auto & cell : dof_handler.active_cell_iterators())
-    {
-      fe_values.reinit(cell);
-      fe_values[scalar].get_function_hessians(system_u, hessians);
-      analytical_solution->hessian_list(fe_values.get_quadrature_points(), exact_hessians);
-
-      double local_error = 0;
-      for(unsigned int q_point = 0; q_point < n_q_points; ++q_point)
-      {
-        local_error +=
-          ((exact_hessians[q_point] - hessians[q_point]).norm_square() * fe_values.JxW(q_point));
-      }
-      error_per_cell[cell->active_cell_index()] = std::sqrt(local_error);
-    }
-
-    const double error_norm = error_per_cell.l2_norm();
-    print_parameter("Error in the broken H2 seminorm:", error_norm);
+    const double error_norm = compute_energy_error();
+    print_parameter("Error in energy norm (resp. |.|_h):", error_norm);
     pp_data.H2semi_error.push_back(error_norm);
   }
 }
