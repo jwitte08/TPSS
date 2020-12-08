@@ -558,6 +558,9 @@ struct EquationData
   str_local_solver() const;
 
   std::string
+  sstr_local_solver() const;
+
+  std::string
   to_string() const;
 
   bool
@@ -615,6 +618,14 @@ std::string
 EquationData::str_local_solver() const
 {
   return str_local_solver(local_solver_variant);
+}
+
+
+std::string
+EquationData::sstr_local_solver() const
+{
+  const std::string str_variant[] = {"exact", "bilapl"};
+  return str_variant[(int)local_solver_variant];
 }
 
 
