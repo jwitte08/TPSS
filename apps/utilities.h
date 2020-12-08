@@ -123,6 +123,16 @@ damping_to_fstring(double factor)
 
 
 
+std::string
+short_name(const std::string & str_in)
+{
+  std::string sname = str_in.substr(0, 4);
+  std::transform(sname.begin(), sname.end(), sname.begin(), [](auto c) { return std::tolower(c); });
+  return sname;
+}
+
+
+
 template<typename MatrixType,
          typename VectorType = LinearAlgebra::distributed::Vector<typename MatrixType::value_type>>
 struct MatrixWrapper
