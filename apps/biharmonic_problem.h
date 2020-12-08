@@ -395,13 +395,22 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
                   parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
     mapping(1),
     fe(fe_degree),
-    user_coloring(std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh))
+    user_coloring([&]() -> std::shared_ptr<ColoringBase<dim>> {
+      const bool is_AVP = rt_parameters.multigrid.pre_smoother.schwarz.is_additive_vertex_patch();
+      Assert(rt_parameters.multigrid.pre_smoother.schwarz.is_additive_vertex_patch() ==
+               rt_parameters.multigrid.post_smoother.schwarz.is_additive_vertex_patch(),
+             ExcMessage("Pre- and postsmoother differ."));
+      const bool is_multithreaded = MultithreadInfo::n_threads() > 1;
+      if(is_AVP && is_multithreaded)
+        return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
+      return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
+    }())
 {
   AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
-              ExcMessage("One process only."));
+              ExcMessage("MPI isn't supported."));
   AssertThrow(rt_parameters.multigrid.pre_smoother.schwarz.patch_variant ==
                 TPSS::PatchVariant::vertex,
-              ExcMessage("Vertex patches only."));
+              ExcMessage("Model problem is designed for Schwarz methods on vertex patches."));
 
   if(equation_data.is_stream_function())
   {
@@ -744,6 +753,7 @@ ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
   const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
   typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
   mgss_data.coloring_func = std::ref(*user_coloring);
+  mgss_data.use_tbb       = rt_parameters.use_tbb;
   mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
   // mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
   mgss->initialize(mg_matrices, mgss_data);
@@ -755,10 +765,12 @@ ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
     rt_parameters.template fill_schwarz_smoother_data<dim, double>(sd_handler_data,
                                                                    /*is_pre?*/ false);
 
-    const auto mgss_post = std::make_shared<MG_SMOOTHER_SCHWARZ>();
-    typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data_post;
-    mgss_data_post.coloring_func = std::ref(*user_coloring);
-    mgss_data_post.parameters    = rt_parameters.multigrid.post_smoother;
+    const auto mgss_post      = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+    auto       mgss_data_post = mgss_data;
+    mgss_data_post.parameters = rt_parameters.multigrid.post_smoother;
+    // typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data_post;
+    // mgss_data_post.coloring_func = std::ref(*user_coloring);
+    // mgss_data_post.parameters    = rt_parameters.multigrid.post_smoother;
     mgss_post->initialize(*mg_schwarz_smoother_pre, mgss_data_post);
     mg_schwarz_smoother_post = mgss_post;
   }
@@ -2184,7 +2196,7 @@ ModelProblem<dim, fe_degree>::run()
     const unsigned int n_refinements = rt_parameters.mesh.n_refinements + cycle;
     if(!make_grid(n_refinements))
     {
-      *pcout << "NO MESH CREATED AT CYCLE " << cycle << " !!!\n\n";
+      *pcout << "no mesh created... \n\n";
       continue;
     }
 
@@ -2197,10 +2209,10 @@ ModelProblem<dim, fe_degree>::run()
     if(equation_data.is_stream_function())
     {
       solve_pressure();
-      stokes_problem->output_results(cycle);
+      // stokes_problem->output_results(cycle);
     }
 
-    output_results(cycle);
+    // output_results(cycle);
 
     compute_errors();
 

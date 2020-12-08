@@ -84,33 +84,29 @@ write_ppdata_to_string(const PostProcessData & pp_data,
 std::string
 get_filename(const RT::Parameter &            prms,
              const Biharmonic::EquationData & equation_data,
-             const bool                       add_damping = false)
+             const bool                       print_damping = false)
 {
   std::ostringstream oss;
-  const auto         n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
-  const std::string  str_schwarz_variant =
-    TPSS::getstr_schwarz_variant(CT::PATCH_VARIANT_, CT::SMOOTHER_VARIANT_);
-  const auto damping    = prms.multigrid.pre_smoother.schwarz.damping_factor;
-  const auto short_name = [](const std::string & str_in) {
-    std::string sname = str_in.substr(0, 4);
-    std::transform(sname.begin(), sname.end(), sname.begin(), [](auto c) {
-      return std::tolower(c);
-    });
-    return sname;
-  };
 
-  oss << "biharmonic";
+  const auto        n_threads_per_mpi_proc = MultithreadInfo::n_threads();
+  const auto &      pre_schwarz            = prms.multigrid.pre_smoother.schwarz;
+  const auto        damping                = pre_schwarz.damping_factor;
+  const std::string str_schwarz_variant =
+    TPSS::getstr_schwarz_variant(pre_schwarz.patch_variant, pre_schwarz.smoother_variant);
+
+  oss << "biharm";
   oss << std::scientific << std::setprecision(2);
-  oss << "_" << n_mpi_procs << "prcs";
+  // if(n_threads_per_mpi_proc > 1)
+  oss << "_" << n_threads_per_mpi_proc << "tpp";
   if(prms.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
   {
     oss << "_" << str_schwarz_variant;
-    oss << "_" << short_name(equation_data.str_local_solver());
+    oss << "_" << Util::short_name(equation_data.sstr_local_solver());
   }
   oss << "_" << CT::DIMENSION_ << "D";
   oss << "_" << CT::FE_DEGREE_ << "deg";
-  if(add_damping)
-    oss << "_" << damping << "damp";
+  if(damping != 1.)
+    oss << "_" << Util::damping_to_fstring(damping) << "damp";
   return oss.str();
 }
 
@@ -133,22 +129,28 @@ main(int argc, char * argv[])
 
 
     //: default
-    unsigned int solver_index = 4;
-    unsigned int debug_depth  = 0;
-    double       damping      = 0.;
-    double       ip_factor    = 1.;
-    unsigned int pde_index    = 1;
+    unsigned int solver_index  = 4; // CG + GMG + Schwarz
+    unsigned int debug_depth   = 0;
+    double       damping       = 0.;
+    double       ip_factor     = 1.;
+    unsigned int pde_index     = 1; // clamped Gaussian bells
+    int          n_threads_max = 1;
 
 
     //: parse arguments
     atoi_if(solver_index, 1);
     atoi_if(pde_index, 2);
-    atof_if(ip_factor, 3);
-    atoi_if(debug_depth, 4);
-    atof_if(damping, 5);
+    atof_if(damping, 3);
+    atoi_if(n_threads_max, 4);
+    atof_if(ip_factor, 5);
+    atoi_if(debug_depth, 6);
 
     deallog.depth_console(debug_depth);
-    Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
+    Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
+                                                        argv,
+                                                        n_threads_max == -1 ?
+                                                          numbers::invalid_unsigned_int :
+                                                          static_cast<unsigned int>(n_threads_max));
 
     constexpr int  dim              = CT::DIMENSION_;
     constexpr int  fe_degree        = CT::FE_DEGREE_;
@@ -162,27 +164,31 @@ main(int argc, char * argv[])
     // 4: CG solver (GMG preconditioner with Schwarz smoothing)
     constexpr unsigned int solver_index_max = 4;
     AssertThrow(solver_index <= solver_index_max, ExcMessage("solver_index is not valid"));
+    AssertThrow(damping <= 1., ExcMessage("Do you intend to over-relax?"));
+    AssertThrow(ip_factor >= 1., ExcMessage("IP factor should be larger than one."));
+    AssertThrow(n_threads_max == -1 || n_threads_max > 0,
+                ExcMessage("Check the number of active threads."));
 
     RT::Parameter prms;
     {
+      prms.use_tbb = MultithreadInfo::n_threads() > 1;
+
       //: discretization
       prms.n_cycles              = 10;
-      prms.dof_limits            = {1e1, 1e5}; //{1e4, 1e6};
+      prms.dof_limits            = {1e3, 1e6}; //{1e5, 1e8};
       prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
       prms.mesh.n_refinements    = 1;
       prms.mesh.n_repetitions    = 2;
 
       //: solver
       prms.solver.variant              = solver_index == 0 ? "direct" : "cg";
-      prms.solver.rel_tolerance        = 1.e-12; // !!! -8
+      prms.solver.rel_tolerance        = 1.e-8;
       prms.solver.precondition_variant = solver_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
       prms.solver.n_iterations_max = 200;
 
       //: multigrid
-      if(damping == 0.)
-        damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
       prms.multigrid.coarse_level                 = 0;
       prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::FullSVD;
       prms.multigrid.coarse_grid.iterative_solver = "cg";
@@ -200,7 +206,9 @@ main(int argc, char * argv[])
       prms.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
       prms.multigrid.pre_smoother.schwarz.damping_factor       = damping;
       prms.multigrid.post_smoother                             = prms.multigrid.pre_smoother;
-      prms.multigrid.post_smoother.schwarz.reverse_smoothing   = true;
+      prms.multigrid.post_smoother.schwarz.reverse_smoothing   = prms.solver.variant == "cg";
+      if(damping == 0.)
+        prms.reset_damping_factor(dim);
     }
 
     EquationData equation_data;
@@ -213,9 +221,9 @@ main(int argc, char * argv[])
     ModelProblem<dim, fe_degree> biharmonic_problem(prms, equation_data);
 
     std::fstream fout;
-    const auto   filename = get_filename(prms, equation_data, argc > 1);
+    const auto   filename = get_filename(prms, equation_data);
     fout.open(filename + ".log", std::ios_base::out);
-    auto pcout               = std::make_shared<ConditionalOStream>(std::cout /*!!!fout*/, true);
+    auto pcout               = std::make_shared<ConditionalOStream>(fout, true);
     biharmonic_problem.pcout = pcout;
 
     biharmonic_problem.run();
