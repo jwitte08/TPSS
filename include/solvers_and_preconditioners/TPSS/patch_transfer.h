@@ -75,6 +75,10 @@ local_element(LinearAlgebra::distributed::Vector<Number> & vec, const unsigned i
 } // namespace internal
 
 
+/// TODO: get_dof_indices() should be private. users should call a function
+/// get_global_dof_indices() instead which returns the actual global dof
+/// indices (i.e. with type types::global_dof_index) instead of the proc-local
+/// indices
 
 /**
  * Transfer class modeling the (mathematical) restriction operator from global
