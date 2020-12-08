@@ -14,6 +14,8 @@
 #include <deal.II/base/revision.h>
 #include <deal.II/base/utilities.h>
 
+#include <deal.II/lac/full_matrix.h>
+
 #include "git_version.h"
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
 
@@ -33,6 +35,8 @@ parameter_to_fstring(const std::string & description, const T parameter)
   return oss.str();
 }
 
+
+
 std::string
 git_version_to_fstring()
 {
@@ -43,6 +47,8 @@ git_version_to_fstring()
   oss << parameter_to_fstring("Git - TPSS branch: ", GIT_BRANCH);
   return oss.str();
 }
+
+
 
 std::string
 generic_info_to_fstring()
@@ -61,6 +67,8 @@ generic_info_to_fstring()
                                     8 * size_of_global_dof_index);
   return oss.str();
 }
+
+
 
 constexpr unsigned long long
 pow(const unsigned int base, const int iexp)
@@ -85,6 +93,8 @@ pow(const unsigned int base, const int iexp)
   return iexp <= 0 ? 1 : (((iexp % 2 == 1) ? base : 1) * ::Util::pow(base * base, iexp / 2));
 }
 
+
+
 std::string
 si_metric_prefix(unsigned long long measurement)
 {
@@ -101,6 +111,8 @@ si_metric_prefix(unsigned long long measurement)
   return oss.str();
 }
 
+
+
 std::string
 damping_to_fstring(double factor)
 {
@@ -108,6 +120,51 @@ damping_to_fstring(double factor)
   oss << factor;
   return oss.str();
 }
+
+
+
+template<typename MatrixType,
+         typename VectorType = LinearAlgebra::distributed::Vector<typename MatrixType::value_type>>
+struct MatrixWrapper
+{
+  using value_type  = typename MatrixType::value_type;
+  using vector_type = VectorType;
+
+  MatrixWrapper(const MatrixType & matrix_in) : matrix(matrix_in)
+  {
+  }
+
+  types::global_dof_index
+  m() const
+  {
+    return matrix.m();
+  }
+
+  types::global_dof_index
+  n() const
+  {
+    return matrix.n();
+  }
+
+  void
+  vmult(const ArrayView<value_type> dst_view, const ArrayView<const value_type> src_view) const
+  {
+    vector_type dst(dst_view.size());
+    vector_type src(src_view.size());
+
+    std::copy(src_view.cbegin(), src_view.cend(), src.begin());
+    matrix.vmult(dst, src);
+    std::copy(dst.begin(), dst.end(), dst_view.begin());
+  }
+
+  FullMatrix<value_type>
+  as_fullmatrix()
+  {
+    return table_to_fullmatrix(Tensors::matrix_to_table(*this));
+  }
+
+  const MatrixType & matrix;
+};
 
 } // end namespace Util
 
