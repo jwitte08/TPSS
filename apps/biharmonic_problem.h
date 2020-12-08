@@ -93,6 +93,18 @@ public:
     local_integrator_type::initialize(equation_data_in);
   }
 
+  void
+  initialize_dof_vector(Vector<double> & vec) const
+  {
+    AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
+    const auto   level = mf_storage->get_mg_level();
+    const auto & dofh  = mf_storage->get_dof_handler();
+    if(level == numbers::invalid_unsigned_int)
+      vec.reinit(dofh.n_dofs());
+    else
+      vec.reinit(dofh.n_dofs(level));
+  }
+
   std::shared_ptr<const MatrixFree<dim, Number>>
   get_matrix_free() const
   {

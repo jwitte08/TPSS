@@ -21,6 +21,7 @@ set(sourcefiles
   poisson_robin.cc
   poisson_optdamping.cc
   biharmonic_c0ip.cc
+  biharmonic_optdamping.cc
   stokes_taylorhood.cc
   stokes_Qkplus2_DGPk.cc
   stokes_DGQkplus2_DGPk.cc
