@@ -36,7 +36,7 @@ struct SolverParameter
                         const SmootherParameter post_smoother);
 
   std::string         variant                   = "none"; // see SolverSelector
-  double              abs_tolerance             = 1.e-14;
+  double              abs_tolerance             = 1.e-16;
   double              rel_tolerance             = -1.;
   int                 n_iterations_max          = 100;
   PreconditionVariant precondition_variant      = PreconditionVariant::None;
