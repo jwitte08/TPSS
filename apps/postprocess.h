@@ -56,6 +56,9 @@ compute_fractional_steps(const ReductionControl & solver_control)
    */
   const double n_frac = std::log(reduction) / std::log(rho);
 
+  AssertThrow(n - 1 <= (int)n_frac && (int)n_frac <= n,
+              ExcMessage("Computing fractional step failed..."));
+
   return std::make_pair(n_frac, rho);
 }
 
