@@ -327,6 +327,8 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         return std::make_shared<Clamped::NoSlipNormal::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
         return std::make_shared<Clamped::Poiseuille::Inhom::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
+        return std::make_shared<Clamped::Homogeneous::Poly::Solution<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -345,6 +347,8 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         return std::make_shared<Stokes::DivergenceFree::NoSlipNormal::SolutionVelocity<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
         return std::make_shared<Stokes::DivergenceFree::Poiseuille::Inhom::SolutionVelocity<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
+        return nullptr;
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -362,6 +366,8 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         return std::make_shared<ManufacturedLoad<dim, Clamped::NoSlipNormal::Solution<dim>>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
         return nullptr;
+      else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
+        return std::make_shared<Clamped::Homogeneous::Poly::Load<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -383,6 +389,8 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
       else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
         return std::make_shared<Stokes::ManufacturedLoad<dim>>(
           std::make_shared<Stokes::DivergenceFree::Poiseuille::Inhom::Solution<dim>>());
+      else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
+        return nullptr;
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;

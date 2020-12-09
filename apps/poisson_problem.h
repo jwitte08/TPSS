@@ -145,8 +145,28 @@ struct ModelProblem : public Subscriptor
       }()),
       mapping(fe_degree),
       equation_data(equation_data_in),
-      analytical_solution(std::make_shared<Laplace::Solution<dim>>()),
-      load_function(std::make_shared<Laplace::ManufacturedLoad<dim>>(analytical_solution)),
+      analytical_solution([&]() -> std::shared_ptr<Function<dim>> {
+        if(equation_data_in.variant == Laplace::EquationData::Variant::DirichletBell)
+          return std::make_shared<Laplace::GaussianBells::Solution<dim>>();
+        else if(equation_data_in.variant == Laplace::EquationData::Variant::DirichletHom)
+          return std::make_shared<Laplace::Homogeneous::Solution<dim>>();
+        else if(equation_data_in.variant == Laplace::EquationData::Variant::DirichletHomPoly)
+          return std::make_shared<::Common::PolyAtCube<dim>>();
+        else
+          AssertThrow(false, ExcMessage("Not supported..."));
+        return nullptr;
+      }()),
+      load_function([&]() -> std::shared_ptr<Function<dim>> {
+        if(equation_data_in.variant == Laplace::EquationData::Variant::DirichletBell)
+          return std::make_shared<Laplace::ManufacturedLoad<dim>>(analytical_solution);
+        else if(equation_data_in.variant == Laplace::EquationData::Variant::DirichletHom)
+          return std::make_shared<Laplace::ManufacturedLoad<dim>>(analytical_solution);
+        else if(equation_data_in.variant == Laplace::EquationData::Variant::DirichletHomPoly)
+          return std::make_shared<Laplace::ManufacturedLoad<dim>>(analytical_solution);
+        else
+          AssertThrow(false, ExcMessage("Not supported..."));
+        return nullptr;
+      }()),
       level(numbers::invalid_unsigned_int),
       user_coloring([&]() -> std::shared_ptr<ColoringBase<dim>> {
         if constexpr(dof_layout == TPSS::DoFLayout::Q)
@@ -225,6 +245,9 @@ struct ModelProblem : public Subscriptor
   void
   print_informations() const
   {
+    *pcout << std::endl;
+    *pcout << equation_data.to_string();
+    *pcout << std::endl;
     AssertThrow(fe, ExcMessage("Finite element is not initialized."));
     print_parameter("Finite element:", fe->get_name());
     *pcout << rt_parameters.to_string();
@@ -816,6 +839,8 @@ struct ModelProblem : public Subscriptor
     pp_data = PostProcessData{};
     TimerOutput time(MPI_COMM_WORLD, *pcout, TimerOutput::summary, TimerOutput::wall_times);
 
+    print_informations();
+
     for(unsigned cycle = 0; cycle < rt_parameters.n_cycles; ++cycle)
     {
       print_parameter("//////////////////////////////", "//////////////////////////////");
@@ -845,7 +870,6 @@ struct ModelProblem : public Subscriptor
         case SolverParameter::PreconditionVariant::None:
         {
           {
-            print_informations();
             TimerOutput::Scope time_section(time, "Solve linear system");
             solve(preconditioner_id);
           }
@@ -858,7 +882,6 @@ struct ModelProblem : public Subscriptor
             prepare_preconditioner_mg();
           }
           {
-            print_informations();
             TimerOutput::Scope time_section(time, "Solve");
             solve(*preconditioner_mg);
           }
