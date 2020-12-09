@@ -34,6 +34,9 @@ struct PolyAtCubeBase
 template<>
 const std::vector<double> PolyAtCubeBase<2>::polynomial_coefficients = {{0., 0., 1., -2., 1.}};
 
+template<>
+const std::vector<double> PolyAtCubeBase<3>::polynomial_coefficients = {{0., 0., 1., -2., 1.}};
+
 
 
 /**
@@ -45,79 +48,30 @@ const std::vector<double> PolyAtCubeBase<2>::polynomial_coefficients = {{0., 0.,
  *
  *    PHI(x,y) = p(x) * p(y)
  *
- * in two dimensions. The roots of p(x) are chosen such that the value as well
- * as the gradient of PHI(x,y) are zero on the boundary of the unit cube
+ * in two dimensions and the polynomial
+ *
+ *    PHI(x,y) = p(x) * p(y) * p(z)
+ *
+ * in three dimensions. The roots of p(x) are chosen such that the value as well
+ * as the gradient of PHI(x,y) are zero at the boundary of the unit cube
  * [0,1]^2.
  */
 template<int dim>
 class PolyAtCube : public Function<dim>, protected PolyAtCubeBase<dim>
 {
-  static_assert(dim == 2, "Implemented for two dimensions.");
-
 public:
   PolyAtCube() : Function<dim>(1), poly(PolyAtCubeBase<dim>::polynomial_coefficients)
   {
   }
 
   virtual double
-  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
-  {
-    const auto x = p[0];
-    const auto y = p[1];
-
-    std::vector<double> values_x(1U), values_y(1U);
-    poly.value(x, values_x);
-    poly.value(y, values_y);
-    const auto poly_x = values_x[0];
-    const auto poly_y = values_y[0];
-
-    return poly_x * poly_y;
-  }
+  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override;
 
   virtual Tensor<1, dim>
-  gradient(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
-  {
-    const auto x = p[0];
-    const auto y = p[1];
-
-    std::vector<double> values_x(2U), values_y(2U);
-    poly.value(x, values_x);
-    poly.value(y, values_y);
-    const auto poly_x  = values_x[0]; // p(x)
-    const auto Dpoly_x = values_x[1]; // p'(x)
-    const auto poly_y  = values_y[0]; // p(y)
-    const auto Dpoly_y = values_y[1]; // p'(y)
-
-    Tensor<1, dim> grad;
-    grad[0] = Dpoly_x * poly_y;
-    grad[1] = poly_x * Dpoly_y;
-
-    return grad;
-  }
+  gradient(const Point<dim> & p, const unsigned int /*component*/ = 0) const override;
 
   virtual SymmetricTensor<2, dim>
-  hessian(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
-  {
-    const auto x = p[0];
-    const auto y = p[1];
-
-    std::vector<double> values_x(3U), values_y(3U);
-    poly.value(x, values_x);
-    poly.value(y, values_y);
-    const auto poly_x   = values_x[0];
-    const auto Dpoly_x  = values_x[1];
-    const auto D2poly_x = values_x[2];
-    const auto poly_y   = values_y[0];
-    const auto Dpoly_y  = values_y[1];
-    const auto D2poly_y = values_y[2];
-
-    SymmetricTensor<2, dim> hess;
-    hess[0][0] = D2poly_x * poly_y;
-    hess[0][1] = Dpoly_x * Dpoly_y;
-    hess[1][1] = poly_x * D2poly_y;
-
-    return hess;
-  }
+  hessian(const Point<dim> & p, const unsigned int /*component*/ = 0) const override;
 
   virtual double
   laplacian(const dealii::Point<dim> & p, const unsigned int /*component*/ = 0) const override final
@@ -127,30 +81,218 @@ public:
   }
 
   double
-  bilaplacian(const Point<dim> & p, const unsigned int /*component*/ = 0) const
-  {
-    const auto & x = p[0];
-    const auto & y = p[1];
-
-    std::vector<double> values_x(5U), values_y(5U);
-    poly.value(x, values_x);
-    poly.value(y, values_y);
-    const auto poly_x   = values_x[0];
-    const auto D2poly_x = values_x[2];
-    const auto D4poly_x = values_x[4];
-    const auto poly_y   = values_y[0];
-    const auto D2poly_y = values_y[2];
-    const auto D4poly_y = values_y[4];
-
-    double bilapl = 0.;
-    bilapl        = D4poly_x * poly_y + 2. * D2poly_x * D2poly_y + poly_x * D4poly_y;
-
-    return bilapl;
-  }
+  bilaplacian(const Point<dim> & p, const unsigned int /*component*/ = 0) const;
 
 private:
   Polynomials::Polynomial<double> poly;
 };
+
+
+template<>
+double
+PolyAtCube<2>::value(const Point<2> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+
+  std::vector<double> values_x(1U), values_y(1U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  const auto poly_x = values_x[0];
+  const auto poly_y = values_y[0];
+
+  return poly_x * poly_y;
+}
+
+
+template<>
+double
+PolyAtCube<3>::value(const Point<3> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+  const auto z = p[2];
+
+  std::vector<double> values_x(1U), values_y(1U), values_z(1U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  poly.value(z, values_z);
+  const auto poly_x = values_x[0];
+  const auto poly_y = values_y[0];
+  const auto poly_z = values_z[0];
+
+  return poly_x * poly_y * poly_z;
+}
+
+
+template<>
+Tensor<1, 2>
+PolyAtCube<2>::gradient(const Point<2> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+
+  std::vector<double> values_x(2U), values_y(2U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  const auto poly_x  = values_x[0]; // p(x)
+  const auto Dpoly_x = values_x[1]; // p'(x)
+  const auto poly_y  = values_y[0]; // p(y)
+  const auto Dpoly_y = values_y[1]; // p'(y)
+
+  Tensor<1, 2> grad;
+  grad[0] = Dpoly_x * poly_y;
+  grad[1] = poly_x * Dpoly_y;
+
+  return grad;
+}
+
+
+template<>
+Tensor<1, 3>
+PolyAtCube<3>::gradient(const Point<3> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+  const auto z = p[2];
+
+  std::vector<double> values_x(2U), values_y(2U), values_z(2U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  poly.value(z, values_z);
+  const auto poly_x  = values_x[0]; // p(x)
+  const auto Dpoly_x = values_x[1]; // p'(x)
+  const auto poly_y  = values_y[0]; // p(y)
+  const auto Dpoly_y = values_y[1]; // p'(y)
+  const auto poly_z  = values_z[0]; // p(z)
+  const auto Dpoly_z = values_z[1]; // p'(z)
+
+  Tensor<1, 3> grad;
+  grad[0] = Dpoly_x * poly_y * poly_z;
+  grad[1] = poly_x * Dpoly_y * poly_z;
+  grad[2] = poly_x * poly_y * Dpoly_z;
+
+  return grad;
+}
+
+
+template<>
+SymmetricTensor<2, 2>
+PolyAtCube<2>::hessian(const Point<2> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+
+  std::vector<double> values_x(3U), values_y(3U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  const auto poly_x   = values_x[0];
+  const auto Dpoly_x  = values_x[1];
+  const auto D2poly_x = values_x[2];
+  const auto poly_y   = values_y[0];
+  const auto Dpoly_y  = values_y[1];
+  const auto D2poly_y = values_y[2];
+
+  SymmetricTensor<2, 2> hess;
+  hess[0][0] = D2poly_x * poly_y;
+  hess[0][1] = Dpoly_x * Dpoly_y;
+  hess[1][1] = poly_x * D2poly_y;
+
+  return hess;
+}
+
+
+template<>
+SymmetricTensor<2, 3>
+PolyAtCube<3>::hessian(const Point<3> & p, const unsigned int /*component*/) const
+{
+  const auto x = p[0];
+  const auto y = p[1];
+  const auto z = p[2];
+
+  std::vector<double> values_x(3U), values_y(3U), values_z(3U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  poly.value(z, values_z);
+  const auto poly_x   = values_x[0];
+  const auto Dpoly_x  = values_x[1];
+  const auto D2poly_x = values_x[2];
+  const auto poly_y   = values_y[0];
+  const auto Dpoly_y  = values_y[1];
+  const auto D2poly_y = values_y[2];
+  const auto poly_z   = values_z[0];
+  const auto Dpoly_z  = values_z[1];
+  const auto D2poly_z = values_z[2];
+
+  SymmetricTensor<2, 3> hess;
+  hess[0][0] = D2poly_x * poly_y * poly_z;
+  hess[0][1] = Dpoly_x * Dpoly_y * poly_z;
+  hess[0][2] = Dpoly_x * poly_y * Dpoly_z;
+  hess[1][1] = poly_x * D2poly_y * poly_z;
+  hess[1][2] = poly_x * Dpoly_y * Dpoly_z;
+  hess[2][2] = poly_x * poly_y * D2poly_z;
+
+  return hess;
+}
+
+
+template<>
+double
+PolyAtCube<2>::bilaplacian(const Point<2> & p, const unsigned int /*component*/) const
+{
+  const auto & x = p[0];
+  const auto & y = p[1];
+
+  std::vector<double> values_x(5U), values_y(5U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  const auto poly_x   = values_x[0];
+  const auto D2poly_x = values_x[2];
+  const auto D4poly_x = values_x[4];
+  const auto poly_y   = values_y[0];
+  const auto D2poly_y = values_y[2];
+  const auto D4poly_y = values_y[4];
+
+  double bilapl = 0.;
+  bilapl        = D4poly_x * poly_y + 2. * D2poly_x * D2poly_y + poly_x * D4poly_y;
+
+  return bilapl;
+}
+
+
+template<>
+double
+PolyAtCube<3>::bilaplacian(const Point<3> & p, const unsigned int /*component*/) const
+{
+  const auto & x = p[0];
+  const auto & y = p[1];
+  const auto & z = p[2];
+
+  std::vector<double> values_x(5U), values_y(5U), values_z(5U);
+  poly.value(x, values_x);
+  poly.value(y, values_y);
+  poly.value(z, values_z);
+  const auto poly_x   = values_x[0];
+  const auto D2poly_x = values_x[2];
+  const auto D4poly_x = values_x[4];
+  const auto poly_y   = values_y[0];
+  const auto D2poly_y = values_y[2];
+  const auto D4poly_y = values_y[4];
+  const auto poly_z   = values_z[0];
+  const auto D2poly_z = values_z[2];
+  const auto D4poly_z = values_z[4];
+
+  double bilapl = 0.;
+  bilapl        = D4poly_x * poly_y * poly_z;
+  bilapl += 2. * D2poly_x * D2poly_y * poly_z;
+  bilapl += 2. * D2poly_x * poly_y * D2poly_z;
+  bilapl += poly_x * D4poly_y * poly_z;
+  bilapl += 2. * poly_x * D2poly_y * D2poly_z;
+  bilapl += poly_x * poly_y * D4poly_z;
+
+  return bilapl;
+}
+
 } // namespace Common
 
 /**
