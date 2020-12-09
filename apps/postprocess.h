@@ -45,6 +45,9 @@ compute_fractional_steps(const ReductionControl & solver_control)
   const int    n          = solver_control.last_step(); // number of iterations
   const double reduction  = solver_control.reduction(); // relative tolerance
 
+  AssertThrow(residual_n / residual_0 < reduction,
+              ExcMessage("Relative tolerance isn't satisfied..."));
+
   // *** average reduction: r_n = rho^n * r_0
   const double rho = std::pow(residual_n / residual_0, static_cast<double>(1. / n));
 
