@@ -45,9 +45,6 @@ compute_fractional_steps(const ReductionControl & solver_control)
   const int    n          = solver_control.last_step(); // number of iterations
   const double reduction  = solver_control.reduction(); // relative tolerance
 
-  AssertThrow(residual_n / residual_0 < reduction,
-              ExcMessage("Relative tolerance isn't satisfied..."));
-
   // *** average reduction: r_n = rho^n * r_0
   const double rho = std::pow(residual_n / residual_0, static_cast<double>(1. / n));
 
@@ -59,8 +56,15 @@ compute_fractional_steps(const ReductionControl & solver_control)
    */
   const double n_frac = std::log(reduction) / std::log(rho);
 
-  AssertThrow(n - 1 <= (int)n_frac && (int)n_frac <= n,
-              ExcMessage("Computing fractional step failed..."));
+  /// n_frac should definitely not be larger than n. this can happen if the
+  /// iterative solver is stopped before the relative tolerance is reached.
+  AssertThrow(residual_n / residual_0 < reduction,
+              ExcLowerRangeType(reduction, residual_n / residual_0));
+  AssertThrow(n_frac <= (double)n, ExcLowerRangeType((double)n, n_frac));
+  /// if the reduction of the last step n is above average it might happen that
+  /// n_frac is smaller than (n-1). the subsequent assert should warn us if
+  /// n_frac is even smaller than (n-2).
+  AssertThrow((double)(n - 2) <= n_frac, ExcLowerRangeType(n_frac, (double)(n - 1)));
 
   return std::make_pair(n_frac, rho);
 }
