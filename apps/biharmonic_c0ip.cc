@@ -129,12 +129,13 @@ main(int argc, char * argv[])
 
 
     //: default
-    unsigned int solver_index  = 4; // CG + GMG + Schwarz
-    unsigned int debug_depth   = 0;
-    double       damping       = 0.;
-    double       ip_factor     = 1.;
-    unsigned int pde_index     = 1; // clamped Gaussian bells
-    int          n_threads_max = 1;
+    unsigned int solver_index              = 4; // CG + GMG + Schwarz
+    unsigned int debug_depth               = 0;
+    double       damping                   = 0.;
+    double       ip_factor                 = 1.;
+    unsigned int pde_index                 = 1; // clamped Gaussian bells
+    int          n_threads_max             = 1;
+    unsigned int use_hierarchical_elements = false;
 
 
     //: parse arguments
@@ -144,6 +145,7 @@ main(int argc, char * argv[])
     atoi_if(n_threads_max, 4);
     atof_if(ip_factor, 5);
     atoi_if(debug_depth, 6);
+    atoi_if(use_hierarchical_elements, 7);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
@@ -168,6 +170,8 @@ main(int argc, char * argv[])
     AssertThrow(ip_factor >= 1., ExcMessage("IP factor should be larger than one."));
     AssertThrow(n_threads_max == -1 || n_threads_max > 0,
                 ExcMessage("Check the number of active threads."));
+    AssertThrow(use_hierarchical_elements == 0 || use_hierarchical_elements == 1,
+                ExcMessage("use_hierarchical_elements is treated as boolean"));
 
     RT::Parameter prms;
     {
@@ -175,18 +179,19 @@ main(int argc, char * argv[])
 
       //: discretization
       prms.n_cycles              = 10;
-      prms.dof_limits            = {1e3, 1e6}; //{1e5, 1e8};
+      prms.dof_limits            = {1e1, 1e6}; //{1e5, 1e8};
       prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
       prms.mesh.n_refinements    = 1;
       prms.mesh.n_repetitions    = 2;
 
       //: solver
       prms.solver.variant              = solver_index == 0 ? "direct" : "cg";
-      prms.solver.rel_tolerance        = 1.e-8;
+      prms.solver.rel_tolerance        = 1.e-14;
       prms.solver.precondition_variant = solver_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
       prms.solver.n_iterations_max = 200;
+      prms.solver.control_variant  = SolverParameter::ControlVariant::absolute; // !!!
 
       //: multigrid
       prms.multigrid.coarse_level                 = 0;
@@ -226,6 +231,8 @@ main(int argc, char * argv[])
     auto pcout               = std::make_shared<ConditionalOStream>(fout, true);
     biharmonic_problem.pcout = pcout;
 
+    if(use_hierarchical_elements)
+      biharmonic_problem.finite_element = std::make_shared<FE_Q_Hierarchical<dim>>(fe_degree);
     biharmonic_problem.run();
 
     std::string pp_output_as_string;

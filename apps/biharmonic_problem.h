@@ -43,6 +43,7 @@
 #include <deal.II/grid/tria_iterator.h>
 
 #include <deal.II/fe/fe_q.h>
+#include <deal.II/fe/fe_q_hierarchical.h>
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/fe/mapping_q.h>
 
@@ -240,7 +241,7 @@ public:
   {
     *pcout << equation_data.to_string();
     *pcout << std::endl;
-    print_parameter("Finite element:", fe.get_name());
+    print_parameter("Finite element:", finite_element->get_name());
     *pcout << rt_parameters.to_string();
     *pcout << std::endl;
   }
@@ -257,7 +258,7 @@ public:
 
   parallel::distributed::Triangulation<dim> triangulation;
   MappingQ<dim>                             mapping;
-  FE_Q<dim>                                 fe;
+  std::shared_ptr<FiniteElement<dim>>       finite_element;
   DoFHandler<dim>                           dof_handler;
   AffineConstraints<double>                 constraints;
   AffineConstraints<double>                 zero_constraints;
@@ -402,7 +403,7 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
                   Triangulation<dim>::limit_level_difference_at_vertices,
                   parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
     mapping(1),
-    fe(fe_degree),
+    finite_element(std::make_shared<FE_Q<dim>>(fe_degree)),
     user_coloring([&]() -> std::shared_ptr<ColoringBase<dim>> {
       const bool is_AVP = rt_parameters.multigrid.pre_smoother.schwarz.is_additive_vertex_patch();
       Assert(rt_parameters.multigrid.pre_smoother.schwarz.is_additive_vertex_patch() ==
@@ -449,6 +450,7 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
     stokes_problem = std::make_shared<
       Stokes::ModelProblem<dim, fe_degree_pressure, Stokes::Method::RaviartThomas>>(
       options_stokes.prms, equation_data_stokes);
+    stokes_problem->pcout = pcout;
   }
 
   else
@@ -477,7 +479,7 @@ ModelProblem<dim, fe_degree>::make_grid(const unsigned int n_refinements)
   MeshParameter mesh_prms = rt_parameters.mesh;
   mesh_prms.n_refinements = n_refinements;
 
-  const auto n_dofs_est = estimate_n_dofs(fe, mesh_prms);
+  const auto n_dofs_est = estimate_n_dofs(*finite_element, mesh_prms);
   if(rt_parameters.exceeds_dof_limits(n_dofs_est))
     return false;
 
@@ -504,13 +506,28 @@ void
 ModelProblem<dim, fe_degree>::setup_system()
 {
   dof_handler.clear();
-  dof_handler.initialize(triangulation, fe);
+  dof_handler.initialize(triangulation, *finite_element);
   dof_handler.distribute_mg_dofs();
 
   print_parameter("Number of degrees of freedom:", dof_handler.n_dofs());
 
   constraints.clear();
-  VectorTools::interpolate_boundary_values(dof_handler, 0, *analytical_solution, constraints);
+  if(dof_handler.get_fe().has_support_points())
+  {
+    *pcout << "interpolating boundary values..." << std::endl;
+    VectorTools::interpolate_boundary_values(dof_handler, 0, *analytical_solution, constraints);
+  }
+  else
+  {
+    *pcout << "projecting boundary values..." << std::endl;
+    std::map<types::boundary_id, const Function<dim> *> boundary_id_to_function;
+    for(const auto id : equation_data.dirichlet_boundary_ids)
+      boundary_id_to_function.emplace(id, analytical_solution.get());
+    VectorTools::project_boundary_values(dof_handler,
+                                         boundary_id_to_function,
+                                         QGauss<dim - 1>(fe_degree + 1),
+                                         constraints);
+  }
   constraints.close();
   zero_constraints.clear();
   for(const auto boundary_id : equation_data.dirichlet_boundary_ids)
@@ -624,8 +641,8 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
     const unsigned int n_gauss_points         = dof_handler.get_fe().degree + 1;
 
     ScratchData<dim> scratch_data(mapping,
-                                  fe,
-                                  fe,
+                                  *finite_element,
+                                  *finite_element,
                                   n_gauss_points,
                                   update_flags,
                                   update_flags,
@@ -711,7 +728,7 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
 
     const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
     ScratchData<dim>   scratch_data(mapping,
-                                  fe,
+                                  *finite_element,
                                   n_gauss_points,
                                   update_values | update_gradients | update_hessians |
                                     update_quadrature_points | update_JxW_values,
@@ -878,7 +895,7 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
 
     const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
     ScratchData<dim>   scratch_data(mapping,
-                                  fe,
+                                  *finite_element,
                                   n_gauss_points,
                                   update_values | update_gradients | update_hessians |
                                     update_quadrature_points | update_JxW_values,
@@ -980,13 +997,25 @@ template<typename PreconditionerType>
 void
 ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & preconditioner)
 {
-  ReductionControl solver_control;
-  solver_control.set_max_steps(rt_parameters.solver.n_iterations_max);
-  solver_control.set_reduction(rt_parameters.solver.rel_tolerance);
-  solver_control.set_tolerance(rt_parameters.solver.abs_tolerance);
-  solver_control.log_history(true);
-  solver_control.log_result(true);
-  solver_control.enable_history_data();
+  auto solver_control = [&]() -> std::shared_ptr<SolverControl> {
+    if(rt_parameters.solver.control_variant == SolverParameter::ControlVariant::relative)
+    {
+      auto control = std::make_shared<ReductionControl>();
+      control->set_reduction(rt_parameters.solver.rel_tolerance);
+      return control;
+    }
+    else if(rt_parameters.solver.control_variant == SolverParameter::ControlVariant::absolute)
+      return std::make_shared<SolverControl>();
+    else
+      AssertThrow(false, ExcMessage("ControlVariant isn't supported."));
+    return nullptr;
+  }();
+  AssertThrow(solver_control, ExcMessage("ControlVariant isn't supported."));
+  solver_control->set_max_steps(rt_parameters.solver.n_iterations_max);
+  solver_control->set_tolerance(rt_parameters.solver.abs_tolerance);
+  solver_control->log_history(true);
+  solver_control->log_result(true);
+  solver_control->enable_history_data();
 
   /// DEBUG
   // IterationNumberControl solver_control;
@@ -997,16 +1026,27 @@ ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & pr
   // solver_control.enable_history_data();
 
   SolverSelector<VECTOR> iterative_solver;
-  iterative_solver.set_control(solver_control);
+  iterative_solver.set_control(*solver_control);
   iterative_solver.select(rt_parameters.solver.variant);
   iterative_solver.solve(system_matrix, system_delta_u, system_rhs, preconditioner);
   system_u += system_delta_u;
 
-  const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
-  pp_data.average_reduction_system.push_back(reduction_rate);
-  pp_data.n_iterations_system.push_back(n_frac);
-  print_parameter("Average reduction (solver):", reduction_rate);
-  print_parameter("Number of iterations (solver):", n_frac);
+  auto reduction_control = dynamic_cast<ReductionControl *>(solver_control.get());
+  if(reduction_control)
+  {
+    const auto [n_frac, reduction_rate] = compute_fractional_steps(*reduction_control);
+    pp_data.average_reduction_system.push_back(reduction_rate);
+    pp_data.n_iterations_system.push_back(n_frac);
+    print_parameter("Average reduction (solver):", reduction_rate);
+    print_parameter("Number of iterations (solver):", n_frac);
+  }
+  else
+  {
+    pp_data.average_reduction_system.push_back(solver_control->average_reduction());
+    pp_data.n_iterations_system.push_back(solver_control->last_step());
+    print_parameter("Average reduction (solver):", solver_control->average_reduction());
+    print_parameter("Number of iterations (solver):", solver_control->last_step());
+  }
 }
 
 
@@ -2119,7 +2159,7 @@ ModelProblem<dim, fe_degree>::compute_errors()
                                       system_u,
                                       *analytical_solution,
                                       norm_per_cell,
-                                      QGauss<dim>(fe.degree + 2),
+                                      QGauss<dim>(finite_element->degree + 2),
                                       VectorTools::L2_norm);
     const double error_norm =
       VectorTools::compute_global_error(triangulation, norm_per_cell, VectorTools::L2_norm);
@@ -2134,7 +2174,7 @@ ModelProblem<dim, fe_degree>::compute_errors()
                                       system_u,
                                       *analytical_solution,
                                       norm_per_cell,
-                                      QGauss<dim>(fe.degree + 2),
+                                      QGauss<dim>(finite_element->degree + 2),
                                       VectorTools::H1_seminorm);
     const double error_norm =
       VectorTools::compute_global_error(triangulation, norm_per_cell, VectorTools::H1_seminorm);

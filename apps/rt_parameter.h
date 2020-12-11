@@ -29,11 +29,12 @@ struct SolverParameter
     None,
     GMG
   };
-  static std::string
-  str_precondition_variant(const PreconditionVariant variant);
-  static std::string
-  lookup_solver_variant(const SmootherParameter pre_smoother,
-                        const SmootherParameter post_smoother);
+
+  enum class ControlVariant
+  {
+    absolute,
+    relative
+  };
 
   std::string         variant                   = "none"; // see SolverSelector
   double              abs_tolerance             = 1.e-16;
@@ -41,9 +42,23 @@ struct SolverParameter
   int                 n_iterations_max          = 100;
   PreconditionVariant precondition_variant      = PreconditionVariant::None;
   bool                use_right_preconditioning = false;
+  ControlVariant      control_variant           = ControlVariant::relative;
 
-  void
-  set_solver_variant(const SmootherParameter pre_smoother, const SmootherParameter post_smoother);
+  static std::string
+  str_control_variant(const ControlVariant variant);
+
+  static std::string
+  str_precondition_variant(const PreconditionVariant variant);
+
+  static std::string
+  lookup_solver_variant(const SmootherParameter pre_smoother,
+                        const SmootherParameter post_smoother);
+
+  std::string
+  str_control_variant() const;
+
+  std::string
+  str_precondition_variant() const;
 
   std::string
   to_string() const;
@@ -103,10 +118,32 @@ struct Parameter
 // +++++++++++++++++++++++++++++++++++ DEFINITIONS +++++++++++++++++++++++++++++++++++
 
 std::string
+SolverParameter::str_control_variant(const ControlVariant variant)
+{
+  const std::string str_variant[] = {"absolute tolerance", "relative tolerance"};
+  return str_variant[(int)variant];
+}
+
+
+std::string
 SolverParameter::str_precondition_variant(const PreconditionVariant variant)
 {
   const std::string str_variant[] = {"None", "GMG"};
   return str_variant[(int)variant];
+}
+
+
+std::string
+SolverParameter::str_control_variant() const
+{
+  return str_control_variant(control_variant);
+}
+
+
+std::string
+SolverParameter::str_precondition_variant() const
+{
+  return str_precondition_variant(precondition_variant);
 }
 
 
@@ -141,14 +178,6 @@ SolverParameter::lookup_solver_variant(const SmootherParameter pre_smoother,
 }
 
 
-void
-SolverParameter::set_solver_variant(const SmootherParameter pre_smoother,
-                                    const SmootherParameter post_smoother)
-{
-  variant = lookup_solver_variant(pre_smoother, post_smoother);
-}
-
-
 std::string
 SolverParameter::to_string() const
 {
@@ -163,6 +192,7 @@ SolverParameter::to_string() const
     variant == "gmres" && precondition_variant != PreconditionVariant::None;
   if(use_preconditioner_for_gmres)
     oss << Util::parameter_to_fstring("Use as right preconditioner?", use_right_preconditioning);
+  oss << Util::parameter_to_fstring("Solver control:", str_control_variant(control_variant));
   return oss.str();
 }
 
