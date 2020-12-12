@@ -136,16 +136,19 @@ main(int argc, char * argv[])
     unsigned int pde_index                 = 1; // clamped Gaussian bells
     int          n_threads_max             = 1;
     unsigned int use_hierarchical_elements = false;
-
+    unsigned int use_doubling_of_steps     = false;
+    unsigned int n_smoothing_steps         = 2;
 
     //: parse arguments
     atoi_if(solver_index, 1);
     atoi_if(pde_index, 2);
     atof_if(damping, 3);
     atoi_if(n_threads_max, 4);
-    atof_if(ip_factor, 5);
-    atoi_if(debug_depth, 6);
-    atoi_if(use_hierarchical_elements, 7);
+    atoi_if(n_smoothing_steps, 5);
+    atoi_if(use_doubling_of_steps, 6);
+    atof_if(ip_factor, 7);
+    atoi_if(debug_depth, 8);
+    atoi_if(use_hierarchical_elements, 9);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
@@ -172,26 +175,30 @@ main(int argc, char * argv[])
                 ExcMessage("Check the number of active threads."));
     AssertThrow(use_hierarchical_elements == 0 || use_hierarchical_elements == 1,
                 ExcMessage("use_hierarchical_elements is treated as boolean"));
+    AssertThrow(use_doubling_of_steps == 0 || use_doubling_of_steps == 1,
+                ExcMessage("use_doubling_of_steps is treated as boolean"));
+    AssertThrow(n_smoothing_steps < 10, ExcMessage("Check n_smoothing_steps!"));
 
     RT::Parameter prms;
     {
       prms.use_tbb = MultithreadInfo::n_threads() > 1;
 
       //: discretization
-      prms.n_cycles              = 10;
-      prms.dof_limits            = {1e1, 1e6}; //{1e5, 1e8};
+      prms.n_cycles              = 13;
+      prms.dof_limits            = {1e4, 5e5}; //{1e5, 1e8};
       prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
       prms.mesh.n_refinements    = 1;
       prms.mesh.n_repetitions    = 2;
 
       //: solver
       prms.solver.variant              = solver_index == 0 ? "direct" : "cg";
-      prms.solver.rel_tolerance        = 1.e-14;
+      prms.solver.abs_tolerance        = 1.e-14;
+      prms.solver.rel_tolerance        = 1.e-8;
       prms.solver.precondition_variant = solver_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
       prms.solver.n_iterations_max = 200;
-      prms.solver.control_variant  = SolverParameter::ControlVariant::absolute; // !!!
+      prms.solver.control_variant  = SolverParameter::ControlVariant::relative;
 
       //: multigrid
       prms.multigrid.coarse_level                 = 0;
@@ -205,11 +212,12 @@ main(int argc, char * argv[])
         SmootherParameter::SmootherVariant::GaussSeidel,
         SmootherParameter::SmootherVariant::Schwarz};
       prms.multigrid.pre_smoother.variant                      = smoother_variant[solver_index];
-      prms.multigrid.pre_smoother.n_smoothing_steps            = 2;
+      prms.multigrid.pre_smoother.n_smoothing_steps            = n_smoothing_steps;
       prms.multigrid.pre_smoother.schwarz.patch_variant        = CT::PATCH_VARIANT_;
       prms.multigrid.pre_smoother.schwarz.smoother_variant     = CT::SMOOTHER_VARIANT_;
       prms.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
       prms.multigrid.pre_smoother.schwarz.damping_factor       = damping;
+      prms.multigrid.pre_smoother.use_doubling_of_steps        = use_doubling_of_steps;
       prms.multigrid.post_smoother                             = prms.multigrid.pre_smoother;
       prms.multigrid.post_smoother.schwarz.reverse_smoothing   = prms.solver.variant == "cg";
       if(damping == 0.)

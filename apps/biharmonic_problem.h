@@ -2239,7 +2239,7 @@ ModelProblem<dim, fe_degree>::run()
   const unsigned int n_cycles = rt_parameters.n_cycles;
   for(unsigned int cycle = 0; cycle < n_cycles; ++cycle)
   {
-    *pcout << "Cycle: " << cycle + 1 << " of " << n_cycles << std::endl;
+    *pcout << "starting cycle " << cycle + 1 << " of " << n_cycles << "..." << std::endl;
 
     const unsigned int n_refinements = rt_parameters.mesh.n_refinements + cycle;
     if(!make_grid(n_refinements))
