@@ -36,6 +36,7 @@
 #include <deal.II/lac/sparse_direct.h>
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/vector.h>
+#include <deal.II/lac/trilinos_sparse_matrix.h>
 
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/tria.h>
@@ -78,14 +79,15 @@ namespace Biharmonic
 using namespace dealii;
 
 template<int dim, int fe_degree = 2, typename Number = double>
-class SparseMatrixAugmented : public SparseMatrix<Number>,
+class SparseMatrixAugmented : public TrilinosWrappers::SparseMatrix,
                               public C0IP::FD::MatrixIntegrator<dim, fe_degree, Number>
 {
 public:
   using value_type            = Number;
-  using matrix_type           = SparseMatrix<Number>;
+  using matrix_type           = TrilinosWrappers::SparseMatrix;
   using local_integrator_type = C0IP::FD::MatrixIntegrator<dim, fe_degree, Number>;
-
+  using vector_type = LinearAlgebra::distributed::Vector<Number>;
+  
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
              const EquationData                             equation_data_in)
@@ -95,15 +97,16 @@ public:
   }
 
   void
-  initialize_dof_vector(Vector<double> & vec) const
+  initialize_dof_vector(vector_type & vec) const
   {
     AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
-    const auto   level = mf_storage->get_mg_level();
-    const auto & dofh  = mf_storage->get_dof_handler();
-    if(level == numbers::invalid_unsigned_int)
-      vec.reinit(dofh.n_dofs());
-    else
-      vec.reinit(dofh.n_dofs(level));
+    // const auto   level = mf_storage->get_mg_level();
+    // const auto & dofh  = mf_storage->get_dof_handler();
+    // if(level == numbers::invalid_unsigned_int)
+    //   vec.reinit(dofh.n_dofs());
+    // else
+    //   vec.reinit(dofh.n_dofs(level));
+    mf_storage->initialize_dof_vector(vec);
   }
 
   std::shared_ptr<const MatrixFree<dim, Number>>
@@ -120,9 +123,9 @@ public:
   {
     AssertDimension(dst.size(), matrix_type::m());
     AssertDimension(src.size(), matrix_type::n());
-    Vector<Number> v(matrix_type::n()); // src
+    vector_type v(matrix_type::n()); // src
     std::copy(src.cbegin(), src.cend(), v.begin());
-    Vector<Number> w(matrix_type::m()); // dst
+    vector_type w(matrix_type::m()); // dst
     matrix_type::vmult(w, v);           // w = A v
     std::copy(w.begin(), w.end(), dst.begin());
   }
@@ -141,7 +144,7 @@ class ModelProblem
     "The C0IP formulation for the biharmonic problem is reasonable for finite elements of polynomial degree at least 2.");
 
 public:
-  using VECTOR = Vector<double>;
+  using VECTOR = LinearAlgebra::distributed::Vector<double>;
   using MATRIX = SparseMatrixAugmented<dim, fe_degree, double>;
 
   using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
@@ -149,6 +152,8 @@ public:
   using PATCH_MATRIX          = Tensors::TensorProductMatrix<dim, VectorizedArray<double>>;
   using MG_SMOOTHER_SCHWARZ   = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
   using GMG_PRECONDITIONER    = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
+
+  static constexpr unsigned int n_q_points_1d = fe_degree + 1;
 
   ModelProblem(const RT::Parameter & rt_parameters_in,
                const EquationData &  equation_data_in = EquationData{});
@@ -215,7 +220,11 @@ public:
   void
   output_results(const unsigned int iteration) const;
 
-  unsigned int
+  template<typename OtherNumber>
+  std::shared_ptr<const MatrixFree<dim, OtherNumber>>
+  build_mf_storage() const;
+
+    unsigned int
   max_level() const
   {
     return triangulation.n_global_levels() - 1;
@@ -265,6 +274,8 @@ public:
 
   SparsityPattern sparsity_pattern;
   MATRIX          system_matrix;
+  const UpdateFlags update_flags;
+  const UpdateFlags update_flags_interface;
   VECTOR          system_u;
   VECTOR          system_delta_u;
   VECTOR          system_rhs;
@@ -404,6 +415,11 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
                   parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
     mapping(1),
     finite_element(std::make_shared<FE_Q<dim>>(fe_degree)),
+    update_flags (                                   update_values | update_gradients | update_hessians |
+						     update_quadrature_points | update_JxW_values),
+    update_flags_interface(                                   update_values | update_gradients | update_hessians |
+                                    update_quadrature_points | update_JxW_values |
+							      update_normal_vectors),
     user_coloring([&]() -> std::shared_ptr<ColoringBase<dim>> {
       const bool is_AVP = rt_parameters.multigrid.pre_smoother.schwarz.is_additive_vertex_patch();
       Assert(rt_parameters.multigrid.pre_smoother.schwarz.is_additive_vertex_patch() ==
@@ -502,6 +518,30 @@ ModelProblem<dim, fe_degree>::make_grid_impl(const MeshParameter & mesh_prms)
 
 
 template<int dim, int fe_degree>
+  template<typename OtherNumber>
+  std::shared_ptr<const MatrixFree<dim, OtherNumber>>
+ModelProblem<dim, fe_degree>::  build_mf_storage() const
+  {
+    typename MatrixFree<dim, OtherNumber>::AdditionalData mf_features;
+    mf_features.tasks_parallel_scheme = MatrixFree<dim, OtherNumber>::AdditionalData::none;
+      mf_features.mapping_update_flags =
+	update_flags;
+      mf_features.mapping_update_flags_inner_faces =
+        update_flags_interface;
+      mf_features.mapping_update_flags_boundary_faces =
+        update_flags_interface;
+
+    QGauss<1> quadrature(n_q_points_1d);
+
+    const auto mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
+    mf_storage->reinit(mapping, dof_handler, constraints, quadrature, mf_features);
+
+    return mf_storage;
+  }
+
+
+
+template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::setup_system()
 {
@@ -511,7 +551,12 @@ ModelProblem<dim, fe_degree>::setup_system()
 
   print_parameter("Number of degrees of freedom:", dof_handler.n_dofs());
 
+  const auto & locally_owned_dof_indices = dof_handler.locally_owned_dofs();
+  IndexSet locally_relevant_dof_indices;
+  DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dof_indices);
+  
   constraints.clear();
+  constraints.reinit(locally_relevant_dof_indices);
   if(dof_handler.get_fe().has_support_points())
   {
     *pcout << "interpolating boundary values..." << std::endl;
@@ -529,29 +574,40 @@ ModelProblem<dim, fe_degree>::setup_system()
                                          constraints);
   }
   constraints.close();
+
   zero_constraints.clear();
+  zero_constraints.reinit(locally_relevant_dof_indices);
   for(const auto boundary_id : equation_data.dirichlet_boundary_ids)
     DoFTools::make_zero_boundary_constraints(dof_handler, boundary_id, zero_constraints);
   zero_constraints.close();
 
-  DynamicSparsityPattern dsp(dof_handler.n_dofs());
-  const bool             direct_solver_used = (rt_parameters.solver.variant == "direct");
+  DynamicSparsityPattern dsp(locally_relevant_dof_indices);
+
+  const bool             direct_solver_is_used = (rt_parameters.solver.variant == "direct");
   DoFTools::make_flux_sparsity_pattern(dof_handler,
                                        dsp,
                                        constraints,
-                                       direct_solver_used ? true : false);
-  sparsity_pattern.copy_from(dsp);
-  system_matrix.reinit(sparsity_pattern);
+                                       direct_solver_is_used ? true : false);
+  SparsityTools::distribute_sparsity_pattern(dsp,
+					     locally_owned_dof_indices,
+                                             MPI_COMM_WORLD,
+                                             locally_relevant_dof_indices);
+  // sparsity_pattern.copy_from(dsp);
+  system_matrix.initialize(build_mf_storage<double>(), equation_data);
+  system_matrix.reinit(locally_owned_dof_indices, locally_owned_dof_indices, dsp, MPI_COMM_WORLD);
   pp_data.n_dofs_global.push_back(system_matrix.m());
 
   system_u.reinit(0);
   system_delta_u.reinit(0);
   system_rhs.reinit(0);
-  system_u.reinit(dof_handler.n_dofs());
+  // system_u.reinit(dof_handler.n_dofs());
+  system_matrix.initialize_dof_vector(system_u);
   constraints.distribute(system_u); // set boundary values (particular solution)
-  system_delta_u.reinit(dof_handler.n_dofs());
+  // system_delta_u.reinit(dof_handler.n_dofs());
+  system_matrix.initialize_dof_vector(system_delta_u);
   zero_constraints.distribute(system_delta_u); // set zero boundary values (homogen. solution)
-  system_rhs.reinit(dof_handler.n_dofs());
+  system_matrix.initialize_dof_vector(system_rhs);
+  // system_rhs.reinit(dof_handler.n_dofs());
 }
 
 
@@ -563,104 +619,105 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
 {
   if(is_stream)
   {
-    using Stokes::Velocity::SIPG::MW::ScratchData;
+    AssertThrow(false, ExcMessage("TODO MPI..."));
+    // using Stokes::Velocity::SIPG::MW::ScratchData;
 
-    using Stokes::Velocity::SIPG::MW::CopyData;
+    // using Stokes::Velocity::SIPG::MW::CopyData;
 
-    const auto                     velocity_components = std::make_pair<unsigned int>(0, dim);
-    Stokes::FunctionExtractor<dim> load_function_stream(load_function_stokes.get(),
-                                                        velocity_components);
+    // const auto                     velocity_components = std::make_pair<unsigned int>(0, dim);
+    // Stokes::FunctionExtractor<dim> load_function_stream(load_function_stokes.get(),
+    //                                                     velocity_components);
 
-    Stokes::FunctionExtractor<dim> analytical_solution_velocity(analytical_velocity.get(),
-                                                                velocity_components);
+    // Stokes::FunctionExtractor<dim> analytical_solution_velocity(analytical_velocity.get(),
+    //                                                             velocity_components);
 
-    using MatrixIntegrator =
-      typename Stokes::Velocity::SIPG::MW::MatrixIntegrator<dim, /*is_multigrid*/ false>;
+    // using MatrixIntegrator =
+    //   typename Stokes::Velocity::SIPG::MW::MatrixIntegrator<dim, /*is_multigrid*/ false>;
 
-    MatrixIntegrator matrix_integrator(&load_function_stream,
-                                       &analytical_solution_velocity,
-                                       &system_u,
-                                       equation_data_stokes);
+    // MatrixIntegrator matrix_integrator(&load_function_stream,
+    //                                    &analytical_solution_velocity,
+    //                                    &system_u,
+    //                                    equation_data_stokes);
 
-    auto cell_worker =
-      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        matrix_integrator.cell_worker_stream(cell, scratch_data, copy_data);
-      };
+    // auto cell_worker =
+    //   [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+    //     matrix_integrator.cell_worker_stream(cell, scratch_data, copy_data);
+    //   };
 
-    auto face_worker = [&](const auto &         cell,
-                           const unsigned int & f,
-                           const unsigned int & sf,
-                           const auto &         ncell,
-                           const unsigned int & nf,
-                           const unsigned int & nsf,
-                           ScratchData<dim> &   scratch_data,
-                           CopyData &           copy_data) {
-      matrix_integrator.face_worker_stream(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-    };
+    // auto face_worker = [&](const auto &         cell,
+    //                        const unsigned int & f,
+    //                        const unsigned int & sf,
+    //                        const auto &         ncell,
+    //                        const unsigned int & nf,
+    //                        const unsigned int & nsf,
+    //                        ScratchData<dim> &   scratch_data,
+    //                        CopyData &           copy_data) {
+    //   matrix_integrator.face_worker_stream(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+    // };
 
-    auto boundary_worker = [&](const auto &         cell,
-                               const unsigned int & face_no,
-                               ScratchData<dim> &   scratch_data,
-                               CopyData &           copy_data) {
-      matrix_integrator.boundary_worker_stream(cell, face_no, scratch_data, copy_data);
-    };
+    // auto boundary_worker = [&](const auto &         cell,
+    //                            const unsigned int & face_no,
+    //                            ScratchData<dim> &   scratch_data,
+    //                            CopyData &           copy_data) {
+    //   matrix_integrator.boundary_worker_stream(cell, face_no, scratch_data, copy_data);
+    // };
 
-    /// The copier has to use homogeneous boundary constraints for dof transfer
-    /// since we would like to assemble a system matrix for the homogeneous
-    /// solution @p system_delta_u. The particular solution u0 with the correct
-    /// heterogeneous boundary values is incorporated in the right hand side. This
-    /// is like using Newton's method on a linear system, thus, resulting in one
-    /// Newton step with @p system_delta_u being the Newton update and @p system_u
-    /// the initial value.
-    const auto copier = [&](const CopyData & copy_data) {
-      zero_constraints.template distribute_local_to_global<SparseMatrix<double>, VECTOR>(
-        copy_data.cell_matrix,
-        copy_data.cell_rhs_test,
-        copy_data.local_dof_indices_test,
-        system_matrix,
-        system_rhs);
+    // /// The copier has to use homogeneous boundary constraints for dof transfer
+    // /// since we would like to assemble a system matrix for the homogeneous
+    // /// solution @p system_delta_u. The particular solution u0 with the correct
+    // /// heterogeneous boundary values is incorporated in the right hand side. This
+    // /// is like using Newton's method on a linear system, thus, resulting in one
+    // /// Newton step with @p system_delta_u being the Newton update and @p system_u
+    // /// the initial value.
+    // const auto copier = [&](const CopyData & copy_data) {
+    //   zero_constraints.template distribute_local_to_global<SparseMatrix<double>, VECTOR>(
+    //     copy_data.cell_matrix,
+    //     copy_data.cell_rhs_test,
+    //     copy_data.local_dof_indices_test,
+    //     system_matrix,
+    //     system_rhs);
 
-      for(auto & cdf : copy_data.face_data)
-      {
-        if(cdf.cell_rhs_test.size() == 0) // only filled on cells at the boundary
-          zero_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-            cdf.cell_matrix, cdf.joint_dof_indices_test, system_matrix);
-        else
-          zero_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-            cdf.cell_matrix,
-            cdf.cell_rhs_test,
-            cdf.joint_dof_indices_test,
-            system_matrix,
-            system_rhs);
-      }
-    };
+    //   for(auto & cdf : copy_data.face_data)
+    //   {
+    //     if(cdf.cell_rhs_test.size() == 0) // only filled on cells at the boundary
+    //       zero_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+    //         cdf.cell_matrix, cdf.joint_dof_indices_test, system_matrix);
+    //     else
+    //       zero_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+    //         cdf.cell_matrix,
+    //         cdf.cell_rhs_test,
+    //         cdf.joint_dof_indices_test,
+    //         system_matrix,
+    //         system_rhs);
+    //   }
+    // };
 
-    UpdateFlags update_flags = update_values | update_gradients | update_hessians |
-                               update_quadrature_points | update_JxW_values;
-    UpdateFlags        interface_update_flags = update_flags | update_normal_vectors;
-    const unsigned int n_gauss_points         = dof_handler.get_fe().degree + 1;
+    // UpdateFlags update_flags = update_values | update_gradients | update_hessians |
+    //                            update_quadrature_points | update_JxW_values;
+    // UpdateFlags        interface_update_flags = update_flags | update_normal_vectors;
+    // const unsigned int n_gauss_points         = dof_handler.get_fe().degree + 1;
 
-    ScratchData<dim> scratch_data(mapping,
-                                  *finite_element,
-                                  *finite_element,
-                                  n_gauss_points,
-                                  update_flags,
-                                  update_flags,
-                                  interface_update_flags,
-                                  interface_update_flags);
+    // ScratchData<dim> scratch_data(mapping,
+    //                               *finite_element,
+    //                               *finite_element,
+    //                               n_gauss_points,
+    //                               update_flags,
+    //                               update_flags,
+    //                               interface_update_flags,
+    //                               interface_update_flags);
 
-    CopyData copy_data(dof_handler.get_fe().dofs_per_cell, dof_handler.get_fe().dofs_per_cell);
+    // CopyData copy_data(dof_handler.get_fe().dofs_per_cell, dof_handler.get_fe().dofs_per_cell);
 
-    MeshWorker::mesh_loop(dof_handler.begin_active(),
-                          dof_handler.end(),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                            MeshWorker::assemble_own_interior_faces_once,
-                          boundary_worker,
-                          face_worker);
+    // MeshWorker::mesh_loop(dof_handler.begin_active(),
+    //                       dof_handler.end(),
+    //                       cell_worker,
+    //                       copier,
+    //                       scratch_data,
+    //                       copy_data,
+    //                       MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+    //                         MeshWorker::assemble_own_interior_faces_once,
+    //                       boundary_worker,
+    //                       face_worker);
   }
 
   else
@@ -708,7 +765,7 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
     /// Newton step with @p system_delta_u being the Newton update and @p system_u
     /// the initial value.
     const auto copier = [&](const CopyData & copy_data) {
-      zero_constraints.template distribute_local_to_global<SparseMatrix<double>, VECTOR>(
+      zero_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix, VECTOR>(
         copy_data.cell_matrix,
         copy_data.cell_rhs,
         copy_data.local_dof_indices,
@@ -718,24 +775,23 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
       for(auto & cdf : copy_data.face_data)
       {
         if(cdf.cell_rhs.size() == 0) // only filled on cells at the boundary
-          zero_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+          zero_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
             cdf.cell_matrix, cdf.joint_dof_indices, system_matrix);
         else
-          zero_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+          zero_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
             cdf.cell_matrix, cdf.cell_rhs, cdf.joint_dof_indices, system_matrix, system_rhs);
       }
     };
 
     const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
+
     ScratchData<dim>   scratch_data(mapping,
                                   *finite_element,
                                   n_gauss_points,
-                                  update_values | update_gradients | update_hessians |
-                                    update_quadrature_points | update_JxW_values,
-                                  update_values | update_gradients | update_hessians |
-                                    update_quadrature_points | update_JxW_values |
-                                    update_normal_vectors);
-    CopyData           copy_data(dof_handler.get_fe().dofs_per_cell);
+				    update_flags,
+				    update_flags_interface);
+
+				    CopyData           copy_data(dof_handler.get_fe().dofs_per_cell);
     MeshWorker::mesh_loop(dof_handler.begin_active(),
                           dof_handler.end(),
                           cell_worker,
@@ -767,38 +823,39 @@ template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
 {
-  //: pre-smoother
-  Assert(rt_parameters.multigrid.pre_smoother.variant ==
-           SmootherParameter::SmootherVariant::Schwarz,
-         ExcMessage("Invalid smoothing variant."));
-  AssertDimension(mg_matrices.max_level(), max_level());
-  for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
-    AssertThrow(mg_matrices[level].mf_storage, ExcMessage("mf_storage is not initialized."));
+  AssertThrow(false, ExcMessage("TODO MPI..."));
+  // //: pre-smoother
+  // Assert(rt_parameters.multigrid.pre_smoother.variant ==
+  //          SmootherParameter::SmootherVariant::Schwarz,
+  //        ExcMessage("Invalid smoothing variant."));
+  // AssertDimension(mg_matrices.max_level(), max_level());
+  // for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
+  //   AssertThrow(mg_matrices[level].mf_storage, ExcMessage("mf_storage is not initialized."));
 
-  const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
-  typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
-  mgss_data.coloring_func = std::ref(*user_coloring);
-  mgss_data.use_tbb       = rt_parameters.use_tbb;
-  mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
-  // mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
-  mgss->initialize(mg_matrices, mgss_data);
-  mg_schwarz_smoother_pre = mgss;
+  // const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+  // typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
+  // mgss_data.coloring_func = std::ref(*user_coloring);
+  // mgss_data.use_tbb       = rt_parameters.use_tbb;
+  // mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
+  // // mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
+  // mgss->initialize(mg_matrices, mgss_data);
+  // mg_schwarz_smoother_pre = mgss;
 
-  //: post-smoother (so far only shallow copy!)
-  {
-    typename SubdomainHandler<dim, double>::AdditionalData sd_handler_data;
-    rt_parameters.template fill_schwarz_smoother_data<dim, double>(sd_handler_data,
-                                                                   /*is_pre?*/ false);
+  // //: post-smoother (so far only shallow copy!)
+  // {
+  //   typename SubdomainHandler<dim, double>::AdditionalData sd_handler_data;
+  //   rt_parameters.template fill_schwarz_smoother_data<dim, double>(sd_handler_data,
+  //                                                                  /*is_pre?*/ false);
 
-    const auto mgss_post      = std::make_shared<MG_SMOOTHER_SCHWARZ>();
-    auto       mgss_data_post = mgss_data;
-    mgss_data_post.parameters = rt_parameters.multigrid.post_smoother;
-    // typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data_post;
-    // mgss_data_post.coloring_func = std::ref(*user_coloring);
-    // mgss_data_post.parameters    = rt_parameters.multigrid.post_smoother;
-    mgss_post->initialize(*mg_schwarz_smoother_pre, mgss_data_post);
-    mg_schwarz_smoother_post = mgss_post;
-  }
+  //   const auto mgss_post      = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+  //   auto       mgss_data_post = mgss_data;
+  //   mgss_data_post.parameters = rt_parameters.multigrid.post_smoother;
+  //   // typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data_post;
+  //   // mgss_data_post.coloring_func = std::ref(*user_coloring);
+  //   // mgss_data_post.parameters    = rt_parameters.multigrid.post_smoother;
+  //   mgss_post->initialize(*mg_schwarz_smoother_pre, mgss_data_post);
+  //   mg_schwarz_smoother_post = mgss_post;
+  // }
 }
 
 
@@ -807,187 +864,188 @@ template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::prepare_multigrid()
 {
-  // *** clear multigrid infrastructure
-  multigrid.reset();
-  mg_matrix_wrapper.reset();
-  coarse_grid_solver.clear();
-  mg_smoother_post = nullptr;
-  mg_smoother_pre  = nullptr;
-  mg_schwarz_smoother_pre.reset();
-  mg_schwarz_smoother_post.reset();
-  mg_transfer.clear();
-  mg_matrices.clear_elements();
-  mg_constrained_dofs.reset();
+  AssertThrow(false, ExcMessage("TODO MPI..."));
+  // // *** clear multigrid infrastructure
+  // multigrid.reset();
+  // mg_matrix_wrapper.reset();
+  // coarse_grid_solver.clear();
+  // mg_smoother_post = nullptr;
+  // mg_smoother_pre  = nullptr;
+  // mg_schwarz_smoother_pre.reset();
+  // mg_schwarz_smoother_post.reset();
+  // mg_transfer.clear();
+  // mg_matrices.clear_elements();
+  // mg_constrained_dofs.reset();
 
-  // *** setup multigrid data
-  const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
-  const unsigned mg_level_max = max_level();
-  pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
+  // // *** setup multigrid data
+  // const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
+  // const unsigned mg_level_max = max_level();
+  // pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
 
-  // *** initialize multigrid constraints
-  mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
-  mg_constrained_dofs->initialize(dof_handler);
-  mg_constrained_dofs->make_zero_boundary_constraints(dof_handler,
-                                                      equation_data.dirichlet_boundary_ids);
+  // // *** initialize multigrid constraints
+  // mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
+  // mg_constrained_dofs->initialize(dof_handler);
+  // mg_constrained_dofs->make_zero_boundary_constraints(dof_handler,
+  //                                                     equation_data.dirichlet_boundary_ids);
 
-  // *** initialize level matrices A_l
-  mg_matrices.resize(mg_level_min, mg_level_max);
-  mg_sparsity_patterns.resize(mg_level_min, mg_level_max);
-  for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
-  {
-    DynamicSparsityPattern dsp(dof_handler.n_dofs(level), dof_handler.n_dofs(level));
-    MGTools::make_flux_sparsity_pattern(dof_handler, dsp, level);
-    mg_sparsity_patterns[level].copy_from(dsp);
-    mg_matrices[level].reinit(mg_sparsity_patterns[level]);
+  // // *** initialize level matrices A_l
+  // mg_matrices.resize(mg_level_min, mg_level_max);
+  // mg_sparsity_patterns.resize(mg_level_min, mg_level_max);
+  // for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
+  // {
+  //   DynamicSparsityPattern dsp(dof_handler.n_dofs(level), dof_handler.n_dofs(level));
+  //   MGTools::make_flux_sparsity_pattern(dof_handler, dsp, level);
+  //   mg_sparsity_patterns[level].copy_from(dsp);
+  //   mg_matrices[level].reinit(mg_sparsity_patterns[level]);
 
-    // assemble
-    AffineConstraints<double> level_constraints;
-    IndexSet                  relevant_dofs;
-    DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, relevant_dofs);
-    level_constraints.reinit(relevant_dofs);
-    level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
-    level_constraints.close();
+  //   // assemble
+  //   AffineConstraints<double> level_constraints;
+  //   IndexSet                  relevant_dofs;
+  //   DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, relevant_dofs);
+  //   level_constraints.reinit(relevant_dofs);
+  //   level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
+  //   level_constraints.close();
 
-    using C0IP::MW::ScratchData;
+  //   using C0IP::MW::ScratchData;
 
-    using C0IP::MW::CopyData;
+  //   using C0IP::MW::CopyData;
 
-    using MatrixIntegrator = C0IP::MW::MatrixIntegrator<dim, /*is_multigrid*/ true>;
+  //   using MatrixIntegrator = C0IP::MW::MatrixIntegrator<dim, /*is_multigrid*/ true>;
 
-    MatrixIntegrator matrix_integrator(nullptr, analytical_solution.get(), nullptr, equation_data);
+  //   MatrixIntegrator matrix_integrator(nullptr, analytical_solution.get(), nullptr, equation_data);
 
-    using LevelCellIterator = typename MatrixIntegrator::IteratorType;
+  //   using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
-    auto cell_worker =
-      [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-      };
+  //   auto cell_worker =
+  //     [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+  //       matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+  //     };
 
-    auto face_worker = [&](const LevelCellIterator & cell,
-                           const unsigned int &      f,
-                           const unsigned int &      sf,
-                           const LevelCellIterator & ncell,
-                           const unsigned int &      nf,
-                           const unsigned int &      nsf,
-                           ScratchData<dim> &        scratch_data,
-                           CopyData &                copy_data) {
-      matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-    };
+  //   auto face_worker = [&](const LevelCellIterator & cell,
+  //                          const unsigned int &      f,
+  //                          const unsigned int &      sf,
+  //                          const LevelCellIterator & ncell,
+  //                          const unsigned int &      nf,
+  //                          const unsigned int &      nsf,
+  //                          ScratchData<dim> &        scratch_data,
+  //                          CopyData &                copy_data) {
+  //     matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+  //   };
 
-    auto boundary_worker = [&](const LevelCellIterator & cell,
-                               const unsigned int &      face_no,
-                               ScratchData<dim> &        scratch_data,
-                               CopyData &                copy_data) {
-      matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-    };
+  //   auto boundary_worker = [&](const LevelCellIterator & cell,
+  //                              const unsigned int &      face_no,
+  //                              ScratchData<dim> &        scratch_data,
+  //                              CopyData &                copy_data) {
+  //     matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+  //   };
 
-    const auto copier = [&](const CopyData & copy_data) {
-      AssertDimension(copy_data.level, level);
-      level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-        copy_data.cell_matrix, copy_data.local_dof_indices, mg_matrices[copy_data.level]);
+  //   const auto copier = [&](const CopyData & copy_data) {
+  //     AssertDimension(copy_data.level, level);
+  //     level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+  //       copy_data.cell_matrix, copy_data.local_dof_indices, mg_matrices[copy_data.level]);
 
-      for(auto & cdf : copy_data.face_data)
-      {
-        level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-          cdf.cell_matrix, cdf.joint_dof_indices, mg_matrices[copy_data.level]);
-      }
-    };
+  //     for(auto & cdf : copy_data.face_data)
+  //     {
+  //       level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+  //         cdf.cell_matrix, cdf.joint_dof_indices, mg_matrices[copy_data.level]);
+  //     }
+  //   };
 
-    const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
-    ScratchData<dim>   scratch_data(mapping,
-                                  *finite_element,
-                                  n_gauss_points,
-                                  update_values | update_gradients | update_hessians |
-                                    update_quadrature_points | update_JxW_values,
-                                  update_values | update_gradients | update_hessians |
-                                    update_quadrature_points | update_JxW_values |
-                                    update_normal_vectors);
-    CopyData           copy_data(dof_handler.get_fe().dofs_per_cell, level);
-    MeshWorker::mesh_loop(dof_handler.begin_mg(level),
-                          dof_handler.end_mg(level),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                            MeshWorker::assemble_own_interior_faces_once,
-                          boundary_worker,
-                          face_worker);
+  //   const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
+  //   ScratchData<dim>   scratch_data(mapping,
+  //                                 *finite_element,
+  //                                 n_gauss_points,
+  //                                 update_values | update_gradients | update_hessians |
+  //                                   update_quadrature_points | update_JxW_values,
+  //                                 update_values | update_gradients | update_hessians |
+  //                                   update_quadrature_points | update_JxW_values |
+  //                                   update_normal_vectors);
+  //   CopyData           copy_data(dof_handler.get_fe().dofs_per_cell, level);
+  //   MeshWorker::mesh_loop(dof_handler.begin_mg(level),
+  //                         dof_handler.end_mg(level),
+  //                         cell_worker,
+  //                         copier,
+  //                         scratch_data,
+  //                         copy_data,
+  //                         MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+  //                           MeshWorker::assemble_own_interior_faces_once,
+  //                         boundary_worker,
+  //                         face_worker);
 
-    /// initialize matrix-free storage (dummy, required to setup TPSS) + local
-    /// matrix integrator
-    {
-      typename MatrixFree<dim, double>::AdditionalData mf_features;
-      mf_features.mg_level = level;
-      QGauss<1>  quadrature(fe_degree + 1);
-      const auto mf_storage_ = std::make_shared<MatrixFree<dim, double>>();
-      mf_storage_->reinit(mapping, dof_handler, level_constraints, quadrature, mf_features);
-      mg_matrices[level].initialize(mf_storage_, equation_data);
-    }
-  }
+  //   /// initialize matrix-free storage (dummy, required to setup TPSS) + local
+  //   /// matrix integrator
+  //   {
+  //     typename MatrixFree<dim, double>::AdditionalData mf_features;
+  //     mf_features.mg_level = level;
+  //     QGauss<1>  quadrature(fe_degree + 1);
+  //     const auto mf_storage_ = std::make_shared<MatrixFree<dim, double>>();
+  //     mf_storage_->reinit(mapping, dof_handler, level_constraints, quadrature, mf_features);
+  //     mg_matrices[level].initialize(mf_storage_, equation_data);
+  //   }
+  // }
 
-  // *** initialize multigrid transfer R_l
-  mg_transfer.initialize_constraints(*mg_constrained_dofs);
-  mg_transfer.build(dof_handler);
+  // // *** initialize multigrid transfer R_l
+  // mg_transfer.initialize_constraints(*mg_constrained_dofs);
+  // mg_transfer.build(dof_handler);
 
-  // *** initialize Schwarz smoother S_l
-  switch(rt_parameters.multigrid.pre_smoother.variant)
-  {
-    case SmootherParameter::SmootherVariant::None:
-      mg_smoother_identity = std::make_shared<const MGSmootherIdentity<VECTOR>>();
-      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
-      mg_smoother_pre = mg_smoother_identity.get();
-      break;
-    case SmootherParameter::SmootherVariant::GaussSeidel:
-    {
-      auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, VECTOR>>();
-      tmp->initialize(mg_matrices);
-      tmp->set_steps(rt_parameters.multigrid.pre_smoother.n_smoothing_steps);
-      tmp->set_symmetric(true);
-      mg_smoother_gauss_seidel = tmp;
-      mg_smoother_pre          = mg_smoother_gauss_seidel.get();
-    }
-    break;
-    case SmootherParameter::SmootherVariant::Schwarz:
-      prepare_schwarz_smoothers();
-      AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
-      mg_smoother_pre = mg_schwarz_smoother_pre.get();
-      break;
-    default:
-      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
-  }
-  switch(rt_parameters.multigrid.post_smoother.variant)
-  {
-    case SmootherParameter::SmootherVariant::None:
-      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
-      mg_smoother_post = mg_smoother_identity.get();
-      break;
-    case SmootherParameter::SmootherVariant::GaussSeidel:
-      AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
-      mg_smoother_post = mg_smoother_gauss_seidel.get();
-      break;
-    case SmootherParameter::SmootherVariant::Schwarz:
-      AssertThrow(mg_schwarz_smoother_post, ExcMessage("Not initialized"));
-      mg_smoother_post = mg_schwarz_smoother_post.get();
-      break;
-    default:
-      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
-  }
+  // // *** initialize Schwarz smoother S_l
+  // switch(rt_parameters.multigrid.pre_smoother.variant)
+  // {
+  //   case SmootherParameter::SmootherVariant::None:
+  //     mg_smoother_identity = std::make_shared<const MGSmootherIdentity<VECTOR>>();
+  //     AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+  //     mg_smoother_pre = mg_smoother_identity.get();
+  //     break;
+  //   case SmootherParameter::SmootherVariant::GaussSeidel:
+  //   {
+  //     auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, VECTOR>>();
+  //     tmp->initialize(mg_matrices);
+  //     tmp->set_steps(rt_parameters.multigrid.pre_smoother.n_smoothing_steps);
+  //     tmp->set_symmetric(true);
+  //     mg_smoother_gauss_seidel = tmp;
+  //     mg_smoother_pre          = mg_smoother_gauss_seidel.get();
+  //   }
+  //   break;
+  //   case SmootherParameter::SmootherVariant::Schwarz:
+  //     prepare_schwarz_smoothers();
+  //     AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
+  //     mg_smoother_pre = mg_schwarz_smoother_pre.get();
+  //     break;
+  //   default:
+  //     AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  // }
+  // switch(rt_parameters.multigrid.post_smoother.variant)
+  // {
+  //   case SmootherParameter::SmootherVariant::None:
+  //     AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+  //     mg_smoother_post = mg_smoother_identity.get();
+  //     break;
+  //   case SmootherParameter::SmootherVariant::GaussSeidel:
+  //     AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
+  //     mg_smoother_post = mg_smoother_gauss_seidel.get();
+  //     break;
+  //   case SmootherParameter::SmootherVariant::Schwarz:
+  //     AssertThrow(mg_schwarz_smoother_post, ExcMessage("Not initialized"));
+  //     mg_smoother_post = mg_schwarz_smoother_post.get();
+  //     break;
+  //   default:
+  //     AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  // }
 
-  pp_data.n_colors_system.push_back(n_colors_system());
+  // pp_data.n_colors_system.push_back(n_colors_system());
 
-  // *** initialize coarse grid solver
-  coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
-  mg_coarse_grid = &coarse_grid_solver;
+  // // *** initialize coarse grid solver
+  // coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
+  // mg_coarse_grid = &coarse_grid_solver;
 
-  mg_matrix_wrapper.initialize(mg_matrices);
-  multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
-                                                  *mg_coarse_grid,
-                                                  mg_transfer,
-                                                  *mg_smoother_pre,
-                                                  *mg_smoother_post,
-                                                  mg_level_min,
-                                                  mg_level_max);
+  // mg_matrix_wrapper.initialize(mg_matrices);
+  // multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
+  //                                                 *mg_coarse_grid,
+  //                                                 mg_transfer,
+  //                                                 *mg_smoother_pre,
+  //                                                 *mg_smoother_post,
+  //                                                 mg_level_min,
+  //                                                 mg_level_max);
 }
 
 
@@ -1032,21 +1090,22 @@ ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & pr
   system_u += system_delta_u;
 
   auto reduction_control = dynamic_cast<ReductionControl *>(solver_control.get());
-  if(reduction_control)
-  {
-    const auto [n_frac, reduction_rate] = compute_fractional_steps(*reduction_control);
-    pp_data.average_reduction_system.push_back(reduction_rate);
-    pp_data.n_iterations_system.push_back(n_frac);
-    print_parameter("Average reduction (solver):", reduction_rate);
-    print_parameter("Number of iterations (solver):", n_frac);
-  }
-  else
-  {
+  // !!!
+  // if(reduction_control)
+  //   {
+  //   const auto [n_frac, reduction_rate] = compute_fractional_steps(*reduction_control);
+  //   pp_data.average_reduction_system.push_back(reduction_rate);
+  //   pp_data.n_iterations_system.push_back(n_frac);
+  //   print_parameter("Average reduction (solver):", reduction_rate);
+  //   print_parameter("Number of iterations (solver):", n_frac);
+  // }
+  // else
+  // {
     pp_data.average_reduction_system.push_back(solver_control->average_reduction());
     pp_data.n_iterations_system.push_back(solver_control->last_step());
     print_parameter("Average reduction (solver):", solver_control->average_reduction());
     print_parameter("Number of iterations (solver):", solver_control->last_step());
-  }
+  // }
 }
 
 
@@ -1059,17 +1118,18 @@ ModelProblem<dim, fe_degree>::solve()
 
   if(rt_parameters.solver.variant == "direct")
   {
-    SparseDirectUMFPACK A_direct;
-    A_direct.template initialize<SparseMatrix<double>>(system_matrix);
-    A_direct.vmult(system_delta_u, system_rhs);
-    system_u += system_delta_u;
-    pp_data.average_reduction_system.push_back(0.);
-    pp_data.n_iterations_system.push_back(0.);
-    pp_data.n_colors_system.push_back(0);
-    pp_data.n_mg_levels.push_back(0);
-    print_parameter("Average reduction (solver):", "direct solver");
-    print_parameter("Number of iterations (solver):", "---");
-    return;
+    AssertThrow(false, ExcMessage("Direct solver for trilinos?!"));
+    // SparseDirectUMFPACK A_direct;
+    // A_direct.template initialize<SparseMatrix<double>>(system_matrix);
+    // A_direct.vmult(system_delta_u, system_rhs);
+    // system_u += system_delta_u;
+    // pp_data.average_reduction_system.push_back(0.);
+    // pp_data.n_iterations_system.push_back(0.);
+    // pp_data.n_colors_system.push_back(0);
+    // pp_data.n_mg_levels.push_back(0);
+    // print_parameter("Average reduction (solver):", "direct solver");
+    // print_parameter("Number of iterations (solver):", "---");
+    // return;
   }
 
   else
@@ -1329,507 +1389,508 @@ template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::solve_pressure()
 {
-  print_parameter("Solving pressure system", "...");
-
-  AssertThrow(stokes_problem, ExcMessage("FEM for Stokes equations is uninitialized."));
-
-  // TODO !!! share triangulations as shared_ptr
-  stokes_problem->triangulation.clear();
-  stokes_problem->triangulation.copy_triangulation(this->triangulation);
-  stokes_problem->setup_system();
-
-  const auto & dof_handler_velocity = stokes_problem->dof_handler_velocity;
-  const auto & dof_handler_pressure = stokes_problem->dof_handler_pressure;
-  const bool   is_dgq_legendre =
-    dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
-  AssertThrow(is_dgq_legendre,
-              ExcMessage("Implementation is based on a DGQ pressure ansatz of Legendre-type"));
-
-  const auto [trafomatrix_rt_to_gradp, trafomatrix_rt_to_constp] =
-    compute_nondivfree_shape_functions();
-
-  FullMatrix<double> shape_to_test_functions_interior(trafomatrix_rt_to_gradp.m(),
-                                                      trafomatrix_rt_to_gradp.n());
-  shape_to_test_functions_interior = trafomatrix_rt_to_gradp;
-
-  // DEBUG
-  // shape_to_test_functions_interior.print_formatted(std::cout);
-  // trafomatrix_rt_to_gradp.print_formatted(std::cout);
-
-  FullMatrix<double> shape_to_test_functions_interface(trafomatrix_rt_to_constp.m(),
-                                                       trafomatrix_rt_to_constp.n());
-  shape_to_test_functions_interface = trafomatrix_rt_to_constp;
-
-  // DEBUG
-  // shape_to_test_functions_interface.print_formatted(std::cout);
-  // trafomatrix_rt_to_constp.print_formatted(std::cout);
-
-  Pressure::InterfaceHandler<dim> interface_handler;
-  interface_handler.reinit(dof_handler_velocity);
-  const auto n_interface_nodes = interface_handler.n_interfaces();
-
-  AssertThrow(
-    interface_handler.get_fixed_cell_index() == interface_handler.get_fixed_interface_index(),
-    ExcMessage(
-      "I am worried about the constraints in case the fixed cell and interface index do not coincide."));
-
-  AffineConstraints constraints_on_interface;
-  const auto        interface_index_of_fixed_cell = interface_handler.get_fixed_interface_index();
-  constraints_on_interface.add_line(interface_index_of_fixed_cell);
-  constraints_on_interface.set_inhomogeneity(interface_index_of_fixed_cell, 1.);
-  constraints_on_interface.close();
-
-  AffineConstraints constraints_on_cell;
-  constraints_on_cell.close();
-
-  DynamicSparsityPattern dsp(n_interface_nodes);
-  for(const auto & id : interface_handler.interface_ids)
-  {
-    const auto e                 = interface_handler.get_interface_index(id);
-    const auto [K_left, K_right] = interface_handler.get_cell_index_pair(id);
-    dsp.add(e, K_left);
-    dsp.add(e, K_right);
-
-    // DEBUG
-    // std::cout << "interface index (row): " << interface_handler.get_interface_index(id) << " ";
-    // const auto [left_index, right_index] = interface_handler.get_cell_index_pair(id);
-    // std::cout << "left cell index (column): " << left_index << " ";
-    // std::cout << "right cell index (column): " << right_index << " ";
-    // std::cout << std::endl;
-  }
-
-  constraints_on_interface.condense(dsp);
-
-  SparsityPattern sparsity_pattern;
-  sparsity_pattern.copy_from(dsp);
-
-  SparseMatrix<double> constant_pressure_matrix;
-  constant_pressure_matrix.reinit(sparsity_pattern);
-  Vector<double> right_hand_side(n_interface_nodes);
-
-  std::vector<types::global_dof_index> constant_pressure_dof_indices(n_interface_nodes);
-  Vector<double> &                     discrete_pressure = stokes_problem->system_solution.block(1);
-
-  const auto n_q_points_1d = stokes_problem->n_q_points_1d;
-
-  /**
-   * First, we compute all pressure coefficients except the constant mode
-   * coefficient. To this end, we construct a basis of cell-wise non-div-free
-   * test functions vv_j associated to the interior RT node functionals N_i as follows:
-   * as node functional generating polynomials from Q_k-1,k x Q_k,k-1 we
-   * substitute grad p_i, where p_i are the pressure shape functions, such that
-   *
-   *    N_i(vv_j) = \int_K vv_j * (grad p_i) dx   =!=   \delta_ij   (1)
-   *
-   * We see that the gradient of the constant pressure mode is zero and, thus,
-   * not contributing to the basis of non-div-free test functions. The new basis
-   * functions vv_j are a linear combination of the RT basis v_k given, that is
-   * vv_j = \sum_k \alpha_jk v_k. Equation (1) is converted one-to-one to the
-   * reference cell and reference functions, thus, it suffices to compute the
-   * transformation matrix A = (\alpha_jk)_jk, here @p
-   * shape_to_test_functions_interior, on the reference cell.
-   *
-   * Why does this determine the non-constant pressure modes? Given the stream
-   * function velocity u_h the discretization of the first Stokes equation reads
-   *
-   *    a_h(u_h, v) - (p, div v) = (f, v) + BDRY   (2)
-   *
-   * Integration by parts of the pressure term, (p, vv_j * n)_\face = 0 \forall
-   * vv_j and substituting \beta_j * p_j as pressure (\beta_j is the pressure
-   * coefficient) results in
-   *
-   *    -\beta_j * (grad p_j, vv_i) = (f, vv_i) + BDRY_i - a_h(u_h, vv_i),   (3)
-   *
-   * where the LHS (grad p_j, vv_i) = N_j(vv_i) = \delta_ij by definition of
-   * vv_i, thus, the non-constant pressure coefficients are computed as follows
-   *
-   *    -\beta_i = (f, vv_i) + BDRY_i - a_h(u_h, vv_i).   (4)
-   *
-   * The RHS is the residual of the discretized Stokes equations for the
-   * discrete stream function velocity u_h.
-   */
-  {
-    const bool is_dgq_legendre =
-      dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
-    AssertThrow(
-      is_dgq_legendre,
-      ExcMessage(
-        "For this reconstruction method we assume that the pressure shape functions are of Legendre-type."));
-    AssertThrow(
-      TPSS::get_dof_layout(dof_handler_velocity.get_fe()) == TPSS::DoFLayout::RT,
-      ExcMessage(
-        "For this reconstruction method we assume that the velocity finite elements are of Raviart-Thomas-type."));
-
-    using Stokes::Velocity::SIPG::MW::ScratchData;
-
-    using Stokes::Velocity::SIPG::MW::CopyData;
-
-    using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
-
-    using CellIterator = typename MatrixIntegrator<dim>::IteratorType;
-
-    const auto                     component_range = std::make_pair<unsigned int>(0, dim);
-    Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
-                                                          component_range);
-    Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
-                                                       component_range);
-
-    MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
-                                            &analytical_velocity,
-                                            &system_u,
-                                            equation_data_stokes,
-                                            &interface_handler);
-
-    auto cell_worker =
-      [&](const CellIterator & cell, ScratchData<dim, true> & scratch_data, CopyData & copy_data) {
-        CellIterator cell_stream_function(&dof_handler.get_triangulation(),
-                                          cell->level(),
-                                          cell->index(),
-                                          &dof_handler);
-        CellIterator cell_pressure(&dof_handler_pressure.get_triangulation(),
-                                   cell->level(),
-                                   cell->index(),
-                                   &dof_handler_pressure);
-        matrix_integrator.cell_residual_worker(
-          cell, cell_stream_function, cell_pressure, scratch_data, copy_data);
-      };
-
-    const auto face_worker = [&](const CellIterator &     cell,
-                                 const unsigned int &     f,
-                                 const unsigned int &     sf,
-                                 const CellIterator &     ncell,
-                                 const unsigned int &     nf,
-                                 const unsigned int &     nsf,
-                                 ScratchData<dim, true> & scratch_data,
-                                 CopyData &               copy_data) {
-      CellIterator cell_stream(&dof_handler.get_triangulation(),
-                               cell->level(),
-                               cell->index(),
-                               &dof_handler);
-      CellIterator cell_pressure(&dof_handler_pressure.get_triangulation(),
-                                 cell->level(),
-                                 cell->index(),
-                                 &dof_handler_pressure);
-      CellIterator ncell_stream(&dof_handler.get_triangulation(),
-                                ncell->level(),
-                                ncell->index(),
-                                &dof_handler);
-      CellIterator ncell_pressure(&dof_handler_pressure.get_triangulation(),
-                                  ncell->level(),
-                                  ncell->index(),
-                                  &dof_handler_pressure);
-      matrix_integrator.face_residual_worker_tangential(cell,
-                                                        cell_stream,
-                                                        cell_pressure,
-                                                        f,
-                                                        sf,
-                                                        ncell,
-                                                        ncell_stream,
-                                                        ncell_pressure,
-                                                        nf,
-                                                        nsf,
-                                                        scratch_data,
-                                                        copy_data);
-    };
-
-    const auto boundary_worker = [&](const CellIterator &     cell,
-                                     const unsigned int &     face_no,
-                                     ScratchData<dim, true> & scratch_data,
-                                     CopyData &               copy_data) {
-      CellIterator cell_stream(&dof_handler.get_triangulation(),
-                               cell->level(),
-                               cell->index(),
-                               &dof_handler);
-      CellIterator cell_pressure(&dof_handler_pressure.get_triangulation(),
-                                 cell->level(),
-                                 cell->index(),
-                                 &dof_handler_pressure);
-      matrix_integrator.boundary_residual_worker_tangential(
-        cell, cell_stream, cell_pressure, face_no, scratch_data, copy_data);
-    };
-
-    AffineConstraints<double> empty_constraints;
-    empty_constraints.close();
-
-    const auto copier = [&](const CopyData & copy_data) {
-      empty_constraints.template distribute_local_to_global<Vector<double>>(
-        copy_data.cell_rhs_test, copy_data.local_dof_indices_test, discrete_pressure);
-
-      /// Book-keeping the (global) dof indices of each constant mode per cell
-      AssertDimension(copy_data.local_dof_indices_ansatz.size(), 2U);
-      const auto cell_index                     = copy_data.local_dof_indices_ansatz.back();
-      const auto dof_index                      = copy_data.local_dof_indices_ansatz.front();
-      constant_pressure_dof_indices[cell_index] = dof_index;
-
-      for(const auto & cdf : copy_data.face_data)
-        empty_constraints.template distribute_local_to_global<Vector<double>>(
-          cdf.cell_rhs_test, cdf.joint_dof_indices_test, discrete_pressure);
-    };
-
-    const UpdateFlags update_flags_v =
-      update_values | update_gradients | update_quadrature_points | update_JxW_values;
-    const UpdateFlags update_flags_sf          = update_flags_v | update_hessians;
-    const UpdateFlags interface_update_flags_v = update_values | update_gradients |
-                                                 update_quadrature_points | update_JxW_values |
-                                                 update_normal_vectors;
-    const UpdateFlags interface_update_flags_sf = interface_update_flags_v | update_hessians;
-
-    ScratchData<dim, true> scratch_data(mapping,
-                                        dof_handler_velocity.get_fe(),
-                                        dof_handler.get_fe(),
-                                        n_q_points_1d,
-                                        shape_to_test_functions_interior,
-                                        update_flags_v,
-                                        update_flags_sf,
-                                        interface_update_flags_v,
-                                        interface_update_flags_sf);
-
-    CopyData copy_data(shape_to_test_functions_interior.m(), dof_handler.get_fe().dofs_per_cell);
-
-    MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                          dof_handler_velocity.end(),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                            MeshWorker::assemble_own_interior_faces_once,
-                          boundary_worker,
-                          face_worker);
-
-    // // DEBUG
-    // discrete_pressure.print(std::cout);
-    // std::cout << vector_to_string(constant_pressure_dof_indices) << std::endl;
-  }
-
-  /**
-   * Second, it remains to determine the constant pressure mode on each cell to
-   * globally determine the discrete pressure. As discussed before, the constant
-   * pressure modes do not contribute to the cell-interior non-div-free velocity
-   * functions, thus, they are determined by the degrees of freedom on
-   * interfaces.
-   *
-   * The (#cells - 1) remaining test functions are constructed by the method
-   * described in [Caussignac'87]... TODO
-   */
-  {
-    {
-      using Stokes::Velocity::SIPG::MW::ScratchData;
-
-      using Stokes::Velocity::SIPG::MW::CopyData;
-
-      using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
-
-      using CellIterator = typename MatrixIntegrator<dim>::IteratorType;
-
-      const auto                     component_range = std::make_pair<unsigned int>(0, dim);
-      Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
-                                                            component_range);
-      Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
-                                                         component_range);
-
-      MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
-                                              &analytical_velocity,
-                                              &system_u,
-                                              equation_data_stokes,
-                                              &interface_handler);
-
-      const auto cell_worker = [&](const CellIterator &     cell,
-                                   ScratchData<dim, true> & scratch_data,
-                                   CopyData &               copy_data) {
-        CellIterator cell_stream_function(&dof_handler.get_triangulation(),
-                                          cell->level(),
-                                          cell->index(),
-                                          &dof_handler);
-        matrix_integrator.cell_residual_worker_interface(cell,
-                                                         cell_stream_function,
-                                                         scratch_data,
-                                                         copy_data);
-      };
-
-      const auto face_worker = [&](const CellIterator &     cell,
-                                   const unsigned int &     f,
-                                   const unsigned int &     sf,
-                                   const CellIterator &     ncell,
-                                   const unsigned int &     nf,
-                                   const unsigned int &     nsf,
-                                   ScratchData<dim, true> & scratch_data,
-                                   CopyData &               copy_data) {
-        CellIterator cell_stream(&dof_handler.get_triangulation(),
-                                 cell->level(),
-                                 cell->index(),
-                                 &dof_handler);
-        CellIterator ncell_stream(&dof_handler.get_triangulation(),
-                                  ncell->level(),
-                                  ncell->index(),
-                                  &dof_handler);
-        matrix_integrator.face_residual_worker_tangential_interface(
-          cell, cell_stream, f, sf, ncell, ncell_stream, nf, nsf, scratch_data, copy_data);
-      };
-
-      const auto boundary_worker = [&](const CellIterator &     cell,
-                                       const unsigned int &     face_no,
-                                       ScratchData<dim, true> & scratch_data,
-                                       CopyData &               copy_data) {
-        CellIterator cell_stream(&dof_handler.get_triangulation(),
-                                 cell->level(),
-                                 cell->index(),
-                                 &dof_handler);
-        matrix_integrator.boundary_residual_worker_tangential_interface(
-          cell, cell_stream, face_no, scratch_data, copy_data);
-      };
-
-      const auto copier = [&](const CopyData & copy_data) {
-        constraints_on_interface.template distribute_local_to_global<Vector<double>>(
-          copy_data.cell_rhs_test, copy_data.local_dof_indices_test, right_hand_side);
-
-        for(const auto & cdf : copy_data.face_data)
-        {
-          constraints_on_interface.template distribute_local_to_global<Vector<double>>(
-            cdf.cell_rhs_test, cdf.joint_dof_indices_test, right_hand_side);
-        }
-      };
-
-      const UpdateFlags update_flags_v =
-        update_values | update_gradients | update_quadrature_points | update_JxW_values;
-      const UpdateFlags update_flags_sf          = update_flags_v | update_hessians;
-      const UpdateFlags interface_update_flags_v = update_values | update_gradients |
-                                                   update_quadrature_points | update_JxW_values |
-                                                   update_normal_vectors;
-      const UpdateFlags interface_update_flags_sf = interface_update_flags_v | update_hessians;
-
-      ScratchData<dim, true> scratch_data(mapping,
-                                          dof_handler_velocity.get_fe(),
-                                          dof_handler.get_fe(),
-                                          n_q_points_1d,
-                                          shape_to_test_functions_interface,
-                                          update_flags_v,
-                                          update_flags_sf,
-                                          interface_update_flags_v,
-                                          interface_update_flags_sf);
-
-      CopyData copy_data(shape_to_test_functions_interface.m(), dof_handler.get_fe().dofs_per_cell);
-
-      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                            dof_handler_velocity.end(),
-                            cell_worker,
-                            copier,
-                            scratch_data,
-                            copy_data,
-                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                              MeshWorker::assemble_own_interior_faces_once,
-                            boundary_worker,
-                            face_worker);
-    }
-
-    {
-      using Pressure::Interface::MW::ScratchData;
-
-      using Pressure::Interface::MW::CopyData;
-
-      using Pressure::Interface::MW::MatrixIntegrator;
-
-      using CellIterator = typename MatrixIntegrator<dim>::IteratorType;
-
-      const auto                     component_range = std::make_pair<unsigned int>(0, dim);
-      Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
-                                                            component_range);
-
-      MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
-                                              nullptr,
-                                              &discrete_pressure,
-                                              &interface_handler,
-                                              equation_data_stokes);
-
-      const auto face_worker = [&](const CellIterator & cell,
-                                   const unsigned int & f,
-                                   const unsigned int & sf,
-                                   const CellIterator & ncell,
-                                   const unsigned int & nf,
-                                   const unsigned int & nsf,
-                                   ScratchData<dim> &   scratch_data,
-                                   CopyData &           copy_data) {
-        CellIterator cellP(&dof_handler_pressure.get_triangulation(),
-                           cell->level(),
-                           cell->index(),
-                           &dof_handler_pressure);
-        CellIterator ncellP(&dof_handler_pressure.get_triangulation(),
-                            ncell->level(),
-                            ncell->index(),
-                            &dof_handler_pressure);
-        matrix_integrator.face_worker(
-          cell, cellP, f, sf, ncell, ncellP, nf, nsf, scratch_data, copy_data);
-      };
-
-      const auto copier = [&](const CopyData & copy_data) {
-        for(const auto & cdf : copy_data.face_data)
-        {
-          constraints_on_interface.template distribute_local_to_global<Vector<double>>(
-            cdf.cell_rhs_test, cdf.joint_dof_indices_test, right_hand_side);
-
-          constraints_on_interface.template distribute_local_to_global<SparseMatrix<double>>(
-            cdf.cell_matrix,
-            cdf.joint_dof_indices_test,
-            constraints_on_cell,
-            cdf.joint_dof_indices_ansatz,
-            constant_pressure_matrix);
-        }
-      };
-
-      const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
-      const UpdateFlags update_flags_pressure = update_default;
-      const UpdateFlags interface_update_flags =
-        update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
-      const UpdateFlags interface_update_flags_pressure =
-        update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
-
-      ScratchData<dim> scratch_data(mapping,
-                                    dof_handler_velocity.get_fe(),
-                                    dof_handler_pressure.get_fe(),
-                                    n_q_points_1d,
-                                    shape_to_test_functions_interface,
-                                    update_flags,
-                                    update_flags_pressure,
-                                    interface_update_flags,
-                                    interface_update_flags_pressure);
-
-      CopyData copy_data(GeometryInfo<dim>::faces_per_cell, 1U);
-
-      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                            dof_handler_velocity.end(),
-                            nullptr /*cell_worker*/,
-                            copier,
-                            scratch_data,
-                            copy_data,
-                            /*MeshWorker::assemble_own_cells |*/
-                            MeshWorker::assemble_own_interior_faces_once,
-                            nullptr,
-                            face_worker);
-    }
-
-    constraints_on_interface.condense(constant_pressure_matrix, right_hand_side);
-
-    // // DEBUG
-    // right_hand_side.print(std::cout);
-    // constant_pressure_matrix.print_formatted(std::cout);
-
-    const auto     n_cells = constant_pressure_matrix.n();
-    Vector<double> constant_mode_solution(n_cells);
-
-    SparseDirectUMFPACK A_direct;
-    A_direct.template initialize<SparseMatrix<double>>(constant_pressure_matrix);
-    A_direct.vmult(constant_mode_solution, right_hand_side);
-
-    constraints_on_interface.distribute(constant_mode_solution);
-
-    for(auto cell_index = 0U; cell_index < n_cells; ++cell_index)
-    {
-      const auto dof_index         = constant_pressure_dof_indices[cell_index];
-      discrete_pressure(dof_index) = constant_mode_solution[cell_index];
-    }
-
-    stokes_problem->correct_mean_value_pressure();
-  }
+  AssertThrow(false, ExcMessage("TODO MPI..."));
+  // print_parameter("Solving pressure system", "...");
+
+  // AssertThrow(stokes_problem, ExcMessage("FEM for Stokes equations is uninitialized."));
+
+  // // TODO !!! share triangulations as shared_ptr
+  // stokes_problem->triangulation.clear();
+  // stokes_problem->triangulation.copy_triangulation(this->triangulation);
+  // stokes_problem->setup_system();
+
+  // const auto & dof_handler_velocity = stokes_problem->dof_handler_velocity;
+  // const auto & dof_handler_pressure = stokes_problem->dof_handler_pressure;
+  // const bool   is_dgq_legendre =
+  //   dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
+  // AssertThrow(is_dgq_legendre,
+  //             ExcMessage("Implementation is based on a DGQ pressure ansatz of Legendre-type"));
+
+  // const auto [trafomatrix_rt_to_gradp, trafomatrix_rt_to_constp] =
+  //   compute_nondivfree_shape_functions();
+
+  // FullMatrix<double> shape_to_test_functions_interior(trafomatrix_rt_to_gradp.m(),
+  //                                                     trafomatrix_rt_to_gradp.n());
+  // shape_to_test_functions_interior = trafomatrix_rt_to_gradp;
+
+  // // DEBUG
+  // // shape_to_test_functions_interior.print_formatted(std::cout);
+  // // trafomatrix_rt_to_gradp.print_formatted(std::cout);
+
+  // FullMatrix<double> shape_to_test_functions_interface(trafomatrix_rt_to_constp.m(),
+  //                                                      trafomatrix_rt_to_constp.n());
+  // shape_to_test_functions_interface = trafomatrix_rt_to_constp;
+
+  // // DEBUG
+  // // shape_to_test_functions_interface.print_formatted(std::cout);
+  // // trafomatrix_rt_to_constp.print_formatted(std::cout);
+
+  // Pressure::InterfaceHandler<dim> interface_handler;
+  // interface_handler.reinit(dof_handler_velocity);
+  // const auto n_interface_nodes = interface_handler.n_interfaces();
+
+  // AssertThrow(
+  //   interface_handler.get_fixed_cell_index() == interface_handler.get_fixed_interface_index(),
+  //   ExcMessage(
+  //     "I am worried about the constraints in case the fixed cell and interface index do not coincide."));
+
+  // AffineConstraints constraints_on_interface;
+  // const auto        interface_index_of_fixed_cell = interface_handler.get_fixed_interface_index();
+  // constraints_on_interface.add_line(interface_index_of_fixed_cell);
+  // constraints_on_interface.set_inhomogeneity(interface_index_of_fixed_cell, 1.);
+  // constraints_on_interface.close();
+
+  // AffineConstraints constraints_on_cell;
+  // constraints_on_cell.close();
+
+  // DynamicSparsityPattern dsp(n_interface_nodes);
+  // for(const auto & id : interface_handler.interface_ids)
+  // {
+  //   const auto e                 = interface_handler.get_interface_index(id);
+  //   const auto [K_left, K_right] = interface_handler.get_cell_index_pair(id);
+  //   dsp.add(e, K_left);
+  //   dsp.add(e, K_right);
+
+  //   // DEBUG
+  //   // std::cout << "interface index (row): " << interface_handler.get_interface_index(id) << " ";
+  //   // const auto [left_index, right_index] = interface_handler.get_cell_index_pair(id);
+  //   // std::cout << "left cell index (column): " << left_index << " ";
+  //   // std::cout << "right cell index (column): " << right_index << " ";
+  //   // std::cout << std::endl;
+  // }
+
+  // constraints_on_interface.condense(dsp);
+
+  // SparsityPattern sparsity_pattern;
+  // sparsity_pattern.copy_from(dsp);
+
+  // SparseMatrix<double> constant_pressure_matrix;
+  // constant_pressure_matrix.reinit(sparsity_pattern);
+  // Vector<double> right_hand_side(n_interface_nodes);
+
+  // std::vector<types::global_dof_index> constant_pressure_dof_indices(n_interface_nodes);
+  // Vector<double> &                     discrete_pressure = stokes_problem->system_solution.block(1);
+
+  // const auto n_q_points_1d = stokes_problem->n_q_points_1d;
+
+  // /**
+  //  * First, we compute all pressure coefficients except the constant mode
+  //  * coefficient. To this end, we construct a basis of cell-wise non-div-free
+  //  * test functions vv_j associated to the interior RT node functionals N_i as follows:
+  //  * as node functional generating polynomials from Q_k-1,k x Q_k,k-1 we
+  //  * substitute grad p_i, where p_i are the pressure shape functions, such that
+  //  *
+  //  *    N_i(vv_j) = \int_K vv_j * (grad p_i) dx   =!=   \delta_ij   (1)
+  //  *
+  //  * We see that the gradient of the constant pressure mode is zero and, thus,
+  //  * not contributing to the basis of non-div-free test functions. The new basis
+  //  * functions vv_j are a linear combination of the RT basis v_k given, that is
+  //  * vv_j = \sum_k \alpha_jk v_k. Equation (1) is converted one-to-one to the
+  //  * reference cell and reference functions, thus, it suffices to compute the
+  //  * transformation matrix A = (\alpha_jk)_jk, here @p
+  //  * shape_to_test_functions_interior, on the reference cell.
+  //  *
+  //  * Why does this determine the non-constant pressure modes? Given the stream
+  //  * function velocity u_h the discretization of the first Stokes equation reads
+  //  *
+  //  *    a_h(u_h, v) - (p, div v) = (f, v) + BDRY   (2)
+  //  *
+  //  * Integration by parts of the pressure term, (p, vv_j * n)_\face = 0 \forall
+  //  * vv_j and substituting \beta_j * p_j as pressure (\beta_j is the pressure
+  //  * coefficient) results in
+  //  *
+  //  *    -\beta_j * (grad p_j, vv_i) = (f, vv_i) + BDRY_i - a_h(u_h, vv_i),   (3)
+  //  *
+  //  * where the LHS (grad p_j, vv_i) = N_j(vv_i) = \delta_ij by definition of
+  //  * vv_i, thus, the non-constant pressure coefficients are computed as follows
+  //  *
+  //  *    -\beta_i = (f, vv_i) + BDRY_i - a_h(u_h, vv_i).   (4)
+  //  *
+  //  * The RHS is the residual of the discretized Stokes equations for the
+  //  * discrete stream function velocity u_h.
+  //  */
+  // {
+  //   const bool is_dgq_legendre =
+  //     dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
+  //   AssertThrow(
+  //     is_dgq_legendre,
+  //     ExcMessage(
+  //       "For this reconstruction method we assume that the pressure shape functions are of Legendre-type."));
+  //   AssertThrow(
+  //     TPSS::get_dof_layout(dof_handler_velocity.get_fe()) == TPSS::DoFLayout::RT,
+  //     ExcMessage(
+  //       "For this reconstruction method we assume that the velocity finite elements are of Raviart-Thomas-type."));
+
+  //   using Stokes::Velocity::SIPG::MW::ScratchData;
+
+  //   using Stokes::Velocity::SIPG::MW::CopyData;
+
+  //   using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
+
+  //   using CellIterator = typename MatrixIntegrator<dim>::IteratorType;
+
+  //   const auto                     component_range = std::make_pair<unsigned int>(0, dim);
+  //   Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
+  //                                                         component_range);
+  //   Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
+  //                                                      component_range);
+
+  //   MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
+  //                                           &analytical_velocity,
+  //                                           &system_u,
+  //                                           equation_data_stokes,
+  //                                           &interface_handler);
+
+  //   auto cell_worker =
+  //     [&](const CellIterator & cell, ScratchData<dim, true> & scratch_data, CopyData & copy_data) {
+  //       CellIterator cell_stream_function(&dof_handler.get_triangulation(),
+  //                                         cell->level(),
+  //                                         cell->index(),
+  //                                         &dof_handler);
+  //       CellIterator cell_pressure(&dof_handler_pressure.get_triangulation(),
+  //                                  cell->level(),
+  //                                  cell->index(),
+  //                                  &dof_handler_pressure);
+  //       matrix_integrator.cell_residual_worker(
+  //         cell, cell_stream_function, cell_pressure, scratch_data, copy_data);
+  //     };
+
+  //   const auto face_worker = [&](const CellIterator &     cell,
+  //                                const unsigned int &     f,
+  //                                const unsigned int &     sf,
+  //                                const CellIterator &     ncell,
+  //                                const unsigned int &     nf,
+  //                                const unsigned int &     nsf,
+  //                                ScratchData<dim, true> & scratch_data,
+  //                                CopyData &               copy_data) {
+  //     CellIterator cell_stream(&dof_handler.get_triangulation(),
+  //                              cell->level(),
+  //                              cell->index(),
+  //                              &dof_handler);
+  //     CellIterator cell_pressure(&dof_handler_pressure.get_triangulation(),
+  //                                cell->level(),
+  //                                cell->index(),
+  //                                &dof_handler_pressure);
+  //     CellIterator ncell_stream(&dof_handler.get_triangulation(),
+  //                               ncell->level(),
+  //                               ncell->index(),
+  //                               &dof_handler);
+  //     CellIterator ncell_pressure(&dof_handler_pressure.get_triangulation(),
+  //                                 ncell->level(),
+  //                                 ncell->index(),
+  //                                 &dof_handler_pressure);
+  //     matrix_integrator.face_residual_worker_tangential(cell,
+  //                                                       cell_stream,
+  //                                                       cell_pressure,
+  //                                                       f,
+  //                                                       sf,
+  //                                                       ncell,
+  //                                                       ncell_stream,
+  //                                                       ncell_pressure,
+  //                                                       nf,
+  //                                                       nsf,
+  //                                                       scratch_data,
+  //                                                       copy_data);
+  //   };
+
+  //   const auto boundary_worker = [&](const CellIterator &     cell,
+  //                                    const unsigned int &     face_no,
+  //                                    ScratchData<dim, true> & scratch_data,
+  //                                    CopyData &               copy_data) {
+  //     CellIterator cell_stream(&dof_handler.get_triangulation(),
+  //                              cell->level(),
+  //                              cell->index(),
+  //                              &dof_handler);
+  //     CellIterator cell_pressure(&dof_handler_pressure.get_triangulation(),
+  //                                cell->level(),
+  //                                cell->index(),
+  //                                &dof_handler_pressure);
+  //     matrix_integrator.boundary_residual_worker_tangential(
+  //       cell, cell_stream, cell_pressure, face_no, scratch_data, copy_data);
+  //   };
+
+  //   AffineConstraints<double> empty_constraints;
+  //   empty_constraints.close();
+
+  //   const auto copier = [&](const CopyData & copy_data) {
+  //     empty_constraints.template distribute_local_to_global<Vector<double>>(
+  //       copy_data.cell_rhs_test, copy_data.local_dof_indices_test, discrete_pressure);
+
+  //     /// Book-keeping the (global) dof indices of each constant mode per cell
+  //     AssertDimension(copy_data.local_dof_indices_ansatz.size(), 2U);
+  //     const auto cell_index                     = copy_data.local_dof_indices_ansatz.back();
+  //     const auto dof_index                      = copy_data.local_dof_indices_ansatz.front();
+  //     constant_pressure_dof_indices[cell_index] = dof_index;
+
+  //     for(const auto & cdf : copy_data.face_data)
+  //       empty_constraints.template distribute_local_to_global<Vector<double>>(
+  //         cdf.cell_rhs_test, cdf.joint_dof_indices_test, discrete_pressure);
+  //   };
+
+  //   const UpdateFlags update_flags_v =
+  //     update_values | update_gradients | update_quadrature_points | update_JxW_values;
+  //   const UpdateFlags update_flags_sf          = update_flags_v | update_hessians;
+  //   const UpdateFlags interface_update_flags_v = update_values | update_gradients |
+  //                                                update_quadrature_points | update_JxW_values |
+  //                                                update_normal_vectors;
+  //   const UpdateFlags interface_update_flags_sf = interface_update_flags_v | update_hessians;
+
+  //   ScratchData<dim, true> scratch_data(mapping,
+  //                                       dof_handler_velocity.get_fe(),
+  //                                       dof_handler.get_fe(),
+  //                                       n_q_points_1d,
+  //                                       shape_to_test_functions_interior,
+  //                                       update_flags_v,
+  //                                       update_flags_sf,
+  //                                       interface_update_flags_v,
+  //                                       interface_update_flags_sf);
+
+  //   CopyData copy_data(shape_to_test_functions_interior.m(), dof_handler.get_fe().dofs_per_cell);
+
+  //   MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+  //                         dof_handler_velocity.end(),
+  //                         cell_worker,
+  //                         copier,
+  //                         scratch_data,
+  //                         copy_data,
+  //                         MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+  //                           MeshWorker::assemble_own_interior_faces_once,
+  //                         boundary_worker,
+  //                         face_worker);
+
+  //   // // DEBUG
+  //   // discrete_pressure.print(std::cout);
+  //   // std::cout << vector_to_string(constant_pressure_dof_indices) << std::endl;
+  // }
+
+  // /**
+  //  * Second, it remains to determine the constant pressure mode on each cell to
+  //  * globally determine the discrete pressure. As discussed before, the constant
+  //  * pressure modes do not contribute to the cell-interior non-div-free velocity
+  //  * functions, thus, they are determined by the degrees of freedom on
+  //  * interfaces.
+  //  *
+  //  * The (#cells - 1) remaining test functions are constructed by the method
+  //  * described in [Caussignac'87]... TODO
+  //  */
+  // {
+  //   {
+  //     using Stokes::Velocity::SIPG::MW::ScratchData;
+
+  //     using Stokes::Velocity::SIPG::MW::CopyData;
+
+  //     using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
+
+  //     using CellIterator = typename MatrixIntegrator<dim>::IteratorType;
+
+  //     const auto                     component_range = std::make_pair<unsigned int>(0, dim);
+  //     Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
+  //                                                           component_range);
+  //     Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
+  //                                                        component_range);
+
+  //     MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
+  //                                             &analytical_velocity,
+  //                                             &system_u,
+  //                                             equation_data_stokes,
+  //                                             &interface_handler);
+
+  //     const auto cell_worker = [&](const CellIterator &     cell,
+  //                                  ScratchData<dim, true> & scratch_data,
+  //                                  CopyData &               copy_data) {
+  //       CellIterator cell_stream_function(&dof_handler.get_triangulation(),
+  //                                         cell->level(),
+  //                                         cell->index(),
+  //                                         &dof_handler);
+  //       matrix_integrator.cell_residual_worker_interface(cell,
+  //                                                        cell_stream_function,
+  //                                                        scratch_data,
+  //                                                        copy_data);
+  //     };
+
+  //     const auto face_worker = [&](const CellIterator &     cell,
+  //                                  const unsigned int &     f,
+  //                                  const unsigned int &     sf,
+  //                                  const CellIterator &     ncell,
+  //                                  const unsigned int &     nf,
+  //                                  const unsigned int &     nsf,
+  //                                  ScratchData<dim, true> & scratch_data,
+  //                                  CopyData &               copy_data) {
+  //       CellIterator cell_stream(&dof_handler.get_triangulation(),
+  //                                cell->level(),
+  //                                cell->index(),
+  //                                &dof_handler);
+  //       CellIterator ncell_stream(&dof_handler.get_triangulation(),
+  //                                 ncell->level(),
+  //                                 ncell->index(),
+  //                                 &dof_handler);
+  //       matrix_integrator.face_residual_worker_tangential_interface(
+  //         cell, cell_stream, f, sf, ncell, ncell_stream, nf, nsf, scratch_data, copy_data);
+  //     };
+
+  //     const auto boundary_worker = [&](const CellIterator &     cell,
+  //                                      const unsigned int &     face_no,
+  //                                      ScratchData<dim, true> & scratch_data,
+  //                                      CopyData &               copy_data) {
+  //       CellIterator cell_stream(&dof_handler.get_triangulation(),
+  //                                cell->level(),
+  //                                cell->index(),
+  //                                &dof_handler);
+  //       matrix_integrator.boundary_residual_worker_tangential_interface(
+  //         cell, cell_stream, face_no, scratch_data, copy_data);
+  //     };
+
+  //     const auto copier = [&](const CopyData & copy_data) {
+  //       constraints_on_interface.template distribute_local_to_global<Vector<double>>(
+  //         copy_data.cell_rhs_test, copy_data.local_dof_indices_test, right_hand_side);
+
+  //       for(const auto & cdf : copy_data.face_data)
+  //       {
+  //         constraints_on_interface.template distribute_local_to_global<Vector<double>>(
+  //           cdf.cell_rhs_test, cdf.joint_dof_indices_test, right_hand_side);
+  //       }
+  //     };
+
+  //     const UpdateFlags update_flags_v =
+  //       update_values | update_gradients | update_quadrature_points | update_JxW_values;
+  //     const UpdateFlags update_flags_sf          = update_flags_v | update_hessians;
+  //     const UpdateFlags interface_update_flags_v = update_values | update_gradients |
+  //                                                  update_quadrature_points | update_JxW_values |
+  //                                                  update_normal_vectors;
+  //     const UpdateFlags interface_update_flags_sf = interface_update_flags_v | update_hessians;
+
+  //     ScratchData<dim, true> scratch_data(mapping,
+  //                                         dof_handler_velocity.get_fe(),
+  //                                         dof_handler.get_fe(),
+  //                                         n_q_points_1d,
+  //                                         shape_to_test_functions_interface,
+  //                                         update_flags_v,
+  //                                         update_flags_sf,
+  //                                         interface_update_flags_v,
+  //                                         interface_update_flags_sf);
+
+  //     CopyData copy_data(shape_to_test_functions_interface.m(), dof_handler.get_fe().dofs_per_cell);
+
+  //     MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+  //                           dof_handler_velocity.end(),
+  //                           cell_worker,
+  //                           copier,
+  //                           scratch_data,
+  //                           copy_data,
+  //                           MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+  //                             MeshWorker::assemble_own_interior_faces_once,
+  //                           boundary_worker,
+  //                           face_worker);
+  //   }
+
+  //   {
+  //     using Pressure::Interface::MW::ScratchData;
+
+  //     using Pressure::Interface::MW::CopyData;
+
+  //     using Pressure::Interface::MW::MatrixIntegrator;
+
+  //     using CellIterator = typename MatrixIntegrator<dim>::IteratorType;
+
+  //     const auto                     component_range = std::make_pair<unsigned int>(0, dim);
+  //     Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
+  //                                                           component_range);
+
+  //     MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
+  //                                             nullptr,
+  //                                             &discrete_pressure,
+  //                                             &interface_handler,
+  //                                             equation_data_stokes);
+
+  //     const auto face_worker = [&](const CellIterator & cell,
+  //                                  const unsigned int & f,
+  //                                  const unsigned int & sf,
+  //                                  const CellIterator & ncell,
+  //                                  const unsigned int & nf,
+  //                                  const unsigned int & nsf,
+  //                                  ScratchData<dim> &   scratch_data,
+  //                                  CopyData &           copy_data) {
+  //       CellIterator cellP(&dof_handler_pressure.get_triangulation(),
+  //                          cell->level(),
+  //                          cell->index(),
+  //                          &dof_handler_pressure);
+  //       CellIterator ncellP(&dof_handler_pressure.get_triangulation(),
+  //                           ncell->level(),
+  //                           ncell->index(),
+  //                           &dof_handler_pressure);
+  //       matrix_integrator.face_worker(
+  //         cell, cellP, f, sf, ncell, ncellP, nf, nsf, scratch_data, copy_data);
+  //     };
+
+  //     const auto copier = [&](const CopyData & copy_data) {
+  //       for(const auto & cdf : copy_data.face_data)
+  //       {
+  //         constraints_on_interface.template distribute_local_to_global<Vector<double>>(
+  //           cdf.cell_rhs_test, cdf.joint_dof_indices_test, right_hand_side);
+
+  //         constraints_on_interface.template distribute_local_to_global<SparseMatrix<double>>(
+  //           cdf.cell_matrix,
+  //           cdf.joint_dof_indices_test,
+  //           constraints_on_cell,
+  //           cdf.joint_dof_indices_ansatz,
+  //           constant_pressure_matrix);
+  //       }
+  //     };
+
+  //     const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
+  //     const UpdateFlags update_flags_pressure = update_default;
+  //     const UpdateFlags interface_update_flags =
+  //       update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+  //     const UpdateFlags interface_update_flags_pressure =
+  //       update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+
+  //     ScratchData<dim> scratch_data(mapping,
+  //                                   dof_handler_velocity.get_fe(),
+  //                                   dof_handler_pressure.get_fe(),
+  //                                   n_q_points_1d,
+  //                                   shape_to_test_functions_interface,
+  //                                   update_flags,
+  //                                   update_flags_pressure,
+  //                                   interface_update_flags,
+  //                                   interface_update_flags_pressure);
+
+  //     CopyData copy_data(GeometryInfo<dim>::faces_per_cell, 1U);
+
+  //     MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+  //                           dof_handler_velocity.end(),
+  //                           nullptr /*cell_worker*/,
+  //                           copier,
+  //                           scratch_data,
+  //                           copy_data,
+  //                           /*MeshWorker::assemble_own_cells |*/
+  //                           MeshWorker::assemble_own_interior_faces_once,
+  //                           nullptr,
+  //                           face_worker);
+  //   }
+
+  //   constraints_on_interface.condense(constant_pressure_matrix, right_hand_side);
+
+  //   // // DEBUG
+  //   // right_hand_side.print(std::cout);
+  //   // constant_pressure_matrix.print_formatted(std::cout);
+
+  //   const auto     n_cells = constant_pressure_matrix.n();
+  //   Vector<double> constant_mode_solution(n_cells);
+
+  //   SparseDirectUMFPACK A_direct;
+  //   A_direct.template initialize<SparseMatrix<double>>(constant_pressure_matrix);
+  //   A_direct.vmult(constant_mode_solution, right_hand_side);
+
+  //   constraints_on_interface.distribute(constant_mode_solution);
+
+  //   for(auto cell_index = 0U; cell_index < n_cells; ++cell_index)
+  //   {
+  //     const auto dof_index         = constant_pressure_dof_indices[cell_index];
+  //     discrete_pressure(dof_index) = constant_mode_solution[cell_index];
+  //   }
+
+  //   stokes_problem->correct_mean_value_pressure();
+  // }
 }
 
 
@@ -1838,100 +1899,101 @@ template<int dim, int fe_degree>
 double
 ModelProblem<dim, fe_degree>::compute_stream_function_error()
 {
-  AssertThrow(analytical_velocity, ExcMessage("analytical_velocity isn't initialized."));
-  AssertDimension(analytical_velocity->n_components, dim);
+  AssertThrow(false, ExcMessage("TODO MPI..."));
+  // AssertThrow(analytical_velocity, ExcMessage("analytical_velocity isn't initialized."));
+  // AssertDimension(analytical_velocity->n_components, dim);
 
-  using ::MW::ScratchData;
+  // using ::MW::ScratchData;
 
-  using ::MW::CopyData;
+  // using ::MW::CopyData;
 
-  using ::MW::compute_vcurl;
+  // using ::MW::compute_vcurl;
 
-  AffineConstraints empty_constraints;
-  empty_constraints.close();
+  // AffineConstraints empty_constraints;
+  // empty_constraints.close();
 
-  Vector<double> norm_per_cell(triangulation.n_active_cells());
+  // Vector<double> norm_per_cell(triangulation.n_active_cells());
 
-  auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-    auto & phi = scratch_data.fe_values;
-    phi.reinit(cell);
+  // auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+  //   auto & phi = scratch_data.fe_values;
+  //   phi.reinit(cell);
 
-    const unsigned int n_dofs_per_cell = phi.get_fe().dofs_per_cell;
-    const unsigned int n_q_points      = phi.n_quadrature_points;
-    const auto &       q_points        = phi.get_quadrature_points();
+  //   const unsigned int n_dofs_per_cell = phi.get_fe().dofs_per_cell;
+  //   const unsigned int n_q_points      = phi.n_quadrature_points;
+  //   const auto &       q_points        = phi.get_quadrature_points();
 
-    std::vector<Tensor<1, dim>> velocity_values;
-    std::transform(q_points.cbegin(),
-                   q_points.cend(),
-                   std::back_inserter(velocity_values),
-                   [this](const auto & x_q) {
-                     Tensor<1, dim> u_q;
-                     for(auto c = 0U; c < dim; ++c)
-                       u_q[c] = analytical_velocity->value(x_q, c);
-                     return u_q;
-                   });
+  //   std::vector<Tensor<1, dim>> velocity_values;
+  //   std::transform(q_points.cbegin(),
+  //                  q_points.cend(),
+  //                  std::back_inserter(velocity_values),
+  //                  [this](const auto & x_q) {
+  //                    Tensor<1, dim> u_q;
+  //                    for(auto c = 0U; c < dim; ++c)
+  //                      u_q[c] = analytical_velocity->value(x_q, c);
+  //                    return u_q;
+  //                  });
 
-    std::vector<types::global_dof_index> local_dof_indices(n_dofs_per_cell);
-    cell->get_active_or_mg_dof_indices(local_dof_indices);
-    std::vector<double> stream_function_dof_values;
-    std::transform(local_dof_indices.cbegin(),
-                   local_dof_indices.cend(),
-                   std::back_inserter(stream_function_dof_values),
-                   [this](const auto & i) { return system_u(i); });
+  //   std::vector<types::global_dof_index> local_dof_indices(n_dofs_per_cell);
+  //   cell->get_active_or_mg_dof_indices(local_dof_indices);
+  //   std::vector<double> stream_function_dof_values;
+  //   std::transform(local_dof_indices.cbegin(),
+  //                  local_dof_indices.cend(),
+  //                  std::back_inserter(stream_function_dof_values),
+  //                  [this](const auto & i) { return system_u(i); });
 
-    double local_error = 0.;
-    for(unsigned int q = 0; q < n_q_points; ++q)
-    {
-      Tensor<1, dim> uh_q;
-      for(unsigned int i = 0; i < n_dofs_per_cell; ++i)
-      {
-        const auto & alpha_i    = stream_function_dof_values[i];
-        const auto & curl_phi_i = compute_vcurl(phi, i, q);
-        uh_q += alpha_i * curl_phi_i;
-      }
+  //   double local_error = 0.;
+  //   for(unsigned int q = 0; q < n_q_points; ++q)
+  //   {
+  //     Tensor<1, dim> uh_q;
+  //     for(unsigned int i = 0; i < n_dofs_per_cell; ++i)
+  //     {
+  //       const auto & alpha_i    = stream_function_dof_values[i];
+  //       const auto & curl_phi_i = compute_vcurl(phi, i, q);
+  //       uh_q += alpha_i * curl_phi_i;
+  //     }
 
-      const auto & u_q = velocity_values[q];
-      local_error += (uh_q - u_q) * (uh_q - u_q) * phi.JxW(q);
-    }
+  //     const auto & u_q = velocity_values[q];
+  //     local_error += (uh_q - u_q) * (uh_q - u_q) * phi.JxW(q);
+  //   }
 
-    AssertDimension(copy_data.cell_rhs.size(), 1U);
-    AssertDimension(copy_data.local_dof_indices.size(), 1U);
-    AssertIndexRange(cell->index(), norm_per_cell.size());
+  //   AssertDimension(copy_data.cell_rhs.size(), 1U);
+  //   AssertDimension(copy_data.local_dof_indices.size(), 1U);
+  //   AssertIndexRange(cell->index(), norm_per_cell.size());
 
-    copy_data.local_dof_indices[0] = cell->index();
-    copy_data.cell_rhs(0)          = std::sqrt(local_error);
-  };
+  //   copy_data.local_dof_indices[0] = cell->index();
+  //   copy_data.cell_rhs(0)          = std::sqrt(local_error);
+  // };
 
-  const auto copier = [&](const CopyData & copy_data) {
-    /// We first store cell-wise errors to avoid data races in the mesh_loop()
-    /// call and then accumulate the global error, instead of directly copying
-    /// all local errors to one global error field.
-    AssertDimension(copy_data.cell_rhs.size(), 1U);
-    AssertDimension(copy_data.local_dof_indices.size(), 1U);
-    const auto cell_index     = copy_data.local_dof_indices[0];
-    norm_per_cell(cell_index) = copy_data.cell_rhs(0);
-  };
+  // const auto copier = [&](const CopyData & copy_data) {
+  //   /// We first store cell-wise errors to avoid data races in the mesh_loop()
+  //   /// call and then accumulate the global error, instead of directly copying
+  //   /// all local errors to one global error field.
+  //   AssertDimension(copy_data.cell_rhs.size(), 1U);
+  //   AssertDimension(copy_data.local_dof_indices.size(), 1U);
+  //   const auto cell_index     = copy_data.local_dof_indices[0];
+  //   norm_per_cell(cell_index) = copy_data.cell_rhs(0);
+  // };
 
-  const unsigned int n_gauss_points = dof_handler.get_fe().degree + 2;
-  const UpdateFlags  update_flags =
-    update_values | update_gradients | update_quadrature_points | update_JxW_values;
-  const UpdateFlags interface_update_flags  = update_default;
-  const auto        n_error_values_per_cell = 1U;
+  // const unsigned int n_gauss_points = dof_handler.get_fe().degree + 2;
+  // const UpdateFlags  update_flags =
+  //   update_values | update_gradients | update_quadrature_points | update_JxW_values;
+  // const UpdateFlags interface_update_flags  = update_default;
+  // const auto        n_error_values_per_cell = 1U;
 
-  ScratchData<dim> scratch_data(
-    mapping, dof_handler.get_fe(), n_gauss_points, update_flags, interface_update_flags);
+  // ScratchData<dim> scratch_data(
+  //   mapping, dof_handler.get_fe(), n_gauss_points, update_flags, interface_update_flags);
 
-  CopyData copy_data(n_error_values_per_cell);
+  // CopyData copy_data(n_error_values_per_cell);
 
-  MeshWorker::mesh_loop(dof_handler.begin_active(),
-                        dof_handler.end(),
-                        cell_worker,
-                        copier,
-                        scratch_data,
-                        copy_data,
-                        MeshWorker::assemble_own_cells);
+  // MeshWorker::mesh_loop(dof_handler.begin_active(),
+  //                       dof_handler.end(),
+  //                       cell_worker,
+  //                       copier,
+  //                       scratch_data,
+  //                       copy_data,
+  //                       MeshWorker::assemble_own_cells);
 
-  return VectorTools::compute_global_error(triangulation, norm_per_cell, VectorTools::L2_norm);
+  // return VectorTools::compute_global_error(triangulation, norm_per_cell, VectorTools::L2_norm);
 }
 
 
@@ -1940,22 +2002,23 @@ template<int dim, int fe_degree>
 std::shared_ptr<Vector<double>>
 ModelProblem<dim, fe_degree>::compute_L2_error_pressure() const
 {
-  AssertThrow(stokes_problem, ExcMessage("stokes_problem is not initialized"));
+  AssertThrow(false, ExcMessage("TODO MPI..."));
+  // AssertThrow(stokes_problem, ExcMessage("stokes_problem is not initialized"));
 
-  const auto component_range_pressure = std::make_pair<unsigned int>(dim, dim + 1);
-  Stokes::FunctionExtractor<dim> analytical_solution_pressure(
-    stokes_problem->analytical_solution.get(), component_range_pressure);
-  const auto & dof_handler_p     = stokes_problem->dof_handler_pressure;
-  const auto & discrete_pressure = stokes_problem->system_solution.block(1);
+  // const auto component_range_pressure = std::make_pair<unsigned int>(dim, dim + 1);
+  // Stokes::FunctionExtractor<dim> analytical_solution_pressure(
+  //   stokes_problem->analytical_solution.get(), component_range_pressure);
+  // const auto & dof_handler_p     = stokes_problem->dof_handler_pressure;
+  // const auto & discrete_pressure = stokes_problem->system_solution.block(1);
 
-  const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
-  VectorTools::integrate_difference(dof_handler_p,
-                                    discrete_pressure,
-                                    analytical_solution_pressure,
-                                    *difference_per_cell,
-                                    QGauss<dim>(stokes_problem->n_q_points_1d + 2),
-                                    VectorTools::L2_norm);
-  return difference_per_cell;
+  // const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  // VectorTools::integrate_difference(dof_handler_p,
+  //                                   discrete_pressure,
+  //                                   analytical_solution_pressure,
+  //                                   *difference_per_cell,
+  //                                   QGauss<dim>(stokes_problem->n_q_points_1d + 2),
+  //                                   VectorTools::L2_norm);
+  // return difference_per_cell;
 }
 
 

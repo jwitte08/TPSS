@@ -129,7 +129,7 @@ main(int argc, char * argv[])
 
 
     //: default
-    unsigned int solver_index              = 4; // CG + GMG + Schwarz
+    unsigned int solver_index              = 1; // CG + unprec
     unsigned int debug_depth               = 0;
     double       damping                   = 0.;
     double       ip_factor                 = 1.;
@@ -185,7 +185,7 @@ main(int argc, char * argv[])
 
       //: discretization
       prms.n_cycles              = 13;
-      prms.dof_limits            = {1e4, 5e5}; //{1e5, 1e8};
+      prms.dof_limits            = {1e1, 1e4}; //{1e5, 1e8};
       prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
       prms.mesh.n_refinements    = 1;
       prms.mesh.n_repetitions    = 2;
@@ -236,7 +236,7 @@ main(int argc, char * argv[])
     std::fstream fout;
     const auto   filename = get_filename(prms, equation_data);
     fout.open(filename + ".log", std::ios_base::out);
-    auto pcout               = std::make_shared<ConditionalOStream>(fout, true);
+    auto pcout               = std::make_shared<ConditionalOStream>(std::cout/*!!!fout*/, true);
     biharmonic_problem.pcout = pcout;
 
     if(use_hierarchical_elements)

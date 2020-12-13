@@ -72,7 +72,7 @@ struct MatrixIntegrator
 
   MatrixIntegrator(const Function<dim> *  load_function_in,
                    const Function<dim> *  analytical_solution_in,
-                   const Vector<double> * particular_solution,
+                   const LinearAlgebra::distributed::Vector<double> * particular_solution,
                    const EquationData &   equation_data_in)
     : load_function(load_function_in),
       analytical_solution(analytical_solution_in),
@@ -104,7 +104,7 @@ struct MatrixIntegrator
 
   const Function<dim> *  load_function;
   const Function<dim> *  analytical_solution;
-  const Vector<double> * discrete_solution;
+  const LinearAlgebra::distributed::Vector<double> * discrete_solution;
   const EquationData     equation_data;
 };
 
