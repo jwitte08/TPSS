@@ -35,10 +35,10 @@
 #include <deal.II/lac/solver_cg.h>
 #include <deal.II/lac/sparse_direct.h>
 #include <deal.II/lac/sparse_matrix.h>
-#include <deal.II/lac/vector.h>
-#include <deal.II/lac/trilinos_sparse_matrix.h>
 #include <deal.II/lac/trilinos_precondition.h>
 #include <deal.II/lac/trilinos_solver.h>
+#include <deal.II/lac/trilinos_sparse_matrix.h>
+#include <deal.II/lac/vector.h>
 
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/tria.h>
@@ -88,8 +88,21 @@ public:
   using value_type            = Number;
   using matrix_type           = TrilinosWrappers::SparseMatrix;
   using local_integrator_type = C0IP::FD::MatrixIntegrator<dim, fe_degree, Number>;
-  using vector_type = LinearAlgebra::distributed::Vector<Number>;
-  
+  using vector_type           = LinearAlgebra::distributed::Vector<Number>;
+
+  void
+  initialize(const TrilinosWrappers::SparsityPattern & dsp,
+             const IndexSet &                          locally_owned_dof_indices,
+             const IndexSet &                          ghosted_dof_indices,
+             const MPI_Comm &                          mpi_communicator)
+  {
+    Assert(dsp.is_compressed(), ExcMessage("The sparsity pattern isn't compressed."));
+    matrix_type::reinit(dsp);
+    partitioner = std::make_shared<const Utilities::MPI::Partitioner>(locally_owned_dof_indices,
+                                                                      ghosted_dof_indices,
+                                                                      mpi_communicator);
+  }
+
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
              const EquationData                             equation_data_in)
@@ -101,13 +114,14 @@ public:
   void
   initialize_dof_vector(vector_type & vec) const
   {
-    AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
-    // const auto   level = mf_storage->get_mg_level();
-    // const auto & dofh  = mf_storage->get_dof_handler();
-    // if(level == numbers::invalid_unsigned_int)
-    //   vec.reinit(dofh.n_dofs());
-    // else
-    //   vec.reinit(dofh.n_dofs(level));
+    Assert(partitioner, ExcMessage("Did you initialize partitioner?"));
+    vec.reinit(partitioner);
+  }
+
+  void
+  initialize_dof_vector_mf(vector_type & vec) const
+  {
+    Assert(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
     mf_storage->initialize_dof_vector(vec);
   }
 
@@ -123,16 +137,26 @@ public:
   void
   vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const
   {
+    AssertThrow(false, ExcMessage("TODO MPI..."));
     AssertDimension(dst.size(), matrix_type::m());
     AssertDimension(src.size(), matrix_type::n());
     vector_type v(matrix_type::n()); // src
     std::copy(src.cbegin(), src.cend(), v.begin());
     vector_type w(matrix_type::m()); // dst
-    matrix_type::vmult(w, v);           // w = A v
+    matrix_type::vmult(w, v);        // w = A v
     std::copy(w.begin(), w.end(), dst.begin());
   }
 
-  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
+  void
+  clear()
+  {
+    mf_storage.reset();
+    partitioner.reset();
+    matrix_type::clear();
+  }
+
+  std::shared_ptr<const Utilities::MPI::Partitioner> partitioner;
+  std::shared_ptr<const MatrixFree<dim, Number>>     mf_storage;
 };
 
 
@@ -143,7 +167,7 @@ class ModelProblem
   static_assert(dim == 2, "The model problem is implemented for 2D only.");
   static_assert(
     fe_degree >= 2,
-    "The C0IP formulation for the biharmonic problem is reasonable for finite elements of polynomial degree at least 2.");
+    "The C0IP formulation for the biharmonic problem is reasonable for finite elements of polynomial degree two or larger.");
 
 public:
   using VECTOR = LinearAlgebra::distributed::Vector<double>;
@@ -200,7 +224,8 @@ public:
     amg_features.higher_order_elements = true;
     amg_features.smoother_sweeps       = 2;
     amg_features.aggregation_threshold = 0.0002;
-    preconditioner_amg->initialize(static_cast<const TrilinosWrappers::SparseMatrix&>(system_matrix),amg_features);
+    preconditioner_amg->initialize(
+      static_cast<const TrilinosWrappers::SparseMatrix &>(system_matrix), amg_features);
     return *preconditioner_amg;
   }
 
@@ -210,7 +235,8 @@ public:
     preconditioner_blockdirect = std::make_shared<TrilinosWrappers::PreconditionBlockwiseDirect>();
     TrilinosWrappers::PreconditionBlockwiseDirect::AdditionalData blockdirect_features;
     blockdirect_features.overlap = 0U;
-    preconditioner_blockdirect->initialize(static_cast<const TrilinosWrappers::SparseMatrix&>(system_matrix),blockdirect_features);
+    preconditioner_blockdirect->initialize(
+      static_cast<const TrilinosWrappers::SparseMatrix &>(system_matrix), blockdirect_features);
     return *preconditioner_blockdirect;
   }
 
@@ -249,7 +275,7 @@ public:
   std::shared_ptr<const MatrixFree<dim, OtherNumber>>
   build_mf_storage() const;
 
-    unsigned int
+  unsigned int
   max_level() const
   {
     return triangulation.n_global_levels() - 1;
@@ -297,13 +323,13 @@ public:
   AffineConstraints<double>                 constraints;
   AffineConstraints<double>                 zero_constraints;
 
-  SparsityPattern sparsity_pattern;
-  MATRIX          system_matrix;
+  SparsityPattern   sparsity_pattern;
+  MATRIX            system_matrix;
   const UpdateFlags update_flags;
   const UpdateFlags update_flags_interface;
-  VECTOR          system_u;
-  VECTOR          system_delta_u;
-  VECTOR          system_rhs;
+  VECTOR            system_u;
+  VECTOR            system_delta_u;
+  VECTOR            system_rhs;
 
   // *** multigrid
   std::shared_ptr<MGConstrainedDoFs>                mg_constrained_dofs;
@@ -336,7 +362,7 @@ public:
     stokes_problem;
 
   unsigned int proc_no;
-  
+
 private:
   void
   make_grid_impl(const MeshParameter & mesh_prms);
@@ -449,11 +475,10 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
                   parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
     mapping(1),
     finite_element(std::make_shared<FE_Q<dim>>(fe_degree)),
-    update_flags (                                   update_values | update_gradients | update_hessians |
-						     update_quadrature_points | update_JxW_values),
-    update_flags_interface(                                   update_values | update_gradients | update_hessians |
-                                    update_quadrature_points | update_JxW_values |
-							      update_normal_vectors),
+    update_flags(update_values | update_gradients | update_hessians | update_quadrature_points |
+                 update_JxW_values),
+    update_flags_interface(update_values | update_gradients | update_hessians |
+                           update_quadrature_points | update_JxW_values | update_normal_vectors),
     user_coloring([&]() -> std::shared_ptr<ColoringBase<dim>> {
       const bool is_AVP = rt_parameters.multigrid.pre_smoother.schwarz.is_additive_vertex_patch();
       Assert(rt_parameters.multigrid.pre_smoother.schwarz.is_additive_vertex_patch() ==
@@ -463,7 +488,7 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
       if(is_AVP && is_multithreaded)
         return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
       return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
-      }()),
+    }()),
     proc_no(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD))
 {
   AssertThrow(rt_parameters.multigrid.pre_smoother.schwarz.patch_variant ==
@@ -551,26 +576,23 @@ ModelProblem<dim, fe_degree>::make_grid_impl(const MeshParameter & mesh_prms)
 
 
 template<int dim, int fe_degree>
-  template<typename OtherNumber>
-  std::shared_ptr<const MatrixFree<dim, OtherNumber>>
-ModelProblem<dim, fe_degree>::  build_mf_storage() const
-  {
-    typename MatrixFree<dim, OtherNumber>::AdditionalData mf_features;
-    mf_features.tasks_parallel_scheme = MatrixFree<dim, OtherNumber>::AdditionalData::none;
-      mf_features.mapping_update_flags =
-	update_flags;
-      mf_features.mapping_update_flags_inner_faces =
-        update_flags_interface;
-      mf_features.mapping_update_flags_boundary_faces =
-        update_flags_interface;
+template<typename OtherNumber>
+std::shared_ptr<const MatrixFree<dim, OtherNumber>>
+ModelProblem<dim, fe_degree>::build_mf_storage() const
+{
+  typename MatrixFree<dim, OtherNumber>::AdditionalData mf_features;
+  mf_features.tasks_parallel_scheme            = MatrixFree<dim, OtherNumber>::AdditionalData::none;
+  mf_features.mapping_update_flags             = update_flags;
+  mf_features.mapping_update_flags_inner_faces = update_flags_interface;
+  mf_features.mapping_update_flags_boundary_faces = update_flags_interface;
 
-    QGauss<1> quadrature(n_q_points_1d);
+  QGauss<1> quadrature(n_q_points_1d);
 
-    const auto mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
-    mf_storage->reinit(mapping, dof_handler, constraints, quadrature, mf_features);
+  const auto mf_storage = std::make_shared<MatrixFree<dim, OtherNumber>>();
+  mf_storage->reinit(mapping, dof_handler, constraints, quadrature, mf_features);
 
-    return mf_storage;
-  }
+  return mf_storage;
+}
 
 
 
@@ -585,15 +607,8 @@ ModelProblem<dim, fe_degree>::setup_system()
   print_parameter("Number of degrees of freedom:", dof_handler.n_dofs());
 
   const auto & locally_owned_dof_indices = dof_handler.locally_owned_dofs();
-  IndexSet locally_relevant_dof_indices;
+  IndexSet     locally_relevant_dof_indices;
   DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dof_indices);
-
-  {
-    std::ostringstream oss;
-    oss << "proc: " << proc_no << std::endl;
-    locally_relevant_dof_indices.print(oss);
-    std::cout << oss.str();
-  }
 
   constraints.clear();
   constraints.reinit(locally_relevant_dof_indices);
@@ -621,40 +636,31 @@ ModelProblem<dim, fe_degree>::setup_system()
     DoFTools::make_zero_boundary_constraints(dof_handler, boundary_id, zero_constraints);
   zero_constraints.close();
 
-  // DynamicSparsityPattern dsp(locally_relevant_dof_indices);
-  // DoFTools::make_flux_sparsity_pattern(dof_handler,
-  //                                      dsp,
-  //                                      constraints,
-  //                                      direct_solver_is_used ? true : false);
-  // SparsityTools::distribute_sparsity_pattern(dsp,
-  // 					     locally_owned_dof_indices,
-  //                                            MPI_COMM_WORLD,
-  //                                            locally_relevant_dof_indices);
-  TrilinosWrappers::SparsityPattern dsp(locally_owned_dof_indices,locally_owned_dof_indices,locally_relevant_dof_indices,MPI_COMM_WORLD);
-  DoFTools::make_flux_sparsity_pattern(dof_handler,
-                                       dsp,
-                                       constraints,
-                                       false);
+  TrilinosWrappers::SparsityPattern dsp(locally_owned_dof_indices,
+                                        locally_owned_dof_indices,
+                                        locally_relevant_dof_indices,
+                                        MPI_COMM_WORLD);
+  DoFTools::make_flux_sparsity_pattern(dof_handler, dsp, constraints, false);
   dsp.compress();
-  
-  system_matrix.initialize(build_mf_storage<double>(), equation_data);
-  system_matrix.reinit(dsp);
+
+  // system_matrix.initialize(build_mf_storage<double>(), equation_data);
+  system_matrix.initialize(dsp,
+                           locally_owned_dof_indices,
+                           locally_relevant_dof_indices,
+                           MPI_COMM_WORLD);
   pp_data.n_dofs_global.push_back(system_matrix.m());
 
   system_u.reinit(0);
   system_delta_u.reinit(0);
   system_rhs.reinit(0);
 
-  // system_matrix.initialize_dof_vector(system_u);
-  system_u.reinit(locally_owned_dof_indices, locally_relevant_dof_indices, MPI_COMM_WORLD);
+  system_matrix.initialize_dof_vector(system_u);
   constraints.distribute(system_u); // set boundary values (particular solution)
 
-  // system_matrix.initialize_dof_vector(system_delta_u);
-  system_delta_u.reinit(locally_owned_dof_indices, locally_relevant_dof_indices, MPI_COMM_WORLD);
-  zero_constraints.distribute(system_delta_u); // set zero boundary values (homogen. solution)
+  system_matrix.initialize_dof_vector(system_delta_u);
+  zero_constraints.distribute(system_delta_u); // set zero boundary values (homo. solution)
 
-  // system_matrix.initialize_dof_vector(system_rhs);
-  system_rhs.reinit(locally_owned_dof_indices, locally_relevant_dof_indices, MPI_COMM_WORLD);
+  system_matrix.initialize_dof_vector(system_rhs);
 }
 
 
@@ -773,19 +779,11 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
 
     using C0IP::MW::CopyData;
 
-    using MatrixIntegrator = typename C0IP::MW::
-      MatrixIntegrator<dim, /*is_multigrid*/ false, /*stream function?*/ is_stream>;
+    using MatrixIntegrator =
+      typename C0IP::MW::MatrixIntegrator<dim, /*multigrid?*/ false, /*stream function?*/ false>;
 
     system_u.update_ghost_values();
     system_rhs.zero_out_ghosts();
-
-    {
-    std::ostringstream oss;
-    oss << "proc: " << proc_no << " system_u:" << std::endl;
-    system_u.get_partitioner()->locally_owned_range().print(oss);
-    system_u.get_partitioner()->ghost_indices().print(oss);
-    std::cout << oss.str();
-    }
 
     MatrixIntegrator matrix_integrator(load_function.get(),
                                        analytical_solution.get(),
@@ -793,19 +791,20 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
                                        equation_data);
 
     auto cell_worker =
-      [&](const auto & cell, C0IP::MW::ScratchData<dim> & scratch_data, CopyData & copy_data) {
+      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
         matrix_integrator.cell_worker(cell, scratch_data, copy_data);
       };
 
     auto face_worker = [&](const auto &         cell,
-                           const unsigned int & f,
-                           const unsigned int & sf,
+                           const unsigned int & face_no,
+                           const unsigned int & sface_no,
                            const auto &         ncell,
-                           const unsigned int & nf,
-                           const unsigned int & nsf,
+                           const unsigned int & nface_no,
+                           const unsigned int & nsface_no,
                            ScratchData<dim> &   scratch_data,
                            CopyData &           copy_data) {
-      matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+      matrix_integrator.face_worker(
+        cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
     };
 
     auto boundary_worker = [&](const auto &         cell,
@@ -815,61 +814,36 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
       matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
     };
 
-    /// The copier has to use homogeneous boundary constraints for dof transfer
-    /// since we would like to assemble a system matrix for the homogeneous
-    /// solution @p system_delta_u. The particular solution u0 with the correct
-    /// heterogeneous boundary values is incorporated in the right hand side. This
-    /// is like using Newton's method on a linear system, thus, resulting in one
-    /// Newton step with @p system_delta_u being the Newton update and @p system_u
-    /// the initial value.
+    /// The copier has to transfer dof values with respect to homogeneous
+    /// boundary constraints when assembling a system matrix 'A' (@p
+    /// system_matrix) for the homogeneous solution '\Delta u'(@p
+    /// system_delta_u). Subtracting the matrix-vector product 'A u_0' for a
+    /// particular solution u_0 from the right-hand side vector 'b' lifts
+    /// heterogeneous boundary values. This is like using Newton's method on the
+    /// residual of the linear system 'F(u) = b - A u': the problem gets solved
+    /// in one Newton step by correcting a particular solution 'u_0' (@p
+    /// system_u) as initial guess with the Newton update '\Delta u' (@p
+    /// system_delta_u).
     const auto copier = [&](const CopyData & copy_data) {
+      for(const auto & cell_data : copy_data.cell_data)
       {
-	std::ostringstream oss;
-	oss << "proc: " << proc_no << " local_dof_indices:" << std::endl;
-	oss << vector_to_string(copy_data.local_dof_indices) << std::endl;
-	std::cout << oss.str();
+        AssertDimension(copy_data.cell_data.size(), 1U);
+        zero_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+          cell_data.matrix, cell_data.rhs, cell_data.dof_indices, system_matrix, system_rhs);
       }
-
-      const bool copy_data_not_used = std::all_of(copy_data.local_dof_indices.cbegin(), copy_data.local_dof_indices.cend(), [](const types::global_dof_index i){return i == 0;});
-      
-      if(!copy_data_not_used)
-      zero_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix, VECTOR>(
-        copy_data.cell_matrix,
-        copy_data.cell_rhs,
-        copy_data.local_dof_indices,
-        system_matrix,
-        system_rhs);
-      else
-	AssertThrow(copy_data.face_data.empty(), ExcMessage("FaceData?"));
 
       for(auto & cdf : copy_data.face_data)
       {
-      {
-	std::ostringstream oss;
-	oss << "proc: " << proc_no << " joint_dof_indices:" << std::endl;
-	oss << vector_to_string(cdf.joint_dof_indices) << std::endl;
-	std::cout << oss.str();
-      }
-
-      if(cdf.cell_rhs.size() == 0) // only filled on cells at the boundary
-          zero_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
-            cdf.cell_matrix, cdf.joint_dof_indices, system_matrix);
-        else
-          zero_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
-            cdf.cell_matrix, cdf.cell_rhs, cdf.joint_dof_indices, system_matrix, system_rhs);
+        zero_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+          cdf.matrix, cdf.rhs, cdf.dof_indices, system_matrix, system_rhs);
       }
     };
 
-    const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
+    ScratchData<dim> scratch_data(
+      mapping, dof_handler.get_fe(), n_q_points_1d, update_flags, update_flags_interface);
 
-    ScratchData<dim>   scratch_data(mapping,
-                                  *finite_element,
-                                  n_gauss_points,
-				    update_flags,
-				    update_flags_interface);
+    CopyData copy_data;
 
-				    CopyData           copy_data(dof_handler.get_fe().dofs_per_cell);
-				    
     MeshWorker::mesh_loop(dof_handler.begin_active(),
                           dof_handler.end(),
                           cell_worker,
@@ -877,10 +851,11 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
                           scratch_data,
                           copy_data,
                           MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-			  MeshWorker::assemble_own_interior_faces_once | MeshWorker::assemble_ghost_faces_once,
+                            MeshWorker::assemble_own_interior_faces_once |
+                            MeshWorker::assemble_ghost_faces_once,
                           boundary_worker,
                           face_worker);
-    
+
     system_matrix.compress(VectorOperation::add);
     system_rhs.compress(VectorOperation::add);
   }
@@ -993,12 +968,14 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
 
   //   using MatrixIntegrator = C0IP::MW::MatrixIntegrator<dim, /*is_multigrid*/ true>;
 
-  //   MatrixIntegrator matrix_integrator(nullptr, analytical_solution.get(), nullptr, equation_data);
+  //   MatrixIntegrator matrix_integrator(nullptr, analytical_solution.get(), nullptr,
+  //   equation_data);
 
   //   using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
   //   auto cell_worker =
-  //     [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+  //     [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data)
+  //     {
   //       matrix_integrator.cell_worker(cell, scratch_data, copy_data);
   //     };
 
@@ -1192,10 +1169,10 @@ ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & pr
   // }
   // else
   // {
-    pp_data.average_reduction_system.push_back(solver_control->average_reduction());
-    pp_data.n_iterations_system.push_back(solver_control->last_step());
-    print_parameter("Average reduction (solver):", solver_control->average_reduction());
-    print_parameter("Number of iterations (solver):", solver_control->last_step());
+  pp_data.average_reduction_system.push_back(solver_control->average_reduction());
+  pp_data.n_iterations_system.push_back(solver_control->last_step());
+  print_parameter("Average reduction (solver):", solver_control->average_reduction());
+  print_parameter("Number of iterations (solver):", solver_control->last_step());
   // }
 }
 
@@ -1221,9 +1198,9 @@ ModelProblem<dim, fe_degree>::solve()
     pp_data.n_mg_levels.push_back(0);
     print_parameter("Average reduction (solver):", "trilinos pCG");
     print_parameter("Number of iterations (solver):", "---");
-    auto solver_control = get_solver_control();
+    auto                                       solver_control = get_solver_control();
     TrilinosWrappers::SolverCG::AdditionalData cg_features(true);
-    TrilinosWrappers::SolverCG solver(*solver_control, cg_features);
+    TrilinosWrappers::SolverCG                 solver(*solver_control, cg_features);
     solver.solve(system_matrix, system_delta_u, system_rhs, prec);
     system_u += system_delta_u;
     // pp_data.average_reduction_system.push_back(solver_control->average_reduction());
@@ -1238,18 +1215,18 @@ ModelProblem<dim, fe_degree>::solve()
     switch(rt_parameters.solver.precondition_variant)
     {
       case SolverParameter::PreconditionVariant::None:
-	{
-	// const auto & prec = prepare_preconditioner_amg();
-	  iterative_solve_impl(PreconditionIdentity{});
+      {
+        // const auto & prec = prepare_preconditioner_amg();
+        iterative_solve_impl(PreconditionIdentity{});
         break;
-	}
+      }
 
       case SolverParameter::PreconditionVariant::GMG:
-	{
+      {
         prepare_preconditioner_mg();
         iterative_solve_impl(*preconditioner_mg);
         break;
-	}
+      }
 
       default:
         AssertThrow(false, ExcNotImplemented());
@@ -1538,10 +1515,12 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   // AssertThrow(
   //   interface_handler.get_fixed_cell_index() == interface_handler.get_fixed_interface_index(),
   //   ExcMessage(
-  //     "I am worried about the constraints in case the fixed cell and interface index do not coincide."));
+  //     "I am worried about the constraints in case the fixed cell and interface index do not
+  //     coincide."));
 
   // AffineConstraints constraints_on_interface;
-  // const auto        interface_index_of_fixed_cell = interface_handler.get_fixed_interface_index();
+  // const auto        interface_index_of_fixed_cell =
+  // interface_handler.get_fixed_interface_index();
   // constraints_on_interface.add_line(interface_index_of_fixed_cell);
   // constraints_on_interface.set_inhomogeneity(interface_index_of_fixed_cell, 1.);
   // constraints_on_interface.close();
@@ -1558,7 +1537,8 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   //   dsp.add(e, K_right);
 
   //   // DEBUG
-  //   // std::cout << "interface index (row): " << interface_handler.get_interface_index(id) << " ";
+  //   // std::cout << "interface index (row): " << interface_handler.get_interface_index(id) << "
+  //   ";
   //   // const auto [left_index, right_index] = interface_handler.get_cell_index_pair(id);
   //   // std::cout << "left cell index (column): " << left_index << " ";
   //   // std::cout << "right cell index (column): " << right_index << " ";
@@ -1575,7 +1555,8 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   // Vector<double> right_hand_side(n_interface_nodes);
 
   // std::vector<types::global_dof_index> constant_pressure_dof_indices(n_interface_nodes);
-  // Vector<double> &                     discrete_pressure = stokes_problem->system_solution.block(1);
+  // Vector<double> &                     discrete_pressure =
+  // stokes_problem->system_solution.block(1);
 
   // const auto n_q_points_1d = stokes_problem->n_q_points_1d;
 
@@ -1621,11 +1602,13 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   //   AssertThrow(
   //     is_dgq_legendre,
   //     ExcMessage(
-  //       "For this reconstruction method we assume that the pressure shape functions are of Legendre-type."));
+  //       "For this reconstruction method we assume that the pressure shape functions are of
+  //       Legendre-type."));
   //   AssertThrow(
   //     TPSS::get_dof_layout(dof_handler_velocity.get_fe()) == TPSS::DoFLayout::RT,
   //     ExcMessage(
-  //       "For this reconstruction method we assume that the velocity finite elements are of Raviart-Thomas-type."));
+  //       "For this reconstruction method we assume that the velocity finite elements are of
+  //       Raviart-Thomas-type."));
 
   //   using Stokes::Velocity::SIPG::MW::ScratchData;
 
@@ -1648,7 +1631,8 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   //                                           &interface_handler);
 
   //   auto cell_worker =
-  //     [&](const CellIterator & cell, ScratchData<dim, true> & scratch_data, CopyData & copy_data) {
+  //     [&](const CellIterator & cell, ScratchData<dim, true> & scratch_data, CopyData & copy_data)
+  //     {
   //       CellIterator cell_stream_function(&dof_handler.get_triangulation(),
   //                                         cell->level(),
   //                                         cell->index(),
@@ -1792,7 +1776,8 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   //     const auto                     component_range = std::make_pair<unsigned int>(0, dim);
   //     Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
   //                                                           component_range);
-  //     Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
+  //     Stokes::FunctionExtractor<dim>
+  //     analytical_velocity(stokes_problem->analytical_solution.get(),
   //                                                        component_range);
 
   //     MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
@@ -1875,7 +1860,8 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   //                                         interface_update_flags_v,
   //                                         interface_update_flags_sf);
 
-  //     CopyData copy_data(shape_to_test_functions_interface.m(), dof_handler.get_fe().dofs_per_cell);
+  //     CopyData copy_data(shape_to_test_functions_interface.m(),
+  //     dof_handler.get_fe().dofs_per_cell);
 
   //     MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
   //                           dof_handler_velocity.end(),
@@ -2020,7 +2006,8 @@ ModelProblem<dim, fe_degree>::compute_stream_function_error()
 
   // Vector<double> norm_per_cell(triangulation.n_active_cells());
 
-  // auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+  // auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData &
+  // copy_data) {
   //   auto & phi = scratch_data.fe_values;
   //   phi.reinit(cell);
 
@@ -2117,7 +2104,8 @@ ModelProblem<dim, fe_degree>::compute_L2_error_pressure() const
   // const auto & dof_handler_p     = stokes_problem->dof_handler_pressure;
   // const auto & discrete_pressure = stokes_problem->system_solution.block(1);
 
-  // const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  // const auto difference_per_cell =
+  // std::make_shared<Vector<double>>(triangulation.n_active_cells());
   // VectorTools::integrate_difference(dof_handler_p,
   //                                   discrete_pressure,
   //                                   analytical_solution_pressure,

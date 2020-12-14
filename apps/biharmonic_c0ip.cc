@@ -129,7 +129,7 @@ main(int argc, char * argv[])
 
 
     //: default
-    unsigned int solver_index              = 1; // CG + unprec
+    unsigned int solver_index              = 0; // CG + unprec
     unsigned int debug_depth               = 0;
     double       damping                   = 0.;
     double       ip_factor                 = 1.;
@@ -231,12 +231,14 @@ main(int argc, char * argv[])
     equation_data.local_solver_variant = LocalSolverVariant::Exact;
     equation_data.ip_factor            = ip_factor;
 
+    const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0U;
+
     ModelProblem<dim, fe_degree> biharmonic_problem(prms, equation_data);
 
     std::fstream fout;
     const auto   filename = get_filename(prms, equation_data);
     fout.open(filename + ".log", std::ios_base::out);
-    auto pcout               = std::make_shared<ConditionalOStream>(std::cout/*!!!fout*/, true);
+    auto pcout               = std::make_shared<ConditionalOStream>(std::cout /*!!!fout*/, true);
     biharmonic_problem.pcout = pcout;
 
     if(use_hierarchical_elements)
