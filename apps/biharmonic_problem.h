@@ -37,6 +37,8 @@
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/vector.h>
 #include <deal.II/lac/trilinos_sparse_matrix.h>
+#include <deal.II/lac/trilinos_precondition.h>
+#include <deal.II/lac/trilinos_solver.h>
 
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/tria.h>
@@ -189,6 +191,29 @@ public:
     return *preconditioner_mg;
   }
 
+  const TrilinosWrappers::PreconditionAMG &
+  prepare_preconditioner_amg()
+  {
+    preconditioner_amg = std::make_shared<TrilinosWrappers::PreconditionAMG>();
+    TrilinosWrappers::PreconditionAMG::AdditionalData amg_features;
+    amg_features.elliptic              = true;
+    amg_features.higher_order_elements = true;
+    amg_features.smoother_sweeps       = 2;
+    amg_features.aggregation_threshold = 0.0002;
+    preconditioner_amg->initialize(static_cast<const TrilinosWrappers::SparseMatrix&>(system_matrix),amg_features);
+    return *preconditioner_amg;
+  }
+
+  const TrilinosWrappers::PreconditionBlockwiseDirect &
+  prepare_preconditioner_blockdirect()
+  {
+    preconditioner_blockdirect = std::make_shared<TrilinosWrappers::PreconditionBlockwiseDirect>();
+    TrilinosWrappers::PreconditionBlockwiseDirect::AdditionalData blockdirect_features;
+    blockdirect_features.overlap = 0U;
+    preconditioner_blockdirect->initialize(static_cast<const TrilinosWrappers::SparseMatrix&>(system_matrix),blockdirect_features);
+    return *preconditioner_blockdirect;
+  }
+
   void
   solve();
 
@@ -300,12 +325,18 @@ public:
 
   std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
 
+  std::shared_ptr<TrilinosWrappers::PreconditionAMG> preconditioner_amg;
+
+  std::shared_ptr<TrilinosWrappers::PreconditionBlockwiseDirect> preconditioner_blockdirect;
+
   static constexpr unsigned int               fe_degree_pressure = fe_degree - 1;
   Stokes::StokesFlow<dim, fe_degree_pressure> options_stokes;
   Stokes::EquationData                        equation_data_stokes;
   std::shared_ptr<Stokes::ModelProblem<dim, fe_degree_pressure, Stokes::Method::RaviartThomas>>
     stokes_problem;
 
+  unsigned int proc_no;
+  
 private:
   void
   make_grid_impl(const MeshParameter & mesh_prms);
@@ -313,6 +344,9 @@ private:
   template<bool is_stream_function>
   void
   assemble_system_impl();
+
+  std::shared_ptr<SolverControl>
+  get_solver_control() const;
 
   template<typename PreconditionerType>
   void
@@ -429,10 +463,9 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
       if(is_AVP && is_multithreaded)
         return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
       return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
-    }())
+      }()),
+    proc_no(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD))
 {
-  AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
-              ExcMessage("MPI isn't supported."));
   AssertThrow(rt_parameters.multigrid.pre_smoother.schwarz.patch_variant ==
                 TPSS::PatchVariant::vertex,
               ExcMessage("Model problem is designed for Schwarz methods on vertex patches."));
@@ -554,7 +587,14 @@ ModelProblem<dim, fe_degree>::setup_system()
   const auto & locally_owned_dof_indices = dof_handler.locally_owned_dofs();
   IndexSet locally_relevant_dof_indices;
   DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dof_indices);
-  
+
+  {
+    std::ostringstream oss;
+    oss << "proc: " << proc_no << std::endl;
+    locally_relevant_dof_indices.print(oss);
+    std::cout << oss.str();
+  }
+
   constraints.clear();
   constraints.reinit(locally_relevant_dof_indices);
   if(dof_handler.get_fe().has_support_points())
@@ -581,33 +621,40 @@ ModelProblem<dim, fe_degree>::setup_system()
     DoFTools::make_zero_boundary_constraints(dof_handler, boundary_id, zero_constraints);
   zero_constraints.close();
 
-  DynamicSparsityPattern dsp(locally_relevant_dof_indices);
-
-  const bool             direct_solver_is_used = (rt_parameters.solver.variant == "direct");
+  // DynamicSparsityPattern dsp(locally_relevant_dof_indices);
+  // DoFTools::make_flux_sparsity_pattern(dof_handler,
+  //                                      dsp,
+  //                                      constraints,
+  //                                      direct_solver_is_used ? true : false);
+  // SparsityTools::distribute_sparsity_pattern(dsp,
+  // 					     locally_owned_dof_indices,
+  //                                            MPI_COMM_WORLD,
+  //                                            locally_relevant_dof_indices);
+  TrilinosWrappers::SparsityPattern dsp(locally_owned_dof_indices,locally_owned_dof_indices,locally_relevant_dof_indices,MPI_COMM_WORLD);
   DoFTools::make_flux_sparsity_pattern(dof_handler,
                                        dsp,
                                        constraints,
-                                       direct_solver_is_used ? true : false);
-  SparsityTools::distribute_sparsity_pattern(dsp,
-					     locally_owned_dof_indices,
-                                             MPI_COMM_WORLD,
-                                             locally_relevant_dof_indices);
-  // sparsity_pattern.copy_from(dsp);
+                                       false);
+  dsp.compress();
+  
   system_matrix.initialize(build_mf_storage<double>(), equation_data);
-  system_matrix.reinit(locally_owned_dof_indices, locally_owned_dof_indices, dsp, MPI_COMM_WORLD);
+  system_matrix.reinit(dsp);
   pp_data.n_dofs_global.push_back(system_matrix.m());
 
   system_u.reinit(0);
   system_delta_u.reinit(0);
   system_rhs.reinit(0);
-  // system_u.reinit(dof_handler.n_dofs());
-  system_matrix.initialize_dof_vector(system_u);
+
+  // system_matrix.initialize_dof_vector(system_u);
+  system_u.reinit(locally_owned_dof_indices, locally_relevant_dof_indices, MPI_COMM_WORLD);
   constraints.distribute(system_u); // set boundary values (particular solution)
-  // system_delta_u.reinit(dof_handler.n_dofs());
-  system_matrix.initialize_dof_vector(system_delta_u);
+
+  // system_matrix.initialize_dof_vector(system_delta_u);
+  system_delta_u.reinit(locally_owned_dof_indices, locally_relevant_dof_indices, MPI_COMM_WORLD);
   zero_constraints.distribute(system_delta_u); // set zero boundary values (homogen. solution)
-  system_matrix.initialize_dof_vector(system_rhs);
-  // system_rhs.reinit(dof_handler.n_dofs());
+
+  // system_matrix.initialize_dof_vector(system_rhs);
+  system_rhs.reinit(locally_owned_dof_indices, locally_relevant_dof_indices, MPI_COMM_WORLD);
 }
 
 
@@ -729,6 +776,17 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
     using MatrixIntegrator = typename C0IP::MW::
       MatrixIntegrator<dim, /*is_multigrid*/ false, /*stream function?*/ is_stream>;
 
+    system_u.update_ghost_values();
+    system_rhs.zero_out_ghosts();
+
+    {
+    std::ostringstream oss;
+    oss << "proc: " << proc_no << " system_u:" << std::endl;
+    system_u.get_partitioner()->locally_owned_range().print(oss);
+    system_u.get_partitioner()->ghost_indices().print(oss);
+    std::cout << oss.str();
+    }
+
     MatrixIntegrator matrix_integrator(load_function.get(),
                                        analytical_solution.get(),
                                        &system_u,
@@ -765,16 +823,35 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
     /// Newton step with @p system_delta_u being the Newton update and @p system_u
     /// the initial value.
     const auto copier = [&](const CopyData & copy_data) {
+      {
+	std::ostringstream oss;
+	oss << "proc: " << proc_no << " local_dof_indices:" << std::endl;
+	oss << vector_to_string(copy_data.local_dof_indices) << std::endl;
+	std::cout << oss.str();
+      }
+
+      const bool copy_data_not_used = std::all_of(copy_data.local_dof_indices.cbegin(), copy_data.local_dof_indices.cend(), [](const types::global_dof_index i){return i == 0;});
+      
+      if(!copy_data_not_used)
       zero_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix, VECTOR>(
         copy_data.cell_matrix,
         copy_data.cell_rhs,
         copy_data.local_dof_indices,
         system_matrix,
         system_rhs);
+      else
+	AssertThrow(copy_data.face_data.empty(), ExcMessage("FaceData?"));
 
       for(auto & cdf : copy_data.face_data)
       {
-        if(cdf.cell_rhs.size() == 0) // only filled on cells at the boundary
+      {
+	std::ostringstream oss;
+	oss << "proc: " << proc_no << " joint_dof_indices:" << std::endl;
+	oss << vector_to_string(cdf.joint_dof_indices) << std::endl;
+	std::cout << oss.str();
+      }
+
+      if(cdf.cell_rhs.size() == 0) // only filled on cells at the boundary
           zero_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
             cdf.cell_matrix, cdf.joint_dof_indices, system_matrix);
         else
@@ -792,6 +869,7 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
 				    update_flags_interface);
 
 				    CopyData           copy_data(dof_handler.get_fe().dofs_per_cell);
+				    
     MeshWorker::mesh_loop(dof_handler.begin_active(),
                           dof_handler.end(),
                           cell_worker,
@@ -799,9 +877,12 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
                           scratch_data,
                           copy_data,
                           MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                            MeshWorker::assemble_own_interior_faces_once,
+			  MeshWorker::assemble_own_interior_faces_once | MeshWorker::assemble_ghost_faces_once,
                           boundary_worker,
                           face_worker);
+    
+    system_matrix.compress(VectorOperation::add);
+    system_rhs.compress(VectorOperation::add);
   }
 }
 
@@ -1051,9 +1132,8 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
 
 
 template<int dim, int fe_degree>
-template<typename PreconditionerType>
-void
-ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & preconditioner)
+std::shared_ptr<SolverControl>
+ModelProblem<dim, fe_degree>::get_solver_control() const
 {
   auto solver_control = [&]() -> std::shared_ptr<SolverControl> {
     if(rt_parameters.solver.control_variant == SolverParameter::ControlVariant::relative)
@@ -1082,6 +1162,17 @@ ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & pr
   // solver_control.log_history(true);
   // solver_control.log_result(true);
   // solver_control.enable_history_data();
+
+  return solver_control;
+}
+
+
+template<int dim, int fe_degree>
+template<typename PreconditionerType>
+void
+ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & preconditioner)
+{
+  auto solver_control = get_solver_control();
 
   SolverSelector<VECTOR> iterative_solver;
   iterative_solver.set_control(*solver_control);
@@ -1118,18 +1209,28 @@ ModelProblem<dim, fe_degree>::solve()
 
   if(rt_parameters.solver.variant == "direct")
   {
-    AssertThrow(false, ExcMessage("Direct solver for trilinos?!"));
+    // AssertThrow(false, ExcMessage("Direct solver for trilinos?!"));
+    const auto & prec = prepare_preconditioner_blockdirect();
     // SparseDirectUMFPACK A_direct;
     // A_direct.template initialize<SparseMatrix<double>>(system_matrix);
     // A_direct.vmult(system_delta_u, system_rhs);
     // system_u += system_delta_u;
-    // pp_data.average_reduction_system.push_back(0.);
-    // pp_data.n_iterations_system.push_back(0.);
-    // pp_data.n_colors_system.push_back(0);
-    // pp_data.n_mg_levels.push_back(0);
-    // print_parameter("Average reduction (solver):", "direct solver");
-    // print_parameter("Number of iterations (solver):", "---");
-    // return;
+    pp_data.average_reduction_system.push_back(0.);
+    pp_data.n_iterations_system.push_back(0.);
+    pp_data.n_colors_system.push_back(0);
+    pp_data.n_mg_levels.push_back(0);
+    print_parameter("Average reduction (solver):", "trilinos pCG");
+    print_parameter("Number of iterations (solver):", "---");
+    auto solver_control = get_solver_control();
+    TrilinosWrappers::SolverCG::AdditionalData cg_features(true);
+    TrilinosWrappers::SolverCG solver(*solver_control, cg_features);
+    solver.solve(system_matrix, system_delta_u, system_rhs, prec);
+    system_u += system_delta_u;
+    // pp_data.average_reduction_system.push_back(solver_control->average_reduction());
+    // pp_data.n_iterations_system.push_back(solver_control->last_step());
+    // print_parameter("Average reduction (solver):", solver_control->average_reduction());
+    // print_parameter("Number of iterations (solver):", solver_control->last_step());
+    return;
   }
 
   else
@@ -1137,13 +1238,18 @@ ModelProblem<dim, fe_degree>::solve()
     switch(rt_parameters.solver.precondition_variant)
     {
       case SolverParameter::PreconditionVariant::None:
-        iterative_solve_impl(PreconditionIdentity{});
+	{
+	// const auto & prec = prepare_preconditioner_amg();
+	  iterative_solve_impl(PreconditionIdentity{});
         break;
+	}
 
       case SolverParameter::PreconditionVariant::GMG:
+	{
         prepare_preconditioner_mg();
         iterative_solve_impl(*preconditioner_mg);
         break;
+	}
 
       default:
         AssertThrow(false, ExcNotImplemented());

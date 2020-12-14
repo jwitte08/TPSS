@@ -106,6 +106,8 @@ struct MatrixIntegrator
   const Function<dim> *  analytical_solution;
   const LinearAlgebra::distributed::Vector<double> * discrete_solution;
   const EquationData     equation_data;
+
+  const unsigned int proc_no = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
 };
 
 template<int dim, bool is_multigrid, bool is_stream>
@@ -122,7 +124,12 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::cell_worker(const IteratorType &
 
   cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
 
-  const unsigned int dofs_per_cell = scratch_data.fe_values.get_fe().dofs_per_cell;
+	std::ostringstream oss;
+	oss << "proc: " << proc_no << " subdomain_id: " << cell->subdomain_id() <<" local_dof_indices:" << std::endl;
+	oss << vector_to_string(copy_data.local_dof_indices) << std::endl;
+	std::cout << oss.str();
+
+	const unsigned int dofs_per_cell = scratch_data.fe_values.get_fe().dofs_per_cell;
 
   for(unsigned int qpoint = 0; qpoint < fe_values.n_quadrature_points; ++qpoint)
   {

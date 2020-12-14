@@ -197,7 +197,7 @@ main(int argc, char * argv[])
       prms.solver.precondition_variant = solver_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
-      prms.solver.n_iterations_max = 200;
+      prms.solver.n_iterations_max = 1000;
       prms.solver.control_variant  = SolverParameter::ControlVariant::relative;
 
       //: multigrid
