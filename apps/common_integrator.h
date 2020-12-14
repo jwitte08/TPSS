@@ -1822,11 +1822,75 @@ struct ScratchData : public StreamFunction::ScratchData<dim>
   TestFunction::InterfaceValues<dim> test_interface_values;
 };
 
-
-
 } // namespace TestFunction
 
 
+
+namespace DoF
+{
+/**
+ * This struct locally stores matrix and right-hand side contributions on cells and/or
+ * (inter)faces. It is designed to be used in MeshWorker routines.
+ */
+struct CopyData
+{
+  struct CellData
+  {
+    CellData(const unsigned int n_local_dofs)
+      : matrix(n_local_dofs, n_local_dofs), rhs(n_local_dofs), dof_indices(n_local_dofs)
+    {
+    }
+
+    CellData() : CellData(0U)
+    {
+    }
+
+    CellData(const CellData &) = default;
+
+    CellData(CellData &&) = default;
+
+    CellData &
+    operator=(const CellData &) = default;
+
+    CellData &
+    operator=(CellData &&) = default;
+
+    FullMatrix<double>                   matrix;
+    Vector<double>                       rhs;
+    std::vector<types::global_dof_index> dof_indices;
+  };
+
+  struct FaceData
+  {
+    FaceData(const unsigned int n_local_dofs)
+      : matrix(n_local_dofs, n_local_dofs), rhs(n_local_dofs), dof_indices(n_local_dofs)
+    {
+    }
+
+    FaceData() : FaceData(0U)
+    {
+    }
+
+    FaceData(const FaceData &) = default;
+
+    FaceData(FaceData &&) = default;
+
+    FaceData &
+    operator=(const FaceData &) = default;
+
+    FaceData &
+    operator=(FaceData &&) = default;
+
+    FullMatrix<double>                   matrix;
+    Vector<double>                       rhs;
+    std::vector<types::global_dof_index> dof_indices;
+  };
+
+  std::vector<CellData> cell_data;
+  std::vector<FaceData> face_data;
+};
+
+} // namespace DoF
 
 } // namespace MW
 
