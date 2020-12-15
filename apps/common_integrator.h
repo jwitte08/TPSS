@@ -1892,6 +1892,70 @@ struct CopyData
 
 } // namespace DoF
 
+
+
+namespace Cell
+{
+/**
+ * This struct stores local contributions for each cells and/or
+ * (inter)face. It is designed to be used in MeshWorker routines.
+ */
+struct CopyData
+{
+  struct CellData
+  {
+    CellData(const unsigned int n_indices) : values(n_indices), cell_indices(n_indices)
+    {
+    }
+
+    CellData() : CellData(0U)
+    {
+    }
+
+    CellData(const CellData &) = default;
+
+    CellData(CellData &&) = default;
+
+    CellData &
+    operator=(const CellData &) = default;
+
+    CellData &
+    operator=(CellData &&) = default;
+
+    Vector<double>                       values;
+    std::vector<types::global_dof_index> cell_indices;
+  };
+
+  struct FaceData
+  {
+    FaceData(const unsigned int n_indices) : values(n_indices), cell_indices(n_indices)
+    {
+    }
+
+    FaceData() : FaceData(0U)
+    {
+    }
+
+    FaceData(const FaceData &) = default;
+
+    FaceData(FaceData &&) = default;
+
+    FaceData &
+    operator=(const FaceData &) = default;
+
+    FaceData &
+    operator=(FaceData &&) = default;
+
+    Vector<double>                       values;
+    std::vector<types::global_dof_index> cell_indices;
+  };
+
+  std::vector<CellData> cell_data;
+  std::vector<FaceData> face_data;
+};
+
+} // namespace Cell
+
 } // namespace MW
 
 #endif /* APPS_COMMONINTEGRATOR_H_ */
