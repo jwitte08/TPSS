@@ -193,12 +193,12 @@ main(int argc, char * argv[])
       //: solver
       prms.solver.variant              = solver_index == 0 ? "direct" : "cg";
       prms.solver.abs_tolerance        = 1.e-14;
-      prms.solver.rel_tolerance        = 1.e-8;
+      prms.solver.rel_tolerance        = 1.e-08;
       prms.solver.precondition_variant = solver_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
       prms.solver.n_iterations_max = 1000;
-      prms.solver.control_variant  = SolverParameter::ControlVariant::relative;
+      prms.solver.control_variant  = SolverParameter::ControlVariant::relative; // !!!
 
       //: multigrid
       prms.multigrid.coarse_level                 = 0;
@@ -238,7 +238,7 @@ main(int argc, char * argv[])
     std::fstream fout;
     const auto   filename = get_filename(prms, equation_data);
     fout.open(filename + ".log", std::ios_base::out);
-    auto pcout               = std::make_shared<ConditionalOStream>(std::cout /*!!!fout*/, true);
+    auto pcout               = std::make_shared<ConditionalOStream>(fout, is_first_proc);
     biharmonic_problem.pcout = pcout;
 
     if(use_hierarchical_elements)

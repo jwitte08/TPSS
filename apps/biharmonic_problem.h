@@ -475,8 +475,7 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
                   parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
     mapping(1),
     finite_element(std::make_shared<FE_Q<dim>>(fe_degree)),
-    update_flags(update_values | update_gradients | update_hessians | update_quadrature_points |
-                 update_JxW_values),
+    update_flags(update_values | update_hessians | update_quadrature_points | update_JxW_values),
     update_flags_interface(update_values | update_gradients | update_hessians |
                            update_quadrature_points | update_JxW_values | update_normal_vectors),
     user_coloring([&]() -> std::shared_ptr<ColoringBase<dim>> {
@@ -614,12 +613,12 @@ ModelProblem<dim, fe_degree>::setup_system()
   constraints.reinit(locally_relevant_dof_indices);
   if(dof_handler.get_fe().has_support_points())
   {
-    *pcout << "interpolating boundary values..." << std::endl;
+    print_parameter("Interpolating boundary values", "...");
     VectorTools::interpolate_boundary_values(dof_handler, 0, *analytical_solution, constraints);
   }
   else
   {
-    *pcout << "projecting boundary values..." << std::endl;
+    print_parameter("Projecting boundary values", "...");
     std::map<types::boundary_id, const Function<dim> *> boundary_id_to_function;
     for(const auto id : equation_data.dirichlet_boundary_ids)
       boundary_id_to_function.emplace(id, analytical_solution.get());
@@ -2123,19 +2122,17 @@ ModelProblem<dim, fe_degree>::compute_energy_error() const
 {
   using ::MW::ScratchData;
 
-  using ::MW::CopyData;
+  using ::MW::Cell::CopyData;
 
   Vector<double> error_per_cell(triangulation.n_active_cells());
 
   auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-    AssertDimension(copy_data.local_dof_indices.size(), 1U);
-    AssertDimension(copy_data.cell_rhs.size(), 1U);
+    auto & cell_data          = copy_data.cell_data.emplace_back(1U);
+    cell_data.cell_indices[0] = cell->active_cell_index();
 
     FEValuesExtractors::Scalar scalar(0);
     auto &                     fe_values = scratch_data.fe_values;
     fe_values.reinit(cell);
-
-    copy_data.local_dof_indices[0] = cell->active_cell_index();
 
     std::vector<Tensor<2, dim>> hessians(fe_values.n_quadrature_points);
     fe_values[scalar].get_function_hessians(system_u, hessians);
@@ -2152,7 +2149,7 @@ ModelProblem<dim, fe_degree>::compute_energy_error() const
       local_error += (hess_u - hess_uh).norm_square() * fe_values.JxW(q);
     }
 
-    copy_data.cell_rhs = local_error;
+    cell_data.values = local_error;
   };
 
   auto face_worker = [&](const auto &         cell,
@@ -2163,11 +2160,12 @@ ModelProblem<dim, fe_degree>::compute_energy_error() const
                          const unsigned int & nsface_no,
                          ScratchData<dim> &   scratch_data,
                          CopyData &           copy_data) {
+    auto & face_data          = copy_data.face_data.emplace_back(2U);
+    face_data.cell_indices[0] = cell->active_cell_index();
+    face_data.cell_indices[1] = ncell->active_cell_index();
+
     FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
     fe_interface_values.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no);
-
-    AssertDimension(copy_data.local_dof_indices.size(), 1U);
-    AssertDimension(copy_data.local_dof_indices[0], cell->active_cell_index());
 
     const unsigned int  n_interface_dofs  = fe_interface_values.n_current_interface_dofs();
     const auto &        joint_dof_indices = fe_interface_values.get_interface_dof_indices();
@@ -2193,24 +2191,26 @@ ModelProblem<dim, fe_degree>::compute_energy_error() const
       for(unsigned int i = 0; i < n_interface_dofs; ++i)
         jump_grad_uh_dot_n += dof_values[i] * fe_interface_values.jump_gradient(i, q) * n;
 
-      // assuming u is smooth its jump of the gradient is zero!
+      /// assuming u is smooth the jump of its gradient is zero
       local_error += jump_grad_uh_dot_n * jump_grad_uh_dot_n * fe_interface_values.JxW(q);
     }
-
     local_error *= gamma_over_h;
 
-    copy_data.cell_rhs[0] += local_error;
+    /// split the error at the interface even among cells
+    face_data.values[0] = 0.5 * local_error;
+    face_data.values[1] = 0.5 * local_error;
   };
 
   auto boundary_worker = [&](const auto &         cell,
                              const unsigned int & face_no,
                              ScratchData<dim> &   scratch_data,
                              CopyData &           copy_data) {
+    auto & face_data          = copy_data.face_data.emplace_back(2U);
+    face_data.cell_indices[0] = cell->active_cell_index();
+    face_data.cell_indices[1] = cell->active_cell_index();
+
     FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values;
     fe_interface_values.reinit(cell, face_no);
-
-    AssertDimension(copy_data.local_dof_indices.size(), 1U);
-    AssertDimension(copy_data.local_dof_indices[0], cell->active_cell_index());
 
     const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
 
@@ -2241,29 +2241,27 @@ ModelProblem<dim, fe_degree>::compute_energy_error() const
       local_error += (grad_uh_dot_n - grad_u_dot_n) * (grad_uh_dot_n - grad_u_dot_n) *
                      fe_interface_values.JxW(q);
     }
-
     local_error *= gamma_over_h;
 
-    copy_data.cell_rhs[0] += local_error;
+    face_data.values[0] = 0.5 * local_error;
+    face_data.values[1] = 0.5 * local_error;
   };
 
   const auto copier = [&](const CopyData & copy_data) {
-    AssertDimension(copy_data.local_dof_indices.size(), 1U);
+    for(const auto & cell_data : copy_data.cell_data)
+      error_per_cell(cell_data.cell_indices[0]) += cell_data.values(0);
 
-    const auto cell_index      = copy_data.local_dof_indices.front();
-    error_per_cell(cell_index) = copy_data.cell_rhs[0];
+    for(const auto & cdf : copy_data.face_data)
+    {
+      error_per_cell(cdf.cell_indices[0]) += cdf.values(0);
+      error_per_cell(cdf.cell_indices[1]) += cdf.values(1);
+    }
   };
 
-  UpdateFlags update_flags =
-    update_values | update_hessians | update_quadrature_points | update_JxW_values;
-  UpdateFlags interface_update_flags = update_values | update_gradients | update_normal_vectors |
-                                       update_quadrature_points | update_JxW_values;
-  const unsigned int n_gauss_points = dof_handler.get_fe().degree + 2;
-
   ScratchData<dim> scratch_data(
-    mapping, dof_handler.get_fe(), n_gauss_points, update_flags, interface_update_flags);
+    mapping, dof_handler.get_fe(), n_q_points_1d + 1, update_flags, update_flags_interface);
 
-  CopyData copy_data(1U);
+  CopyData copy_data;
 
   MeshWorker::mesh_loop(dof_handler.begin_active(),
                         dof_handler.end(),
@@ -2272,11 +2270,17 @@ ModelProblem<dim, fe_degree>::compute_energy_error() const
                         scratch_data,
                         copy_data,
                         MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                          MeshWorker::assemble_own_interior_faces_once,
+                          MeshWorker::assemble_own_interior_faces_once |
+                          MeshWorker::assemble_ghost_faces_once,
                         boundary_worker,
                         face_worker);
 
-  return std::sqrt(error_per_cell.l1_norm());
+  const double locally_owned_error_square = error_per_cell.l1_norm();
+
+  const double global_error =
+    std::sqrt(Utilities::MPI::sum(locally_owned_error_square, MPI_COMM_WORLD));
+
+  return global_error;
 }
 
 
@@ -2396,12 +2400,17 @@ ModelProblem<dim, fe_degree>::run()
   const unsigned int n_cycles = rt_parameters.n_cycles;
   for(unsigned int cycle = 0; cycle < n_cycles; ++cycle)
   {
-    *pcout << "starting cycle " << cycle + 1 << " of " << n_cycles << "..." << std::endl;
+    {
+      std::ostringstream oss;
+      oss << "Starting cycle " << cycle + 1 << " of " << n_cycles;
+      print_parameter(oss.str(), "...");
+    }
 
     const unsigned int n_refinements = rt_parameters.mesh.n_refinements + cycle;
     if(!make_grid(n_refinements))
     {
-      *pcout << "no mesh created... \n\n";
+      print_parameter("No mesh created", "...");
+      *pcout << std::endl << std::endl;
       continue;
     }
 
