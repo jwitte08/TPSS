@@ -15,7 +15,6 @@
 
 #include <gtest/gtest.h>
 
-#include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
 #include "solvers_and_preconditioners/TPSS/tensors.h"
 
 #include "test_utilities.h"
