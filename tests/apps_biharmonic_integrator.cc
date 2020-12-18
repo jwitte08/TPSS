@@ -95,6 +95,55 @@ protected:
 
 
   void
+  check_level_matrix()
+  {
+    rt_parameters.multigrid.pre_smoother.variant  = SmootherParameter::SmootherVariant::None;
+    rt_parameters.multigrid.post_smoother.variant = rt_parameters.multigrid.pre_smoother.variant;
+
+    biharmonic_problem        = std::make_shared<BiharmonicProblem>(rt_parameters);
+    biharmonic_problem->pcout = pcout_owned;
+    biharmonic_problem->make_grid();
+    biharmonic_problem->setup_system();
+    biharmonic_problem->assemble_system();
+    biharmonic_problem->prepare_multigrid();
+
+    const auto & system_matrix = biharmonic_problem->system_matrix;
+    const auto   level         = biharmonic_problem->max_level();
+    const auto & level_matrix  = biharmonic_problem->mg_matrices[level];
+
+    if(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1)
+    {
+      FullMatrix<double> system_fullmatrix(system_matrix.m(), system_matrix.n());
+      system_fullmatrix.copy_from(
+        static_cast<const TrilinosWrappers::SparseMatrix &>(system_matrix));
+      FullMatrix<double> level_fullmatrix(level_matrix.m(), level_matrix.n());
+      level_fullmatrix.copy_from(static_cast<const TrilinosWrappers::SparseMatrix &>(level_matrix));
+      compare_matrix(system_fullmatrix, level_fullmatrix);
+    }
+
+    else
+    {
+      const auto partitioner       = system_matrix.partitioner;
+      const auto partitioner_level = level_matrix.partitioner;
+      (void)partitioner, (void)partitioner_level;
+      Assert(partitioner->is_compatible(*partitioner_level),
+             ExcMessage("mismatching vector partitioners"));
+
+      LinearAlgebra::distributed::Vector<double> src, dst, dst_level;
+      system_matrix.initialize_dof_vector(src);
+      fill_with_random_values(src);
+      system_matrix.initialize_dof_vector(dst);
+      dst_level = dst;
+
+      system_matrix.vmult(dst, src);
+      level_matrix.vmult(dst_level, src);
+
+      compare_vector(dst_level, dst);
+    }
+  }
+
+
+  void
   check_local_matrices()
   {
     initialize();
@@ -431,18 +480,25 @@ protected:
 
 
   void
-  compare_matrix(const FullMatrix<double> & patch_matrix_full,
-                 const FullMatrix<double> & other) const
+  compare_matrix(const FullMatrix<double> & matrix, const FullMatrix<double> & other) const
   {
-    Util::compare_matrix(patch_matrix_full, other, *pcout_owned);
+    Util::compare_matrix(matrix, other, *pcout_owned);
   }
 
 
   void
-  compare_inverse_matrix(const FullMatrix<double> & inverse_patch_matrix,
+  compare_inverse_matrix(const FullMatrix<double> & inverse_matrix,
                          const FullMatrix<double> & other) const
   {
-    Util::compare_inverse_matrix(inverse_patch_matrix, other, *pcout_owned);
+    Util::compare_inverse_matrix(inverse_matrix, other, *pcout_owned);
+  }
+
+
+  template<typename VectorType>
+  void
+  compare_vector(const VectorType & vec, const VectorType & other) const
+  {
+    Util::compare_vector(vec, other, *pcout_owned);
   }
 
 
@@ -450,7 +506,7 @@ protected:
   std::shared_ptr<ConditionalOStream> pcout_owned;
 
   RT::Parameter                                  rt_parameters;
-  std::shared_ptr<const BiharmonicProblem>       biharmonic_problem;
+  std::shared_ptr<BiharmonicProblem>             biharmonic_problem;
   std::shared_ptr<const MatrixFree<dim, double>> mf_storage;
   std::shared_ptr<SubdomainHandler<dim, double>> subdomain_handler;
 };
@@ -470,6 +526,17 @@ TYPED_TEST_P(TestBiharmonicIntegrator, CheckVertexPatchMatrix)
   Fixture::check_local_matrices();
 }
 
+TYPED_TEST_P(TestBiharmonicIntegrator, CheckLevelMatrixMPI)
+{
+  using Fixture                                = TestBiharmonicIntegrator<TypeParam>;
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::rt_parameters.mesh.n_refinements    = 1;
+  Fixture::check_level_matrix();
+  Fixture::rt_parameters.mesh.n_refinements = 2;
+  Fixture::check_level_matrix();
+}
+
 TYPED_TEST_P(TestBiharmonicIntegrator, CheckVertexPatchEigendecomp1D)
 {
   using Fixture                                = TestBiharmonicIntegrator<TypeParam>;
@@ -480,11 +547,13 @@ TYPED_TEST_P(TestBiharmonicIntegrator, CheckVertexPatchEigendecomp1D)
 }
 
 REGISTER_TYPED_TEST_SUITE_P(TestBiharmonicIntegrator,
+                            CheckLevelMatrixMPI,
                             CheckVertexPatchMatrix,
                             CheckVertexPatchEigendecomp1D);
 
 using TestParamsQuadratic = testing::Types<Util::NonTypeParams<2, 2>>;
-using TestParamsHighOrder = testing::Types<Util::NonTypeParams<2, 5>, Util::NonTypeParams<2, 7>>;
+// using TestParamsHighOrder = testing::Types<Util::NonTypeParams<2, 5>, Util::NonTypeParams<2, 7>>;
+using TestParamsHighOrder = testing::Types<Util::NonTypeParams<2, 3>, Util::NonTypeParams<2, 5>>;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestBiharmonicIntegrator, TestParamsQuadratic);
 INSTANTIATE_TYPED_TEST_SUITE_P(HighOrder2D, TestBiharmonicIntegrator, TestParamsHighOrder);
