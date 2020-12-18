@@ -61,7 +61,7 @@ DoFInfo<dim, Number>::initialize_impl()
     /// LAMBDA checks if cell has a neighbor being a ghost cell on the current level
     const auto & has_ghost_neighbor_on_level = [&](const auto & cell) {
       for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
-        if(cell.neighbor_level(face_no) == additional_data.level)
+        if(cell.neighbor_level(face_no) == static_cast<int>(additional_data.level))
           if(is_ghost_on_level(*(cell.neighbor(face_no))))
             return true;
       return false;
@@ -212,15 +212,14 @@ DoFInfo<dim, Number>::compute_restricted_dofs_impl()
               ExcMessage("Additive scheme is only supported."));
 
   PatchDoFWorker<dim, Number> patch_dof_worker(*this);
-  const auto &                partition_data   = patch_dof_worker.get_partition_data();
-  const auto                  n_subdomains     = partition_data.n_subdomains();
-  const auto &                patch_dof_tensor = patch_dof_worker.get_dof_tensor();
+  const auto &                partition_data = patch_dof_worker.get_partition_data();
+  const auto                  n_subdomains   = partition_data.n_subdomains();
 
   std::array<unsigned int, dim> inner_sizes;
   for(auto d = 0U; d < dim; ++d)
     inner_sizes[d] = patch_dof_worker.n_dofs_1d(d);
-
-  // auto inner_sizes = patch_dof_tensor.size();
+  // const auto & patch_dof_tensor = patch_dof_worker.get_dof_tensor();
+  // auto         inner_sizes      = patch_dof_tensor.size();
   // for(auto d = 0U; d < dim; ++d)
   //   inner_sizes[d] -= 2U;
   Tensors::TensorHelper<dim> dof_tensor_inner(inner_sizes);

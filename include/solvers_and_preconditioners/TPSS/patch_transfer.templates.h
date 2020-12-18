@@ -76,20 +76,24 @@ PatchTransfer<dim, Number>::scatter_add_impl(
       {
         const auto dof_index = global_dof_indices[i];
         if(!is_restricted_dof[i])
+        {
           if(do_add)
             internal::local_element(dst, dof_index) += (*src_value)[lane];
           else
             internal::local_element(dst, dof_index) = (*src_value)[lane];
+        }
       }
     }
     else
     {
       auto dof_index = global_dof_indices.cbegin();
       for(auto src_value = src.cbegin(); src_value != src.cend(); ++dof_index, ++src_value)
+      {
         if(do_add)
           internal::local_element(dst, *dof_index) += (*src_value)[lane];
         else
           internal::local_element(dst, *dof_index) = (*src_value)[lane];
+      }
     }
   }
 }

@@ -114,7 +114,7 @@ void
 Parameter::reset_solver_variant()
 {
   solver.variant = lookup_solver_variant(multigrid.pre_smoother, multigrid.post_smoother);
-};
+}
 
 
 void

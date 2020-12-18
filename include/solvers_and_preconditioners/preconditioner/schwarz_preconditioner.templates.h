@@ -612,7 +612,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
         AlignedVector<VectorizedArray<value_type>> local_solution;    // u_j
         AlignedVector<VectorizedArray<value_type>> local_ras_weights; // w_j
 
-        for(int patch_id = subdomain_range.first; patch_id < subdomain_range.second; ++patch_id)
+        for(auto patch_id = subdomain_range.first; patch_id < subdomain_range.second; ++patch_id)
         {
           /// restrict global to local residual and initialize local solution u_j
           transfer->reinit(patch_id);

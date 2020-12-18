@@ -170,7 +170,7 @@ struct MGCoarseGridDirect : public MGCoarseGridBase<VectorType>
   ~MGCoarseGridDirect() override final = default;
 
   void
-  operator()(const unsigned int level,
+  operator()(const unsigned int /*level*/,
              VectorType &       dst,
              const VectorType & src) const override final
   {
