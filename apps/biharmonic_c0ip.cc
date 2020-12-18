@@ -156,6 +156,7 @@ main(int argc, char * argv[])
                                                         n_threads_max == -1 ?
                                                           numbers::invalid_unsigned_int :
                                                           static_cast<unsigned int>(n_threads_max));
+    const auto                       n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
 
     constexpr int  dim              = CT::DIMENSION_;
     constexpr int  fe_degree        = CT::FE_DEGREE_;
@@ -202,7 +203,7 @@ main(int argc, char * argv[])
 
       //: multigrid
       prms.multigrid.coarse_level                 = 0;
-      prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::FullSVD;
+      prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::DirectSVD;
       prms.multigrid.coarse_grid.iterative_solver = "cg";
       prms.multigrid.coarse_grid.accuracy         = 1.e-12;
       const SmootherParameter::SmootherVariant smoother_variant[solver_index_max + 1] = {
@@ -217,9 +218,11 @@ main(int argc, char * argv[])
       prms.multigrid.pre_smoother.schwarz.smoother_variant     = CT::SMOOTHER_VARIANT_;
       prms.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
       prms.multigrid.pre_smoother.schwarz.damping_factor       = damping;
-      prms.multigrid.pre_smoother.use_doubling_of_steps        = use_doubling_of_steps;
-      prms.multigrid.post_smoother                             = prms.multigrid.pre_smoother;
-      prms.multigrid.post_smoother.schwarz.reverse_smoothing   = prms.solver.variant == "cg";
+      prms.multigrid.pre_smoother.damping_factor =
+        damping == 0. ? (n_mpi_procs == 1 ? 1. : 0.7) : damping;
+      prms.multigrid.pre_smoother.use_doubling_of_steps      = use_doubling_of_steps;
+      prms.multigrid.post_smoother                           = prms.multigrid.pre_smoother;
+      prms.multigrid.post_smoother.schwarz.reverse_smoothing = prms.solver.variant == "cg";
       if(damping == 0.)
         prms.reset_damping_factor(dim);
     }

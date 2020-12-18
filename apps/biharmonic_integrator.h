@@ -281,7 +281,11 @@ MatrixIntegrator<dim, is_multigrid, is_stream>::boundary_worker(const IteratorTy
   const std::vector<Tensor<1, dim>> & normals   = fe_interface_values.get_normal_vectors();
 
   std::vector<Tensor<1, dim>> exact_gradients(quadrature_points.size());
-  analytical_solution->gradient_list(quadrature_points, exact_gradients);
+  if(!is_multigrid)
+  {
+    Assert(analytical_solution, ExcMessage("Did you initialize analytical_solution?"));
+    analytical_solution->gradient_list(quadrature_points, exact_gradients);
+  }
 
   const auto   h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
   const auto   fe_degree    = scratch_data.fe_values.get_fe().degree;

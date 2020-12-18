@@ -137,7 +137,8 @@ public:
   void
   vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const
   {
-    AssertThrow(false, ExcMessage("TODO MPI..."));
+    AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
+                ExcMessage("TODO incompatible"));
     AssertDimension(dst.size(), matrix_type::m());
     AssertDimension(src.size(), matrix_type::n());
     vector_type v(matrix_type::n()); // src
@@ -173,11 +174,11 @@ public:
   using VECTOR = LinearAlgebra::distributed::Vector<double>;
   using MATRIX = SparseMatrixAugmented<dim, fe_degree, double>;
 
-  using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
-  using GAUSS_SEIDEL_SMOOTHER = PreconditionSOR<MATRIX>;
-  using PATCH_MATRIX          = Tensors::TensorProductMatrix<dim, VectorizedArray<double>>;
-  using MG_SMOOTHER_SCHWARZ   = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
-  using GMG_PRECONDITIONER    = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
+  // using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
+  using MG_TRANSFER         = MGTransferMatrixFree<dim, double>;
+  using PATCH_MATRIX        = Tensors::TensorProductMatrix<dim, VectorizedArray<double>>;
+  using MG_SMOOTHER_SCHWARZ = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
+  using GMG_PRECONDITIONER  = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 
   static constexpr unsigned int n_q_points_1d = fe_degree + 1;
 
@@ -282,11 +283,27 @@ public:
   }
 
   unsigned int
+  n_mg_levels() const
+  {
+    if(mg_matrices.min_level() != mg_matrices.max_level())
+    {
+      const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
+      const unsigned mg_level_max = max_level();
+      AssertDimension(mg_level_max - mg_level_min + 1,
+                      mg_matrices.max_level() - mg_matrices.min_level() + 1);
+      return mg_level_max - mg_level_min + 1;
+    }
+    return 0;
+  }
+
+  unsigned int
   n_colors_system()
   {
     if(mg_schwarz_smoother_pre)
       return mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
-    return numbers::invalid_unsigned_int;
+    if(mg_schwarz_smoother_post)
+      return mg_schwarz_smoother_post->get_subdomain_handler()->get_partition_data().n_colors();
+    return 0;
   }
 
   template<typename T>
@@ -340,14 +357,19 @@ public:
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_pre;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_post;
   std::shared_ptr<const MGSmootherIdentity<VECTOR>> mg_smoother_identity;
-  std::shared_ptr<const mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, VECTOR>>
-                                     mg_smoother_gauss_seidel;
-  const MGSmootherBase<VECTOR> *     mg_smoother_pre;
-  const MGSmootherBase<VECTOR> *     mg_smoother_post;
-  CoarseGridSolver<MATRIX, VECTOR>   coarse_grid_solver;
-  const MGCoarseGridBase<VECTOR> *   mg_coarse_grid;
-  mg::Matrix<VECTOR>                 mg_matrix_wrapper;
-  std::shared_ptr<Multigrid<VECTOR>> multigrid;
+  // std::shared_ptr<const mg::SmootherRelaxation<TrilinosWrappers::PreconditionSSOR, VECTOR>>
+  //                                mg_smoother_gauss_seidel;
+  std::shared_ptr<const MGSmootherPrecondition<TrilinosWrappers::SparseMatrix,
+                                               TrilinosWrappers::PreconditionSSOR,
+                                               VECTOR>>
+                                 mg_smoother_gauss_seidel;
+  const MGSmootherBase<VECTOR> * mg_smoother_pre;
+  const MGSmootherBase<VECTOR> * mg_smoother_post;
+  // CoarseGridSolver<MATRIX, VECTOR>   coarse_grid_solver;
+  CoarseGridSolver<TrilinosWrappers::SparseMatrix, VECTOR> coarse_grid_solver;
+  const MGCoarseGridBase<VECTOR> *                         mg_coarse_grid;
+  mg::Matrix<VECTOR>                                       mg_matrix_wrapper;
+  std::shared_ptr<Multigrid<VECTOR>>                       multigrid;
 
   std::shared_ptr<GMG_PRECONDITIONER> preconditioner_mg;
 
@@ -919,190 +941,201 @@ template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::prepare_multigrid()
 {
-  AssertThrow(false, ExcMessage("TODO MPI..."));
-  // // *** clear multigrid infrastructure
-  // multigrid.reset();
-  // mg_matrix_wrapper.reset();
-  // coarse_grid_solver.clear();
-  // mg_smoother_post = nullptr;
-  // mg_smoother_pre  = nullptr;
-  // mg_schwarz_smoother_pre.reset();
-  // mg_schwarz_smoother_post.reset();
-  // mg_transfer.clear();
-  // mg_matrices.clear_elements();
-  // mg_constrained_dofs.reset();
+  // *** clear multigrid infrastructure
+  multigrid.reset();
+  mg_matrix_wrapper.reset();
+  coarse_grid_solver.clear();
+  mg_smoother_post = nullptr;
+  mg_smoother_pre  = nullptr;
+  mg_schwarz_smoother_pre.reset();
+  mg_schwarz_smoother_post.reset();
+  mg_transfer.clear();
+  mg_matrices.clear_elements();
+  mg_constrained_dofs.reset();
 
-  // // *** setup multigrid data
-  // const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
-  // const unsigned mg_level_max = max_level();
-  // pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
+  // *** setup multigrid data
+  const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
+  const unsigned mg_level_max = max_level();
 
-  // // *** initialize multigrid constraints
-  // mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
-  // mg_constrained_dofs->initialize(dof_handler);
-  // mg_constrained_dofs->make_zero_boundary_constraints(dof_handler,
-  //                                                     equation_data.dirichlet_boundary_ids);
+  // *** initialize multigrid constraints
+  mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
+  mg_constrained_dofs->initialize(dof_handler);
+  mg_constrained_dofs->make_zero_boundary_constraints(dof_handler,
+                                                      equation_data.dirichlet_boundary_ids);
 
-  // // *** initialize level matrices A_l
-  // mg_matrices.resize(mg_level_min, mg_level_max);
-  // mg_sparsity_patterns.resize(mg_level_min, mg_level_max);
-  // for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
-  // {
-  //   DynamicSparsityPattern dsp(dof_handler.n_dofs(level), dof_handler.n_dofs(level));
-  //   MGTools::make_flux_sparsity_pattern(dof_handler, dsp, level);
-  //   mg_sparsity_patterns[level].copy_from(dsp);
-  //   mg_matrices[level].reinit(mg_sparsity_patterns[level]);
+  // *** initialize level matrices A_l
+  mg_matrices.resize(mg_level_min, mg_level_max);
+  mg_sparsity_patterns.resize(mg_level_min, mg_level_max);
+  for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
+  {
+    ////////// setup
+    const IndexSet & locally_owned_dof_indices = dof_handler.locally_owned_mg_dofs(level);
+    IndexSet         locally_relevant_dof_indices;
+    DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, locally_relevant_dof_indices);
 
-  //   // assemble
-  //   AffineConstraints<double> level_constraints;
-  //   IndexSet                  relevant_dofs;
-  //   DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, relevant_dofs);
-  //   level_constraints.reinit(relevant_dofs);
-  //   level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
-  //   level_constraints.close();
+    AffineConstraints<double> level_constraints;
+    level_constraints.reinit(locally_relevant_dof_indices);
+    level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
+    level_constraints.close();
 
-  //   using C0IP::MW::ScratchData;
+    TrilinosWrappers::SparsityPattern dsp(locally_owned_dof_indices,
+                                          locally_owned_dof_indices,
+                                          locally_relevant_dof_indices,
+                                          MPI_COMM_WORLD);
+    MGTools::make_flux_sparsity_pattern(dof_handler, dsp, level);
+    dsp.compress();
 
-  //   using C0IP::MW::CopyData;
+    mg_matrices[level].initialize(dsp,
+                                  locally_owned_dof_indices,
+                                  locally_relevant_dof_indices,
+                                  MPI_COMM_WORLD);
+    {
+      /// initialize dummy matrix-free storage required to setup TPSS
+      typename MatrixFree<dim, double>::AdditionalData mf_features;
+      mf_features.mg_level = level;
+      QGauss<1>  quadrature(n_q_points_1d);
+      const auto mf_storage = std::make_shared<MatrixFree<dim, double>>();
+      mf_storage->reinit(mapping, dof_handler, level_constraints, quadrature, mf_features);
 
-  //   using MatrixIntegrator = C0IP::MW::MatrixIntegrator<dim, /*is_multigrid*/ true>;
+      /// initialize local integrator required to setup TPSS
+      mg_matrices[level].initialize(mf_storage, equation_data);
+    }
 
-  //   MatrixIntegrator matrix_integrator(nullptr, analytical_solution.get(), nullptr,
-  //   equation_data);
+    ////////// assemble
+    using C0IP::MW::ScratchData;
 
-  //   using LevelCellIterator = typename MatrixIntegrator::IteratorType;
+    using C0IP::MW::CopyData;
 
-  //   auto cell_worker =
-  //     [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data)
-  //     {
-  //       matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-  //     };
+    using MatrixIntegrator = C0IP::MW::MatrixIntegrator<dim, /*is_multigrid*/ true>;
 
-  //   auto face_worker = [&](const LevelCellIterator & cell,
-  //                          const unsigned int &      f,
-  //                          const unsigned int &      sf,
-  //                          const LevelCellIterator & ncell,
-  //                          const unsigned int &      nf,
-  //                          const unsigned int &      nsf,
-  //                          ScratchData<dim> &        scratch_data,
-  //                          CopyData &                copy_data) {
-  //     matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-  //   };
+    using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
-  //   auto boundary_worker = [&](const LevelCellIterator & cell,
-  //                              const unsigned int &      face_no,
-  //                              ScratchData<dim> &        scratch_data,
-  //                              CopyData &                copy_data) {
-  //     matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-  //   };
+    MatrixIntegrator matrix_integrator(nullptr, analytical_solution.get(), nullptr, equation_data);
 
-  //   const auto copier = [&](const CopyData & copy_data) {
-  //     AssertDimension(copy_data.level, level);
-  //     level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-  //       copy_data.cell_matrix, copy_data.local_dof_indices, mg_matrices[copy_data.level]);
+    auto cell_worker =
+      [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+        matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+      };
 
-  //     for(auto & cdf : copy_data.face_data)
-  //     {
-  //       level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-  //         cdf.cell_matrix, cdf.joint_dof_indices, mg_matrices[copy_data.level]);
-  //     }
-  //   };
+    auto face_worker = [&](const LevelCellIterator & cell,
+                           const unsigned int &      face_no,
+                           const unsigned int &      sface_no,
+                           const LevelCellIterator & ncell,
+                           const unsigned int &      nface_no,
+                           const unsigned int &      nsface_no,
+                           ScratchData<dim> &        scratch_data,
+                           CopyData &                copy_data) {
+      matrix_integrator.face_worker(
+        cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
+    };
 
-  //   const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
-  //   ScratchData<dim>   scratch_data(mapping,
-  //                                 *finite_element,
-  //                                 n_gauss_points,
-  //                                 update_values | update_gradients | update_hessians |
-  //                                   update_quadrature_points | update_JxW_values,
-  //                                 update_values | update_gradients | update_hessians |
-  //                                   update_quadrature_points | update_JxW_values |
-  //                                   update_normal_vectors);
-  //   CopyData           copy_data(dof_handler.get_fe().dofs_per_cell, level);
-  //   MeshWorker::mesh_loop(dof_handler.begin_mg(level),
-  //                         dof_handler.end_mg(level),
-  //                         cell_worker,
-  //                         copier,
-  //                         scratch_data,
-  //                         copy_data,
-  //                         MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-  //                           MeshWorker::assemble_own_interior_faces_once,
-  //                         boundary_worker,
-  //                         face_worker);
+    auto boundary_worker = [&](const LevelCellIterator & cell,
+                               const unsigned int &      face_no,
+                               ScratchData<dim> &        scratch_data,
+                               CopyData &                copy_data) {
+      matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+    };
 
-  //   /// initialize matrix-free storage (dummy, required to setup TPSS) + local
-  //   /// matrix integrator
-  //   {
-  //     typename MatrixFree<dim, double>::AdditionalData mf_features;
-  //     mf_features.mg_level = level;
-  //     QGauss<1>  quadrature(fe_degree + 1);
-  //     const auto mf_storage_ = std::make_shared<MatrixFree<dim, double>>();
-  //     mf_storage_->reinit(mapping, dof_handler, level_constraints, quadrature, mf_features);
-  //     mg_matrices[level].initialize(mf_storage_, equation_data);
-  //   }
-  // }
+    const auto copier = [&](const CopyData & copy_data) {
+      for(const auto & cell_data : copy_data.cell_data)
+      {
+        AssertDimension(copy_data.cell_data.size(), 1U);
+        level_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+          cell_data.matrix, cell_data.dof_indices, mg_matrices[level]);
+      }
 
-  // // *** initialize multigrid transfer R_l
-  // mg_transfer.initialize_constraints(*mg_constrained_dofs);
-  // mg_transfer.build(dof_handler);
+      for(auto & cdf : copy_data.face_data)
+      {
+        level_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+          cdf.matrix, cdf.dof_indices, mg_matrices[level]);
+      }
+    };
 
-  // // *** initialize Schwarz smoother S_l
-  // switch(rt_parameters.multigrid.pre_smoother.variant)
-  // {
-  //   case SmootherParameter::SmootherVariant::None:
-  //     mg_smoother_identity = std::make_shared<const MGSmootherIdentity<VECTOR>>();
-  //     AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
-  //     mg_smoother_pre = mg_smoother_identity.get();
-  //     break;
-  //   case SmootherParameter::SmootherVariant::GaussSeidel:
-  //   {
-  //     auto tmp = std::make_shared<mg::SmootherRelaxation<GAUSS_SEIDEL_SMOOTHER, VECTOR>>();
-  //     tmp->initialize(mg_matrices);
-  //     tmp->set_steps(rt_parameters.multigrid.pre_smoother.n_smoothing_steps);
-  //     tmp->set_symmetric(true);
-  //     mg_smoother_gauss_seidel = tmp;
-  //     mg_smoother_pre          = mg_smoother_gauss_seidel.get();
-  //   }
-  //   break;
-  //   case SmootherParameter::SmootherVariant::Schwarz:
-  //     prepare_schwarz_smoothers();
-  //     AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
-  //     mg_smoother_pre = mg_schwarz_smoother_pre.get();
-  //     break;
-  //   default:
-  //     AssertThrow(false, ExcMessage("Invalid smoothing variant."));
-  // }
-  // switch(rt_parameters.multigrid.post_smoother.variant)
-  // {
-  //   case SmootherParameter::SmootherVariant::None:
-  //     AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
-  //     mg_smoother_post = mg_smoother_identity.get();
-  //     break;
-  //   case SmootherParameter::SmootherVariant::GaussSeidel:
-  //     AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
-  //     mg_smoother_post = mg_smoother_gauss_seidel.get();
-  //     break;
-  //   case SmootherParameter::SmootherVariant::Schwarz:
-  //     AssertThrow(mg_schwarz_smoother_post, ExcMessage("Not initialized"));
-  //     mg_smoother_post = mg_schwarz_smoother_post.get();
-  //     break;
-  //   default:
-  //     AssertThrow(false, ExcMessage("Invalid smoothing variant."));
-  // }
+    ScratchData<dim> scratch_data(
+      mapping, dof_handler.get_fe(), n_q_points_1d, update_flags, update_flags_interface);
 
-  // pp_data.n_colors_system.push_back(n_colors_system());
+    CopyData copy_data;
 
-  // // *** initialize coarse grid solver
-  // coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
-  // mg_coarse_grid = &coarse_grid_solver;
+    MeshWorker::mesh_loop(dof_handler.begin_mg(level),
+                          dof_handler.end_mg(level),
+                          cell_worker,
+                          copier,
+                          scratch_data,
+                          copy_data,
+                          MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                            MeshWorker::assemble_own_interior_faces_once |
+                            MeshWorker::assemble_ghost_faces_once,
+                          boundary_worker,
+                          face_worker);
 
-  // mg_matrix_wrapper.initialize(mg_matrices);
-  // multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
-  //                                                 *mg_coarse_grid,
-  //                                                 mg_transfer,
-  //                                                 *mg_smoother_pre,
-  //                                                 *mg_smoother_post,
-  //                                                 mg_level_min,
-  //                                                 mg_level_max);
+    mg_matrices[level].compress(VectorOperation::add);
+  }
+
+  // *** initialize multigrid transfer R_l
+  mg_transfer.initialize_constraints(*mg_constrained_dofs);
+  mg_transfer.build(dof_handler);
+
+  // *** initialize Schwarz smoother S_l
+  switch(rt_parameters.multigrid.pre_smoother.variant)
+  {
+    case SmootherParameter::SmootherVariant::None:
+      mg_smoother_identity = std::make_shared<const MGSmootherIdentity<VECTOR>>();
+      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+      mg_smoother_pre = mg_smoother_identity.get();
+      break;
+    case SmootherParameter::SmootherVariant::GaussSeidel:
+    {
+      typename TrilinosWrappers::PreconditionSSOR::AdditionalData ssor_features;
+      // ssor_features.n_sweeps = rt_parameters.multigrid.pre_smoother.n_smoothing_steps;
+      ssor_features.omega = rt_parameters.multigrid.pre_smoother.damping_factor;
+      auto tmp            = std::make_shared<MGSmootherPrecondition<TrilinosWrappers::SparseMatrix,
+                                                         TrilinosWrappers::PreconditionSSOR,
+                                                         VECTOR>>();
+      tmp->initialize(mg_matrices, ssor_features);
+      tmp->set_steps(rt_parameters.multigrid.pre_smoother.n_smoothing_steps);
+      mg_smoother_gauss_seidel = tmp;
+      mg_smoother_pre          = mg_smoother_gauss_seidel.get();
+      break;
+    }
+    case SmootherParameter::SmootherVariant::Schwarz:
+      prepare_schwarz_smoothers();
+      AssertThrow(mg_schwarz_smoother_pre, ExcMessage("Not initialized."));
+      mg_smoother_pre = mg_schwarz_smoother_pre.get();
+      break;
+    default:
+      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  }
+
+  switch(rt_parameters.multigrid.post_smoother.variant)
+  {
+    case SmootherParameter::SmootherVariant::None:
+      AssertThrow(mg_smoother_identity, ExcMessage("Not initialized."));
+      mg_smoother_post = mg_smoother_identity.get();
+      break;
+    case SmootherParameter::SmootherVariant::GaussSeidel:
+      AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
+      mg_smoother_post = mg_smoother_gauss_seidel.get();
+      break;
+    case SmootherParameter::SmootherVariant::Schwarz:
+      AssertThrow(mg_schwarz_smoother_post, ExcMessage("Not initialized"));
+      mg_smoother_post = mg_schwarz_smoother_post.get();
+      break;
+    default:
+      AssertThrow(false, ExcMessage("Invalid smoothing variant."));
+  }
+
+  /// initialize coarse grid solver
+  coarse_grid_solver.initialize(mg_matrices[mg_level_min], rt_parameters.multigrid.coarse_grid);
+  mg_coarse_grid = &coarse_grid_solver;
+
+  mg_matrix_wrapper.initialize(mg_matrices);
+  multigrid = std::make_shared<Multigrid<VECTOR>>(mg_matrix_wrapper,
+                                                  *mg_coarse_grid,
+                                                  mg_transfer,
+                                                  *mg_smoother_pre,
+                                                  *mg_smoother_post,
+                                                  mg_level_min,
+                                                  mg_level_max);
 }
 
 
@@ -1143,6 +1176,7 @@ ModelProblem<dim, fe_degree>::get_solver_control() const
 }
 
 
+
 template<int dim, int fe_degree>
 template<typename PreconditionerType>
 void
@@ -1157,22 +1191,21 @@ ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & pr
   system_u += system_delta_u;
 
   auto reduction_control = dynamic_cast<ReductionControl *>(solver_control.get());
-  // !!!
-  // if(reduction_control)
-  //   {
-  //   const auto [n_frac, reduction_rate] = compute_fractional_steps(*reduction_control);
-  //   pp_data.average_reduction_system.push_back(reduction_rate);
-  //   pp_data.n_iterations_system.push_back(n_frac);
-  //   print_parameter("Average reduction (solver):", reduction_rate);
-  //   print_parameter("Number of iterations (solver):", n_frac);
-  // }
-  // else
-  // {
-  pp_data.average_reduction_system.push_back(solver_control->average_reduction());
-  pp_data.n_iterations_system.push_back(solver_control->last_step());
-  print_parameter("Average reduction (solver):", solver_control->average_reduction());
-  print_parameter("Number of iterations (solver):", solver_control->last_step());
-  // }
+  if(reduction_control)
+  {
+    const auto [n_frac, reduction_rate] = compute_fractional_steps(*reduction_control);
+    pp_data.average_reduction_system.push_back(reduction_rate);
+    pp_data.n_iterations_system.push_back(n_frac);
+    print_parameter("Average reduction (solver):", reduction_rate);
+    print_parameter("Number of iterations (solver):", n_frac);
+  }
+  else
+  {
+    pp_data.average_reduction_system.push_back(solver_control->average_reduction());
+    pp_data.n_iterations_system.push_back(solver_control->last_step());
+    print_parameter("Average reduction (solver):", solver_control->average_reduction());
+    print_parameter("Number of iterations (solver):", solver_control->last_step());
+  }
 }
 
 
@@ -1185,29 +1218,41 @@ ModelProblem<dim, fe_degree>::solve()
 
   if(rt_parameters.solver.variant == "direct")
   {
-    // AssertThrow(false, ExcMessage("Direct solver for trilinos?!"));
-    const auto & prec = prepare_preconditioner_blockdirect();
-    // SparseDirectUMFPACK A_direct;
-    // A_direct.template initialize<SparseMatrix<double>>(system_matrix);
-    // A_direct.vmult(system_delta_u, system_rhs);
-    // system_u += system_delta_u;
+    auto solver_control = get_solver_control();
+
+    TrilinosWrappers::SolverDirect::AdditionalData features;
+    features.output_solver_details = true;
+
+    TrilinosWrappers::SolverDirect solver(*solver_control, features);
+    solver.solve(system_matrix, system_delta_u, system_rhs);
+
+    system_u += system_delta_u;
+
     pp_data.average_reduction_system.push_back(0.);
     pp_data.n_iterations_system.push_back(0.);
-    pp_data.n_colors_system.push_back(0);
-    pp_data.n_mg_levels.push_back(0);
-    print_parameter("Average reduction (solver):", "trilinos pCG");
-    print_parameter("Number of iterations (solver):", "---");
-    auto                                       solver_control = get_solver_control();
-    TrilinosWrappers::SolverCG::AdditionalData cg_features(true);
-    TrilinosWrappers::SolverCG                 solver(*solver_control, cg_features);
-    solver.solve(system_matrix, system_delta_u, system_rhs, prec);
-    system_u += system_delta_u;
-    // pp_data.average_reduction_system.push_back(solver_control->average_reduction());
-    // pp_data.n_iterations_system.push_back(solver_control->last_step());
-    // print_parameter("Average reduction (solver):", solver_control->average_reduction());
-    // print_parameter("Number of iterations (solver):", solver_control->last_step());
-    return;
+
+    print_parameter("Average reduction (solver):", "direct (trilinos)");
+    print_parameter("Number of iterations (solver):", "direct (trilinos)");
   }
+
+  // if(/*CG + additive Schwarz preconditioner*/)
+  // {
+  //   const auto & prec = prepare_preconditioner_blockdirect();
+  //   pp_data.average_reduction_system.push_back(0.);
+  //   pp_data.n_iterations_system.push_back(0.);
+  //   print_parameter("Average reduction (solver):", "trilinos pCG");
+  //   print_parameter("Number of iterations (solver):", "---");
+  //   auto                                       solver_control = get_solver_control();
+  //   TrilinosWrappers::SolverCG::AdditionalData cg_features(true);
+  //   TrilinosWrappers::SolverCG                 solver(*solver_control, cg_features);
+  //   solver.solve(system_matrix, system_delta_u, system_rhs, prec);
+  //   system_u += system_delta_u;
+  //   // pp_data.average_reduction_system.push_back(solver_control->average_reduction());
+  //   // pp_data.n_iterations_system.push_back(solver_control->last_step());
+  //   // print_parameter("Average reduction (solver):", solver_control->average_reduction());
+  //   // print_parameter("Number of iterations (solver):", solver_control->last_step());
+  //   return;
+  // }
 
   else
   {
@@ -1231,6 +1276,9 @@ ModelProblem<dim, fe_degree>::solve()
         AssertThrow(false, ExcNotImplemented());
     }
   }
+
+  pp_data.n_colors_system.push_back(n_colors_system());
+  pp_data.n_mg_levels.push_back(n_mg_levels());
 }
 
 
