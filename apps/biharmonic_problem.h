@@ -80,6 +80,10 @@ namespace Biharmonic
 {
 using namespace dealii;
 
+/**
+ * This class augments the (trilinos) sparse matrix struct to suit the TPSS
+ * interface and adds some convenience functions.
+ */
 template<int dim, int fe_degree = 2, typename Number = double>
 class SparseMatrixAugmented : public TrilinosWrappers::SparseMatrix,
                               public C0IP::FD::MatrixIntegrator<dim, fe_degree, Number>
@@ -94,67 +98,28 @@ public:
   initialize(const TrilinosWrappers::SparsityPattern & dsp,
              const IndexSet &                          locally_owned_dof_indices,
              const IndexSet &                          ghosted_dof_indices,
-             const MPI_Comm &                          mpi_communicator)
-  {
-    Assert(dsp.is_compressed(), ExcMessage("The sparsity pattern isn't compressed."));
-    matrix_type::reinit(dsp);
-    partitioner = std::make_shared<const Utilities::MPI::Partitioner>(locally_owned_dof_indices,
-                                                                      ghosted_dof_indices,
-                                                                      mpi_communicator);
-  }
+             const MPI_Comm &                          mpi_communicator);
 
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
-             const EquationData                             equation_data_in)
-  {
-    mf_storage = mf_storage_in;
-    local_integrator_type::initialize(equation_data_in);
-  }
+             const EquationData                             equation_data_in);
 
   void
-  initialize_dof_vector(vector_type & vec) const
-  {
-    Assert(partitioner, ExcMessage("Did you initialize partitioner?"));
-    vec.reinit(partitioner);
-  }
+  initialize_dof_vector(vector_type & vec) const;
 
   void
-  initialize_dof_vector_mf(vector_type & vec) const
-  {
-    Assert(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
-    mf_storage->initialize_dof_vector(vec);
-  }
+  initialize_dof_vector_mf(vector_type & vec) const;
 
   std::shared_ptr<const MatrixFree<dim, Number>>
-  get_matrix_free() const
-  {
-    AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
-    return mf_storage;
-  }
+  get_matrix_free() const;
 
   using matrix_type::vmult;
 
   void
-  vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const
-  {
-    AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1,
-                ExcMessage("TODO incompatible"));
-    AssertDimension(dst.size(), matrix_type::m());
-    AssertDimension(src.size(), matrix_type::n());
-    vector_type v(matrix_type::n()); // src
-    std::copy(src.cbegin(), src.cend(), v.begin());
-    vector_type w(matrix_type::m()); // dst
-    matrix_type::vmult(w, v);        // w = A v
-    std::copy(w.begin(), w.end(), dst.begin());
-  }
+  vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const;
 
   void
-  clear()
-  {
-    mf_storage.reset();
-    partitioner.reset();
-    matrix_type::clear();
-  }
+  clear();
 
   std::shared_ptr<const Utilities::MPI::Partitioner> partitioner;
   std::shared_ptr<const MatrixFree<dim, Number>>     mf_storage;
@@ -162,6 +127,13 @@ public:
 
 
 
+/**
+ * (1) Biharmonic model problem with clamped boundary conditions. The problem
+ * is discretized by means of the C^0 interior penalty method (C0IP).
+ *
+ * (2) Stream function formulation for Stokes model problems discretized by
+ * means of H^div-conforming interior penalty methods.
+ */
 template<int dim, int fe_degree = 2>
 class ModelProblem
 {
@@ -174,13 +146,13 @@ public:
   using VECTOR = LinearAlgebra::distributed::Vector<double>;
   using MATRIX = SparseMatrixAugmented<dim, fe_degree, double>;
 
-  // using MG_TRANSFER           = MGTransferPrebuilt<VECTOR>;
   using MG_TRANSFER         = MGTransferMatrixFree<dim, double>;
   using PATCH_MATRIX        = Tensors::TensorProductMatrix<dim, VectorizedArray<double>>;
   using MG_SMOOTHER_SCHWARZ = MGSmootherSchwarz<dim, MATRIX, PATCH_MATRIX, VECTOR>;
   using GMG_PRECONDITIONER  = PreconditionMG<dim, VECTOR, MG_TRANSFER>;
 
-  static constexpr unsigned int n_q_points_1d = fe_degree + 1;
+  static constexpr unsigned int n_q_points_1d    = fe_degree + 1;
+  static constexpr unsigned int fe_degree_static = fe_degree;
 
   ModelProblem(const RT::Parameter & rt_parameters_in,
                const EquationData &  equation_data_in = EquationData{});
@@ -207,67 +179,22 @@ public:
   prepare_schwarz_smoothers();
 
   const GMG_PRECONDITIONER &
-  prepare_preconditioner_mg()
-  {
-    prepare_multigrid();
-    AssertThrow(multigrid, ExcNotInitialized());
-
-    preconditioner_mg = std::make_shared<GMG_PRECONDITIONER>(dof_handler, *multigrid, mg_transfer);
-    return *preconditioner_mg;
-  }
+  prepare_preconditioner_mg();
 
   const TrilinosWrappers::PreconditionAMG &
-  prepare_preconditioner_amg()
-  {
-    preconditioner_amg = std::make_shared<TrilinosWrappers::PreconditionAMG>();
-    TrilinosWrappers::PreconditionAMG::AdditionalData amg_features;
-    amg_features.elliptic              = true;
-    amg_features.higher_order_elements = true;
-    amg_features.smoother_sweeps       = 2;
-    amg_features.aggregation_threshold = 0.0002;
-    preconditioner_amg->initialize(
-      static_cast<const TrilinosWrappers::SparseMatrix &>(system_matrix), amg_features);
-    return *preconditioner_amg;
-  }
+  prepare_preconditioner_amg();
 
   const TrilinosWrappers::PreconditionBlockwiseDirect &
-  prepare_preconditioner_blockdirect()
-  {
-    preconditioner_blockdirect = std::make_shared<TrilinosWrappers::PreconditionBlockwiseDirect>();
-    TrilinosWrappers::PreconditionBlockwiseDirect::AdditionalData blockdirect_features;
-    blockdirect_features.overlap = 0U;
-    preconditioner_blockdirect->initialize(
-      static_cast<const TrilinosWrappers::SparseMatrix &>(system_matrix), blockdirect_features);
-    return *preconditioner_blockdirect;
-  }
+  prepare_preconditioner_blockdirect();
 
   void
   solve();
 
-  std::array<LAPACKFullMatrix<double>, 2>
-  compute_nondivfree_shape_functions() const;
-
   void
   solve_pressure();
 
-  double
-  compute_stream_function_error();
-
-  std::shared_ptr<Vector<double>>
-  compute_L2_error_pressure() const;
-
-  /**
-   * Computes the energy (semi)norm induced by the C^0 interior penalty bilinear
-   * form. To be precise, we actually compute the mesh-dependent seminorm from
-   * equation (3.5) in BrennerSung05 which is equivalent to the energy norm
-   * (there given in equation (4.19)) on the finite element space. For smooth
-   * functions the mesh-dependent seminorm is equivalent to the H^2-seminorm.
-   */
-  double
-  compute_energy_error() const;
-
   void
-  compute_errors();
+  compute_discretization_errors();
 
   void
   output_results(const unsigned int iteration) const;
@@ -277,51 +204,16 @@ public:
   build_mf_storage() const;
 
   unsigned int
-  max_level() const
-  {
-    return triangulation.n_global_levels() - 1;
-  }
+  max_level() const;
 
   unsigned int
-  n_mg_levels() const
-  {
-    if(mg_matrices.min_level() != mg_matrices.max_level())
-    {
-      const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
-      const unsigned mg_level_max = max_level();
-      AssertDimension(mg_level_max - mg_level_min + 1,
-                      mg_matrices.max_level() - mg_matrices.min_level() + 1);
-      return mg_level_max - mg_level_min + 1;
-    }
-    return 0;
-  }
+  n_mg_levels() const;
 
   unsigned int
-  n_colors_system()
-  {
-    if(mg_schwarz_smoother_pre)
-      return mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
-    if(mg_schwarz_smoother_post)
-      return mg_schwarz_smoother_post->get_subdomain_handler()->get_partition_data().n_colors();
-    return 0;
-  }
-
-  template<typename T>
-  void
-  print_parameter(const std::string & description, const T & value) const
-  {
-    *pcout << Util::parameter_to_fstring(description, value);
-  }
+  n_colors_system() const;
 
   void
-  print_informations() const
-  {
-    *pcout << equation_data.to_string();
-    *pcout << std::endl;
-    print_parameter("Finite element:", finite_element->get_name());
-    *pcout << rt_parameters.to_string();
-    *pcout << std::endl;
-  }
+  print_informations() const;
 
   RT::Parameter                       rt_parameters;
   EquationData                        equation_data;
@@ -340,7 +232,6 @@ public:
   AffineConstraints<double>                 constraints;
   AffineConstraints<double>                 zero_constraints;
 
-  SparsityPattern   sparsity_pattern;
   MATRIX            system_matrix;
   const UpdateFlags update_flags;
   const UpdateFlags update_flags_interface;
@@ -348,24 +239,19 @@ public:
   VECTOR            system_delta_u;
   VECTOR            system_rhs;
 
-  // *** multigrid
   std::shared_ptr<MGConstrainedDoFs>                mg_constrained_dofs;
   MG_TRANSFER                                       mg_transfer;
-  MGLevelObject<SparsityPattern>                    mg_sparsity_patterns;
   MGLevelObject<MATRIX>                             mg_matrices;
   mutable std::shared_ptr<ColoringBase<dim>>        user_coloring;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_pre;
   std::shared_ptr<const MG_SMOOTHER_SCHWARZ>        mg_schwarz_smoother_post;
   std::shared_ptr<const MGSmootherIdentity<VECTOR>> mg_smoother_identity;
-  // std::shared_ptr<const mg::SmootherRelaxation<TrilinosWrappers::PreconditionSSOR, VECTOR>>
-  //                                mg_smoother_gauss_seidel;
   std::shared_ptr<const MGSmootherPrecondition<TrilinosWrappers::SparseMatrix,
                                                TrilinosWrappers::PreconditionSSOR,
                                                VECTOR>>
-                                 mg_smoother_gauss_seidel;
-  const MGSmootherBase<VECTOR> * mg_smoother_pre;
-  const MGSmootherBase<VECTOR> * mg_smoother_post;
-  // CoarseGridSolver<MATRIX, VECTOR>   coarse_grid_solver;
+                                                           mg_smoother_gauss_seidel;
+  const MGSmootherBase<VECTOR> *                           mg_smoother_pre;
+  const MGSmootherBase<VECTOR> *                           mg_smoother_post;
   CoarseGridSolver<TrilinosWrappers::SparseMatrix, VECTOR> coarse_grid_solver;
   const MGCoarseGridBase<VECTOR> *                         mg_coarse_grid;
   mg::Matrix<VECTOR>                                       mg_matrix_wrapper;
@@ -393,13 +279,119 @@ private:
   void
   assemble_system_impl();
 
-  std::shared_ptr<SolverControl>
-  get_solver_control() const;
-
   template<typename PreconditionerType>
   void
   iterative_solve_impl(const PreconditionerType & preconditioner);
+
+  std::shared_ptr<SolverControl>
+  get_solver_control() const;
+
+  template<typename T>
+  void
+  print_parameter(const std::string & description, const T & value) const;
+
+  /**
+   * Computes the energy (semi)norm induced by the C^0 interior penalty bilinear
+   * form. To be precise, we actually compute the mesh-dependent seminorm from
+   * equation (3.5) in BrennerSung05 which is equivalent to the energy norm
+   * (there given in equation (4.19)) on the finite element space. For smooth
+   * functions the mesh-dependent seminorm is equivalent to the H^2-seminorm.
+   */
+  double
+  compute_energy_error() const;
+
+  std::array<LAPACKFullMatrix<double>, 2>
+  compute_nondivfree_shape_functions() const;
+
+  double
+  compute_stream_function_error();
+
+  std::shared_ptr<Vector<double>>
+  compute_L2_error_pressure() const;
 };
+
+
+
+////////////////////////////// Defintions
+
+template<int dim, int fe_degree, typename Number>
+void
+SparseMatrixAugmented<dim, fe_degree, Number>::initialize(
+  const TrilinosWrappers::SparsityPattern & dsp,
+  const IndexSet &                          locally_owned_dof_indices,
+  const IndexSet &                          ghosted_dof_indices,
+  const MPI_Comm &                          mpi_communicator)
+{
+  Assert(dsp.is_compressed(), ExcMessage("The sparsity pattern isn't compressed."));
+  matrix_type::reinit(dsp);
+  partitioner = std::make_shared<const Utilities::MPI::Partitioner>(locally_owned_dof_indices,
+                                                                    ghosted_dof_indices,
+                                                                    mpi_communicator);
+}
+
+
+template<int dim, int fe_degree, typename Number>
+void
+SparseMatrixAugmented<dim, fe_degree, Number>::initialize(
+  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
+  const EquationData                             equation_data_in)
+{
+  mf_storage = mf_storage_in;
+  local_integrator_type::initialize(equation_data_in);
+}
+
+
+template<int dim, int fe_degree, typename Number>
+void
+SparseMatrixAugmented<dim, fe_degree, Number>::initialize_dof_vector(vector_type & vec) const
+{
+  Assert(partitioner, ExcMessage("Did you initialize partitioner?"));
+  vec.reinit(partitioner);
+}
+
+
+template<int dim, int fe_degree, typename Number>
+void
+SparseMatrixAugmented<dim, fe_degree, Number>::initialize_dof_vector_mf(vector_type & vec) const
+{
+  Assert(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
+  mf_storage->initialize_dof_vector(vec);
+}
+
+
+template<int dim, int fe_degree, typename Number>
+std::shared_ptr<const MatrixFree<dim, Number>>
+SparseMatrixAugmented<dim, fe_degree, Number>::get_matrix_free() const
+{
+  AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
+  return mf_storage;
+}
+
+
+template<int dim, int fe_degree, typename Number>
+void
+SparseMatrixAugmented<dim, fe_degree, Number>::vmult(const ArrayView<Number>       dst,
+                                                     const ArrayView<const Number> src) const
+{
+  AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1, ExcMessage("No MPI support"));
+  AssertDimension(dst.size(), matrix_type::m());
+  AssertDimension(src.size(), matrix_type::n());
+  vector_type v(matrix_type::n()); // src
+  std::copy(src.cbegin(), src.cend(), v.begin());
+  vector_type w(matrix_type::m()); // dst
+  matrix_type::vmult(w, v);        // w = A v
+  std::copy(w.begin(), w.end(), dst.begin());
+}
+
+
+template<int dim, int fe_degree, typename Number>
+void
+SparseMatrixAugmented<dim, fe_degree, Number>::clear()
+{
+  mf_storage.reset();
+  partitioner.reset();
+  matrix_type::clear();
+}
 
 
 
@@ -900,39 +892,32 @@ template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
 {
-  AssertThrow(false, ExcMessage("TODO MPI..."));
-  // //: pre-smoother
-  // Assert(rt_parameters.multigrid.pre_smoother.variant ==
-  //          SmootherParameter::SmootherVariant::Schwarz,
-  //        ExcMessage("Invalid smoothing variant."));
-  // AssertDimension(mg_matrices.max_level(), max_level());
-  // for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
-  //   AssertThrow(mg_matrices[level].mf_storage, ExcMessage("mf_storage is not initialized."));
+  //: pre-smoother
+  Assert(rt_parameters.multigrid.pre_smoother.variant ==
+           SmootherParameter::SmootherVariant::Schwarz,
+         ExcMessage("Invalid smoothing variant."));
+  AssertDimension(mg_matrices.max_level(), max_level());
+  for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
+    AssertThrow(mg_matrices[level].mf_storage, ExcMessage("mf_storage isn't initialized."));
 
-  // const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
-  // typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
-  // mgss_data.coloring_func = std::ref(*user_coloring);
-  // mgss_data.use_tbb       = rt_parameters.use_tbb;
-  // mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
-  // // mgss_data.dirichlet_ids.emplace_back(equation_data.dirichlet_boundary_ids);
-  // mgss->initialize(mg_matrices, mgss_data);
-  // mg_schwarz_smoother_pre = mgss;
+  typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data;
+  mgss_data.coloring_func = std::ref(*user_coloring);
+  mgss_data.use_tbb       = rt_parameters.use_tbb;
+  mgss_data.parameters    = rt_parameters.multigrid.pre_smoother;
 
-  // //: post-smoother (so far only shallow copy!)
-  // {
-  //   typename SubdomainHandler<dim, double>::AdditionalData sd_handler_data;
-  //   rt_parameters.template fill_schwarz_smoother_data<dim, double>(sd_handler_data,
-  //                                                                  /*is_pre?*/ false);
+  const auto mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+  mgss->initialize(mg_matrices, mgss_data);
+  mg_schwarz_smoother_pre = mgss;
 
-  //   const auto mgss_post      = std::make_shared<MG_SMOOTHER_SCHWARZ>();
-  //   auto       mgss_data_post = mgss_data;
-  //   mgss_data_post.parameters = rt_parameters.multigrid.post_smoother;
-  //   // typename MG_SMOOTHER_SCHWARZ::AdditionalData mgss_data_post;
-  //   // mgss_data_post.coloring_func = std::ref(*user_coloring);
-  //   // mgss_data_post.parameters    = rt_parameters.multigrid.post_smoother;
-  //   mgss_post->initialize(*mg_schwarz_smoother_pre, mgss_data_post);
-  //   mg_schwarz_smoother_post = mgss_post;
-  // }
+  //: post-smoother (so far only shallow copy!)
+  {
+    auto mgss_data_post       = mgss_data;
+    mgss_data_post.parameters = rt_parameters.multigrid.post_smoother;
+
+    const auto mgss_post = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+    mgss_post->initialize(*mg_schwarz_smoother_pre, mgss_data_post);
+    mg_schwarz_smoother_post = mgss_post;
+  }
 }
 
 
@@ -941,7 +926,7 @@ template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::prepare_multigrid()
 {
-  // *** clear multigrid infrastructure
+  //: clear multigrid infrastructure
   multigrid.reset();
   mg_matrix_wrapper.reset();
   coarse_grid_solver.clear();
@@ -953,19 +938,18 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
   mg_matrices.clear_elements();
   mg_constrained_dofs.reset();
 
-  // *** setup multigrid data
+  //: setup multigrid data
   const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
   const unsigned mg_level_max = max_level();
 
-  // *** initialize multigrid constraints
+  //: initialize multigrid constraints
   mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
   mg_constrained_dofs->initialize(dof_handler);
   mg_constrained_dofs->make_zero_boundary_constraints(dof_handler,
                                                       equation_data.dirichlet_boundary_ids);
 
-  // *** initialize level matrices A_l
+  //: initialize level matrices A_l
   mg_matrices.resize(mg_level_min, mg_level_max);
-  mg_sparsity_patterns.resize(mg_level_min, mg_level_max);
   for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
   {
     ////////// setup
@@ -1071,11 +1055,11 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
     mg_matrices[level].compress(VectorOperation::add);
   }
 
-  // *** initialize multigrid transfer R_l
+  //: initialize multigrid transfer R_l
   mg_transfer.initialize_constraints(*mg_constrained_dofs);
   mg_transfer.build(dof_handler);
 
-  // *** initialize Schwarz smoother S_l
+  //: initialize Schwarz smoother S_l
   switch(rt_parameters.multigrid.pre_smoother.variant)
   {
     case SmootherParameter::SmootherVariant::None:
@@ -1138,6 +1122,104 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
                                                   mg_level_max);
 }
 
+
+template<int dim, int fe_degree>
+const typename ModelProblem<dim, fe_degree>::GMG_PRECONDITIONER &
+ModelProblem<dim, fe_degree>::prepare_preconditioner_mg()
+{
+  prepare_multigrid();
+  AssertThrow(multigrid, ExcNotInitialized());
+
+  preconditioner_mg = std::make_shared<GMG_PRECONDITIONER>(dof_handler, *multigrid, mg_transfer);
+  return *preconditioner_mg;
+}
+
+
+template<int dim, int fe_degree>
+const TrilinosWrappers::PreconditionAMG &
+ModelProblem<dim, fe_degree>::prepare_preconditioner_amg()
+{
+  preconditioner_amg = std::make_shared<TrilinosWrappers::PreconditionAMG>();
+  TrilinosWrappers::PreconditionAMG::AdditionalData amg_features;
+  amg_features.elliptic              = true;
+  amg_features.higher_order_elements = true;
+  amg_features.smoother_sweeps       = 2;
+  amg_features.aggregation_threshold = 0.0002;
+  preconditioner_amg->initialize(static_cast<const TrilinosWrappers::SparseMatrix &>(system_matrix),
+                                 amg_features);
+  return *preconditioner_amg;
+}
+
+
+template<int dim, int fe_degree>
+const TrilinosWrappers::PreconditionBlockwiseDirect &
+ModelProblem<dim, fe_degree>::prepare_preconditioner_blockdirect()
+{
+  preconditioner_blockdirect = std::make_shared<TrilinosWrappers::PreconditionBlockwiseDirect>();
+  TrilinosWrappers::PreconditionBlockwiseDirect::AdditionalData blockdirect_features;
+  blockdirect_features.overlap = 0U;
+  preconditioner_blockdirect->initialize(
+    static_cast<const TrilinosWrappers::SparseMatrix &>(system_matrix), blockdirect_features);
+  return *preconditioner_blockdirect;
+}
+
+
+template<int dim, int fe_degree>
+unsigned int
+ModelProblem<dim, fe_degree>::max_level() const
+{
+  return triangulation.n_global_levels() - 1;
+}
+
+
+template<int dim, int fe_degree>
+unsigned int
+ModelProblem<dim, fe_degree>::n_mg_levels() const
+{
+  if(mg_matrices.min_level() != mg_matrices.max_level())
+  {
+    const unsigned mg_level_min = rt_parameters.multigrid.coarse_level;
+    const unsigned mg_level_max = max_level();
+    AssertDimension(mg_level_max - mg_level_min + 1,
+                    mg_matrices.max_level() - mg_matrices.min_level() + 1);
+    return mg_level_max - mg_level_min + 1;
+  }
+  return 0;
+}
+
+
+template<int dim, int fe_degree>
+unsigned int
+ModelProblem<dim, fe_degree>::n_colors_system() const
+{
+  if(mg_schwarz_smoother_pre)
+    return mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
+  if(mg_schwarz_smoother_post)
+    return mg_schwarz_smoother_post->get_subdomain_handler()->get_partition_data().n_colors();
+  return 0;
+}
+
+
+template<int dim, int fe_degree>
+template<typename T>
+void
+ModelProblem<dim, fe_degree>::print_parameter(const std::string & description,
+                                              const T &           value) const
+{
+  *pcout << Util::parameter_to_fstring(description, value);
+}
+
+
+template<int dim, int fe_degree>
+void
+ModelProblem<dim, fe_degree>::print_informations() const
+{
+  *pcout << equation_data.to_string();
+  *pcout << std::endl;
+  print_parameter("Finite element:", finite_element->get_name());
+  *pcout << rt_parameters.to_string();
+  *pcout << std::endl;
+}
 
 
 template<int dim, int fe_degree>
@@ -1233,28 +1315,28 @@ ModelProblem<dim, fe_degree>::solve()
 
     print_parameter("Average reduction (solver):", "direct (trilinos)");
     print_parameter("Number of iterations (solver):", "direct (trilinos)");
+
+    // if(/*CG + additive Schwarz preconditioner*/)
+    // {
+    //   const auto & prec = prepare_preconditioner_blockdirect();
+    //   pp_data.average_reduction_system.push_back(0.);
+    //   pp_data.n_iterations_system.push_back(0.);
+    //   print_parameter("Average reduction (solver):", "trilinos pCG");
+    //   print_parameter("Number of iterations (solver):", "---");
+    //   auto                                       solver_control = get_solver_control();
+    //   TrilinosWrappers::SolverCG::AdditionalData cg_features(true);
+    //   TrilinosWrappers::SolverCG                 solver(*solver_control, cg_features);
+    //   solver.solve(system_matrix, system_delta_u, system_rhs, prec);
+    //   system_u += system_delta_u;
+    //   // pp_data.average_reduction_system.push_back(solver_control->average_reduction());
+    //   // pp_data.n_iterations_system.push_back(solver_control->last_step());
+    //   // print_parameter("Average reduction (solver):", solver_control->average_reduction());
+    //   // print_parameter("Number of iterations (solver):", solver_control->last_step());
+    //   return;
+    // }
   }
 
-  // if(/*CG + additive Schwarz preconditioner*/)
-  // {
-  //   const auto & prec = prepare_preconditioner_blockdirect();
-  //   pp_data.average_reduction_system.push_back(0.);
-  //   pp_data.n_iterations_system.push_back(0.);
-  //   print_parameter("Average reduction (solver):", "trilinos pCG");
-  //   print_parameter("Number of iterations (solver):", "---");
-  //   auto                                       solver_control = get_solver_control();
-  //   TrilinosWrappers::SolverCG::AdditionalData cg_features(true);
-  //   TrilinosWrappers::SolverCG                 solver(*solver_control, cg_features);
-  //   solver.solve(system_matrix, system_delta_u, system_rhs, prec);
-  //   system_u += system_delta_u;
-  //   // pp_data.average_reduction_system.push_back(solver_control->average_reduction());
-  //   // pp_data.n_iterations_system.push_back(solver_control->last_step());
-  //   // print_parameter("Average reduction (solver):", solver_control->average_reduction());
-  //   // print_parameter("Number of iterations (solver):", solver_control->last_step());
-  //   return;
-  // }
-
-  else
+  else // iterative solver
   {
     switch(rt_parameters.solver.precondition_variant)
     {
@@ -2339,7 +2421,7 @@ ModelProblem<dim, fe_degree>::compute_energy_error() const
 // we compute the error in the $L_2$ norm and the $H^1$ semi-norm.
 template<int dim, int fe_degree>
 void
-ModelProblem<dim, fe_degree>::compute_errors()
+ModelProblem<dim, fe_degree>::compute_discretization_errors()
 {
   if(equation_data.is_stream_function())
   {
@@ -2476,7 +2558,7 @@ ModelProblem<dim, fe_degree>::run()
 
     // output_results(cycle);
 
-    compute_errors();
+    compute_discretization_errors();
 
     *pcout << std::endl;
   }

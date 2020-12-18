@@ -82,12 +82,11 @@ write_ppdata_to_string(const PostProcessData & pp_data,
 }
 
 std::string
-get_filename(const RT::Parameter &            prms,
-             const Biharmonic::EquationData & equation_data,
-             const bool                       print_damping = false)
+get_filename(const RT::Parameter & prms, const Biharmonic::EquationData & equation_data)
 {
   std::ostringstream oss;
 
+  const auto        n_mpi_procs            = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
   const auto        n_threads_per_mpi_proc = MultithreadInfo::n_threads();
   const auto &      pre_schwarz            = prms.multigrid.pre_smoother.schwarz;
   const auto        damping                = pre_schwarz.damping_factor;
@@ -96,8 +95,9 @@ get_filename(const RT::Parameter &            prms,
 
   oss << "biharm";
   oss << std::scientific << std::setprecision(2);
-  // if(n_threads_per_mpi_proc > 1)
-  oss << "_" << n_threads_per_mpi_proc << "tpp";
+  oss << "_" << n_mpi_procs << "prcs";
+  if(n_threads_per_mpi_proc > 1)
+    oss << "_" << n_threads_per_mpi_proc << "tpp";
   if(prms.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
   {
     oss << "_" << str_schwarz_variant;
@@ -129,7 +129,7 @@ main(int argc, char * argv[])
 
 
     //: default
-    unsigned int solver_index              = 0; // CG + unprec
+    unsigned int solver_index              = 4; // CG + unprec
     unsigned int debug_depth               = 0;
     double       damping                   = 0.;
     double       ip_factor                 = 1.;
@@ -158,10 +158,10 @@ main(int argc, char * argv[])
                                                           static_cast<unsigned int>(n_threads_max));
     const auto                       n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
 
-    constexpr int  dim              = CT::DIMENSION_;
-    constexpr int  fe_degree        = CT::FE_DEGREE_;
-    constexpr auto patch_variant    = CT::PATCH_VARIANT_;
-    constexpr auto smoother_variant = CT::SMOOTHER_VARIANT_;
+    constexpr int  dim                   = CT::DIMENSION_;
+    constexpr int  fe_degree             = CT::FE_DEGREE_;
+    constexpr auto patch_variant         = CT::PATCH_VARIANT_;
+    constexpr auto tpss_smoother_variant = CT::SMOOTHER_VARIANT_;
 
     // 0: direct solver
     // 1: CG solver (no preconditioner)
@@ -186,26 +186,24 @@ main(int argc, char * argv[])
 
       //: discretization
       prms.n_cycles              = 13;
-      prms.dof_limits            = {1e1, 1e4}; //{1e5, 1e8};
+      prms.dof_limits            = {1e1, 2e5}; //{1e5, 1e7};
       prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
       prms.mesh.n_refinements    = 1;
       prms.mesh.n_repetitions    = 2;
 
       //: solver
       prms.solver.variant              = solver_index == 0 ? "direct" : "cg";
+      prms.solver.n_iterations_max     = 100;
+      prms.solver.control_variant      = SolverParameter::ControlVariant::relative;
       prms.solver.abs_tolerance        = 1.e-14;
       prms.solver.rel_tolerance        = 1.e-08;
       prms.solver.precondition_variant = solver_index >= 2 ?
                                            SolverParameter::PreconditionVariant::GMG :
                                            SolverParameter::PreconditionVariant::None;
-      prms.solver.n_iterations_max = 1000;
-      prms.solver.control_variant  = SolverParameter::ControlVariant::relative; // !!!
 
       //: multigrid
-      prms.multigrid.coarse_level                 = 0;
-      prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::DirectSVD;
-      prms.multigrid.coarse_grid.iterative_solver = "cg";
-      prms.multigrid.coarse_grid.accuracy         = 1.e-12;
+      prms.multigrid.coarse_level               = 0;
+      prms.multigrid.coarse_grid.solver_variant = CoarseGridParameter::SolverVariant::DirectSVD;
       const SmootherParameter::SmootherVariant smoother_variant[solver_index_max + 1] = {
         SmootherParameter::SmootherVariant::None,
         SmootherParameter::SmootherVariant::None,
@@ -214,12 +212,13 @@ main(int argc, char * argv[])
         SmootherParameter::SmootherVariant::Schwarz};
       prms.multigrid.pre_smoother.variant                      = smoother_variant[solver_index];
       prms.multigrid.pre_smoother.n_smoothing_steps            = n_smoothing_steps;
-      prms.multigrid.pre_smoother.schwarz.patch_variant        = CT::PATCH_VARIANT_;
-      prms.multigrid.pre_smoother.schwarz.smoother_variant     = CT::SMOOTHER_VARIANT_;
+      prms.multigrid.pre_smoother.schwarz.patch_variant        = patch_variant;
+      prms.multigrid.pre_smoother.schwarz.smoother_variant     = tpss_smoother_variant;
       prms.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
       prms.multigrid.pre_smoother.schwarz.damping_factor       = damping;
-      prms.multigrid.pre_smoother.damping_factor =
-        damping == 0. ? (n_mpi_procs == 1 ? 1. : 0.7) : damping;
+      if(prms.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::GaussSeidel)
+        prms.multigrid.pre_smoother.damping_factor =
+          damping == 0. ? (n_mpi_procs == 1 ? 1. : 0.7) : damping;
       prms.multigrid.pre_smoother.use_doubling_of_steps      = use_doubling_of_steps;
       prms.multigrid.post_smoother                           = prms.multigrid.pre_smoother;
       prms.multigrid.post_smoother.schwarz.reverse_smoothing = prms.solver.variant == "cg";
