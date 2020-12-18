@@ -163,9 +163,8 @@ private:
  * 'TrilinosWrappers::SolverDirect'.
  */
 template<typename VectorType>
-class MGCoarseGridDirect : public MGCoarseGridBase<VectorType>
+struct MGCoarseGridDirect : public MGCoarseGridBase<VectorType>
 {
-public:
   using Base = MGCoarseGridBase<VectorType>;
 
   ~MGCoarseGridDirect() override final = default;
@@ -179,7 +178,6 @@ public:
     solver_direct->solve(dst, src);
   }
 
-private:
   std::shared_ptr<TrilinosWrappers::SolverDirect> solver_direct;
 };
 
@@ -244,12 +242,13 @@ public:
     const auto solver_control = Base::set_solver_control(prms);
     // solver_control->set_max_steps(coarse_matrix.m());
 
-    using coarse_grid_solver_type = MGCoarseGridDirect<VectorType>;
-    const auto solver             = std::make_shared<MGCoarseGridDirect>;
     const auto solver_direct = std::make_shared<TrilinosWrappers::SolverDirect>(*solver_control);
     solver_direct->initialize(coarse_matrix);
-    solver.solver_direct     = solver_direct;
-    Base::coarse_grid_solver = solver;
+
+    using coarse_grid_solver_type = MGCoarseGridDirect<VectorType>;
+    const auto solver             = std::make_shared<coarse_grid_solver_type>();
+    solver->solver_direct         = solver_direct;
+    Base::coarse_grid_solver      = solver;
   }
 
   void
