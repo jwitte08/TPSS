@@ -25,20 +25,21 @@
 #include <deal.II/multigrid/multigrid.h>
 
 
-
+#include "solver.h"
 #include "solvers_and_preconditioners/TPSS/schwarz_smoother_data.h"
 #include "solvers_and_preconditioners/TPSS/tensors.h"
 #include "solvers_and_preconditioners/smoother/schwarz_smoother.h"
 #include "utilities.h"
 
+
+
 using namespace dealii;
 
 
 
-// +++++++++++++++++++++++++++++++ CLASSES & STRUCTS +++++++++++++++++++++++++++++++++
-
-
-
+/**
+ * Collection of parameters for smoothers used in multigrid routines.
+ */
 struct SmootherParameter
 {
   enum class SmootherVariant
@@ -54,6 +55,7 @@ struct SmootherParameter
   int                                n_smoothing_steps     = 1;
   bool                               use_doubling_of_steps = false;
   SchwarzSmootherData                schwarz;
+  double                             damping_factor = 1.;
 
   bool
   operator==(const SmootherParameter & other) const
@@ -62,6 +64,7 @@ struct SmootherParameter
     is_equal &= variant == other.variant;
     is_equal &= n_smoothing_steps == other.n_smoothing_steps;
     is_equal &= schwarz == other.schwarz;
+    is_equal &= damping_factor == other.damping_factor;
     return is_equal;
   }
 
@@ -71,25 +74,30 @@ struct SmootherParameter
 
 
 
+/**
+ * Collection of parameters for the coarsest grid in multigrid routines.
+ */
 struct CoarseGridParameter
 {
   enum class SolverVariant
   {
     None,
-    IterativeAcc,
-    FullSVD
+    Iterative,
+    DirectSVD
   };
+
   enum class PreconditionVariant
   {
     None
   };
+
   static std::string
   str_solver_variant(const SolverVariant variant);
 
-  double              accuracy             = 1.e-12;
-  std::string         iterative_solver     = "none"; // see SolverSelector
+  SolverVariant       solver_variant       = SolverVariant::Iterative;
   PreconditionVariant precondition_variant = PreconditionVariant::None;
-  SolverVariant       solver_variant       = SolverVariant::IterativeAcc;
+  std::string         iterative_solver     = "none"; // see SolverSelector
+  double              accuracy             = 1.e-12;
   double              threshold_svd        = 0.;
 
   std::string
@@ -98,6 +106,9 @@ struct CoarseGridParameter
 
 
 
+/**
+ * Collection of multigrid parameters.
+ */
 struct MGParameter
 {
   CoarseGridParameter coarse_grid;
@@ -110,6 +121,15 @@ struct MGParameter
   to_string() const;
 };
 
+
+
+/**
+ * A wrapper class extending MGCoarseGridSVD to more vector types than 'Vector'
+ * (the vector type that is internally used by LAPACKFullMatrix). In particular,
+ * we have MPI-capable vector types in mind like
+ * 'LinearAlgebra::distributed::Vector'. However, vector types are only compatible
+ * when the program runs with one MPI process.
+ */
 template<typename Number, typename VectorType>
 class MGCoarseGridSVDSerial : public MGCoarseGridBase<VectorType>
 {
@@ -123,6 +143,8 @@ public:
   virtual void
   operator()(const unsigned int level, VectorType & dst, const VectorType & src) const override
   {
+    AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1U,
+                ExcMessage("Vector type conversion only possible for one MPI process."));
     Vector<Number> tmp_dst(dst.size());
     Vector<Number> tmp_src(src.size());
     std::copy(src.begin(), src.end(), tmp_src.begin());
@@ -134,67 +156,227 @@ private:
   MGCoarseGridSVD<Number, Vector<Number>> solver_svd;
 };
 
-template<typename MatrixType, typename VectorType>
-class CoarseGridSolver : public MGCoarseGridBase<VectorType>
+
+
+/**
+ * A MGCoarseGridBase derivative enabling the direct solver
+ * 'TrilinosWrappers::SolverDirect'.
+ */
+template<typename VectorType>
+class MGCoarseGridDirect : public MGCoarseGridBase<VectorType>
 {
 public:
+  using Base = MGCoarseGridBase<VectorType>;
+
+  ~MGCoarseGridDirect() override final = default;
+
   void
-  initialize(const MatrixType & coarse_matrix, const CoarseGridParameter & prms)
+  operator()(const unsigned int level,
+             VectorType &       dst,
+             const VectorType & src) const override final
   {
-    if(prms.solver_variant == CoarseGridParameter::SolverVariant::IterativeAcc)
-    {
-      solver_control.set_max_steps(coarse_matrix.m());
-      solver_control.set_tolerance(prms.accuracy);
-      solver_control.log_history(false);
-      solver_control.log_result(false);
-      iterative_solver.set_control(solver_control);
-      iterative_solver.select(prms.iterative_solver);
-      if(prms.precondition_variant == CoarseGridParameter::PreconditionVariant::None)
-      {
-        const auto solver = std::make_shared<MGCoarseGridIterativeSolver<VectorType,
-                                                                         SolverSelector<VectorType>,
-                                                                         MatrixType,
-                                                                         PreconditionIdentity>>();
-        solver->initialize(iterative_solver, coarse_matrix, precondition_id);
-        coarse_grid_solver = solver;
-        return;
-      }
-      else
-        AssertThrow(false, ExcMessage("Invalid PreconditionVariant. TODO."));
-    }
-    else if(prms.solver_variant == CoarseGridParameter::SolverVariant::FullSVD)
-    {
-      const auto & coarse_table       = Tensors::matrix_to_table(coarse_matrix);
-      const auto & coarse_full_matrix = table_to_fullmatrix(coarse_table);
-      const auto   solver_svd = std::make_shared<MGCoarseGridSVDSerial<value_type, VectorType>>();
-      solver_svd->initialize(coarse_full_matrix, prms.threshold_svd);
-      coarse_grid_solver = solver_svd;
-    }
-    else
-      AssertThrow(false, ExcMessage("Invalid SolverVariant. TODO."));
-    AssertThrow(coarse_grid_solver, ExcMessage("Initialize failed."));
+    AssertThrow(solver_direct, ExcMessage("solver_direct is uninitialized."));
+    solver_direct->solve(dst, src);
   }
+
+private:
+  std::shared_ptr<TrilinosWrappers::SolverDirect> solver_direct;
+};
+
+
+
+/**
+ * A base class that handles the infrastructure required for coarse grid solvers
+ * used in multigrid routines.
+ */
+/// TODO replace inheritance by operator ()
+template<typename VectorType>
+class CoarseGridSolverBase : public MGCoarseGridBase<VectorType>
+{
+public:
+  using Base = MGCoarseGridBase<VectorType>;
+
+  virtual ~CoarseGridSolverBase() override = default;
 
   void
   clear()
   {
     coarse_grid_solver.reset();
+    solver_control.reset();
   }
 
-  void
+  void virtual
   operator()(const unsigned int level, VectorType & dst, const VectorType & src) const override
   {
     AssertThrow(coarse_grid_solver, ExcMessage("The coarse grid solver is uninitialized."));
     coarse_grid_solver->operator()(level, dst, src);
   }
 
-private:
-  using value_type = typename MatrixType::value_type;
-  SolverControl                                       solver_control;
-  PreconditionIdentity                                precondition_id;
-  SolverSelector<VectorType>                          iterative_solver;
+  std::shared_ptr<SolverControl>
+  set_solver_control(const CoarseGridParameter & prms)
+  {
+    solver_control = std::make_shared<SolverControl>();
+    solver_control->set_tolerance(prms.accuracy);
+    solver_control->log_history(false);
+    solver_control->log_result(false);
+    return solver_control;
+  }
+
+protected:
+  std::shared_ptr<SolverControl>                      solver_control;
   std::shared_ptr<const MGCoarseGridBase<VectorType>> coarse_grid_solver;
 };
+
+
+
+template<typename MatrixType, typename VectorType>
+class CoarseGridSolver : public CoarseGridSolverBase<VectorType>
+{
+public:
+  using Base       = CoarseGridSolverBase<VectorType>;
+  using value_type = typename MatrixType::value_type;
+
+  void
+  initialize_direct(const TrilinosWrappers::SparseMatrix & coarse_matrix,
+                    const CoarseGridParameter &            prms)
+  {
+    AssertDimension(coarse_matrix.m(), coarse_matrix.n());
+    const auto solver_control = Base::set_solver_control(prms);
+    // solver_control->set_max_steps(coarse_matrix.m());
+
+    using coarse_grid_solver_type = MGCoarseGridDirect<VectorType>;
+    const auto solver             = std::make_shared<MGCoarseGridDirect>;
+    const auto solver_direct = std::make_shared<TrilinosWrappers::SolverDirect>(*solver_control);
+    solver_direct->initialize(coarse_matrix);
+    solver.solver_direct     = solver_direct;
+    Base::coarse_grid_solver = solver;
+  }
+
+  void
+  initialize_direct(const FullMatrix<value_type> & coarse_matrix, const CoarseGridParameter & prms)
+  {
+    // const auto & coarse_table       = Tensors::matrix_to_table(coarse_matrix);
+    // const auto & coarse_full_matrix = table_to_fullmatrix(coarse_table);
+    using coarse_grid_solver_type = MGCoarseGridSVDSerial<value_type, VectorType>;
+    const auto solver             = std::make_shared<coarse_grid_solver_type>();
+    solver->initialize(coarse_matrix, prms.threshold_svd);
+    Base::coarse_grid_solver = solver;
+  }
+
+  void
+  initialize_iterative(const MatrixType & coarse_matrix, const CoarseGridParameter & prms)
+  {
+    const auto solver_control = Base::set_solver_control(prms);
+    solver_control->set_max_steps(coarse_matrix.m());
+
+    iterative_solver.set_control(*solver_control);
+    iterative_solver.select(prms.iterative_solver);
+
+    switch(prms.precondition_variant)
+    {
+      case CoarseGridParameter::PreconditionVariant::None:
+      {
+        using coarse_grid_solver_type = MGCoarseGridIterativeSolver<VectorType,
+                                                                    SolverSelector<VectorType>,
+                                                                    MatrixType,
+                                                                    PreconditionIdentity>;
+        Base::coarse_grid_solver      = std::make_shared<coarse_grid_solver_type>(iterative_solver,
+                                                                             coarse_matrix,
+                                                                             preconditioner_id);
+        return;
+      }
+      default:
+        AssertThrow(false, ExcMessage("PreconditionVariant isn't supported."));
+    }
+  }
+
+  void
+  initialize(const MatrixType & coarse_matrix, const CoarseGridParameter & prms)
+  {
+    AssertDimension(coarse_matrix.m(), coarse_matrix.n());
+    const auto solver_control = Base::set_solver_control(prms);
+    solver_control->set_max_steps(coarse_matrix.m());
+
+    switch(prms.solver_variant)
+    {
+      case CoarseGridParameter::SolverVariant::Iterative:
+        initialize_iterative(coarse_matrix, prms);
+        return;
+      case CoarseGridParameter::SolverVariant::DirectSVD:
+        initialize_direct(coarse_matrix, prms);
+        return;
+      default:
+        AssertThrow(false, ExcMessage("Not supported."));
+    }
+  }
+
+  void
+  clear()
+  {
+    Base::clear();
+  }
+
+private:
+  SolverSelector<VectorType> iterative_solver;
+  const PreconditionIdentity preconditioner_id;
+};
+
+
+
+// template<typename VectorType>
+// class CoarseGridSolver<TrilinosWrappers::SparseMatrix, VectorType>
+//   : public CoarseGridSolverBase<VectorType>
+// {
+// public:
+//   using Base = CoarseGridSolverBase<VectorType>;
+
+//   ~CoarseGridSolver() override final = default;
+
+//   void
+//   initialize(const TrilinosWrappers::SparseMatrix & coarse_matrix, const CoarseGridParameter &
+//   prms)
+//   {
+//     AssertDimension(coarse_matrix.m(), coarse_matrix.n());
+//     const auto solver_control = Base::set_solver_control(prms);
+//     solver_control->set_max_steps(coarse_matrix.m());
+
+//     switch(prms.solver_variant)
+//     {
+//       case CoarseGridParameter::SolverVariant::DirectSVD:
+//       {
+//         solver_direct = std::make_shared<TrilinosWrappers::SolverDirect>(*solver_control);
+//         solver_direct->initialize(coarse_matrix);
+//         return;
+//       }
+//       default:
+//         AssertThrow(false, ExcMessage("Not supported."));
+//     }
+//   }
+
+//   void
+//   clear()
+//   {
+//     solver_direct.reset();
+//     Base::clear();
+//   }
+
+//   void
+//   operator()(const unsigned int level,
+//              VectorType &       dst,
+//              const VectorType & src) const override final
+//   {
+//     if(solver_direct)
+//     {
+//       solver_direct->solve(dst, src);
+//       return;
+//     }
+
+//     Base::operator()(level, dst, src);
+//   }
+
+// private:
+//   std::shared_ptr<TrilinosWrappers::SolverDirect> solver_direct;
+// };
 
 
 
@@ -415,7 +597,7 @@ CoarseGridParameter::to_string() const
 {
   std::ostringstream oss;
   oss << Util::parameter_to_fstring("Coarse grid solver:", str_solver_variant(solver_variant));
-  if(solver_variant == SolverVariant::IterativeAcc)
+  if(solver_variant == SolverVariant::Iterative)
   {
     oss << Util::parameter_to_fstring("Iterative solver:", iterative_solver);
     oss << Util::parameter_to_fstring("Accuracy:", accuracy);

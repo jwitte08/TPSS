@@ -80,7 +80,7 @@ main(int argc, char * argv[])
       if(damping == 0.)
         damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
       prms.multigrid.coarse_level                 = 0;
-      prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::FullSVD;
+      prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::DirectSVD;
       prms.multigrid.coarse_grid.iterative_solver = "cg";
       prms.multigrid.coarse_grid.accuracy         = 1.e-12;
       const SmootherParameter::SmootherVariant smoother_variant[test_index_max + 1] = {

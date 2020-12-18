@@ -23,7 +23,7 @@ struct TestParameter
   TPSS::SmootherVariant              smoother_variant = CT::SMOOTHER_VARIANT_;
   std::string                        solver_variant   = "gmres"; //!!! see SolverSelector
   CoarseGridParameter::SolverVariant coarse_grid_variant =
-    CoarseGridParameter::SolverVariant::IterativeAcc;
+    CoarseGridParameter::SolverVariant::Iterative;
   double       coarse_grid_accuracy    = 1.e-12;
   double       cg_reduction            = 1.e-8; // -8 !!!
   unsigned     n_refinements           = 1;
@@ -88,7 +88,7 @@ struct Tester
   {
     //: discretization
     rt_parameters.n_cycles              = 15;
-    rt_parameters.dof_limits            = {1e1, 2e6}; // {1e5, 1e8};
+    rt_parameters.dof_limits            = {1e1, 5e5}; // {1e5, 1e8};
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
     rt_parameters.mesh.n_refinements    = testprms.n_refinements;
     rt_parameters.mesh.n_repetitions    = testprms.n_repetitions;

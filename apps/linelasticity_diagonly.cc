@@ -21,7 +21,7 @@ struct TestParameter
   double                             cg_reduction         = 1.e-8;
   double                             coarse_grid_accuracy = 1.e-12;
   CoarseGridParameter::SolverVariant coarse_grid_variant =
-    CoarseGridParameter::SolverVariant::IterativeAcc;
+    CoarseGridParameter::SolverVariant::Iterative;
   types::global_dof_index dof_limit_min = 1e4;
   types::global_dof_index dof_limit_max = 1e6;
   EquationData            equation_data;

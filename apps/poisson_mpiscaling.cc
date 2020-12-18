@@ -26,7 +26,7 @@ struct TestParameter
   TPSS::SmootherVariant              smoother_variant = CT::SMOOTHER_VARIANT_;
   std::string                        solver_variant   = "cg"; // see SolverSelector
   CoarseGridParameter::SolverVariant coarse_grid_variant =
-    CoarseGridParameter::SolverVariant::IterativeAcc;
+    CoarseGridParameter::SolverVariant::Iterative;
   double   cg_reduction         = 1.e-8;
   double   coarse_grid_accuracy = 1.e-12;
   unsigned n_refinements        = 1;

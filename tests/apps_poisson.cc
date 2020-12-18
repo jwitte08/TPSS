@@ -44,7 +44,7 @@ protected:
       TPSS::lookup_damping_factor(params.patch_variant, params.smoother_variant, dim);
     rt_parameters.multigrid.coarse_level = 0;
     rt_parameters.multigrid.coarse_grid.solver_variant =
-      CoarseGridParameter::SolverVariant::IterativeAcc;
+      CoarseGridParameter::SolverVariant::Iterative;
     rt_parameters.multigrid.coarse_grid.iterative_solver = "cg";
     rt_parameters.multigrid.coarse_grid.accuracy         = 1.e-12;
     rt_parameters.multigrid.pre_smoother.variant = SmootherParameter::SmootherVariant::Schwarz;
