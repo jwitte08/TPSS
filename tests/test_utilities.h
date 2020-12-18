@@ -40,6 +40,8 @@ struct PrintFormat
   static constexpr unsigned int max_size    = 200;
 };
 
+
+
 /// Compare pair of matrices of FullMatrix type
 template<typename Number>
 void
@@ -47,8 +49,14 @@ compare_matrix(const FullMatrix<Number> & matrix,
                const FullMatrix<Number> & other,
                const ConditionalOStream & pcout = ConditionalOStream(std::cout, true))
 {
+  ASSERT_EQ(matrix.m(), other.m()) << "mismatching number of rows";
+  ASSERT_EQ(matrix.n(), other.n()) << "mismatching number of columns";
+
   std::ostringstream oss;
-  if(pcout.is_active())
+  const bool         print_details =
+    pcout.is_active() && matrix.m() < PrintFormat::max_size && matrix.n() < PrintFormat::max_size;
+
+  if(print_details)
   {
     oss << "Matrix:\n";
     matrix.print_formatted(oss,
@@ -70,14 +78,17 @@ compare_matrix(const FullMatrix<Number> & matrix,
   else
     oss << "...printing is suppressed!\n";
 
+  pcout << oss.str();
+
   auto diff(matrix);
   diff.add(-1., other);
-  EXPECT_PRED_FORMAT2(testing::FloatLE,
+  EXPECT_PRED_FORMAT2(testing::DoubleLE,
                       diff.frobenius_norm(),
                       numeric_eps<Number> * other.frobenius_norm())
     << oss.str();
-  pcout << oss.str();
 }
+
+
 
 /// Compare inverse matrix by multiplying with reference matrix, both of
 /// FullMatrix type
@@ -133,13 +144,14 @@ compare_inverse_matrix(const FullMatrix<Number> & inverse_matrix,
 
   for(auto i = 0U; i < id.m(); ++i)
   {
-    EXPECT_NEAR(id(i, i), 1., numeric_eps<Number> /* n_entries*/);
+    EXPECT_NEAR(id(i, i), 1., numeric_eps<Number>);
     for(auto j = 0U; j < id.m(); ++j)
       if(i != j)
       {
         EXPECT_NEAR(id(i, j),
-                    std::numeric_limits<Number>::epsilon(),
-                    numeric_eps<Number> /* n_entries*/);
+                    // std::numeric_limits<Number>::epsilon(),
+                    0.,
+                    numeric_eps<Number>);
       }
   }
   pcout << oss.str();
@@ -169,8 +181,9 @@ compare_vector(const Vector<Number> &     vector,
     const auto value       = vector[i];
     const auto other_value = other[i];
     const auto diff        = std::abs(value - other_value);
-    EXPECT_PRED_FORMAT2(testing::FloatLE, diff, numeric_eps<Number> * std::abs(other_value))
-      << oss.str();
+    const auto threshold   = numeric_eps<Number> * std::abs(other_value);
+    EXPECT_PRED_FORMAT2(testing::DoubleLE, diff, threshold)
+      << "diff " << diff << " exceeds threshold " << threshold << " at position " << i;
   }
   pcout << oss.str();
 }
@@ -200,7 +213,9 @@ compare_vector(const LinearAlgebra::distributed::Vector<Number> & vector,
     const auto value       = vector.local_element(i);
     const auto other_value = other.local_element(i);
     const auto diff        = std::abs(value - other_value);
-    EXPECT_PRED_FORMAT2(testing::FloatLE, diff, numeric_eps<Number> * other_value) << oss.str();
+    const auto threshold   = numeric_eps<Number> * std::abs(other_value);
+    EXPECT_PRED_FORMAT2(testing::DoubleLE, diff, threshold)
+      << "diff " << diff << " exceeds threshold " << threshold << " at position " << i;
   }
   pcout << oss.str();
 }
@@ -222,7 +237,7 @@ compare_vector(const LinearAlgebra::distributed::BlockVector<Number> & vector,
 }
 
 
-/// Compare two vectors of VectorType element-wise.
+/// Compare two vectors with type VectorType element by element.
 /// VectorType has to provide size() and operator[]() for element access
 template<typename VectorType, typename Number = typename VectorType::value_type>
 void
@@ -247,7 +262,9 @@ compare_vector(const VectorType &         vector,
     const auto value       = vector[i];
     const auto other_value = other[i];
     const auto diff        = std::abs(value - other_value);
-    EXPECT_PRED_FORMAT2(testing::FloatLE, diff, numeric_eps<Number> * other_value) << oss.str();
+    const auto threshold   = numeric_eps<Number> * std::abs(other_value);
+    EXPECT_PRED_FORMAT2(testing::DoubleLE, diff, threshold)
+      << "diff " << diff << " exceeds threshold " << threshold << " at position " << i;
   }
   pcout << oss.str();
 }
