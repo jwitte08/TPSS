@@ -20,7 +20,7 @@ or, alternatively, for ssh access:
 git clone git@github.com:dealii/dealii.git dealii
 ```
 
-Next, we download **p4est** into the previously created directory _p4est_:
+Next, we download **p4est** into a previously created directory _p4est_:
 
 ```bash
 mkdir p4est
@@ -34,11 +34,13 @@ We run the _p4est-setup.sh_ script provided by deal.II to compile the debug (DEB
 bash path_to_dealii/doc/external-libs/p4est-setup.sh p4est-2.0.tar.gz `pwd`
 ```
 
-where `pwd` prints the current working directory, that is _path_to_p4est_. Directly after p4est is build we set an environment variable to the _p4est_ directory:
+where `pwd` returns the current working directory _path_to_p4est_. After p4est is built and installed we set an environment variable to _path_to_p4est_:
 
 ```bash
 export P4EST_DIR=path_to_p4est
 ```
+
+When deal.II searches for external dependencies it evaluates this variable as hint for p4est.
 
 ### Installing deal.II
 
