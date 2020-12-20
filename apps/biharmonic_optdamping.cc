@@ -54,6 +54,7 @@ main(int argc, char * argv[])
   unsigned n_refinements = 0;
   unsigned n_repetitions = 3;
   double   damping       = 1.;
+  double   omega         = 1.; // local stability constant
   int      n_threads_max = 1;
   double   ip_factor     = 1.;
 
@@ -61,7 +62,8 @@ main(int argc, char * argv[])
   atoi_if(n_refinements, 1);
   atoi_if(n_repetitions, 2);
   atof_if(damping, 3);
-  atoi_if(n_threads_max, 4);
+  atof_if(omega, 4);
+  atoi_if(n_threads_max, 5);
 
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
                                                       argv,
@@ -91,14 +93,14 @@ main(int argc, char * argv[])
     rt_parameters.multigrid.pre_smoother.schwarz.patch_variant        = patch_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant     = smoother_variant;
     rt_parameters.multigrid.pre_smoother.schwarz.userdefined_coloring = true;
-    rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping;
+    rt_parameters.multigrid.pre_smoother.schwarz.damping_factor       = damping / omega;
     rt_parameters.multigrid.post_smoother = rt_parameters.multigrid.pre_smoother;
     // rt_parameters.reset_damping_factor(dim);
   }
 
   EquationData equation_data;
   equation_data.variant              = EquationData::Variant::ClampedBell;
-  equation_data.local_solver_variant = LocalSolverVariant::Exact;
+  equation_data.local_solver_variant = LocalSolverVariant::Bilaplacian; // Exact; !!!
   equation_data.ip_factor            = ip_factor;
 
   auto biharmonic_problem = std::make_shared<BiharmonicProblem>(rt_parameters, equation_data);
@@ -107,6 +109,7 @@ main(int argc, char * argv[])
   biharmonic_problem->setup_system();
   biharmonic_problem->assemble_system();
   biharmonic_problem->prepare_preconditioner_mg();
+  biharmonic_problem->print_informations();
 
   AssertThrow(biharmonic_problem->mg_schwarz_smoother_pre, ExcMessage("Check runtime parameters."));
 
@@ -127,12 +130,12 @@ main(int argc, char * argv[])
               ExcMessage("MPI not supported."));
 
   ////////// LAMBDAS
-  const bool print_details =
-    biharmonic_problem->triangulation.n_global_active_cells() < 20 && dim == 2;
+  constexpr unsigned int max_size       = 50;
+  constexpr unsigned int max_subdomains = 5;
 
   const auto & print_fullmatrix = [&](const FullMatrix<double> & matrix,
                                       const std::string &        description) {
-    if(!print_details)
+    if(matrix.n() > max_size)
       return;
     std::cout << description << std::endl;
     matrix.print_formatted(std::cout);
@@ -180,12 +183,38 @@ main(int argc, char * argv[])
   E.add(-1., BinvA);
   print_fullmatrix(E, "error propagation matrix E=I-B^{-1}A:");
 
+  ///// compare local matrices
+  for(auto j = 0U; j < patch_dof_worker.n_subdomains(); ++j)
+  {
+    const auto & local_solver = local_solvers[j];
+    for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(j); ++lane)
+    {
+      auto tildeAj = table_to_fullmatrix(Tensors::matrix_to_table(local_solver), lane);
+      tildeAj /= omega;
+      print_fullmatrix(tildeAj, "tildeAj / omega:");
+
+      patch_transfer.reinit(j);
+      std::vector<types::global_dof_index> dof_indices_on_patch;
+      {
+        const auto view = patch_transfer.get_dof_indices(lane);
+        std::copy(view.cbegin(), view.cend(), std::back_inserter(dof_indices_on_patch));
+      }
+      FullMatrix<double> Aj(dof_indices_on_patch.size());
+      Aj.extract_submatrix_from(level_fullmatrix, dof_indices_on_patch, dof_indices_on_patch);
+      print_fullmatrix(Aj, "Rj A Rj^T:");
+
+      FullMatrix<double> Q(Aj.m());
+      const auto &       geigenvalues = compute_generalized_eigenvalues_symm(Aj, tildeAj, Q);
+      std::cout << "generalized eigenvalues of Rj A Rj^T x = \lambda Aj x:" << std::endl;
+      std::cout << vector_to_string(geigenvalues) << std::endl;
+    }
+  }
+
   /// neglect constrained dofs at the boundary if needed
   std::vector<unsigned int> interior_dofs;
   if(TPSS::get_dof_layout(dofh.get_fe()) == TPSS::DoFLayout::Q)
   {
-    const auto n_dofs = level_fullmatrix.m();
-    interior_dofs     = std::move(extract_interior_dofs());
+    interior_dofs = std::move(extract_interior_dofs());
 
     {
       const auto copyof_A = level_fullmatrix;
@@ -225,7 +254,7 @@ main(int argc, char * argv[])
     // tmp2.print_formatted(std::cout);
     // std::cout << std::endl;
 
-    if(print_details && dim == 2)
+    if(Q.n() <= max_size && dim == 2)
     {
       std::cout << "visualize generalized eigenvectors Q..." << std::endl;
       {
