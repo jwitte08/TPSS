@@ -810,7 +810,7 @@ struct CombinedOperator : public MF::Operator<dim, fe_degree, Number>,
  * the negative Laplacian:
  *
  * (MF) MatrixFree
- * (FD) FastDiagonalization // TODO
+ * (FD) FastDiagonalization
  */
 namespace CFEM
 {
@@ -962,6 +962,16 @@ public:
 
   using Base::Tvmult;
 
+  operator const FullMatrix<Number> &() const
+  {
+    if(!fullmatrix)
+    {
+      const auto & tmp = Tensors::matrix_to_table(*this);
+      fullmatrix       = std::make_shared<FullMatrix<Number>>(table_to_fullmatrix(tmp));
+    }
+    return *fullmatrix;
+  }
+
 protected:
   void
   apply_add(LinearAlgebra::distributed::Vector<Number> &       dst,
@@ -978,6 +988,7 @@ private:
   Laplace::EquationData                          equation_data;
   mutable std::vector<TimeInfo>                  time_infos;
   mutable std::shared_ptr<patch_evaluator_type>  eval_patch;
+  mutable std::shared_ptr<FullMatrix<Number>>    fullmatrix;
 };
 
 
@@ -986,6 +997,7 @@ template<int dim, int fe_degree, typename Number>
 void
 Operator<dim, fe_degree, Number>::clear()
 {
+  fullmatrix.reset();
   mf_storage.reset();
   time_infos.clear();
   Base::clear();

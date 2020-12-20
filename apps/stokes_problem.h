@@ -147,6 +147,14 @@ public:
     local_integrator_type::initialize(equation_data_in);
   }
 
+  void
+  clear()
+  {
+    fullmatrix.reset();
+    mf_storage.reset();
+    matrix_type::clear();
+  }
+
   std::shared_ptr<const MatrixFree<dim, Number>>
   get_matrix_free() const
   {
@@ -172,7 +180,18 @@ public:
     std::copy(w.begin(), w.end(), dst.begin());
   }
 
+  operator const FullMatrix<Number> &() const
+  {
+    if(!fullmatrix)
+    {
+      const auto & tmp = Tensors::matrix_to_table(*this);
+      fullmatrix       = std::make_shared<FullMatrix<Number>>(table_to_fullmatrix(tmp));
+    }
+    return *fullmatrix;
+  }
+
   std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
+  mutable std::shared_ptr<FullMatrix<Number>>    fullmatrix;
 };
 
 
@@ -227,6 +246,14 @@ public:
     local_integrator_type::initialize(equation_data_in);
   }
 
+  void
+  clear()
+  {
+    fullmatrix.reset();
+    mf_storage.reset();
+    matrix_type::clear();
+  }
+
   std::shared_ptr<const MatrixFree<dim, Number>>
   get_matrix_free() const
   {
@@ -248,7 +275,18 @@ public:
     std::copy(w.begin(), w.end(), dst.begin());
   }
 
+  operator const FullMatrix<Number> &() const
+  {
+    if(!fullmatrix)
+    {
+      const auto & tmp = Tensors::matrix_to_table(*this);
+      fullmatrix       = std::make_shared<FullMatrix<Number>>(table_to_fullmatrix(tmp));
+    }
+    return *fullmatrix;
+  }
+
   std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
+  mutable std::shared_ptr<FullMatrix<Number>>    fullmatrix;
 };
 
 

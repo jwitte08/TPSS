@@ -8,9 +8,9 @@
 
 #include <deal.II/base/convergence_table.h>
 
-#include "app_utilities.h"
 #include "biharmonic_problem.h"
 #include "ct_parameter.h"
+#include "utilities.h"
 
 using namespace dealii;
 using namespace Biharmonic;
@@ -30,7 +30,8 @@ filter_lane(const ArrayView<const Number> view, const unsigned int lane)
 
 
 template<typename MatrixType>
-using MatrixWrapper = typename Util::MatrixWrapper<MatrixType, Vector<double>>;
+using MatrixWrapper =
+  typename Util::MatrixWrapper<MatrixType, LinearAlgebra::distributed::Vector<double>>;
 
 
 
@@ -46,7 +47,6 @@ main(int argc, char * argv[])
 
   constexpr int  dim              = CT::DIMENSION_;
   constexpr int  fe_degree        = CT::FE_DEGREE_;
-  constexpr auto dof_layout       = CT::DOF_LAYOUT_;
   constexpr auto patch_variant    = CT::PATCH_VARIANT_;
   constexpr auto smoother_variant = CT::SMOOTHER_VARIANT_;
 
@@ -229,7 +229,7 @@ main(int argc, char * argv[])
     {
       std::cout << "visualize generalized eigenvectors Q..." << std::endl;
       {
-        std::vector<Vector<double>> eigenvectors;
+        std::vector<LinearAlgebra::distributed::Vector<double>> eigenvectors;
         for(auto i = 0U; i < Q.n(); ++i)
         {
           eigenvectors.emplace_back();
@@ -253,7 +253,7 @@ main(int argc, char * argv[])
       {
         FullMatrix<double> AQ(level_fullmatrix.m());
         level_fullmatrix.mmult(AQ, Q);
-        std::vector<Vector<double>> eigenvectors;
+        std::vector<LinearAlgebra::distributed::Vector<double>> eigenvectors;
         for(auto i = 0U; i < Q.n(); ++i)
         {
           eigenvectors.emplace_back();

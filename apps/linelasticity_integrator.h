@@ -1302,6 +1302,16 @@ public:
     std::copy(dst_vector.begin(), dst_vector.end(), dst.begin());
   }
 
+  operator const FullMatrix<Number> &() const
+  {
+    if(!fullmatrix)
+    {
+      const auto & tmp = Tensors::matrix_to_table(*this);
+      fullmatrix       = std::make_shared<FullMatrix<Number>>(table_to_fullmatrix(tmp));
+    }
+    return *fullmatrix;
+  }
+
   Number
   get_penalty_factor() const
   {
@@ -1429,12 +1439,17 @@ private:
                  LinearAlgebra::distributed::BlockVector<Number> &       dst,
                  const LinearAlgebra::distributed::BlockVector<Number> & src,
                  const std::pair<unsigned int, unsigned int> &           face_range) const;
+
+  mutable std::shared_ptr<FullMatrix<Number>> fullmatrix;
 };
+
+
 
 template<int dim, int fe_degree, typename Number>
 void
 Operator<dim, fe_degree, Number>::clear()
 {
+  fullmatrix.reset();
   data.reset();
   time_infos.clear();
 }
