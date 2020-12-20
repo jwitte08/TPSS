@@ -221,6 +221,8 @@ struct MatrixWrapper
   void
   vmult(const ArrayView<value_type> dst_view, const ArrayView<const value_type> src_view) const
   {
+    AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1U,
+                ExcMessage("No MPI support"));
     vector_type dst(dst_view.size());
     vector_type src(src_view.size());
 
