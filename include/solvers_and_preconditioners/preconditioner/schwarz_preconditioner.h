@@ -49,14 +49,14 @@ copy_locally_owned_data(LinearAlgebra::distributed::BlockVector<Number> &       
 
 template<typename Number>
 void
-zero_out_ghosts_if_needed(Vector<Number> & vec)
+zero_out_ghosts_if_needed(Vector<Number> &)
 {
   // nothing has to be done...
 }
 
 template<typename Number>
 void
-zero_out_ghosts_if_needed(BlockVector<Number> & vec)
+zero_out_ghosts_if_needed(BlockVector<Number> &)
 {
   // nothing has to be done...
 }
