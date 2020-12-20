@@ -230,7 +230,7 @@ main(int argc, char * argv[])
     AssertThrow(pde_index < EquationData::n_variants,
                 ExcMessage("This equation is not implemented."));
     equation_data.variant              = static_cast<EquationData::Variant>(pde_index);
-    equation_data.local_solver_variant = LocalSolverVariant::Exact;
+    equation_data.local_solver_variant = LocalSolverVariant::Bilaplacian; // Exact;!!!
     equation_data.ip_factor            = ip_factor;
 
     const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0U;
