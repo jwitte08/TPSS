@@ -167,4 +167,15 @@ table_to_fullmatrix(const Table<2, Number> & table, const unsigned int dummy = 0
   return matrix;
 }
 
+template<typename Number>
+std::vector<typename ExtractScalarType<Number>::type>
+alignedvector_to_vector(const AlignedVector<Number> & avec, const unsigned int lane)
+{
+  std::vector<typename ExtractScalarType<Number>::type> vec;
+  std::transform(avec.begin(), avec.end(), std::back_inserter(vec), [lane](const auto & val) {
+    return scalar_value(val, lane);
+  });
+  return vec;
+}
+
 #endif
