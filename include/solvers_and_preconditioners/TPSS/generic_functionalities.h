@@ -215,6 +215,61 @@ merge_lapack_decomposition(const LAPACKFullMatrix<Number> & X,
 }
 
 
+/**
+ * Merges a matrix factorization of the form
+ *
+ *    U M V^T
+ *
+ * for default template parameters. If is_reverse is true,
+ *
+ *    U^T M V
+ *
+ * is computed instead.
+ */
+template<typename Number, bool is_reverse = false>
+FullMatrix<Number>
+merge_decomposition_impl(const FullMatrix<Number> & U,
+                         const FullMatrix<Number> & M,
+                         const FullMatrix<Number> & V)
+{
+  FullMatrix<Number> MVT_or_MV(M.m(), is_reverse ? V.n() : V.m());
+  if(is_reverse) // M V
+    M.mmult(MVT_or_MV, V);
+  else // M V^T
+    M.mTmult(MVT_or_MV, V);
+
+  FullMatrix<Number> UMVT_or_UTMV(is_reverse ? U.n() : U.m(), MVT_or_MV.n());
+  if(is_reverse) // U^T M V
+    U.Tmmult(UMVT_or_UTMV, MVT_or_MV);
+  else // U M V^T
+    U.mmult(UMVT_or_UTMV, MVT_or_MV);
+
+  return UMVT_or_UTMV;
+}
+
+
+/// computes U M V^T
+template<typename Number>
+FullMatrix<Number>
+merge_decomposition(const FullMatrix<Number> & U,
+                    const FullMatrix<Number> & M,
+                    const FullMatrix<Number> & V)
+{
+  return merge_decomposition_impl(U, M, V);
+}
+
+
+/// computes U^T M V
+template<typename Number>
+FullMatrix<Number>
+merge_reverse_decomposition(const FullMatrix<Number> & U,
+                            const FullMatrix<Number> & M,
+                            const FullMatrix<Number> & V)
+{
+  return merge_decomposition_impl<Number, true>(U, M, V);
+}
+
+
 template<typename T1, typename T2>
 std::ostream &
 operator<<(std::ostream & os, const std::pair<T1, T2> & pair)
