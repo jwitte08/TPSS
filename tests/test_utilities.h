@@ -82,10 +82,9 @@ compare_matrix(const FullMatrix<Number> & matrix,
 
   auto diff(matrix);
   diff.add(-1., other);
-  EXPECT_PRED_FORMAT2(testing::DoubleLE,
-                      diff.frobenius_norm(),
-                      numeric_eps<Number> * other.frobenius_norm())
-    << oss.str();
+  const auto threshold =
+    std::max(numeric_eps<Number> * other.frobenius_norm(), numeric_eps<Number>);
+  EXPECT_PRED_FORMAT2(testing::DoubleLE, diff.frobenius_norm(), threshold) << oss.str();
 }
 
 
@@ -268,6 +267,23 @@ compare_vector(const VectorType &         vector,
   }
   pcout << oss.str();
 }
+
+
+template<typename Number>
+void
+print_matrix(const FullMatrix<Number> & matrix,
+             const std::string &        description,
+             const ConditionalOStream & pcout = ConditionalOStream(std::cout, true))
+{
+  const bool do_print =
+    pcout.is_active() && std::max(matrix.m(), matrix.n()) < PrintFormat::max_size;
+  pcout << description << std::endl;
+  if(do_print)
+    matrix.print_formatted(pcout.get_stream());
+  else
+    pcout << "...printing is suppressed!";
+}
+
 
 /// Convert any array-type into a tuple
 template<typename Array, std::size_t... I>
