@@ -17,8 +17,11 @@
 
 #include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
 #include "solvers_and_preconditioners/TPSS/tensor_product_matrix.h"
+#include "solvers_and_preconditioners/TPSS/vectorization.h"
 
 #include "test_utilities.h"
+
+
 
 using namespace dealii;
 
@@ -354,6 +357,17 @@ INSTANTIATE_TYPED_TEST_SUITE_P(TwoDimensionsDouble,
 
 struct Tester
 {
+  enum class RankTwo
+  {
+    reinit,
+    get_eigenvalues
+  };
+
+  struct Features
+  {
+    RankTwo ranktwo = RankTwo::reinit;
+  };
+
   Tester()
   {
     ofs.open("tensor_product_matrix.log", std::ios_base::app);
@@ -371,6 +385,18 @@ struct Tester
   {
     Util::compare_matrix(matrix, other, *pcout);
   }
+
+  template<typename Number>
+  void
+  print_matrix(const FullMatrix<Number> & matrix, const std::string & description) const
+  {
+    Util::print_matrix(matrix, description, *pcout);
+  }
+
+  operator ConditionalOStream &()
+  {
+    return *pcout;
+  };
 
   std::ofstream                       ofs;
   std::shared_ptr<ConditionalOStream> pcout;
@@ -691,6 +717,240 @@ TEST(Order2, Tvmult_sum_of_4x2_times_2x3)
 {
   vmult_random_anisotropic<true, false, true>();
 }
+
+template<typename Number>
+Table<2, Number>
+make_random_matrix_symm(const unsigned int n_rows, const unsigned int n_cols)
+{
+  Table<2, Number> rndm_matrix;
+  // std::generate_n(&(rndm_matrix(0,0)),n_rows*n_cols,make_random_value<Number>());
+  fill_matrix_with_random_values(rndm_matrix, n_rows, n_cols);
+
+  /// symmetrize
+  Table<2, Number> matrix;
+  matrix.reinit(n_rows, n_cols);
+  for(auto i = 0U; i < n_rows; ++i)
+    for(auto j = 0U; j < n_cols; ++j)
+      matrix(i, j) = (rndm_matrix(i, j) + rndm_matrix(j, i)) / 2.;
+  return matrix;
+}
+
+template<typename Number>
+Table<2, Number>
+make_random_matrix_spd(const unsigned int n_rows, const unsigned int n_cols)
+{
+  /// symmetric
+  Table<2, Number> matrix = make_random_matrix_symm<Number>(n_rows, n_cols);
+  /// positive definite?
+  for(auto i = 0U; i < std::min(n_rows, n_cols); ++i)
+    matrix(i, i) += static_cast<Number>(std::max(n_rows, n_cols));
+  return matrix;
+}
+
+template<typename Number>
+Table<2, Number>
+make_one_matrix(const unsigned int n_rows, const unsigned int n_cols)
+{
+  Table<2, Number> matrix;
+  matrix.reinit(n_rows, n_cols);
+  matrix.fill(static_cast<Number>(1.));
+  return matrix;
+}
+
+template<typename Number>
+Table<2, Number>
+make_identity_matrix(const unsigned int n_rows, const unsigned int n_cols)
+{
+  Table<2, Number> matrix;
+  matrix.reinit(n_rows, n_cols);
+  for(auto i = 0U; i < std::min(n_rows, n_cols); ++i)
+    matrix(i, i) = static_cast<Number>(1.);
+  return matrix;
+}
+
+template<int order, typename Number>
+void
+check_ranktwo(
+  std::vector<typename Tensors::TensorProductMatrix<order, Number>::tensor_type> tensors,
+  std::bitset<order>                                                             spd_mask,
+  const Tester::Features & features = Tester::Features{})
+{
+  using tensor_type       = typename Tensors::TensorProductMatrix<order, Number>::tensor_type;
+  using State             = typename Tensors::TensorProductMatrix<order, Number>::State;
+  using scalar_value_type = typename Tensors::TensorProductMatrix<order, Number>::scalar_value_type;
+
+  Tester               tester;
+  ConditionalOStream & pcout = tester;
+
+  Tensors::TensorProductMatrix<order, Number> tpm_ranktwo(tensors, State::ranktwo, spd_mask);
+  Tensors::TensorProductMatrix<order, Number> tpm_basic(tensors, State::basic);
+
+  const auto &                                eigenvalues = tpm_ranktwo.get_eigenvalues();
+  Tensors::TensorProductMatrix<order, Number> tpm_Q(tpm_ranktwo.get_eigenvectors());
+
+  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+  {
+    const auto & fullmatrix      = table_to_fullmatrix(tpm_basic.as_table(), lane);
+    const auto & fullQ           = table_to_fullmatrix(tpm_Q.as_table(), lane);
+    const auto & lambdas         = alignedvector_to_vector(eigenvalues, lane);
+    const auto & diagonalization = merge_reverse_decomposition(fullQ, fullmatrix, fullQ);
+
+    // tester.print_matrix(fullmatrix, "M:");
+    // tester.print_matrix(fullQ, "eigenvectors (column-wise):");
+    // pcout << vector_to_string(compute_eigenvalues(fullmatrix)) << std::endl;
+    // pcout << vector_to_string(lambdas) << std::endl;
+    // tester.print_matrix(diagonalization, "Q^T M Q:");
+
+    if(features.ranktwo == Tester::RankTwo::reinit)
+    {
+      /// check off-diagonal entries of diagonalization
+      auto D = diagonalization;
+      for(auto i = 0U; i < D.m(); ++i)
+        D(i, i) = 0.;
+      FullMatrix<scalar_value_type> fullzero(D.m());
+      tester.compare_matrix(D, fullzero);
+    }
+
+    else if(features.ranktwo == Tester::RankTwo::get_eigenvalues)
+    {
+      /// compare eigenvalues
+      FullMatrix<scalar_value_type> fullLambda(lambdas.size());
+      for(auto i = 0U; i < lambdas.size(); ++i)
+        fullLambda(i, i) = lambdas[i];
+      tester.compare_matrix(fullLambda, diagonalization);
+    }
+
+    else
+      EXPECT_TRUE(false) << "Test variant isn't supported.";
+  }
+}
+
+template<int order, typename Number>
+void
+test_ranktwo_reinit()
+{
+  using tensor_type = typename Tensors::TensorProductMatrix<order, Number>::tensor_type;
+
+  const unsigned int m = 3;
+  const unsigned int n = m;
+
+  const auto & Id  = make_identity_matrix<Number>(m, n);
+  const auto & One = make_one_matrix<Number>(m, n);
+  const auto & A   = make_random_matrix_symm<Number>(m, n);
+  const auto & AA  = make_random_matrix_symm<Number>(m, n);
+  const auto & B   = make_random_matrix_spd<Number>(m, n);
+  const auto & BB  = make_random_matrix_spd<Number>(m, n);
+
+  {
+    std::vector<tensor_type> tensors = {{Id, Id}, {Id, Id}};
+    std::bitset<order>       spd_mask("00");
+    check_ranktwo<order, Number>(tensors, spd_mask);
+  }
+
+  {
+    std::vector<tensor_type> tensors = {{B, Id}, {Id, One}};
+    std::bitset<order>       spd_mask("00");
+    check_ranktwo<order, Number>(tensors, spd_mask);
+  }
+
+  {
+    std::vector<tensor_type> tensors = {{B, BB}, {A, AA}};
+    std::bitset<order>       spd_mask("00");
+    check_ranktwo<order, Number>(tensors, spd_mask);
+  }
+
+  {
+    std::vector<tensor_type> tensors = {{A, AA}, {B, BB}};
+    std::bitset<order>       spd_mask("11");
+    check_ranktwo<order, Number>(tensors, spd_mask);
+  }
+
+  {
+    std::vector<tensor_type> tensors = {{A, BB}, {B, AA}};
+    std::bitset<order>       spd_mask("01");
+    check_ranktwo<order, Number>(tensors, spd_mask);
+  }
+}
+
+TEST(IsotropicSquare2Double, ranktwo_reinit)
+{
+  constexpr int order = 2;
+  using Number        = double;
+  test_ranktwo_reinit<order, Number>();
+}
+
+TEST(IsotropicSquare2VectorizedArrayDouble, ranktwo_reinit)
+{
+  constexpr int order = 2;
+  using Number        = VectorizedArray<double>;
+  test_ranktwo_reinit<order, Number>();
+}
+
+
+template<int order, typename Number>
+void
+test_ranktwo_get_eigenvalues()
+{
+  using tensor_type = typename Tensors::TensorProductMatrix<order, Number>::tensor_type;
+  Tester::Features test_features;
+  test_features.ranktwo = Tester::RankTwo::get_eigenvalues;
+
+  const unsigned int m = 3;
+  const unsigned int n = m;
+
+  const auto & Id  = make_identity_matrix<Number>(m, n);
+  const auto & One = make_one_matrix<Number>(m, n);
+  const auto & A   = make_random_matrix_symm<Number>(m, n);
+  const auto & AA  = make_random_matrix_symm<Number>(m, n);
+  const auto & B   = make_random_matrix_spd<Number>(m, n);
+  const auto & BB  = make_random_matrix_spd<Number>(m, n);
+
+  {
+    std::vector<tensor_type> tensors = {{Id, Id}, {Id, Id}};
+    std::bitset<order>       spd_mask("00");
+    check_ranktwo<order, Number>(tensors, spd_mask, test_features);
+  }
+
+  {
+    std::vector<tensor_type> tensors = {{B, Id}, {Id, One}};
+    std::bitset<order>       spd_mask("00");
+    check_ranktwo<order, Number>(tensors, spd_mask);
+  }
+
+  {
+    std::vector<tensor_type> tensors = {{B, BB}, {A, AA}};
+    std::bitset<order>       spd_mask("00");
+    check_ranktwo<order, Number>(tensors, spd_mask);
+  }
+
+  {
+    std::vector<tensor_type> tensors = {{A, AA}, {B, BB}};
+    std::bitset<order>       spd_mask("11");
+    check_ranktwo<order, Number>(tensors, spd_mask);
+  }
+
+  {
+    std::vector<tensor_type> tensors = {{A, BB}, {B, AA}};
+    std::bitset<order>       spd_mask("01");
+    check_ranktwo<order, Number>(tensors, spd_mask);
+  }
+}
+
+TEST(IsotropicSquare2Double, ranktwo_get_eigenvalues)
+{
+  constexpr int order = 2;
+  using Number        = double;
+  test_ranktwo_get_eigenvalues<order, Number>();
+}
+
+TEST(IsotropicSquare2VectorizedArrayDouble, ranktwo_get_eigenvalues)
+{
+  constexpr int order = 2;
+  using Number        = VectorizedArray<double>;
+  test_ranktwo_get_eigenvalues<order, Number>();
+}
+
+
 
 int
 main(int argc, char ** argv)
