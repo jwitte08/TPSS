@@ -95,6 +95,124 @@ struct Evaluator
   TensorHelper<order> thelper_columns;
 };
 
+/// TODO static path using template parameter n_rows_1d
+template<int order, typename Number, int n_rows_1d = -1>
+struct ComputeGeneralizedEigendecomposition
+{
+  void
+  operator()(std::array<AlignedVector<Number>, order> &               eigenvalues,
+             std::array<Table<2, Number>, order> &                    eigenvectors,
+             const std::vector<std::array<Table<2, Number>, order>> & rank1_tensors,
+             const std::bitset<order>                                 B_mask)
+  {
+    AssertDimension(rank1_tensors.size(), 2U);
+    for(auto dimension = 0; dimension < order; ++dimension)
+    {
+      const bool   B_index = B_mask[dimension];
+      const auto & A       = rank1_tensors[static_cast<std::size_t>(!B_index)][dimension];
+      const auto & B       = rank1_tensors[static_cast<std::size_t>(B_index)][dimension];
+      AssertDimension(A.n_rows(), B.n_rows());
+      AssertDimension(A.n_cols(), B.n_cols());
+      auto & lambdas = eigenvalues[dimension];
+      AssertDimension(A.n_rows(), A.n_cols());
+      lambdas.resize(A.n_rows());
+      auto & Q = eigenvectors[dimension];
+      Q.reinit(A.n_rows(), A.n_cols());
+
+      /// computes a generalized eigenvalue problem of the form:
+      ///    A q = \lambda B q
+      /// eigenvectors q are stored column-wise in Q
+      dealii::internal::TensorProductMatrix::spectral_assembly<Number>(
+        &(B(0, 0)), &(A(0, 0)), A.n_rows(), A.n_cols(), lambdas.begin(), &(Q(0, 0)));
+    }
+  }
+};
+
+
+
+/// TODO static path using template parameter n_rows_1d
+template<int order, typename Number, int n_rows_1d>
+struct ComputeGeneralizedEigendecomposition<order, VectorizedArray<Number>, n_rows_1d>
+{
+  void
+  operator()(
+    std::array<AlignedVector<VectorizedArray<Number>>, order> &               eigenvalues,
+    std::array<Table<2, VectorizedArray<Number>>, order> &                    eigenvectors,
+    const std::vector<std::array<Table<2, VectorizedArray<Number>>, order>> & rank1_tensors,
+    const std::bitset<order>                                                  B_mask)
+  {
+    AssertDimension(rank1_tensors.size(), 2U);
+
+    /// assume one-dimensional square matrices
+    constexpr unsigned int macro_size         = VectorizedArray<Number>::size();
+    unsigned int           n_rows_max_dynamic = 0;
+    for(unsigned int d = 0; d < order; ++d)
+      n_rows_max_dynamic =
+        std::max<unsigned int>(n_rows_max_dynamic, rank1_tensors.front()[d].n_rows());
+    const unsigned int n_flat_max =
+      n_rows_1d > 0 ? n_rows_1d * macro_size : n_rows_max_dynamic * macro_size;
+    const unsigned int nm_flat_max = n_rows_1d > 0 ?
+                                       n_rows_1d * n_rows_1d * macro_size :
+                                       n_rows_max_dynamic * n_rows_max_dynamic * macro_size;
+
+    std::vector<Number> B_flat;
+    std::vector<Number> A_flat;
+    std::vector<Number> lambdas_flat;
+    std::vector<Number> Q_flat;
+    B_flat.resize(nm_flat_max);
+    A_flat.resize(nm_flat_max);
+    lambdas_flat.resize(n_flat_max);
+    Q_flat.resize(nm_flat_max);
+    std::array<unsigned int, macro_size> offsets_nm;
+    std::array<unsigned int, macro_size> offsets_n;
+
+    for(auto dimension = 0; dimension < order; ++dimension)
+    {
+      const bool   B_index = B_mask[dimension];
+      const auto & A       = rank1_tensors[static_cast<std::size_t>(!B_index)][dimension];
+      const auto & B       = rank1_tensors[static_cast<std::size_t>(B_index)][dimension];
+      AssertDimension(A.n_rows(), B.n_rows());
+      AssertDimension(A.n_cols(), B.n_cols());
+      auto & lambdas = eigenvalues[dimension];
+      AssertDimension(A.n_rows(), A.n_cols());
+      lambdas.resize(A.n_rows());
+      auto & Q = eigenvectors[dimension];
+      Q.reinit(A.n_rows(), A.n_cols());
+
+      const unsigned int m  = A.n_rows();
+      const unsigned int n  = A.n_cols();
+      const unsigned int nm = n * m;
+      for(auto lane = 0U; lane < macro_size; ++lane)
+        offsets_nm[lane] = nm * lane;
+
+      vectorized_transpose_and_store(false, nm, &(B(0, 0)), offsets_nm.data(), B_flat.data());
+      vectorized_transpose_and_store(false, nm, &(A(0, 0)), offsets_nm.data(), A_flat.data());
+
+      const Number * B_cbegin      = B_flat.data();
+      const Number * A_cbegin      = A_flat.data();
+      Number *       Q_begin       = Q_flat.data();
+      Number *       lambdas_begin = lambdas_flat.data();
+
+      /// computes a generalized eigenvalue problem of the form:
+      ///    A q = \lambda B q
+      /// eigenvectors q are stored column-wise in Q
+      for(auto lane = 0U; lane < macro_size; ++lane)
+        dealii::internal::TensorProductMatrix::spectral_assembly<Number>(B_cbegin + nm * lane,
+                                                                         A_cbegin + nm * lane,
+                                                                         m,
+                                                                         n,
+                                                                         lambdas_begin + n * lane,
+                                                                         Q_begin + nm * lane);
+
+      for(auto lane = 0U; lane < macro_size; ++lane)
+        offsets_n[lane] = n * lane;
+
+      vectorized_load_and_transpose(n, lambdas_flat.data(), offsets_n.data(), lambdas.begin());
+      vectorized_load_and_transpose(nm, Q_flat.data(), offsets_nm.data(), &(Q(0, 0)));
+    }
+  }
+};
+
 } // namespace internal
 
 
@@ -141,7 +259,8 @@ public:
   {
     invalid,
     basic,
-    separable
+    separable,
+    ranktwo
   };
 
 
@@ -155,15 +274,27 @@ public:
 
   TensorProductMatrix() = default;
 
+  TensorProductMatrix(const tensor_type & rank1_tensor);
+
   TensorProductMatrix(const std::vector<tensor_type> & elementary_tensors,
-                      const State                      state_in = State::basic);
+                      const State                      state_in    = State::basic,
+                      const std::bitset<order>         spd_mask_in = std::bitset<order>{});
 
   TensorProductMatrix &
   operator=(const TensorProductMatrix & other);
 
+  /**
+   * For State::basic the @p elementary_tensors_in has to be filled as in the
+   * class's documentation. For State::separable @p elementary_tensors_in[0]
+   * should pass "mass" matrices and @p elementary_tensors_in[1] "derivative"
+   * matrices (for more details see the documentation of
+   * dealii::TensorProductMatrixSymmetricSum).
+   */
   void
   reinit(const std::vector<tensor_type> & elementary_tensors_in,
-         const State                      state_in = State::basic);
+         const State                      state_in    = State::basic,
+         const std::bitset<order>         spd_mask_in = std::bitset<order>{});
+
   void
   clear();
 
@@ -238,10 +369,22 @@ protected:
    *
    * basic     : TensorProductMatrix
    * separable : TensorProductMatrixSymmetricSum
+   * ranktwo   : TODO...
    */
   State state = State::invalid;
 
+  /**
+   * In case of State::ranktwo defines which one-dimensional matrix is
+   * symmetric, positive definite and on the right-hand side of the generalized
+   * eigenvalue problem.
+   */
+  std::bitset<order> spd_mask;
+
 private:
+  void
+  reinit_ranktwo_impl(const std::vector<tensor_type> & elementary_tensors_in,
+                      const std::bitset<order>         spd_mask_in);
+
   void
   apply_inverse_impl(const ArrayView<Number> &       dst_view,
                      const ArrayView<const Number> & src_view) const;
@@ -263,6 +406,9 @@ private:
   void
   vmult_basic_impl(const ArrayView<Number> &       dst_view,
                    const ArrayView<const Number> & src_view) const;
+
+  AlignedVector<Number>
+  get_eigenvalues_ranktwo_impl() const;
 
   bool
   check_n_rows_1d_static(const std::vector<tensor_type> & tensors) const;
@@ -306,75 +452,6 @@ private:
 
 
 template<int order, typename Number, int n_rows_1d>
-inline TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix(
-  const std::vector<typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type> &
-              elementary_tensors,
-  const State state_in)
-{
-  reinit(elementary_tensors, state_in);
-}
-
-template<int order, typename Number, int n_rows_1d>
-inline TensorProductMatrix<order, Number, n_rows_1d> &
-TensorProductMatrix<order, Number, n_rows_1d>::operator=(const TensorProductMatrix & other)
-{
-  reinit(other.elementary_tensors, other.state);
-  return *this;
-}
-
-template<int order, typename Number, int n_rows_1d>
-inline AlignedVector<Number>
-TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvalues() const
-{
-  AssertThrow(state == State::separable, ExcMessage("Not implemented."));
-  Assert(tensor_helper_row, ExcMessage("Did you initialize tensor_helper_row?"));
-  Assert(tensor_helper_column, ExcMessage("Did you initialize tensor_helper_column?"));
-
-  const auto & eigenvalues_foreach_dimension = separable_matrix_type::eigenvalues;
-  for(auto direction = 0; direction < order; ++direction)
-  {
-    AssertDimension(tensor_helper_row->n_flat(), tensor_helper_column->n_flat());
-    AssertDimension(tensor_helper_row->size(direction),
-                    eigenvalues_foreach_dimension[direction].size());
-  }
-
-  // /// OLD OLD
-  // std::array<unsigned int, order> sizes;
-  // std::transform(eigenvalues_foreach_dimension.cbegin(),
-  //                eigenvalues_foreach_dimension.cend(),
-  //                sizes.begin(),
-  //                [](const auto & evs) { return evs.size(); });
-  // AlignedVector<Number> eigenvalues(m());
-  // for(unsigned int i = 0; i < eigenvalues.size(); ++i)
-  // {
-  //   const auto & ii     = uni_to_multiindex<order>(i, sizes);
-  //   Number       lambda = eigenvalues_foreach_dimension[0][ii[0]];
-  //   for(auto d = 1; d < order; ++d)
-  //     lambda += eigenvalues_foreach_dimension[d][ii[d]];
-  //   eigenvalues[i] = lambda;
-  // }
-  /// TODO needs to be verified
-  AlignedVector<Number> eigenvalues(m());
-  for(unsigned int i = 0; i < eigenvalues.size(); ++i)
-  {
-    const auto & ii     = tensor_helper_row->multi_index(i);
-    Number       lambda = eigenvalues_foreach_dimension[0][ii[0]];
-    for(auto d = 1; d < order; ++d)
-      lambda += eigenvalues_foreach_dimension[d][ii[d]];
-    eigenvalues[i] = lambda;
-  }
-
-
-  // TODO
-  const bool has_zero_eigenvalues =
-    std::any_of(eigenvalues.begin(), eigenvalues.end(), Tensors::is_nearly_zero_value<Number>);
-  AssertThrow(!has_zero_eigenvalues, ExcMessage("Has zero eigenvalues."));
-
-  return eigenvalues;
-}
-
-
-template<int order, typename Number, int n_rows_1d>
 inline const std::array<Table<2, Number>, order> &
 TensorProductMatrix<order, Number, n_rows_1d>::get_mass() const
 {
@@ -387,7 +464,7 @@ template<int order, typename Number, int n_rows_1d>
 inline const std::array<Table<2, Number>, order> &
 TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvectors() const
 {
-  AssertThrow(state == State::separable, ExcMessage("Not implemented."));
+  AssertThrow(state == State::separable || state == State::ranktwo, ExcMessage("Not implemented."));
   return this->eigenvectors;
 }
 
@@ -467,6 +544,7 @@ TensorProductMatrix<order, Number, n_rows_1d>::m(unsigned int dimension) const
   if(state == State::separable)
     return separable_matrix_type::eigenvalues[dimension].size();
   Assert(elementary_tensors.size() > 0, ExcMessage("Not initialized."));
+  /// TODO use tensor_helper_row
   return elementary_tensors.front()[dimension].n_rows();
 }
 
@@ -479,31 +557,8 @@ TensorProductMatrix<order, Number, n_rows_1d>::n(unsigned int dimension) const
   if(state == State::separable)
     return separable_matrix_type::eigenvalues[dimension].size();
   Assert(elementary_tensors.size() > 0, ExcMessage("Not initialized."));
+  /// TODO use tensor_helper_column
   return elementary_tensors.front()[dimension].n_cols();
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-inline Table<2, Number>
-TensorProductMatrix<order, Number, n_rows_1d>::as_table() const
-{
-  return Tensors::matrix_to_table(*this);
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-inline Table<2, Number>
-TensorProductMatrix<order, Number, n_rows_1d>::as_inverse_table() const
-{
-  return Tensors::inverse_matrix_to_table(*this);
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-inline Table<2, Number>
-TensorProductMatrix<order, Number, n_rows_1d>::as_transpose_table() const
-{
-  return Tensors::transpose_matrix_to_table(*this);
 }
 
 
@@ -555,7 +610,6 @@ TensorProductMatrix<order, Number, n_rows_1d>::check_n_rows_1d_static(
   }
   return false;
 }
-
 
 } // namespace Tensors
 
