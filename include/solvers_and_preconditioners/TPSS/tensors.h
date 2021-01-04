@@ -335,6 +335,16 @@ struct TensorHelper
     return true;
   }
 
+  bool
+  operator==(const TensorHelper<order, IntType> & other) const
+  {
+    return std::equal(n.cbegin(),
+                      n.cend(),
+                      other.n.cbegin(),
+                      other.n.cend(),
+                      [](const auto i, const auto j) { return i == j; });
+  }
+
   IntType
   n_flat() const
   {
