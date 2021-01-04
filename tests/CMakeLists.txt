@@ -38,6 +38,7 @@ set (src_files
   patch_transfer.cc
   tensors.cc
   tensor_product_matrix.cc
+  tensor_product_matrix_new.cc
   kroneckersvd.cc
   block_matrix_base.cc
   )
