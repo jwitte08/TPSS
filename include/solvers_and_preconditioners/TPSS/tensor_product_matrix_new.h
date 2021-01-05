@@ -23,7 +23,7 @@ namespace Tensors
  * This struct implements a tensor product matrix in the sense of a sum over
  * rank-1 tensors of matrices (so-called elementary tensors) where the tensor
  * structure is leveraged reducing memory footprint and computational
- * complexity, for example for matrix-vector multiplication. If the tensor
+ * complexity, for example used in a matrix-vector multiplication. If the tensor
  * structure qualifies for a more specific group of tensor product matrices,
  * one might use this specific State upon initialization (resulting in even
  * more efficient memory compression and/or application routines).
@@ -38,10 +38,11 @@ namespace Tensors
  *    SUM_r=1^R  A_r^(d) (x) A_r^(d-1) (x) ... (x) A_r^(1)
  *
  * where its tensor rank (or Kronecker rank) is less or equal to R (depending
- * on the linear independence of rank-1 tensors). We note that due to
- * (deal.II) conventions the first matrix A_r^(1) (that is
- * elementary_tensors[r][0] in the notation of reinit()) is the rightmost
- * factor in the Kronecker product although stored at zeroth array position.
+ * on the linear independence of rank-1 tensors).
+ *
+ * We note that due to (deal.II) conventions the first matrix A_r^(1) (that is
+ * elementary_tensors[r][0] in the notation of reinit()) is the rightmost factor
+ * in the Kronecker product although stored at zeroth array position.
  *
  * For the generic case (State::basic) matrix-vector multiplications are
  * efficiently evaluated by means of sum factorization. Unfortunately,
@@ -50,8 +51,8 @@ namespace Tensors
  * (State::separable) where the fast diagonalization method is applicable
  * (read more on this in TensorProductMatrixBaseSymmetricSum's documentation).
  *
- * Some functionalities of this struct are only valid for a specific State but
- * more details are provided in the documentation there.
+ * Some functionalities are supported only for a specific State but more details
+ * are provided in the documentation there.
  */
 template<int order, typename Number, int n_rows_1d = -1>
 class TensorProductMatrixBase
@@ -63,6 +64,32 @@ public:
   using matrix_type_1d    = Table<2, Number>;
   using tensor_type       = std::array<matrix_type_1d, order>;
 
+
+  TensorProductMatrixBase();
+
+  TensorProductMatrixBase &
+  operator=(const TensorProductMatrixBase & other);
+
+  void
+  reinit(const std::vector<tensor_type> & elementary_tensors);
+
+  void
+  clear();
+
+  void
+  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
+
+  void
+  vmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
+
+  void
+  Tvmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
+
+  void
+  Tvmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
+
+  bool
+  empty() const;
 
   unsigned int
   m() const;
@@ -83,16 +110,21 @@ public:
   get_matrix_1d(const unsigned int tensor_index, const unsigned int dimension) const;
 
 protected:
-  TensorProductMatrixBase();
-
-  TensorProductMatrixBase &
-  operator=(const TensorProductMatrixBase & other);
-
+  template<bool add, bool transpose>
   void
-  reinit(const std::vector<tensor_type> & elementary_tensors);
+  vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
-  void
-  clear();
+  bool
+  check_n_rows_1d_static(const std::vector<tensor_type> & tensors) const;
+
+  bool
+  check_n_rows_and_columns_1d(const std::vector<tensor_type> & tensors) const;
+
+  bool
+  check_n_rows_and_columns_1d_impl(const std::vector<tensor_type> & tensors,
+                                   const unsigned int               direction,
+                                   const unsigned int               n_rows,
+                                   const unsigned int               n_cols) const;
 
   /**
    * The vector of elementary tensors, that is rank-1 tensors of
@@ -117,23 +149,6 @@ protected:
    */
   std::shared_ptr<const TensorHelper<order>> tensor_helper_column;
 
-  template<bool add, bool transpose>
-  void
-  vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
-
-  bool
-  check_n_rows_1d_static(const std::vector<tensor_type> & tensors) const;
-
-  bool
-  check_n_rows_and_columns_1d(const std::vector<tensor_type> & tensors) const;
-
-  bool
-  check_n_rows_and_columns_1d_impl(const std::vector<tensor_type> & tensors,
-                                   const unsigned int               direction,
-                                   const unsigned int               n_rows,
-                                   const unsigned int               n_cols) const;
-
-private:
   /**
    * A mutex that guards access to the array @p tmp_array.
    */
@@ -194,7 +209,17 @@ public:
   clear();
 
   /**
-   * TODO
+   * Depending on the current state we apply the (fast) inverse of the
+   * underlying tensor product matrix.
+   *
+   * basic : We do not compute the inverse during (re-)initialization such that
+   * non-invertible matrices are possible. The first time @p apply_inverse() is
+   * called after (re-)initialization the inverse is computed (thus requiring @p
+   * basic_inverse to be mutable).
+   *
+   * ranktwo : TODO...
+   *
+   * separable : TODO...
    */
   void
   apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
@@ -208,17 +233,33 @@ public:
   void
   Tvmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
-  // /**
-  //  * TODO
-  //  */
-  // AlignedVector<Number>
-  // get_eigenvalues() const;
+  void
+  Tvmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
-  // /**
-  //  * TODO
-  //  */
-  // const tensor_type &
-  // get_eigenvectors() const;
+  /**
+   * Returns the eigenvalues of the underlying matrix, to be precise for the @p
+   * m() times @p n() matrix with Kronecker products resolved (note that this
+   * requires the number of rows @p m() and number of columns @p n() to be
+   * equal).
+   *
+   * This functionality is only supported in ranktwo state.
+   */
+  AlignedVector<Number>
+  get_eigenvalues() const;
+
+  /**
+   * Returns the (generalized) eigenvectors of the underlying matrix, to be
+   * precise for the @p m() times @p n() matrix with Kronecker products resolved
+   * (note that this requires the number of rows @p m() and number of columns @p
+   * n() to be equal). The (generalized) eigenvectors are representable as
+   * rank-1 tensor of univariate eigenvectors if the matrix is appropriate (see
+   * the class' documentation on the requirements for a tensor product matrix
+   * with valid ranktwo or separable state.
+   *
+   * This functionality is only supported in ranktwo state.
+   */
+  Table<2, Number>
+  get_eigenvectors() const;
 
   // std::vector<tensor_type>
   // get_elementary_tensors() const;
@@ -236,6 +277,17 @@ public:
   as_transpose_table() const;
 
 private:
+  void
+  apply_inverse_impl(const ArrayView<Number> &       dst_view,
+                     const ArrayView<const Number> & src_view) const;
+
+  template<bool add, bool transpose>
+  void
+  vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
+
+  AlignedVector<Number>
+  compute_eigenvalues_impl() const;
+
   /**
    * The state switches which functionalities are accessible:
    *
@@ -252,30 +304,24 @@ private:
    */
   std::bitset<order> spd_mask;
 
-  void
-  apply_inverse_impl(const ArrayView<Number> &       dst_view,
-                     const ArrayView<const Number> & src_view) const;
-
-  template<bool add, bool transpose>
-  void
-  vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
-
   /**
-   * The naive inverse of the underlying matrix for the basic state.
+   * The (naively computed) inverse of the underlying matrix if in basic state.
    */
   mutable std::shared_ptr<const InverseTable<Number>> basic_inverse;
 
-  std::shared_ptr<const TensorProductMatrixBase<order, Number, n_rows_1d>> eigenvectors;
+  /**
+   * The eigenvalues stored in tensor product form if in ranktwo state. The
+   * eigenvalues of the underlying m() times n() matrix can be computed as sum
+   * over Kronecker products of diagonal matrices.
+   */
+  std::array<AlignedVector<Number>, order> eigenvalues;
 
   /**
-   * A mutex that guards access to the array @p tmp_array.
+   * The (generalized) eigenvectors stored in tensor product form if in ranktwo
+   * state. The (generalized) eigenvectors of the underlying m() times n()
+   * matrix are a rank-1 tensor of univariate eigenvectors.
    */
-  mutable Threads::Mutex mutex;
-
-  /**
-   * An array for temporary data.
-   */
-  mutable AlignedVector<Number> tmp_array;
+  TensorProductMatrixBase<order, Number, n_rows_1d> eigenvectors;
 };
 
 
@@ -343,6 +389,15 @@ TensorProductMatrixBase<order, Number, n_rows_1d>::n(unsigned int dimension) con
   AssertIndexRange(dimension, order);
   Assert(tensor_helper_column, ExcMessage("tensor_helper_column is not initialized."));
   return tensor_helper_column->size(dimension);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+inline bool
+TensorProductMatrixBase<order, Number, n_rows_1d>::empty() const
+{
+  return m() == 0U || n() == 0U;
 }
 
 

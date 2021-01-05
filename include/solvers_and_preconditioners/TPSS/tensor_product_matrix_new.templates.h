@@ -212,6 +212,54 @@ TensorProductMatrixBase<order, Number, n_rows_1d>::vmult_impl(
 
 
 template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrixBase<order, Number, n_rows_1d>::vmult(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ false, /*transpose*/ false>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrixBase<order, Number, n_rows_1d>::vmult_add(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ true, /*transpose*/ false>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrixBase<order, Number, n_rows_1d>::Tvmult(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ false, /*transpose*/ true>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrixBase<order, Number, n_rows_1d>::Tvmult_add(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ true, /*transpose*/ true>(dst_view, src_view);
+}
+
+
+
+////////// Definitions: TensorProductMatrix_new
+
+
+
+template<int order, typename Number, int n_rows_1d>
 TensorProductMatrix_new<order, Number, n_rows_1d>::TensorProductMatrix_new()
   : TensorProductMatrixBase<order, Number, n_rows_1d>(),
     state(State::invalid),
@@ -268,11 +316,29 @@ TensorProductMatrix_new<order, Number, n_rows_1d>::reinit(
   spd_mask = spd_mask_in;
 
   if(state == State::basic)
+  {
     Base::reinit(elementary_tensors_in);
-  // else if(state == State::invalid)
-  //   AssertThrow(false, ExcMessage("State is invalid."));
+  }
+
+  else if(state == State::ranktwo)
+  {
+    Base::reinit(elementary_tensors_in);
+
+    tensor_type eigenvector_tensor;
+    internal::ComputeGeneralizedEigendecomposition<order, Number, n_rows_1d>{}(
+      this->eigenvalues, eigenvector_tensor, elementary_tensors_in, spd_mask_in);
+    this->eigenvectors.reinit(std::vector<tensor_type>{eigenvector_tensor});
+  }
+
+  else if(state == State::invalid)
+  {
+    AssertThrow(false, ExcMessage("State is invalid."));
+  }
+
   else
+  {
     AssertThrow(false, ExcMessage("Not implemented."));
+  }
 }
 
 
@@ -281,9 +347,9 @@ template<int order, typename Number, int n_rows_1d>
 void
 TensorProductMatrix_new<order, Number, n_rows_1d>::clear()
 {
-  tmp_array.clear();
   state    = State::invalid;
   spd_mask = std::bitset<order>{};
+  basic_inverse.reset();
   Base::clear();
 }
 
@@ -335,6 +401,69 @@ TensorProductMatrix_new<order, Number, n_rows_1d>::Tvmult(
   const ArrayView<const Number> & src_view) const
 {
   vmult_impl</*add*/ false, /*transpose*/ true>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix_new<order, Number, n_rows_1d>::Tvmult_add(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ true, /*transpose*/ true>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+AlignedVector<Number>
+TensorProductMatrix_new<order, Number, n_rows_1d>::get_eigenvalues() const
+{
+  Assert(state == State::ranktwo, ExcMessage("Functionality isn't supported in current state."));
+  return compute_eigenvalues_impl();
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+Table<2, Number>
+TensorProductMatrix_new<order, Number, n_rows_1d>::get_eigenvectors() const
+{
+  Assert(state == State::ranktwo, ExcMessage("Functionality isn't supported in current state."));
+  return Tensors::matrix_to_table(eigenvectors);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+AlignedVector<Number>
+TensorProductMatrix_new<order, Number, n_rows_1d>::compute_eigenvalues_impl() const
+{
+  AssertDimension(this->m(), this->n()); // square matrix?
+
+  const auto & eigenvalues_foreach_dimension = this->eigenvalues;
+
+  AlignedVector<Number> eigenvalues(this->m());
+  for(unsigned int i = 0; i < eigenvalues.size(); ++i)
+  {
+    const auto & ii = this->tensor_helper_row->multi_index(i);
+
+    AssertDimension(this->elementary_tensors.size(), 2U); // TODO
+    for(auto r = 0U; r < this->elementary_tensors.size(); ++r)
+    {
+      const bool is_one = r == static_cast<unsigned int>(spd_mask[0]);
+      Number lambda_r = is_one ? static_cast<Number>(1.) : eigenvalues_foreach_dimension[0][ii[0]];
+      for(auto d = 1; d < order; ++d)
+      {
+        const bool is_one = r == static_cast<unsigned int>(spd_mask[d]);
+        lambda_r *= is_one ? static_cast<Number>(1.) : eigenvalues_foreach_dimension[d][ii[d]];
+      }
+      eigenvalues[i] += lambda_r;
+    }
+  }
+
+  return eigenvalues;
 }
 
 
