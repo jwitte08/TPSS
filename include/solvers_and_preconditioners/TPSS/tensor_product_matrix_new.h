@@ -125,8 +125,7 @@ protected:
   check_n_rows_1d_static(const std::vector<tensor_type> & tensors) const;
 
   bool
-  check_n_rows_and_columns_1d(const std::vector<tensor_type> & tensors,
-                              const unsigned int               direction) const;
+  check_n_rows_and_columns_1d(const std::vector<tensor_type> & tensors) const;
 
   bool
   check_n_rows_and_columns_1d_impl(const std::vector<tensor_type> & tensors,
@@ -266,6 +265,8 @@ private:
    */
   mutable std::shared_ptr<const InverseTable<Number>> basic_inverse;
 
+  std::shared_ptr<const TensorProductMatrixBase<order, Number, n_rows_1d>> eigenvectors;
+
   /**
    * A mutex that guards access to the array @p tmp_array.
    */
@@ -367,13 +368,31 @@ TensorProductMatrixBase<order, Number, n_rows_1d>::check_n_rows_and_columns_1d_i
 template<int order, typename Number, int n_rows_1d>
 inline bool
 TensorProductMatrixBase<order, Number, n_rows_1d>::check_n_rows_and_columns_1d(
-  const std::vector<std::array<Table<2, Number>, order>> & tensors,
-  const unsigned int                                       direction) const
+  const std::vector<std::array<Table<2, Number>, order>> & tensors) const
 {
   Assert(!tensors.empty(), ExcMessage("The vector of tensors is empty."));
-  const unsigned int n_rows = tensors.front()[direction].size(0);
-  const unsigned int n_cols = tensors.front()[direction].size(1);
-  return check_n_rows_and_columns_1d_impl(tensors, direction, n_rows, n_cols);
+  Assert(tensor_helper_row, ExcMessage("tensor_helper isn't initialized."));
+  Assert(tensor_helper_column, ExcMessage("tensor_helper isn't initialized."));
+
+  for(const auto tensor_of_matrices : tensors)
+  {
+    std::array<unsigned int, order> n_rows_foreach_dimension;
+    std::array<unsigned int, order> n_columns_foreach_dimension;
+    for(auto d = 0; d < order; ++d)
+    {
+      const auto & matrix            = tensor_of_matrices[d];
+      n_rows_foreach_dimension[d]    = matrix.size(0);
+      n_columns_foreach_dimension[d] = matrix.size(1);
+    }
+
+    const bool has_equal_rows    = *tensor_helper_row == n_rows_foreach_dimension;
+    const bool has_equal_columns = *tensor_helper_column == n_columns_foreach_dimension;
+
+    if(!has_equal_rows || !has_equal_columns)
+      return false;
+  }
+
+  return true;
 }
 
 

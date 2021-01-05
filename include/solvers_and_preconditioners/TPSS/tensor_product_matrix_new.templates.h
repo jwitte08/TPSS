@@ -26,12 +26,9 @@ TensorProductMatrixBase<order, Number, n_rows_1d>::reinit(
   const std::vector<typename TensorProductMatrixBase<order, Number, n_rows_1d>::tensor_type> &
     elementary_tensors_in)
 {
-  Assert(check_n_rows_1d_static(elementary_tensors_in),
-         ExcMessage("Not all univariate matrices are of size (n_rows_1d x n_rows_1d)."));
-
   clear();
 
-  /// is it better throw to an exception ?!
+  /// TODO is it better throw to an exception ?!
   if(elementary_tensors_in.empty())
   {
     tensor_helper_row    = std::make_shared<const TensorHelper<order>>(0);
@@ -39,25 +36,26 @@ TensorProductMatrixBase<order, Number, n_rows_1d>::reinit(
     return;
   }
 
-  for(unsigned i = 0; i < order; ++i)
-    Assert(check_n_rows_and_columns_1d(elementary_tensors_in, i),
-           ExcMessage("Mismatching sizes of univariate matrices."));
-
-  std::copy(elementary_tensors_in.cbegin(),
-            elementary_tensors_in.cend(),
-            std::back_inserter(elementary_tensors));
-
-  const auto &                    first_elementary_tensor = elementary_tensors.front();
   std::array<unsigned int, order> n_rows_foreach_dimension;
   std::array<unsigned int, order> n_columns_foreach_dimension;
   for(auto d = 0; d < order; ++d)
   {
-    const auto & matrix            = first_elementary_tensor[d];
+    const auto & matrix            = elementary_tensors_in.front()[d];
     n_rows_foreach_dimension[d]    = matrix.size(0);
     n_columns_foreach_dimension[d] = matrix.size(1);
   }
   tensor_helper_row    = std::make_shared<const TensorHelper<order>>(n_rows_foreach_dimension);
   tensor_helper_column = std::make_shared<const TensorHelper<order>>(n_columns_foreach_dimension);
+
+  Assert(check_n_rows_1d_static(elementary_tensors_in),
+         ExcMessage("Not all univariate matrices are of size (n_rows_1d x n_rows_1d)."));
+  Assert(check_n_rows_and_columns_1d(elementary_tensors_in),
+         ExcMessage("Mismatching sizes of univariate matrices."));
+
+  this->elementary_tensors.clear();
+  std::copy(elementary_tensors_in.cbegin(),
+            elementary_tensors_in.cend(),
+            std::back_inserter(this->elementary_tensors));
 }
 
 
@@ -81,7 +79,6 @@ TensorProductMatrixBase<order, Number, n_rows_1d>::vmult_impl(
   const ArrayView<Number> &       dst_view,
   const ArrayView<const Number> & src_view) const
 {
-  static_assert(order == 2, "TODO");
   AssertDimension(dst_view.size(), transpose ? n() : m());
   AssertDimension(src_view.size(), transpose ? m() : n());
   Assert(tensor_helper_row, ExcMessage("Did you initialize tensor_helper_row?"));
@@ -117,8 +114,14 @@ TensorProductMatrixBase<order, Number, n_rows_1d>::vmult_impl(
   if(order == 1)
   {
     /// matrix_<tensor index>_<direction>
-    const Number * matrix_0_0 = &(get_matrix_1d(0, 0)(0, 0));
-    eval.template apply<0, transpose, add>(matrix_0_0, src, dst);
+    const Number * matrix_0 = &(get_matrix_1d(0, 0)(0, 0));
+    eval.template apply<0, transpose, add>(matrix_0, src, dst);
+
+    for(std::size_t r = 1; r < elementary_tensors.size(); ++r)
+    {
+      const Number * matrix_r = &(get_matrix_1d(r, 0)(0, 0));
+      eval.template apply<0, transpose, true>(matrix_r, src, dst);
+    }
   }
 
   else if(order == 2)
@@ -160,7 +163,46 @@ TensorProductMatrixBase<order, Number, n_rows_1d>::vmult_impl(
 
   else if(order == 3)
   {
-    AssertThrow(false, ExcMessage("TODO"));
+    tmp_array.clear();
+    tmp_array.resize(2 * mm);
+    Number * tmp  = tmp_array.begin();
+    Number * tmp2 = tmp_array.begin() + mm;
+
+    const Number * left_0  = &(get_matrix_1d(0, 2)(0, 0));
+    const Number * mid_0   = &(get_matrix_1d(0, 1)(0, 0));
+    const Number * right_0 = &(get_matrix_1d(0, 0)(0, 0));
+    if(transpose)
+    {
+      eval.template apply<0, transpose, false>(right_0, src, tmp);
+      eval.template apply<1, transpose, false>(mid_0, tmp, tmp2);
+      eval.template apply<2, transpose, add>(left_0, tmp2, dst);
+    }
+    else
+    {
+      eval.template apply<2, transpose, false>(left_0, src, tmp);
+      eval.template apply<1, transpose, false>(mid_0, tmp, tmp2);
+      eval.template apply<0, transpose, add>(right_0, tmp2, dst);
+    }
+
+    /// Apply elementary tensors of remaining ranks.
+    for(std::size_t r = 1; r < elementary_tensors.size(); ++r)
+    {
+      const Number * left_r  = &(get_matrix_1d(r, 2)(0, 0));
+      const Number * mid_r   = &(get_matrix_1d(r, 1)(0, 0));
+      const Number * right_r = &(get_matrix_1d(r, 0)(0, 0));
+      if(transpose)
+      {
+        eval.template apply<0, transpose, false>(right_r, src, tmp);
+        eval.template apply<1, transpose, false>(mid_r, tmp, tmp2);
+        eval.template apply<2, transpose, true>(left_r, tmp2, dst);
+      }
+      else
+      {
+        eval.template apply<2, transpose, false>(left_r, src, tmp);
+        eval.template apply<1, transpose, false>(mid_r, tmp, tmp2);
+        eval.template apply<0, transpose, true>(right_r, tmp2, dst);
+      }
+    }
   }
 
   else
