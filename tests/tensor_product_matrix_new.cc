@@ -622,15 +622,17 @@ TEST(Anisotropic2Double, basic_vmult_id3x1_times_2x3)
   tester.compare_matrix(matrix, reference_matrix);
 }
 
-template<bool random = false, bool rank1 = false, bool transpose = false>
+template<bool random = false, bool rank1 = false, bool transpose = false, typename Number = double>
 void
 vmult_random_anisotropic()
 {
   Tester                                          tester;
   constexpr int                                   order = 2;
-  Tensors::TensorProductMatrix_new<order, double> tp_matrix;
+  Tensors::TensorProductMatrix_new<order, Number> tp_matrix;
+  using scalar_value_type =
+    typename Tensors::TensorProductMatrix_new<order, Number>::scalar_value_type;
 
-  Table<2, double> M_0, M_1;
+  Table<2, Number> M_0, M_1;
   for(auto M : {&M_0, &M_1})
   {
     M->reinit(2U, 3U);
@@ -650,45 +652,48 @@ vmult_random_anisotropic()
     }
   }
 
-  Table<2, double> N_0, N_1;
+  Table<2, Number> N_0, N_1;
   for(auto N : {&N_0, &N_1})
   {
     N->reinit(4U, 2U);
     if(random)
       fill_with_random_values(*N);
     else
-      // std::fill(&((*N)(0, 0)), &((*N)(0, 0)) + N->n_elements(), 1.);
-      N->fill(1.);
+      N->fill(static_cast<Number>(1.));
   }
 
-  std::array<Table<2, double>, order>              rank1_tensor_0{M_0, N_0};
-  std::array<Table<2, double>, order>              rank1_tensor_1{M_1, N_1};
-  std::vector<std::array<Table<2, double>, order>> tensors;
+  std::array<Table<2, Number>, order>              rank1_tensor_0{M_0, N_0};
+  std::array<Table<2, Number>, order>              rank1_tensor_1{M_1, N_1};
+  std::vector<std::array<Table<2, Number>, order>> tensors;
   tensors.emplace_back(rank1_tensor_0);
   if(!rank1)
     tensors.emplace_back(rank1_tensor_1);
   tp_matrix.reinit(tensors);
-  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
 
-  /// Note that Tensors::kronecker_product() does not follow (deal.II)
-  /// convention in the sense of the zeroth matrix is the rightmost factor in
-  /// the Kronecker product and so on. Here, kronecker_product(N, M) actually
-  /// computes N (x) M.
-  FullMatrix<double> reference_matrix(matrix.m(), matrix.n());
-  reference_matrix.add(1.,
-                       table_to_fullmatrix(Tensors::kronecker_product(N_0, M_0)),
-                       rank1 ? 0. : 1.,
-                       table_to_fullmatrix(Tensors::kronecker_product(N_1, M_1)));
-
-  if(transpose)
+  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
   {
-    const auto         matrix = table_to_fullmatrix(tp_matrix.as_transpose_table());
-    FullMatrix<double> transpose_reference(matrix.m(), matrix.n());
-    transpose_reference.copy_transposed(reference_matrix);
-    tester.compare_matrix(matrix, transpose_reference);
+    const auto matrix = table_to_fullmatrix(tp_matrix.as_table(), lane);
+
+    /// Note that Tensors::kronecker_product() does not follow (deal.II)
+    /// convention in the sense of the zeroth matrix is the rightmost factor in
+    /// the Kronecker product and so on. Here, kronecker_product(N, M) actually
+    /// computes N (x) M.
+    FullMatrix<scalar_value_type> reference_matrix(matrix.m(), matrix.n());
+    reference_matrix.add(1.,
+                         table_to_fullmatrix(Tensors::kronecker_product(N_0, M_0), lane),
+                         rank1 ? 0. : 1.,
+                         table_to_fullmatrix(Tensors::kronecker_product(N_1, M_1), lane));
+
+    if(transpose)
+    {
+      const auto         matrix = table_to_fullmatrix(tp_matrix.as_transpose_table(), lane);
+      FullMatrix<double> transpose_reference(matrix.m(), matrix.n());
+      transpose_reference.copy_transposed(reference_matrix);
+      tester.compare_matrix(matrix, transpose_reference);
+    }
+    else
+      tester.compare_matrix(matrix, reference_matrix);
   }
-  else
-    tester.compare_matrix(matrix, reference_matrix);
 }
 
 TEST(Anisotropic2Double, basic_vmult_one4x2_times_2x3)
@@ -729,6 +734,46 @@ TEST(Anisotropic2Double, basic_Tvmult_of_4x2_times_2x3)
 TEST(Anisotropic2Double, basic_Tvmult_sum_of_4x2_times_2x3)
 {
   vmult_random_anisotropic<true, false, true>();
+}
+
+TEST(Anisotropic2VectorizedArrayDouble, basic_vmult_one4x2_times_2x3)
+{
+  vmult_random_anisotropic<false, true, false, VectorizedArray<double>>();
+}
+
+TEST(Anisotropic2VectorizedArrayDouble, basic_vmult_sum_of_one4x2_times_2x3)
+{
+  vmult_random_anisotropic<false, false, false, VectorizedArray<double>>();
+}
+
+TEST(Anisotropic2VectorizedArrayDouble, basic_vmult_of_4x2_times_2x3)
+{
+  vmult_random_anisotropic<true, true, false, VectorizedArray<double>>();
+}
+
+TEST(Anisotropic2VectorizedArrayDouble, basic_vmult_sum_of_4x2_times_2x3)
+{
+  vmult_random_anisotropic<true, false, false, VectorizedArray<double>>();
+}
+
+TEST(Anisotropic2VectorizedArrayDouble, basic_Tvmult_one4x2_times_2x3)
+{
+  vmult_random_anisotropic<false, true, true, VectorizedArray<double>>();
+}
+
+TEST(Anisotropic2VectorizedArrayDouble, basic_Tvmult_sum_of_one4x2_times_2x3)
+{
+  vmult_random_anisotropic<false, false, true, VectorizedArray<double>>();
+}
+
+TEST(Anisotropic2VectorizedArrayDouble, basic_Tvmult_of_4x2_times_2x3)
+{
+  vmult_random_anisotropic<true, true, true, VectorizedArray<double>>();
+}
+
+TEST(Anisotropic2VectorizedArrayDouble, basic_Tvmult_sum_of_4x2_times_2x3)
+{
+  vmult_random_anisotropic<true, false, true, VectorizedArray<double>>();
 }
 
 template<typename Number>
@@ -779,6 +824,124 @@ make_identity_matrix(const unsigned int n_rows, const unsigned int n_cols)
   for(auto i = 0U; i < std::min(n_rows, n_cols); ++i)
     matrix(i, i) = static_cast<Number>(1.);
   return matrix;
+}
+
+TEST(IsotropicSquare3Double, basic_vmult_id_times_id_times_id)
+{
+  Tester        tester;
+  constexpr int order     = 3;
+  const auto    n_rows_1d = 3U;
+
+  std::array<Table<2, double>, order> rank1_tensor;
+  for(auto & matrix : rank1_tensor)
+    matrix = make_identity_matrix<double>(n_rows_1d, n_rows_1d);
+
+  Tensors::TensorProductMatrix_new<order, double> tp_matrix(rank1_tensor);
+
+  /// as_table() uses vmult() for each unit vector to construct the kronecker
+  /// product matrix
+  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+  FullMatrix<double> reference_matrix(tp_matrix.m());
+  for(auto i = 0U; i < reference_matrix.m(); ++i)
+    reference_matrix(i, i) = 1.;
+
+  tester.compare_matrix(matrix, reference_matrix);
+}
+
+template<typename Number>
+void
+check_basic_vmult(
+  const std::vector<typename Tensors::TensorProductMatrix_new<3, Number>::tensor_type> & tensors)
+{
+  // using tensor_type = typename Tensors::TensorProductMatrix_new<3, Number>::tensor_type;
+  // using scalar_value_type =
+  //   typename Tensors::TensorProductMatrix_new<3, Number>::scalar_value_type;
+
+  Tester tester;
+
+  /// compute reference matrix (Tensors::kronecker_product(A, B) computes A(x)B)
+  const auto & [M0, M1, M2] = tensors.front();
+  const auto & M2_x_M1_x_M0 = Tensors::kronecker_product(M2, Tensors::kronecker_product(M1, M0));
+  auto         reference_matrix = M2_x_M1_x_M0;
+  for(auto r = 1U; r < tensors.size(); ++r)
+  {
+    const auto & [M0, M1, M2] = tensors.at(r);
+    const auto & M2_x_M1_x_M0 = Tensors::kronecker_product(M2, Tensors::kronecker_product(M1, M0));
+    reference_matrix          = Tensors::sum(reference_matrix, M2_x_M1_x_M0);
+  }
+
+  Tensors::TensorProductMatrix_new<3, Number> tpm_basic(tensors);
+
+  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+  {
+    const auto & fullmatrix           = table_to_fullmatrix(tpm_basic.as_table(), lane);
+    const auto & reference_fullmatrix = table_to_fullmatrix(reference_matrix, lane);
+    tester.compare_matrix(fullmatrix, reference_fullmatrix);
+  }
+}
+
+template<typename Number>
+void
+test_basic_vmult_3D()
+{
+  constexpr int order = 3;
+
+  using tensor_type = typename Tensors::TensorProductMatrix_new<order, Number>::tensor_type;
+
+  const unsigned int m = 3;
+  const unsigned int n = m;
+
+  const auto & Id  = make_identity_matrix<Number>(m, n);
+  const auto & One = make_one_matrix<Number>(m, n);
+  const auto & A   = make_random_matrix_symm<Number>(m, n);
+  const auto & AA  = make_random_matrix_symm<Number>(m, n);
+  const auto & B   = make_random_matrix_spd<Number>(m, n);
+  const auto & BB  = make_random_matrix_spd<Number>(m, n);
+
+  /// rank-1 test cases
+  {
+    std::vector<tensor_type> rank1_tensors = {{Id, Id, Id}};
+    check_basic_vmult<Number>(rank1_tensors);
+  }
+  {
+    std::vector<tensor_type> rank1_tensors = {{Id, One, Id}};
+    check_basic_vmult<Number>(rank1_tensors);
+  }
+  {
+    std::vector<tensor_type> rank1_tensors = {{Id, One, A}};
+    check_basic_vmult<Number>(rank1_tensors);
+  }
+  {
+    std::vector<tensor_type> rank1_tensors = {{A, AA, A}};
+    check_basic_vmult<Number>(rank1_tensors);
+  }
+
+  /// rank-2 test cases
+  {
+    std::vector<tensor_type> rank1_tensors = {{Id, Id, Id}, {Id, Id, Id}};
+    check_basic_vmult<Number>(rank1_tensors);
+  }
+  {
+    std::vector<tensor_type> rank1_tensors = {{A, AA, A}, {B, BB, One}};
+    check_basic_vmult<Number>(rank1_tensors);
+  }
+
+  /// rank-3 test cases
+  {
+    std::vector<tensor_type> rank1_tensors = {{A, AA, A}, {Id, Id, Id}, {B, BB, One}};
+    check_basic_vmult<Number>(rank1_tensors);
+  }
+}
+
+TEST(IsotropicSquare3Double, basic_vmult)
+{
+  test_basic_vmult_3D<double>();
+}
+
+TEST(IsotropicSquare3VectorizedArrayDouble, basic_vmult)
+{
+  test_basic_vmult_3D<VectorizedArray<double>>();
 }
 
 // template<int order, typename Number>
