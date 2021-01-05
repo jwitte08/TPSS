@@ -469,6 +469,91 @@ TensorProductMatrix_new<order, Number, n_rows_1d>::compute_eigenvalues_impl() co
 
 
 template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix_new<order, Number, n_rows_1d>::apply_inverse(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  apply_inverse_impl(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix_new<order, Number, n_rows_1d>::apply_inverse_impl(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  AssertDimension(this->m(), this->n());
+  AssertDimension(dst_view.size(), this->m());
+  AssertDimension(src_view.size(), this->m());
+
+  if(state == State::basic)
+  {
+    apply_inverse_impl_basic(dst_view, src_view);
+  }
+
+  else if(state == State::ranktwo)
+  {
+    apply_inverse_impl_eigen(dst_view, src_view);
+  }
+
+  else if(state == State::invalid)
+  {
+    AssertThrow(false, ExcMessage("The state is invalid."));
+  }
+
+  else
+  {
+    AssertThrow(false, ExcMessage("Not implemented."));
+  }
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix_new<order, Number, n_rows_1d>::apply_inverse_impl_eigen(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  AssertDimension(this->m(), this->n());
+  AssertDimension(eigenvectors.m(), eigenvectors.n());
+  AssertDimension(eigenvectors.m(), this->m());
+
+  this->tmp_array.clear();
+  this->tmp_array.resize(this->m());
+  ArrayView<Number> tmp_view = make_array_view(this->tmp_array.begin(), this->tmp_array.end());
+
+  eigenvectors.Tvmult(tmp_view, src_view);
+
+  const auto & eigenvalues = get_eigenvalues();
+  std::transform(tmp_view.cbegin(),
+                 tmp_view.cend(),
+                 eigenvalues.begin(),
+                 tmp_view.begin(),
+                 std::divides<Number>{});
+
+  eigenvectors.vmult(dst_view, tmp_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix_new<order, Number, n_rows_1d>::apply_inverse_impl_basic(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  if(!basic_inverse)
+    basic_inverse = std::make_shared<const InverseTable<Number>>(as_table());
+  basic_inverse->vmult(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
 Table<2, Number>
 TensorProductMatrix_new<order, Number, n_rows_1d>::as_table() const
 {

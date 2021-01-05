@@ -277,16 +277,25 @@ public:
   as_transpose_table() const;
 
 private:
-  void
-  apply_inverse_impl(const ArrayView<Number> &       dst_view,
-                     const ArrayView<const Number> & src_view) const;
-
   template<bool add, bool transpose>
   void
   vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
   AlignedVector<Number>
   compute_eigenvalues_impl() const;
+
+  void
+  apply_inverse_impl(const ArrayView<Number> &       dst_view,
+                     const ArrayView<const Number> & src_view) const;
+
+  void
+  apply_inverse_impl_basic(const ArrayView<Number> &       dst_view,
+                           const ArrayView<const Number> & src_view) const;
+
+  void
+  apply_inverse_impl_eigen(const ArrayView<Number> &       dst_view,
+                           const ArrayView<const Number> & src_view) const;
+
 
   /**
    * The state switches which functionalities are accessible:
