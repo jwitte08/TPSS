@@ -360,7 +360,7 @@ using namespace dealii;
 
 struct Tester
 {
-  enum class RankTwo
+  enum class Method
   {
     reinit,
     get_eigenvalues,
@@ -369,7 +369,7 @@ struct Tester
 
   struct Features
   {
-    RankTwo ranktwo = RankTwo::reinit;
+    Method method_variant = Method::reinit;
   };
 
   Tester()
@@ -414,213 +414,79 @@ struct Tester
   std::shared_ptr<ConditionalOStream> pcout;
 };
 
-TEST(IsotropicSquare2Double, basic_vmult_id_times_id)
-{
-  Tester                                          tester;
-  constexpr int                                   order = 2;
-  Tensors::TensorProductMatrix_new<order, double> tp_matrix;
-  std::array<Table<2, double>, order>             rank1_tensor;
-  const auto                                      n_rows_1d = 3U;
 
-  for(auto & matrix : rank1_tensor)
+
+TEST(IsotropicSquare_2Double, basic_vmult)
+{
+  /// basic_vmult_id_times_id
   {
-    matrix.reinit(n_rows_1d, n_rows_1d);
-    for(auto i = 0U; i < n_rows_1d; ++i)
-      matrix(i, i) = 1.;
+    Tester                                          tester;
+    constexpr int                                   order = 2;
+    Tensors::TensorProductMatrix_new<order, double> tp_matrix;
+    std::array<Table<2, double>, order>             rank1_tensor;
+    const auto                                      n_rows_1d = 3U;
+
+    for(auto & matrix : rank1_tensor)
+    {
+      matrix.reinit(n_rows_1d, n_rows_1d);
+      for(auto i = 0U; i < n_rows_1d; ++i)
+        matrix(i, i) = 1.;
+    }
+
+    std::vector<std::array<Table<2, double>, order>> tensors;
+    tensors.emplace_back(rank1_tensor);
+    tp_matrix.reinit(tensors);
+    /// as_table() uses vmult() for each unit vector to construct the kronecker
+    /// product matrix
+    const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+    FullMatrix<double> reference_matrix(tp_matrix.m());
+    for(auto i = 0U; i < reference_matrix.m(); ++i)
+      reference_matrix(i, i) = 1.;
+
+    tester.compare_matrix(matrix, reference_matrix);
   }
 
-  std::vector<std::array<Table<2, double>, order>> tensors;
-  tensors.emplace_back(rank1_tensor);
-  tp_matrix.reinit(tensors);
-  /// as_table() uses vmult() for each unit vector to construct the kronecker
-  /// product matrix
-  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+  /// basic_vmult_id_times_2x2
+  {
+    Tester                                          tester;
+    constexpr int                                   order = 2;
+    Tensors::TensorProductMatrix_new<order, double> tp_matrix;
 
-  FullMatrix<double> reference_matrix(tp_matrix.m());
-  for(auto i = 0U; i < reference_matrix.m(); ++i)
-    reference_matrix(i, i) = 1.;
+    Table<2, double> id;
+    id.reinit(2U, 2U);
+    for(auto i = 0U; i < 2U; ++i)
+      id(i, i) = 1.;
 
-  tester.compare_matrix(matrix, reference_matrix);
-}
+    Table<2, double> M;
+    M.reinit(2U, 2U);
+    /// first column
+    M(0, 0) = 1.;
+    M(1, 0) = 2.;
+    /// second column
+    M(0, 1) = 3.;
+    M(1, 1) = 4.;
 
-TEST(IsotropicSquare2Double, basic_vmult_id_times_2x2)
-{
-  Tester                                          tester;
-  constexpr int                                   order = 2;
-  Tensors::TensorProductMatrix_new<order, double> tp_matrix;
+    std::array<Table<2, double>, order>              rank1_tensor{M, id};
+    std::vector<std::array<Table<2, double>, order>> tensors;
+    tensors.emplace_back(rank1_tensor);
+    tp_matrix.reinit(tensors);
+    const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
 
-  Table<2, double> id;
-  id.reinit(2U, 2U);
-  for(auto i = 0U; i < 2U; ++i)
-    id(i, i) = 1.;
-
-  Table<2, double> M;
-  M.reinit(2U, 2U);
-  /// first column
-  M(0, 0) = 1.;
-  M(1, 0) = 2.;
-  /// second column
-  M(0, 1) = 3.;
-  M(1, 1) = 4.;
-
-  std::array<Table<2, double>, order>              rank1_tensor{M, id};
-  std::vector<std::array<Table<2, double>, order>> tensors;
-  tensors.emplace_back(rank1_tensor);
-  tp_matrix.reinit(tensors);
-  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
-
-  FullMatrix<double> reference_matrix(tp_matrix.m());
-  const auto         fill_submatrix = [&](const auto & block, const auto offset) {
-    for(auto i = 0U; i < block.m(); ++i)
-      for(auto j = 0U; j < block.n(); ++j)
-        reference_matrix(offset + i, offset + j) = block(i, j);
-  };
-  fill_submatrix(table_to_fullmatrix(M), 0U);
-  fill_submatrix(table_to_fullmatrix(M), 2U);
-
-  tester.compare_matrix(matrix, reference_matrix);
-}
-
-TEST(Anisotropic2Double, basic_vmult_id_times_2x3)
-{
-  Tester                                          tester;
-  constexpr int                                   order = 2;
-  Tensors::TensorProductMatrix_new<order, double> tp_matrix;
-
-  Table<2, double> id;
-  id.reinit(2U, 2U);
-  for(auto i = 0U; i < 2U; ++i)
-    id(i, i) = 1.;
-
-  Table<2, double> M;
-  M.reinit(2U, 3U);
-  /// first column
-  M(0, 0) = 1.;
-  M(1, 0) = 2.;
-  /// second column
-  M(0, 1) = 3.;
-  M(1, 1) = 4.;
-  /// third column
-  M(0, 2) = 5.;
-  M(1, 2) = 6.;
-
-  std::array<Table<2, double>, order>              rank1_tensor{M, id};
-  std::vector<std::array<Table<2, double>, order>> tensors;
-  tensors.emplace_back(rank1_tensor);
-  tp_matrix.reinit(tensors);
-  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
-
-  FullMatrix<double> reference_matrix(tp_matrix.m(), tp_matrix.n());
-  const auto         fill_submatrix =
-    [&](const auto & block, const auto offset_row, const auto offset_column) {
+    FullMatrix<double> reference_matrix(tp_matrix.m());
+    const auto         fill_submatrix = [&](const auto & block, const auto offset) {
       for(auto i = 0U; i < block.m(); ++i)
         for(auto j = 0U; j < block.n(); ++j)
-          reference_matrix(offset_row + i, offset_column + j) = block(i, j);
+          reference_matrix(offset + i, offset + j) = block(i, j);
     };
-  fill_submatrix(table_to_fullmatrix(M), 0U, 0U);
-  fill_submatrix(table_to_fullmatrix(M), 2U, 3U);
+    fill_submatrix(table_to_fullmatrix(M), 0U);
+    fill_submatrix(table_to_fullmatrix(M), 2U);
 
-  tester.compare_matrix(matrix, reference_matrix);
+    tester.compare_matrix(matrix, reference_matrix);
+  }
 }
 
-TEST(Anisotropic2Double, basic_vmult_2x3_times_2x3)
-{
-  Tester                                          tester;
-  constexpr int                                   order = 2;
-  Tensors::TensorProductMatrix_new<order, double> tp_matrix;
 
-  Table<2, double> M;
-  M.reinit(2U, 3U);
-  /// first column
-  M(0, 0) = 1.;
-  M(1, 0) = 2.;
-  /// second column
-  M(0, 1) = 3.;
-  M(1, 1) = 4.;
-  /// third column
-  M(0, 2) = 5.;
-  M(1, 2) = 6.;
-
-  std::array<Table<2, double>, order>              rank1_tensor{M, M};
-  std::vector<std::array<Table<2, double>, order>> tensors;
-  tensors.emplace_back(rank1_tensor);
-  tp_matrix.reinit(tensors);
-  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
-
-  const auto reference_matrix = table_to_fullmatrix(Tensors::kronecker_product(M, M));
-
-  tester.compare_matrix(matrix, reference_matrix);
-}
-
-TEST(Anisotropic2Double, basic_vmult_random_sum_of_2x3_times_2x3)
-{
-  Tester                                          tester;
-  constexpr int                                   order = 2;
-  Tensors::TensorProductMatrix_new<order, double> tp_matrix;
-
-  Table<2, double> M;
-  M.reinit(2U, 3U);
-  fill_with_random_values(M);
-  Table<2, double> N;
-  N.reinit(2U, 3U);
-  fill_with_random_values(N);
-
-  std::array<Table<2, double>, order>              rank1_tensor_0{M, N};
-  std::array<Table<2, double>, order>              rank1_tensor_1{N, M};
-  std::vector<std::array<Table<2, double>, order>> tensors;
-  tensors.emplace_back(rank1_tensor_0);
-  tensors.emplace_back(rank1_tensor_1);
-  tp_matrix.reinit(tensors);
-  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
-
-  FullMatrix<double> reference_matrix(matrix.m(), matrix.n());
-  reference_matrix.add(1.,
-                       table_to_fullmatrix(Tensors::kronecker_product(M, N)),
-                       1.,
-                       table_to_fullmatrix(Tensors::kronecker_product(N, M)));
-
-  tester.compare_matrix(matrix, reference_matrix);
-}
-
-TEST(Anisotropic2Double, basic_vmult_id3x1_times_2x3)
-{
-  Tester                                          tester;
-  constexpr int                                   order = 2;
-  Tensors::TensorProductMatrix_new<order, double> tp_matrix;
-
-  Table<2, double> id;
-  id.reinit(3U, 1U);
-  id(0U, 0U) = 1.;
-
-  Table<2, double> M;
-  M.reinit(2U, 3U);
-  /// first column
-  M(0, 0) = 1.;
-  M(1, 0) = 2.;
-  /// second column
-  M(0, 1) = 3.;
-  M(1, 1) = 4.;
-  /// third column
-  M(0, 2) = 5.;
-  M(1, 2) = 6.;
-
-  std::array<Table<2, double>, order>              rank1_tensor{M, id};
-  std::vector<std::array<Table<2, double>, order>> tensors;
-  tensors.emplace_back(rank1_tensor);
-  tp_matrix.reinit(tensors);
-  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
-
-  FullMatrix<double> reference_matrix(tp_matrix.m(), tp_matrix.n());
-  const auto         fill_submatrix =
-    [&](const auto & block, const auto offset_row, const auto offset_column) {
-      for(auto i = 0U; i < block.m(); ++i)
-        for(auto j = 0U; j < block.n(); ++j)
-          reference_matrix(offset_row + i, offset_column + j) = block(i, j);
-    };
-  fill_submatrix(table_to_fullmatrix(M), 0U, 0U);
-
-  tester.compare_matrix(matrix, reference_matrix);
-}
 
 template<bool random = false, bool rank1 = false, bool transpose = false, typename Number = double>
 void
@@ -696,84 +562,245 @@ vmult_random_anisotropic()
   }
 }
 
-TEST(Anisotropic2Double, basic_vmult_one4x2_times_2x3)
+
+
+TEST(Anisotropic_2Double, basic_vmult)
 {
-  vmult_random_anisotropic<false, true, false>();
+  /// basic_vmult_id_times_2x3)
+  {
+    Tester                                          tester;
+    constexpr int                                   order = 2;
+    Tensors::TensorProductMatrix_new<order, double> tp_matrix;
+
+    Table<2, double> id;
+    id.reinit(2U, 2U);
+    for(auto i = 0U; i < 2U; ++i)
+      id(i, i) = 1.;
+
+    Table<2, double> M;
+    M.reinit(2U, 3U);
+    /// first column
+    M(0, 0) = 1.;
+    M(1, 0) = 2.;
+    /// second column
+    M(0, 1) = 3.;
+    M(1, 1) = 4.;
+    /// third column
+    M(0, 2) = 5.;
+    M(1, 2) = 6.;
+
+    std::array<Table<2, double>, order>              rank1_tensor{M, id};
+    std::vector<std::array<Table<2, double>, order>> tensors;
+    tensors.emplace_back(rank1_tensor);
+    tp_matrix.reinit(tensors);
+    const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+    FullMatrix<double> reference_matrix(tp_matrix.m(), tp_matrix.n());
+    const auto         fill_submatrix =
+      [&](const auto & block, const auto offset_row, const auto offset_column) {
+        for(auto i = 0U; i < block.m(); ++i)
+          for(auto j = 0U; j < block.n(); ++j)
+            reference_matrix(offset_row + i, offset_column + j) = block(i, j);
+      };
+    fill_submatrix(table_to_fullmatrix(M), 0U, 0U);
+    fill_submatrix(table_to_fullmatrix(M), 2U, 3U);
+
+    tester.compare_matrix(matrix, reference_matrix);
+  }
+
+  /// basic_vmult_2x3_times_2x3)
+  {
+    Tester                                          tester;
+    constexpr int                                   order = 2;
+    Tensors::TensorProductMatrix_new<order, double> tp_matrix;
+
+    Table<2, double> M;
+    M.reinit(2U, 3U);
+    /// first column
+    M(0, 0) = 1.;
+    M(1, 0) = 2.;
+    /// second column
+    M(0, 1) = 3.;
+    M(1, 1) = 4.;
+    /// third column
+    M(0, 2) = 5.;
+    M(1, 2) = 6.;
+
+    std::array<Table<2, double>, order>              rank1_tensor{M, M};
+    std::vector<std::array<Table<2, double>, order>> tensors;
+    tensors.emplace_back(rank1_tensor);
+    tp_matrix.reinit(tensors);
+    const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+    const auto reference_matrix = table_to_fullmatrix(Tensors::kronecker_product(M, M));
+
+    tester.compare_matrix(matrix, reference_matrix);
+  }
+
+  /// basic_vmult_random_sum_of_2x3_times_2x3)
+  {
+    Tester                                          tester;
+    constexpr int                                   order = 2;
+    Tensors::TensorProductMatrix_new<order, double> tp_matrix;
+
+    Table<2, double> M;
+    M.reinit(2U, 3U);
+    fill_with_random_values(M);
+    Table<2, double> N;
+    N.reinit(2U, 3U);
+    fill_with_random_values(N);
+
+    std::array<Table<2, double>, order>              rank1_tensor_0{M, N};
+    std::array<Table<2, double>, order>              rank1_tensor_1{N, M};
+    std::vector<std::array<Table<2, double>, order>> tensors;
+    tensors.emplace_back(rank1_tensor_0);
+    tensors.emplace_back(rank1_tensor_1);
+    tp_matrix.reinit(tensors);
+    const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+    FullMatrix<double> reference_matrix(matrix.m(), matrix.n());
+    reference_matrix.add(1.,
+                         table_to_fullmatrix(Tensors::kronecker_product(M, N)),
+                         1.,
+                         table_to_fullmatrix(Tensors::kronecker_product(N, M)));
+
+    tester.compare_matrix(matrix, reference_matrix);
+  }
+
+  /// basic_vmult_id3x1_times_2x3)
+  {
+    Tester                                          tester;
+    constexpr int                                   order = 2;
+    Tensors::TensorProductMatrix_new<order, double> tp_matrix;
+
+    Table<2, double> id;
+    id.reinit(3U, 1U);
+    id(0U, 0U) = 1.;
+
+    Table<2, double> M;
+    M.reinit(2U, 3U);
+    /// first column
+    M(0, 0) = 1.;
+    M(1, 0) = 2.;
+    /// second column
+    M(0, 1) = 3.;
+    M(1, 1) = 4.;
+    /// third column
+    M(0, 2) = 5.;
+    M(1, 2) = 6.;
+
+    std::array<Table<2, double>, order>              rank1_tensor{M, id};
+    std::vector<std::array<Table<2, double>, order>> tensors;
+    tensors.emplace_back(rank1_tensor);
+    tp_matrix.reinit(tensors);
+    const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+    FullMatrix<double> reference_matrix(tp_matrix.m(), tp_matrix.n());
+    const auto         fill_submatrix =
+      [&](const auto & block, const auto offset_row, const auto offset_column) {
+        for(auto i = 0U; i < block.m(); ++i)
+          for(auto j = 0U; j < block.n(); ++j)
+            reference_matrix(offset_row + i, offset_column + j) = block(i, j);
+      };
+    fill_submatrix(table_to_fullmatrix(M), 0U, 0U);
+
+    tester.compare_matrix(matrix, reference_matrix);
+  }
+
+  /// basic_vmult_one4x2_times_2x3)
+  {
+    vmult_random_anisotropic<false, true, false>();
+  }
+
+  /// basic_vmult_sum_of_one4x2_times_2x3)
+  {
+    vmult_random_anisotropic<false, false, false>();
+  }
+
+  /// basic_vmult_of_4x2_times_2x3)
+  {
+    vmult_random_anisotropic<true, true, false>();
+  }
+
+  /// basic_vmult_sum_of_4x2_times_2x3)
+  {
+    vmult_random_anisotropic<true, false, false>();
+  }
 }
 
-TEST(Anisotropic2Double, basic_vmult_sum_of_one4x2_times_2x3)
+
+
+TEST(Anisotropic_2VectorizedArrayDouble, basic_vmult)
 {
-  vmult_random_anisotropic<false, false, false>();
+  /// basic_vmult_one4x2_times_2x3)
+  {
+    vmult_random_anisotropic<false, true, false, VectorizedArray<double>>();
+  }
+
+  /// basic_vmult_sum_of_one4x2_times_2x3)
+  {
+    vmult_random_anisotropic<false, false, false, VectorizedArray<double>>();
+  }
+
+  /// basic_vmult_of_4x2_times_2x3)
+  {
+    vmult_random_anisotropic<true, true, false, VectorizedArray<double>>();
+  }
+
+  /// basic_vmult_sum_of_4x2_times_2x3)
+  {
+    vmult_random_anisotropic<true, false, false, VectorizedArray<double>>();
+  }
 }
 
-TEST(Anisotropic2Double, basic_vmult_of_4x2_times_2x3)
+
+
+TEST(Anisotropic_2Double, basic_Tvmult)
 {
-  vmult_random_anisotropic<true, true, false>();
+  /// basic_Tvmult_one4x2_times_2x3)
+  {
+    vmult_random_anisotropic<false, true, true>();
+  }
+
+  /// basic_Tvmult_sum_of_one4x2_times_2x3)
+  {
+    vmult_random_anisotropic<false, false, true>();
+  }
+
+  /// basic_Tvmult_of_4x2_times_2x3)
+  {
+    vmult_random_anisotropic<true, true, true>();
+  }
+
+  /// basic_Tvmult_sum_of_4x2_times_2x3)
+  {
+    vmult_random_anisotropic<true, false, true>();
+  }
 }
 
-TEST(Anisotropic2Double, basic_vmult_sum_of_4x2_times_2x3)
-{
-  vmult_random_anisotropic<true, false, false>();
-}
 
-TEST(Anisotropic2Double, basic_Tvmult_one4x2_times_2x3)
-{
-  vmult_random_anisotropic<false, true, true>();
-}
 
-TEST(Anisotropic2Double, basic_Tvmult_sum_of_one4x2_times_2x3)
+TEST(Anisotropic_2VectorizedArrayDouble, basic_Tvmult)
 {
-  vmult_random_anisotropic<false, false, true>();
-}
+  /// basic_Tvmult_one4x2_times_2x3)
+  {
+    vmult_random_anisotropic<false, true, true, VectorizedArray<double>>();
+  }
 
-TEST(Anisotropic2Double, basic_Tvmult_of_4x2_times_2x3)
-{
-  vmult_random_anisotropic<true, true, true>();
-}
+  /// basic_Tvmult_sum_of_one4x2_times_2x3)
+  {
+    vmult_random_anisotropic<false, false, true, VectorizedArray<double>>();
+  }
 
-TEST(Anisotropic2Double, basic_Tvmult_sum_of_4x2_times_2x3)
-{
-  vmult_random_anisotropic<true, false, true>();
-}
+  /// basic_Tvmult_of_4x2_times_2x3)
+  {
+    vmult_random_anisotropic<true, true, true, VectorizedArray<double>>();
+  }
 
-TEST(Anisotropic2VectorizedArrayDouble, basic_vmult_one4x2_times_2x3)
-{
-  vmult_random_anisotropic<false, true, false, VectorizedArray<double>>();
-}
-
-TEST(Anisotropic2VectorizedArrayDouble, basic_vmult_sum_of_one4x2_times_2x3)
-{
-  vmult_random_anisotropic<false, false, false, VectorizedArray<double>>();
-}
-
-TEST(Anisotropic2VectorizedArrayDouble, basic_vmult_of_4x2_times_2x3)
-{
-  vmult_random_anisotropic<true, true, false, VectorizedArray<double>>();
-}
-
-TEST(Anisotropic2VectorizedArrayDouble, basic_vmult_sum_of_4x2_times_2x3)
-{
-  vmult_random_anisotropic<true, false, false, VectorizedArray<double>>();
-}
-
-TEST(Anisotropic2VectorizedArrayDouble, basic_Tvmult_one4x2_times_2x3)
-{
-  vmult_random_anisotropic<false, true, true, VectorizedArray<double>>();
-}
-
-TEST(Anisotropic2VectorizedArrayDouble, basic_Tvmult_sum_of_one4x2_times_2x3)
-{
-  vmult_random_anisotropic<false, false, true, VectorizedArray<double>>();
-}
-
-TEST(Anisotropic2VectorizedArrayDouble, basic_Tvmult_of_4x2_times_2x3)
-{
-  vmult_random_anisotropic<true, true, true, VectorizedArray<double>>();
-}
-
-TEST(Anisotropic2VectorizedArrayDouble, basic_Tvmult_sum_of_4x2_times_2x3)
-{
-  vmult_random_anisotropic<true, false, true, VectorizedArray<double>>();
+  /// basic_Tvmult_sum_of_4x2_times_2x3)
+  {
+    vmult_random_anisotropic<true, false, true, VectorizedArray<double>>();
+  }
 }
 
 
@@ -843,29 +870,6 @@ make_identity_matrix(const unsigned int n_rows, const unsigned int n_cols)
 }
 
 
-
-TEST(IsotropicSquare3Double, basic_vmult_id_times_id_times_id)
-{
-  Tester        tester;
-  constexpr int order     = 3;
-  const auto    n_rows_1d = 3U;
-
-  std::array<Table<2, double>, order> rank1_tensor;
-  for(auto & matrix : rank1_tensor)
-    matrix = make_identity_matrix<double>(n_rows_1d, n_rows_1d);
-
-  Tensors::TensorProductMatrix_new<order, double> tp_matrix(rank1_tensor);
-
-  /// as_table() uses vmult() for each unit vector to construct the kronecker
-  /// product matrix
-  const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
-
-  FullMatrix<double> reference_matrix(tp_matrix.m());
-  for(auto i = 0U; i < reference_matrix.m(); ++i)
-    reference_matrix(i, i) = 1.;
-
-  tester.compare_matrix(matrix, reference_matrix);
-}
 
 template<typename Number>
 void
@@ -948,12 +952,36 @@ test_basic_vmult_3D()
   }
 }
 
-TEST(IsotropicSquare3Double, basic_vmult)
+TEST(IsotropicSquare_3Double, basic_vmult)
 {
+  /// basic_vmult_id_times_id_times_id)
+  {
+    Tester        tester;
+    constexpr int order     = 3;
+    const auto    n_rows_1d = 3U;
+
+    std::array<Table<2, double>, order> rank1_tensor;
+    for(auto & matrix : rank1_tensor)
+      matrix = make_identity_matrix<double>(n_rows_1d, n_rows_1d);
+
+    Tensors::TensorProductMatrix_new<order, double> tp_matrix(rank1_tensor);
+
+    /// as_table() uses vmult() for each unit vector to construct the kronecker
+    /// product matrix
+    const auto matrix = table_to_fullmatrix(tp_matrix.as_table());
+
+    FullMatrix<double> reference_matrix(tp_matrix.m());
+    for(auto i = 0U; i < reference_matrix.m(); ++i)
+      reference_matrix(i, i) = 1.;
+
+    tester.compare_matrix(matrix, reference_matrix);
+  }
+
+  /// various tests
   test_basic_vmult_3D<double>();
 }
 
-TEST(IsotropicSquare3VectorizedArrayDouble, basic_vmult)
+TEST(IsotropicSquare_3VectorizedArrayDouble, basic_vmult)
 {
   test_basic_vmult_3D<VectorizedArray<double>>();
 }
@@ -1023,12 +1051,12 @@ test_basic_apply_inverse()
   }
 }
 
-TEST(IsotropicSquare2Double, basic_apply_inverse)
+TEST(IsotropicSquare_2Double, basic_apply_inverse)
 {
   test_basic_apply_inverse<double>();
 }
 
-TEST(IsotropicSquare2VectorizedArrayDouble, basic_apply_inverse)
+TEST(IsotropicSquare_2VectorizedArrayDouble, basic_apply_inverse)
 {
   test_basic_apply_inverse<VectorizedArray<double>>();
 }
@@ -1081,12 +1109,12 @@ test_basic_apply_inverse_3D()
   }
 }
 
-TEST(IsotropicSquare3Double, basic_apply_inverse)
+TEST(IsotropicSquare_3Double, basic_apply_inverse)
 {
   test_basic_apply_inverse_3D<double>();
 }
 
-TEST(IsotropicSquare3VectorizedArrayDouble, basic_apply_inverse)
+TEST(IsotropicSquare_3VectorizedArrayDouble, basic_apply_inverse)
 {
   test_basic_apply_inverse_3D<VectorizedArray<double>>();
 }
@@ -1095,8 +1123,9 @@ TEST(IsotropicSquare3VectorizedArrayDouble, basic_apply_inverse)
 
 template<int order, typename Number>
 void
-check_ranktwo(
+check_ranktwo_or_separable(
   std::vector<typename Tensors::TensorProductMatrix_new<order, Number>::tensor_type> tensors,
+  typename Tensors::TensorProductMatrix_new<order, Number>::State                    state,
   std::bitset<order>                                                                 spd_mask,
   const Tester::Features &                                                           features)
 {
@@ -1107,8 +1136,28 @@ check_ranktwo(
 
   Tester tester;
 
-  Tensors::TensorProductMatrix_new<order, Number> tpm_ranktwo(tensors, State::ranktwo, spd_mask);
-  Tensors::TensorProductMatrix_new<order, Number> tpm_basic(tensors, State::basic);
+  ASSERT_TRUE(state == State::ranktwo || state == State::separable) << "Invalid state!";
+
+  Tensors::TensorProductMatrix_new<order, Number> tpm_ranktwo(tensors, state, spd_mask);
+  Tensors::TensorProductMatrix_new<order, Number> tpm_basic;
+  if(state == State::separable)
+  {
+    ASSERT_EQ(tensors.size(), 2U) << "only mass first and derivative second";
+    std::vector<tensor_type> expansion(order);
+    const auto &             MM = tensors.front();
+    const auto &             DD = tensors.back();
+    for(auto r = 0U; r < order; ++r)
+      for(auto d = 0U; d < order; ++d)
+      {
+        if(r == d)
+          expansion[r][d] = DD[d];
+        else
+          expansion[r][d] = MM[d];
+      }
+    tpm_basic.reinit(expansion);
+  }
+  else
+    tpm_basic.reinit(tensors);
 
   const auto & eigenvalues  = tpm_ranktwo.get_eigenvalues();
   const auto & eigenvectors = tpm_ranktwo.get_eigenvectors();
@@ -1122,14 +1171,14 @@ check_ranktwo(
 
     /// checks if the eigenvectors computed within reinit() actually diagonalize
     /// the underlying matrix
-    if(features.ranktwo == Tester::RankTwo::reinit ||
-       features.ranktwo == Tester::RankTwo::get_eigenvalues)
+    if(features.method_variant == Tester::Method::reinit ||
+       features.method_variant == Tester::Method::get_eigenvalues)
     {
-      // tester.print_matrix(reference_fullmatrix, "M:");
-      // tester.print_matrix(fullQ, "eigenvectors (column-wise):");
-      // *tester.pcout << vector_to_string(compute_eigenvalues(reference_fullmatrix)) << std::endl;
-      // *tester.pcout << vector_to_string(lambdas) << std::endl;
-      // tester.print_matrix(diagonalization, "Q^T M Q:");
+      tester.print_matrix(reference_fullmatrix, "M:");
+      tester.print_matrix(fullQ, "eigenvectors (column-wise):");
+      *tester.pcout << vector_to_string(compute_eigenvalues(reference_fullmatrix)) << std::endl;
+      *tester.pcout << vector_to_string(lambdas) << std::endl;
+      tester.print_matrix(diagonalization, "Q^T M Q:");
 
       /// check off-diagonal entries of diagonalization
       auto D = diagonalization;
@@ -1140,7 +1189,7 @@ check_ranktwo(
 
       /// checks if the eigenvalues returned by get_eigenvalues() are the same as
       /// those obtained from the eigendecomposition @p diagonalization
-      if(features.ranktwo == Tester::RankTwo::get_eigenvalues)
+      if(features.method_variant == Tester::Method::get_eigenvalues)
       {
         FullMatrix<scalar_value_type> fullLambda(lambdas.size());
         for(auto i = 0U; i < lambdas.size(); ++i)
@@ -1149,7 +1198,7 @@ check_ranktwo(
       }
     }
 
-    else if(features.ranktwo == Tester::RankTwo::apply_inverse)
+    else if(features.method_variant == Tester::Method::apply_inverse)
     {
       const auto fullinverse = table_to_fullmatrix(tpm_ranktwo.as_inverse_table(), lane);
       tester.compare_inverse_matrix(fullinverse, reference_fullmatrix);
@@ -1158,6 +1207,30 @@ check_ranktwo(
     else
       EXPECT_TRUE(false) << "Test variant isn't supported/implemented.";
   }
+}
+
+template<int order, typename Number>
+void
+check_ranktwo(
+  std::vector<typename Tensors::TensorProductMatrix_new<order, Number>::tensor_type> tensors,
+  std::bitset<order>                                                                 spd_mask,
+  const Tester::Features &                                                           features)
+{
+  using State = typename Tensors::TensorProductMatrix_new<order, Number>::State;
+  check_ranktwo_or_separable<order, Number>(tensors, State::ranktwo, spd_mask, features);
+}
+
+template<int order, typename Number>
+void
+check_separable(
+  std::vector<typename Tensors::TensorProductMatrix_new<order, Number>::tensor_type> tensors,
+  const Tester::Features &                                                           features)
+{
+  using State = typename Tensors::TensorProductMatrix_new<order, Number>::State;
+  check_ranktwo_or_separable<order, Number>(tensors,
+                                            State::separable,
+                                            std::bitset<order>{},
+                                            features);
 }
 
 
@@ -1171,7 +1244,7 @@ test_ranktwo_reinit()
   using tensor_type = typename Tensors::TensorProductMatrix_new<order, Number>::tensor_type;
 
   Tester::Features test_features;
-  test_features.ranktwo = Tester::RankTwo::reinit;
+  test_features.method_variant = Tester::Method::reinit;
 
   for(const auto m : {2U, 3U})
   {
@@ -1216,13 +1289,13 @@ test_ranktwo_reinit()
   }
 }
 
-TEST(IsotropicSquare2Double, ranktwo_reinit)
+TEST(IsotropicSquare_2Double, ranktwo_reinit)
 {
   using Number = double;
   test_ranktwo_reinit<Number>();
 }
 
-TEST(IsotropicSquare2VectorizedArrayDouble, ranktwo_reinit)
+TEST(IsotropicSquare_2VectorizedArrayDouble, ranktwo_reinit)
 {
   using Number = VectorizedArray<double>;
   test_ranktwo_reinit<Number>();
@@ -1280,19 +1353,19 @@ test_ranktwo_3D(const Tester::Features & test_features)
   }
 }
 
-TEST(IsotropicSquare3Double, ranktwo_reinit)
+TEST(IsotropicSquare_3Double, ranktwo_reinit)
 {
   using Number = double;
   Tester::Features test_features;
-  test_features.ranktwo = Tester::RankTwo::reinit;
+  test_features.method_variant = Tester::Method::reinit;
   test_ranktwo_3D<Number>(test_features);
 }
 
-TEST(IsotropicSquare3VectorizedArrayDouble, ranktwo_reinit)
+TEST(IsotropicSquare_3VectorizedArrayDouble, ranktwo_reinit)
 {
   using Number = VectorizedArray<double>;
   Tester::Features test_features;
-  test_features.ranktwo = Tester::RankTwo::reinit;
+  test_features.method_variant = Tester::Method::reinit;
   test_ranktwo_3D<Number>(test_features);
 }
 
@@ -1304,7 +1377,7 @@ test_ranktwo_get_eigenvalues()
 {
   using tensor_type = typename Tensors::TensorProductMatrix_new<order, Number>::tensor_type;
   Tester::Features test_features;
-  test_features.ranktwo = Tester::RankTwo::get_eigenvalues;
+  test_features.method_variant = Tester::Method::get_eigenvalues;
 
   const unsigned int m = 3;
   const unsigned int n = m;
@@ -1347,33 +1420,33 @@ test_ranktwo_get_eigenvalues()
   }
 }
 
-TEST(IsotropicSquare2Double, ranktwo_get_eigenvalues)
+TEST(IsotropicSquare_2Double, ranktwo_get_eigenvalues)
 {
   constexpr int order = 2;
   using Number        = double;
   test_ranktwo_get_eigenvalues<order, Number>();
 }
 
-TEST(IsotropicSquare2VectorizedArrayDouble, ranktwo_get_eigenvalues)
+TEST(IsotropicSquare_2VectorizedArrayDouble, ranktwo_get_eigenvalues)
 {
   constexpr int order = 2;
   using Number        = VectorizedArray<double>;
   test_ranktwo_get_eigenvalues<order, Number>();
 }
 
-TEST(IsotropicSquare3Double, ranktwo_get_eigenvalues)
+TEST(IsotropicSquare_3Double, ranktwo_get_eigenvalues)
 {
   using Number = double;
   Tester::Features test_features;
-  test_features.ranktwo = Tester::RankTwo::get_eigenvalues;
+  test_features.method_variant = Tester::Method::get_eigenvalues;
   test_ranktwo_3D<Number>(test_features);
 }
 
-TEST(IsotropicSquare3VectorizedArrayDouble, ranktwo_get_eigenvalues)
+TEST(IsotropicSquare_3VectorizedArrayDouble, ranktwo_get_eigenvalues)
 {
   using Number = VectorizedArray<double>;
   Tester::Features test_features;
-  test_features.ranktwo = Tester::RankTwo::get_eigenvalues;
+  test_features.method_variant = Tester::Method::get_eigenvalues;
   test_ranktwo_3D<Number>(test_features);
 }
 
@@ -1385,7 +1458,7 @@ test_ranktwo_apply_inverse()
 {
   using tensor_type = typename Tensors::TensorProductMatrix_new<order, Number>::tensor_type;
   Tester::Features test_features;
-  test_features.ranktwo = Tester::RankTwo::apply_inverse;
+  test_features.method_variant = Tester::Method::apply_inverse;
 
   for(const auto m : {2U, 3U})
   {
@@ -1436,34 +1509,242 @@ test_ranktwo_apply_inverse()
   }
 }
 
-TEST(IsotropicSquare2Double, ranktwo_apply_inverse)
+TEST(IsotropicSquare_2Double, ranktwo_apply_inverse)
 {
   constexpr int order = 2;
   using Number        = double;
   test_ranktwo_apply_inverse<order, Number>();
 }
 
-TEST(IsotropicSquare2VectorizedArrayDouble, ranktwo_apply_inverse)
+TEST(IsotropicSquare_2VectorizedArrayDouble, ranktwo_apply_inverse)
 {
   constexpr int order = 2;
   using Number        = VectorizedArray<double>;
   test_ranktwo_apply_inverse<order, Number>();
 }
 
-TEST(IsotropicSquare3Double, ranktwo_apply_inverse)
+TEST(IsotropicSquare_3Double, ranktwo_apply_inverse)
 {
   using Number = double;
   Tester::Features test_features;
-  test_features.ranktwo = Tester::RankTwo::apply_inverse;
+  test_features.method_variant = Tester::Method::apply_inverse;
   test_ranktwo_3D<Number>(test_features);
 }
 
-TEST(IsotropicSquare3VectorizedArrayDouble, ranktwo_apply_inverse)
+TEST(IsotropicSquare_3VectorizedArrayDouble, ranktwo_apply_inverse)
 {
   using Number = VectorizedArray<double>;
   Tester::Features test_features;
-  test_features.ranktwo = Tester::RankTwo::apply_inverse;
+  test_features.method_variant = Tester::Method::apply_inverse;
   test_ranktwo_3D<Number>(test_features);
+}
+
+
+
+template<typename Number>
+void
+test_separable(const Tester::Features & test_features)
+{
+  constexpr int order = 2;
+
+  using tensor_type = typename Tensors::TensorProductMatrix_new<order, Number>::tensor_type;
+
+  for(const auto m : {2U, 3U})
+  {
+    const unsigned int n = m;
+
+    const auto & Id = make_identity_matrix<Number>(m, n);
+    const auto & D  = make_random_matrix_symm<Number>(m, n);
+    const auto & DD = make_random_matrix_symm<Number>(m, n);
+    const auto & M  = make_random_matrix_spd<Number>(m, n);
+    const auto & MM = make_random_matrix_spd<Number>(m, n);
+
+    {
+      std::vector<tensor_type> tensors = {{Id, Id}, {Id, Id}};
+      check_separable<order, Number>(tensors, test_features);
+    }
+
+    {
+      std::vector<tensor_type> tensors = {{Id, Id}, {D, DD}};
+      check_separable<order, Number>(tensors, test_features);
+    }
+
+    {
+      std::vector<tensor_type> tensors = {{M, MM}, {D, DD}};
+      check_separable<order, Number>(tensors, test_features);
+    }
+  }
+}
+
+
+
+template<typename Number>
+void
+test_separable_3D(const Tester::Features & test_features)
+{
+  constexpr int order = 3;
+
+  using tensor_type = typename Tensors::TensorProductMatrix_new<order, Number>::tensor_type;
+
+  for(const auto m : {2U, 3U})
+  {
+    const unsigned int n = m;
+
+    const auto & Id  = make_identity_matrix<Number>(m, n);
+    const auto & D   = make_random_matrix_symm<Number>(m, n);
+    const auto & DD  = make_random_matrix_symm<Number>(m, n);
+    const auto & DDD = make_random_matrix_symm<Number>(m, n);
+    const auto & M   = make_random_matrix_spd<Number>(m, n);
+    const auto & MM  = make_random_matrix_spd<Number>(m, n);
+    const auto & MMM = make_random_matrix_spd<Number>(m, n);
+
+    {
+      std::vector<tensor_type> tensors = {{Id, Id, Id}, {Id, Id, Id}};
+      check_separable<order, Number>(tensors, test_features);
+    }
+
+    {
+      std::vector<tensor_type> tensors = {{Id, Id, Id}, {D, DD, DDD}};
+      check_separable<order, Number>(tensors, test_features);
+    }
+
+    {
+      std::vector<tensor_type> tensors = {{M, MM, MMM}, {D, DD, DDD}};
+      check_separable<order, Number>(tensors, test_features);
+    }
+  }
+}
+
+
+
+template<typename Number>
+void
+test_separable_reinit()
+{
+  Tester::Features test_features;
+  test_features.method_variant = Tester::Method::reinit;
+  test_separable<Number>(test_features);
+}
+
+TEST(IsotropicSquare_2Double, separable_reinit)
+{
+  using Number = double;
+  test_separable_reinit<Number>();
+}
+
+TEST(IsotropicSquare_2VectorizedArrayDouble, separable_reinit)
+{
+  using Number = VectorizedArray<double>;
+  test_separable_reinit<Number>();
+}
+
+template<typename Number>
+void
+test_separable_3D_reinit()
+{
+  Tester::Features test_features;
+  test_features.method_variant = Tester::Method::reinit;
+  test_separable_3D<Number>(test_features);
+}
+
+TEST(IsotropicSquare_3Double, separable_reinit)
+{
+  using Number = double;
+  test_separable_3D_reinit<Number>();
+}
+
+TEST(IsotropicSquare_3VectorizedArrayDouble, separable_reinit)
+{
+  using Number = VectorizedArray<double>;
+  test_separable_3D_reinit<Number>();
+}
+
+
+
+template<typename Number>
+void
+test_separable_get_eigenvalues()
+{
+  Tester::Features test_features;
+  test_features.method_variant = Tester::Method::get_eigenvalues;
+  test_separable<Number>(test_features);
+}
+
+TEST(IsotropicSquare_2Double, separable_get_eigenvalues)
+{
+  using Number = double;
+  test_separable_get_eigenvalues<Number>();
+}
+
+TEST(IsotropicSquare_2VectorizedArrayDouble, separable_get_eigenvalues)
+{
+  using Number = VectorizedArray<double>;
+  test_separable_get_eigenvalues<Number>();
+}
+
+template<typename Number>
+void
+test_separable_3D_get_eigenvalues()
+{
+  Tester::Features test_features;
+  test_features.method_variant = Tester::Method::get_eigenvalues;
+  test_separable_3D<Number>(test_features);
+}
+
+TEST(IsotropicSquare_3Double, separable_get_eigenvalues)
+{
+  using Number = double;
+  test_separable_3D_get_eigenvalues<Number>();
+}
+
+TEST(IsotropicSquare_3VectorizedArrayDouble, separable_get_eigenvalues)
+{
+  using Number = VectorizedArray<double>;
+  test_separable_3D_get_eigenvalues<Number>();
+}
+
+
+
+template<typename Number>
+void
+test_separable_apply_inverse()
+{
+  Tester::Features test_features;
+  test_features.method_variant = Tester::Method::apply_inverse;
+  test_separable<Number>(test_features);
+}
+
+TEST(IsotropicSquare_2Double, separable_apply_inverse)
+{
+  using Number = double;
+  test_separable_apply_inverse<Number>();
+}
+
+TEST(IsotropicSquare_2VectorizedArrayDouble, separable_apply_inverse)
+{
+  using Number = VectorizedArray<double>;
+  test_separable_apply_inverse<Number>();
+}
+
+template<typename Number>
+void
+test_separable_3D_apply_inverse()
+{
+  Tester::Features test_features;
+  test_features.method_variant = Tester::Method::apply_inverse;
+  test_separable_3D<Number>(test_features);
+}
+
+TEST(IsotropicSquare_3Double, separable_apply_inverse)
+{
+  using Number = double;
+  test_separable_3D_apply_inverse<Number>();
+}
+
+TEST(IsotropicSquare_3VectorizedArrayDouble, separable_apply_inverse)
+{
+  using Number = VectorizedArray<double>;
+  test_separable_3D_apply_inverse<Number>();
 }
 
 
