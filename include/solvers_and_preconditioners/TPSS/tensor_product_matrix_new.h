@@ -198,13 +198,32 @@ public:
   operator=(const TensorProductMatrix_new & other);
 
   /**
-   * TODO
+   * Depending on the matrix state @p state_in the rank-1 tensors of matrices @p
+   * elementary_tensors_in initialize this tensor product matrix.
+   *
+   * basic : All rank-1 tensors are treated in the way they are passed, see the
+   * class' description.
+   *
+   * ranktwo : Accepts two and only two rank-1 tensors passed by @p elementary_tensors,
+   * see the class' description. The bitset @p spd_mask_in defines for each
+   * direction which matrix is symmetric, positive definite (requirement for
+   * generalized eigenvalue problem). The bit position coincides with the tensor
+   * direction.
+   *
+   * separable : Accepts two and only two rank-1 tensors passed by @p
+   * elementary_tensors, see the class' description. The first rank-1 tensor
+   * needs to contain mass matrices (symmetric, positive definite) and the
+   * second derivative matrices, in the context of Rice, Lynch and Thomas.
    */
   void
   reinit(const std::vector<tensor_type> & elementary_tensors_in,
          const State                      state_in    = State::basic,
          const std::bitset<order>         spd_mask_in = std::bitset<order>{});
 
+  /**
+   * Clears all data, sizes are reset to zero and the matrix state becomes
+   * State::invalid. Only after a call to reinit() the matrix is usable again.
+   */
   void
   clear();
 
@@ -217,24 +236,48 @@ public:
    * called after (re-)initialization the inverse is computed (thus requiring @p
    * basic_inverse to be mutable).
    *
-   * ranktwo : TODO...
+   * ranktwo : We use the (generalized) eigendecomposition computed during
+   * (re-)initialization to apply the inverse via fast diagonalization.
    *
-   * separable : TODO...
+   * separable : We use the (generalized) eigendecomposition computed during
+   * (re-)initialization to apply the inverse via fast diagonalization.
    */
   void
   apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
+  /**
+   * Sum-factorization is used to efficiently apply this matrix to a vector @p
+   * src_view resulting in the vector @p dst_view: to be precise we accumulate
+   * all products of rank-1 tensors with the source vector.
+   */
   void
   vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
+  /**
+   * Same as above but adding into the destination vector @p dst_view.
+   */
   void
   vmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
+  /**
+   * Same as vmult() but multiplying with the transpose matrix.
+   */
   void
   Tvmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
+  /**
+   * Same as above but adding into the destination vector @p dst_view.
+   */
   void
   Tvmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
+
+  /**
+   * Returns the number of rank-1 tensors used to initialize this tensor product
+   * matrix. Depending on the linear independence of those tensors the actual
+   * tensor rank is less than or equal to the maximal rank returned.
+   */
+  unsigned int
+  n_max_rank() const;
 
   /**
    * Returns the eigenvalues of the underlying matrix, to be precise for the @p
@@ -261,18 +304,29 @@ public:
   Table<2, Number>
   get_eigenvectors() const;
 
-  // std::vector<tensor_type>
-  // get_elementary_tensors() const;
-
+  /**
+   * Returns the current matrix state.
+   */
   State
   get_state() const;
 
+  /**
+   * Returns the m() times n() matrix after resolving all kronecker products.
+   */
   Table<2, Number>
   as_table() const;
 
+  /**
+   * Returns the inverse of this m() times n() matrix after resolving all
+   * kronecker products.
+   */
   Table<2, Number>
   as_inverse_table() const;
 
+  /**
+   * Returns the transpose of this m() times n() matrix after resolving all
+   * kronecker products.
+   */
   Table<2, Number>
   as_transpose_table() const;
 
@@ -282,7 +336,10 @@ private:
   vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
   AlignedVector<Number>
-  compute_eigenvalues_impl() const;
+  compute_eigenvalues_impl_ranktwo() const;
+
+  AlignedVector<Number>
+  compute_eigenvalues_impl_separable() const;
 
   void
   apply_inverse_impl(const ArrayView<Number> &       dst_view,
@@ -478,6 +535,38 @@ TensorProductMatrixBase<order, Number, n_rows_1d>::check_n_rows_1d_static(
       });
   }
   return false;
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+inline unsigned int
+TensorProductMatrix_new<order, Number, n_rows_1d>::n_max_rank() const
+{
+  if(state == State::basic)
+  {
+    return this->elementary_tensors.size();
+  }
+  else if(state == State::ranktwo)
+  {
+    AssertDimension(this->elementary_tensors.size(), 2U);
+    return 2;
+  }
+  else if(state == State::separable)
+  {
+    AssertDimension(this->elementary_tensors.size(), order); // TODO
+    return order;
+  }
+  else if(state == State::invalid)
+  {
+    AssertThrow(false, ExcMessage("State is invalid."));
+  }
+  else
+  {
+    AssertThrow(false, ExcMessage("Not implemented."));
+  }
+
+  return numbers::invalid_unsigned_int;
 }
 
 } // namespace Tensors
