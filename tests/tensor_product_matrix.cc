@@ -420,11 +420,11 @@ TEST(IsotropicSquare_2Double, basic_vmult)
 {
   /// basic_vmult_id_times_id
   {
-    Tester                                          tester;
-    constexpr int                                   order = 2;
+    Tester                                      tester;
+    constexpr int                               order = 2;
     Tensors::TensorProductMatrix<order, double> tp_matrix;
-    std::array<Table<2, double>, order>             rank1_tensor;
-    const auto                                      n_rows_1d = 3U;
+    std::array<Table<2, double>, order>         rank1_tensor;
+    const auto                                  n_rows_1d = 3U;
 
     for(auto & matrix : rank1_tensor)
     {
@@ -449,8 +449,8 @@ TEST(IsotropicSquare_2Double, basic_vmult)
 
   /// basic_vmult_id_times_2x2
   {
-    Tester                                          tester;
-    constexpr int                                   order = 2;
+    Tester                                      tester;
+    constexpr int                               order = 2;
     Tensors::TensorProductMatrix<order, double> tp_matrix;
 
     Table<2, double> id;
@@ -492,11 +492,10 @@ template<bool random = false, bool rank1 = false, bool transpose = false, typena
 void
 vmult_random_anisotropic()
 {
-  Tester                                          tester;
-  constexpr int                                   order = 2;
+  Tester                                      tester;
+  constexpr int                               order = 2;
   Tensors::TensorProductMatrix<order, Number> tp_matrix;
-  using scalar_value_type =
-    typename Tensors::TensorProductMatrix<order, Number>::scalar_value_type;
+  using scalar_value_type = typename Tensors::TensorProductMatrix<order, Number>::scalar_value_type;
 
   Table<2, Number> M_0, M_1;
   for(auto M : {&M_0, &M_1})
@@ -568,8 +567,8 @@ TEST(Anisotropic_2Double, basic_vmult)
 {
   /// basic_vmult_id_times_2x3)
   {
-    Tester                                          tester;
-    constexpr int                                   order = 2;
+    Tester                                      tester;
+    constexpr int                               order = 2;
     Tensors::TensorProductMatrix<order, double> tp_matrix;
 
     Table<2, double> id;
@@ -610,8 +609,8 @@ TEST(Anisotropic_2Double, basic_vmult)
 
   /// basic_vmult_2x3_times_2x3)
   {
-    Tester                                          tester;
-    constexpr int                                   order = 2;
+    Tester                                      tester;
+    constexpr int                               order = 2;
     Tensors::TensorProductMatrix<order, double> tp_matrix;
 
     Table<2, double> M;
@@ -639,8 +638,8 @@ TEST(Anisotropic_2Double, basic_vmult)
 
   /// basic_vmult_random_sum_of_2x3_times_2x3)
   {
-    Tester                                          tester;
-    constexpr int                                   order = 2;
+    Tester                                      tester;
+    constexpr int                               order = 2;
     Tensors::TensorProductMatrix<order, double> tp_matrix;
 
     Table<2, double> M;
@@ -669,8 +668,8 @@ TEST(Anisotropic_2Double, basic_vmult)
 
   /// basic_vmult_id3x1_times_2x3)
   {
-    Tester                                          tester;
-    constexpr int                                   order = 2;
+    Tester                                      tester;
+    constexpr int                               order = 2;
     Tensors::TensorProductMatrix<order, double> tp_matrix;
 
     Table<2, double> id;
@@ -992,8 +991,7 @@ TEST(IsotropicSquare_3VectorizedArrayDouble, basic_vmult)
 template<int order, typename Number>
 void
 check_basic_apply_inverse(
-  const std::vector<typename Tensors::TensorProductMatrix<order, Number>::tensor_type> &
-    tensors)
+  const std::vector<typename Tensors::TensorProductMatrix<order, Number>::tensor_type> & tensors)
 {
   Tester tester;
 
@@ -1126,13 +1124,12 @@ void
 check_ranktwo_or_separable(
   std::vector<typename Tensors::TensorProductMatrix<order, Number>::tensor_type> tensors,
   typename Tensors::TensorProductMatrix<order, Number>::State                    state,
-  std::bitset<order>                                                                 spd_mask,
-  const Tester::Features &                                                           features)
+  std::bitset<order>                                                             spd_mask,
+  const Tester::Features &                                                       features)
 {
-  using tensor_type = typename Tensors::TensorProductMatrix<order, Number>::tensor_type;
-  using State       = typename Tensors::TensorProductMatrix<order, Number>::State;
-  using scalar_value_type =
-    typename Tensors::TensorProductMatrix<order, Number>::scalar_value_type;
+  using tensor_type       = typename Tensors::TensorProductMatrix<order, Number>::tensor_type;
+  using State             = typename Tensors::TensorProductMatrix<order, Number>::State;
+  using scalar_value_type = typename Tensors::TensorProductMatrix<order, Number>::scalar_value_type;
 
   Tester tester;
 
@@ -1213,8 +1210,8 @@ template<int order, typename Number>
 void
 check_ranktwo(
   std::vector<typename Tensors::TensorProductMatrix<order, Number>::tensor_type> tensors,
-  std::bitset<order>                                                                 spd_mask,
-  const Tester::Features &                                                           features)
+  std::bitset<order>                                                             spd_mask,
+  const Tester::Features &                                                       features)
 {
   using State = typename Tensors::TensorProductMatrix<order, Number>::State;
   check_ranktwo_or_separable<order, Number>(tensors, State::ranktwo, spd_mask, features);
@@ -1224,7 +1221,7 @@ template<int order, typename Number>
 void
 check_separable(
   std::vector<typename Tensors::TensorProductMatrix<order, Number>::tensor_type> tensors,
-  const Tester::Features &                                                           features)
+  const Tester::Features &                                                       features)
 {
   using State = typename Tensors::TensorProductMatrix<order, Number>::State;
   check_ranktwo_or_separable<order, Number>(tensors,
