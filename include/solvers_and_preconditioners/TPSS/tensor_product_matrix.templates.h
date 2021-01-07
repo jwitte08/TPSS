@@ -2,371 +2,83 @@
 namespace Tensors
 {
 template<int order, typename Number, int n_rows_1d>
-TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix(
-  const std::vector<typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type> &
-                           elementary_tensors,
-  const State              state_in,
-  const std::bitset<order> spd_mask_in)
-{
-  reinit(elementary_tensors, state_in, spd_mask_in);
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix(
-  const typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type & rank1_tensor)
-  : TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix(
-      std::vector<typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type>{
-        rank1_tensor},
-      State::basic)
+TensorProductMatrixBase<order, Number, n_rows_1d>::TensorProductMatrixBase()
+  : tensor_helper_row(std::make_shared<const TensorHelper<order>>(0)),
+    tensor_helper_column(std::make_shared<const TensorHelper<order>>(0))
 {
 }
 
 
+
 template<int order, typename Number, int n_rows_1d>
-TensorProductMatrix<order, Number, n_rows_1d> &
-TensorProductMatrix<order, Number, n_rows_1d>::operator=(const TensorProductMatrix & other)
+TensorProductMatrixBase<order, Number, n_rows_1d> &
+TensorProductMatrixBase<order, Number, n_rows_1d>::operator=(const TensorProductMatrixBase & other)
 {
-  reinit(other.elementary_tensors, other.state, other.spd_mask);
+  reinit(other.elementary_tensors);
   return *this;
 }
 
 
-template<int order, typename Number, int n_rows_1d>
-void
-TensorProductMatrix<order, Number, n_rows_1d>::clear()
-{
-  tmp_array.clear();
-  tensor_helper_row.reset();
-  tensor_helper_column.reset();
-  basic_inverse.reset();
-  state = State::invalid;
-  elementary_tensors.clear();
-  /// TODO clear underlying TensorProductMatrixSymmetricSum
-}
-
 
 template<int order, typename Number, int n_rows_1d>
 void
-TensorProductMatrix<order, Number, n_rows_1d>::reinit(
-  const std::vector<typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type> &
-                           elementary_tensors_in,
-  const State              state_in,
-  const std::bitset<order> spd_mask_in)
+TensorProductMatrixBase<order, Number, n_rows_1d>::reinit(
+  const std::vector<typename TensorProductMatrixBase<order, Number, n_rows_1d>::tensor_type> &
+    elementary_tensors_in)
 {
-  Assert(check_n_rows_1d_static(elementary_tensors_in),
-         ExcMessage("Not all univariate matrices are of size (n_rows_1d x n_rows_1d)."));
-
-  /// clear data
   clear();
-  /// is it better throw to an exception ?!
+
+  /// TODO is it better throw to an exception ?!
   if(elementary_tensors_in.empty())
+  {
+    tensor_helper_row    = std::make_shared<const TensorHelper<order>>(0);
+    tensor_helper_column = std::make_shared<const TensorHelper<order>>(0);
     return;
-
-  /// initialize data
-  state = state_in;
-
-  if(state == State::basic)
-  {
-    for(unsigned i = 0; i < order; ++i)
-      Assert(check_n_rows_and_columns_1d(elementary_tensors_in, i),
-             ExcMessage("Mismatching sizes of univariate matrices."));
-    std::copy(elementary_tensors_in.cbegin(),
-              elementary_tensors_in.cend(),
-              std::back_inserter(elementary_tensors));
-
-    const auto &                    first_elementary_tensor = elementary_tensors.front();
-    std::array<unsigned int, order> n_rows_foreach_dimension;
-    std::array<unsigned int, order> n_columns_foreach_dimension;
-    for(auto d = 0; d < order; ++d)
-    {
-      const auto & matrix            = first_elementary_tensor[d];
-      n_rows_foreach_dimension[d]    = matrix.size(0);
-      n_columns_foreach_dimension[d] = matrix.size(1);
-    }
-    tensor_helper_row    = std::make_shared<const TensorHelper<order>>(n_rows_foreach_dimension);
-    tensor_helper_column = std::make_shared<const TensorHelper<order>>(n_columns_foreach_dimension);
   }
-
-  else if(state == State::separable)
-  {
-    AssertThrow(
-      elementary_tensors_in.size() == 2,
-      ExcMessage(
-        "For this special case two rank-1 tensors are required, first the tensor of mass matrices and second the tensor of derivative matrices."));
-    /// TODO avoid duplication
-    // elementary_tensor = elementary_tensor_in;
-
-    const auto & M = elementary_tensors_in[0]; // tensor of mass matrices
-    const auto & A = elementary_tensors_in[1]; // tensor of derivative matrices
-
-    std::array<unsigned int, order> n_rows_foreach_dimension;
-    std::array<unsigned int, order> n_columns_foreach_dimension;
-    n_rows_foreach_dimension[0]    = A[0].size(0);
-    n_columns_foreach_dimension[0] = A[0].size(1);
-    for(auto d = 1; d < order; ++d)
-    {
-      n_rows_foreach_dimension[d]    = M[d].size(0);
-      n_columns_foreach_dimension[d] = M[d].size(1);
-    }
-    tensor_helper_row    = std::make_shared<const TensorHelper<order>>(n_rows_foreach_dimension);
-    tensor_helper_column = std::make_shared<const TensorHelper<order>>(n_columns_foreach_dimension);
-
-    separable_matrix_type::reinit(M, A);
-  }
-
-  else if(state == State::ranktwo)
-  {
-    reinit_ranktwo_impl(elementary_tensors_in, spd_mask_in);
-  }
-
-  else
-    AssertThrow(false, ExcMessage("Did you set a valid matrix state?"));
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-void
-TensorProductMatrix<order, Number, n_rows_1d>::reinit_ranktwo_impl(
-  const std::vector<typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type> &
-                           elementary_tensors_in,
-  const std::bitset<order> spd_mask_in)
-{
-  AssertThrow(elementary_tensors_in.size() == 2,
-              ExcMessage("This state is based on a rank-2 tensor of matrices."));
-
-  elementary_tensors = elementary_tensors_in;
-  spd_mask           = spd_mask_in;
 
   std::array<unsigned int, order> n_rows_foreach_dimension;
   std::array<unsigned int, order> n_columns_foreach_dimension;
   for(auto d = 0; d < order; ++d)
   {
-    const auto & matrix            = elementary_tensors.front()[d];
+    const auto & matrix            = elementary_tensors_in.front()[d];
     n_rows_foreach_dimension[d]    = matrix.size(0);
     n_columns_foreach_dimension[d] = matrix.size(1);
   }
   tensor_helper_row    = std::make_shared<const TensorHelper<order>>(n_rows_foreach_dimension);
   tensor_helper_column = std::make_shared<const TensorHelper<order>>(n_columns_foreach_dimension);
 
-  internal::ComputeGeneralizedEigendecomposition<order, Number, n_rows_1d>{}(
-    separable_matrix_type::eigenvalues,
-    separable_matrix_type::eigenvectors,
-    elementary_tensors,
-    spd_mask);
+  Assert(check_n_rows_1d_static(elementary_tensors_in),
+         ExcMessage("Not all univariate matrices are of size (n_rows_1d x n_rows_1d)."));
+  Assert(check_n_rows_and_columns_1d(elementary_tensors_in),
+         ExcMessage("Mismatching sizes of univariate matrices."));
+
+  this->elementary_tensors.clear();
+  std::copy(elementary_tensors_in.cbegin(),
+            elementary_tensors_in.cend(),
+            std::back_inserter(this->elementary_tensors));
 }
 
-
-template<int order, typename Number, int n_rows_1d>
-AlignedVector<Number>
-TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvalues() const
-{
-  Assert(tensor_helper_row, ExcMessage("Did you initialize tensor_helper_row?"));
-  Assert(tensor_helper_column, ExcMessage("Did you initialize tensor_helper_column?"));
-
-  const auto & eigenvalues_foreach_dimension = separable_matrix_type::eigenvalues;
-  for(auto direction = 0; direction < order; ++direction)
-  {
-    AssertDimension(tensor_helper_row->n_flat(), tensor_helper_column->n_flat());
-    AssertDimension(tensor_helper_row->size(direction),
-                    eigenvalues_foreach_dimension[direction].size());
-  }
-
-  // /// OLD OLD
-  // std::array<unsigned int, order> sizes;
-  // std::transform(eigenvalues_foreach_dimension.cbegin(),
-  //                eigenvalues_foreach_dimension.cend(),
-  //                sizes.begin(),
-  //                [](const auto & evs) { return evs.size(); });
-  // AlignedVector<Number> eigenvalues(m());
-  // for(unsigned int i = 0; i < eigenvalues.size(); ++i)
-  // {
-  //   const auto & ii     = uni_to_multiindex<order>(i, sizes);
-  //   Number       lambda = eigenvalues_foreach_dimension[0][ii[0]];
-  //   for(auto d = 1; d < order; ++d)
-  //     lambda += eigenvalues_foreach_dimension[d][ii[d]];
-  //   eigenvalues[i] = lambda;
-  // }
-  /// TODO needs to be verified
-  AlignedVector<Number> eigenvalues;
-  if(state == State::separable)
-  {
-    eigenvalues.resize(m());
-    for(unsigned int i = 0; i < eigenvalues.size(); ++i)
-    {
-      const auto & ii     = tensor_helper_row->multi_index(i);
-      Number       lambda = eigenvalues_foreach_dimension[0][ii[0]];
-      for(auto d = 1; d < order; ++d)
-        lambda += eigenvalues_foreach_dimension[d][ii[d]];
-      eigenvalues[i] = lambda;
-    }
-  }
-  else if(state == State::ranktwo)
-  {
-    eigenvalues = std::move(get_eigenvalues_ranktwo_impl());
-  }
-  else
-    AssertThrow(false, ExcMessage("Not implemented."));
-
-  // TODO
-  const bool has_zero_eigenvalues =
-    std::any_of(eigenvalues.begin(), eigenvalues.end(), Tensors::is_nearly_zero_value<Number>);
-  AssertThrow(!has_zero_eigenvalues, ExcMessage("Has zero eigenvalues."));
-
-  return eigenvalues;
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-AlignedVector<Number>
-TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvalues_ranktwo_impl() const
-{
-  const auto & eigenvalues_foreach_dimension = separable_matrix_type::eigenvalues;
-
-  AlignedVector<Number> eigenvalues(m());
-  for(unsigned int i = 0; i < eigenvalues.size(); ++i)
-  {
-    const auto & ii = tensor_helper_row->multi_index(i);
-
-    AssertDimension(elementary_tensors.size(), 2U);
-    for(auto r = 0U; r < elementary_tensors.size(); ++r)
-    {
-      const bool is_one = r == static_cast<unsigned int>(spd_mask[0]);
-      Number lambda_r = is_one ? static_cast<Number>(1.) : eigenvalues_foreach_dimension[0][ii[0]];
-      for(auto d = 1; d < order; ++d)
-      {
-        const bool is_one = r == static_cast<unsigned int>(spd_mask[d]);
-        lambda_r *= is_one ? static_cast<Number>(1.) : eigenvalues_foreach_dimension[d][ii[d]];
-      }
-      eigenvalues[i] += lambda_r;
-    }
-  }
-
-  return eigenvalues;
-}
 
 
 template<int order, typename Number, int n_rows_1d>
 void
-TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse(
-  const ArrayView<Number> &       dst_view,
-  const ArrayView<const Number> & src_view) const
+TensorProductMatrixBase<order, Number, n_rows_1d>::clear()
 {
-  apply_inverse_impl(dst_view, src_view);
+  tmp_array.clear();
+  tensor_helper_row    = std::make_shared<const TensorHelper<order>>(0);
+  tensor_helper_column = std::make_shared<const TensorHelper<order>>(0);
+  elementary_tensors.clear();
 }
 
-
-template<int order, typename Number, int n_rows_1d>
-void
-TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl(
-  const ArrayView<Number> &       dst_view,
-  const ArrayView<const Number> & src_view) const
-{
-  if(state == State::basic)
-    apply_inverse_impl_basic_static(dst_view, src_view);
-  else if(state == State::separable)
-    separable_matrix_type::apply_inverse(dst_view, src_view);
-  else
-    AssertThrow(false, ExcMessage("Not implemented."));
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-void
-TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl_basic_static(
-  const ArrayView<Number> &       dst_view,
-  const ArrayView<const Number> & src_view) const
-{
-  AssertDimension(dst_view.size(), m());
-  AssertDimension(src_view.size(), n());
-  if(!basic_inverse)
-    basic_inverse = std::make_shared<const InverseTable<Number>>(as_table());
-  basic_inverse->vmult(dst_view, src_view);
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-void
-TensorProductMatrix<order, Number, n_rows_1d>::vmult(const ArrayView<Number> &       dst_view,
-                                                     const ArrayView<const Number> & src_view) const
-{
-  vmult_impl</*add*/ false, /*transpose*/ false>(dst_view, src_view);
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-void
-TensorProductMatrix<order, Number, n_rows_1d>::vmult_add(
-  const ArrayView<Number> &       dst_view,
-  const ArrayView<const Number> & src_view) const
-{
-  vmult_impl</*add*/ true, /*transpose*/ false>(dst_view, src_view);
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-void
-TensorProductMatrix<order, Number, n_rows_1d>::Tvmult(
-  const ArrayView<Number> &       dst_view,
-  const ArrayView<const Number> & src_view) const
-{
-  vmult_impl</*add*/ false, /*transpose*/ true>(dst_view, src_view);
-}
 
 
 template<int order, typename Number, int n_rows_1d>
 template<bool add, bool transpose>
 void
-TensorProductMatrix<order, Number, n_rows_1d>::vmult_impl(
+TensorProductMatrixBase<order, Number, n_rows_1d>::vmult_impl(
   const ArrayView<Number> &       dst_view,
   const ArrayView<const Number> & src_view) const
 {
-  if(state == State::basic)
-    vmult_basic_impl<add, transpose>(dst_view, src_view);
-  else if(state == State::separable)
-    vmult_separable_impl<add, transpose>(dst_view, src_view);
-  else
-    AssertThrow(false, ExcMessage("Not implemented."));
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-template<bool add, bool transpose>
-void
-TensorProductMatrix<order, Number, n_rows_1d>::vmult_separable_impl(
-  const ArrayView<Number> &       dst_view,
-  const ArrayView<const Number> & src_view) const
-{
-  AssertThrow(!transpose, ExcMessage("Not implemented."));
-
-  AlignedVector<Number> initial_dst;
-  if(add)
-  {
-    initial_dst.resize_fast(dst_view.size());
-    std::copy(dst_view.cbegin(), dst_view.cend(), initial_dst.begin());
-  }
-
-  separable_matrix_type::vmult(dst_view, src_view);
-
-  if(add)
-  {
-    std::transform(dst_view.cbegin(),
-                   dst_view.cend(),
-                   initial_dst.begin(),
-                   dst_view.begin(),
-                   [](const auto & elem1, const auto & elem2) { return elem1 + elem2; });
-  }
-}
-
-
-template<int order, typename Number, int n_rows_1d>
-template<bool add, bool transpose>
-void
-TensorProductMatrix<order, Number, n_rows_1d>::vmult_basic_impl(
-  const ArrayView<Number> &       dst_view,
-  const ArrayView<const Number> & src_view) const
-{
-  static_assert(order == 2, "TODO");
   AssertDimension(dst_view.size(), transpose ? n() : m());
   AssertDimension(src_view.size(), transpose ? m() : n());
   Assert(tensor_helper_row, ExcMessage("Did you initialize tensor_helper_row?"));
@@ -402,8 +114,14 @@ TensorProductMatrix<order, Number, n_rows_1d>::vmult_basic_impl(
   if(order == 1)
   {
     /// matrix_<tensor index>_<direction>
-    const Number * matrix_0_0 = &(get_matrix_1d(0, 0)(0, 0));
-    eval.template apply<0, transpose, add>(matrix_0_0, src, dst);
+    const Number * matrix_0 = &(get_matrix_1d(0, 0)(0, 0));
+    eval.template apply<0, transpose, add>(matrix_0, src, dst);
+
+    for(std::size_t r = 1; r < elementary_tensors.size(); ++r)
+    {
+      const Number * matrix_r = &(get_matrix_1d(r, 0)(0, 0));
+      eval.template apply<0, transpose, true>(matrix_r, src, dst);
+    }
   }
 
   else if(order == 2)
@@ -445,12 +163,460 @@ TensorProductMatrix<order, Number, n_rows_1d>::vmult_basic_impl(
 
   else if(order == 3)
   {
-    AssertThrow(false, ExcMessage("TODO"));
+    tmp_array.clear();
+    tmp_array.resize(2 * mm);
+    Number * tmp  = tmp_array.begin();
+    Number * tmp2 = tmp_array.begin() + mm;
+
+    const Number * left_0  = &(get_matrix_1d(0, 2)(0, 0));
+    const Number * mid_0   = &(get_matrix_1d(0, 1)(0, 0));
+    const Number * right_0 = &(get_matrix_1d(0, 0)(0, 0));
+    if(transpose)
+    {
+      eval.template apply<0, transpose, false>(right_0, src, tmp);
+      eval.template apply<1, transpose, false>(mid_0, tmp, tmp2);
+      eval.template apply<2, transpose, add>(left_0, tmp2, dst);
+    }
+    else
+    {
+      eval.template apply<2, transpose, false>(left_0, src, tmp);
+      eval.template apply<1, transpose, false>(mid_0, tmp, tmp2);
+      eval.template apply<0, transpose, add>(right_0, tmp2, dst);
+    }
+
+    /// Apply elementary tensors of remaining ranks.
+    for(std::size_t r = 1; r < elementary_tensors.size(); ++r)
+    {
+      const Number * left_r  = &(get_matrix_1d(r, 2)(0, 0));
+      const Number * mid_r   = &(get_matrix_1d(r, 1)(0, 0));
+      const Number * right_r = &(get_matrix_1d(r, 0)(0, 0));
+      if(transpose)
+      {
+        eval.template apply<0, transpose, false>(right_r, src, tmp);
+        eval.template apply<1, transpose, false>(mid_r, tmp, tmp2);
+        eval.template apply<2, transpose, true>(left_r, tmp2, dst);
+      }
+      else
+      {
+        eval.template apply<2, transpose, false>(left_r, src, tmp);
+        eval.template apply<1, transpose, false>(mid_r, tmp, tmp2);
+        eval.template apply<0, transpose, true>(right_r, tmp2, dst);
+      }
+    }
   }
 
   else
-    AssertThrow(false, ExcMessage("Currently, this case is not supported."));
+    AssertThrow(false, ExcMessage("Not implemented."));
 }
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrixBase<order, Number, n_rows_1d>::vmult(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ false, /*transpose*/ false>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrixBase<order, Number, n_rows_1d>::vmult_add(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ true, /*transpose*/ false>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrixBase<order, Number, n_rows_1d>::Tvmult(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ false, /*transpose*/ true>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrixBase<order, Number, n_rows_1d>::Tvmult_add(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ true, /*transpose*/ true>(dst_view, src_view);
+}
+
+
+
+////////// Definitions: TensorProductMatrix
+
+
+
+template<int order, typename Number, int n_rows_1d>
+TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix()
+  : TensorProductMatrixBase<order, Number, n_rows_1d>(),
+    state(State::invalid),
+    spd_mask(std::bitset<order>{})
+{
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix(
+  const std::vector<typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type> &
+                           elementary_tensors_in,
+  const State              state_in,
+  const std::bitset<order> spd_mask_in)
+{
+  reinit(elementary_tensors_in, state_in, spd_mask_in);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix(
+  const typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type & rank1_tensor)
+  : TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix(
+      std::vector<typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type>{
+        rank1_tensor})
+{
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+TensorProductMatrix<order, Number, n_rows_1d> &
+TensorProductMatrix<order, Number, n_rows_1d>::operator=(const TensorProductMatrix & other)
+{
+  reinit(other.elementary_tensors, other.state, other.spd_mask);
+  return *this;
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::reinit(
+  const std::vector<typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type> &
+                           elementary_tensors_in,
+  const State              state_in,
+  const std::bitset<order> spd_mask_in)
+{
+  clear();
+
+  state    = state_in;
+  spd_mask = spd_mask_in;
+
+  if(state == State::basic)
+  {
+    Base::reinit(elementary_tensors_in);
+  }
+
+  else if(state == State::ranktwo)
+  {
+    Base::reinit(elementary_tensors_in);
+
+    tensor_type eigenvector_tensor;
+    internal::ComputeGeneralizedEigendecomposition<order, Number, n_rows_1d>{}(
+      this->eigenvalues, eigenvector_tensor, elementary_tensors_in, spd_mask_in);
+    this->eigenvectors.reinit(std::vector<tensor_type>{eigenvector_tensor});
+  }
+
+  else if(state == State::separable)
+  {
+    AssertThrow(
+      elementary_tensors_in.size() == 2U,
+      ExcMessage(
+        "elementary_tensors_in must contain exactly two elements: a tensor of mass matrices first and a tensor of derivative matrices second!"));
+    const auto & MM = elementary_tensors_in.front();
+    const auto & DD = elementary_tensors_in.back();
+
+    std::vector<tensor_type> expanded_tensors(order);
+    for(auto r = 0U; r < order; ++r)
+      for(auto d = 0U; d < order; ++d)
+      {
+        if(r == d)
+          expanded_tensors[r][d] = DD[d];
+        else
+          expanded_tensors[r][d] = MM[d];
+      }
+
+    Base::reinit(expanded_tensors);
+
+    tensor_type eigenvector_tensor;
+    internal::ComputeGeneralizedEigendecomposition<order, Number, n_rows_1d>{}(
+      this->eigenvalues, eigenvector_tensor, elementary_tensors_in, std::bitset<order>{});
+    this->eigenvectors.reinit(std::vector<tensor_type>{eigenvector_tensor});
+  }
+
+  else if(state == State::invalid)
+  {
+    AssertThrow(false, ExcMessage("State is invalid."));
+  }
+
+  else
+  {
+    AssertThrow(false, ExcMessage("Not implemented."));
+  }
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::clear()
+{
+  state    = State::invalid;
+  spd_mask = std::bitset<order>{};
+  basic_inverse.reset();
+  Base::clear();
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+template<bool add, bool transpose>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::vmult_impl(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  /// TODO
+  Base::template vmult_impl<add, transpose>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::vmult(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ false, /*transpose*/ false>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::vmult_add(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ true, /*transpose*/ false>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::Tvmult(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ false, /*transpose*/ true>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::Tvmult_add(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl</*add*/ true, /*transpose*/ true>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+AlignedVector<Number>
+TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvalues() const
+{
+  if(state == State::ranktwo)
+  {
+    return compute_eigenvalues_impl_ranktwo();
+  }
+
+  else if(state == State::separable)
+  {
+    return compute_eigenvalues_impl_separable();
+  }
+
+  else if(state == State::invalid)
+  {
+    AssertThrow(false, ExcMessage("State is invalid."));
+  }
+
+  else
+  {
+    Assert(false, ExcMessage("Functionality isn't supported in current state."));
+  }
+
+  return AlignedVector<Number>{};
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+Table<2, Number>
+TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvectors() const
+{
+  Assert(state == State::ranktwo || state == State::separable,
+         ExcMessage("Functionality isn't supported in current state."));
+  return Tensors::matrix_to_table(eigenvectors);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+AlignedVector<Number>
+TensorProductMatrix<order, Number, n_rows_1d>::compute_eigenvalues_impl_ranktwo() const
+{
+  AssertDimension(this->m(), this->n()); // square matrix?
+
+  const auto & eigenvalues_foreach_dimension = this->eigenvalues;
+
+  Number                lambda_r(0.);
+  AlignedVector<Number> eigenvalues(this->m());
+  for(unsigned int i = 0; i < eigenvalues.size(); ++i)
+  {
+    const auto & ii = this->tensor_helper_row->multi_index(i);
+
+    AssertDimension(n_max_rank(), 2U);
+    for(auto r = 0U; r < 2U; ++r)
+    {
+      const bool is_one = r == static_cast<unsigned int>(spd_mask[0]);
+      lambda_r = is_one ? static_cast<Number>(1.) : eigenvalues_foreach_dimension[0][ii[0]];
+      for(auto d = 1; d < order; ++d)
+      {
+        const bool is_one = r == static_cast<unsigned int>(spd_mask[d]);
+        lambda_r *= is_one ? static_cast<Number>(1.) : eigenvalues_foreach_dimension[d][ii[d]];
+      }
+      eigenvalues[i] += lambda_r;
+    }
+  }
+
+  return eigenvalues;
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+AlignedVector<Number>
+TensorProductMatrix<order, Number, n_rows_1d>::compute_eigenvalues_impl_separable() const
+{
+  AssertDimension(this->m(), this->n()); // square matrix?
+
+  const auto & eigenvalues_foreach_dimension = this->eigenvalues;
+
+  AssertDimension(n_max_rank(), order);
+  AlignedVector<Number> eigenvalues(this->m());
+  for(unsigned int i = 0; i < eigenvalues.size(); ++i)
+  {
+    const auto & ii = this->tensor_helper_row->multi_index(i);
+    for(auto r = 0U; r < order; ++r)
+      eigenvalues[i] += eigenvalues_foreach_dimension[r][ii[r]];
+  }
+
+  return eigenvalues;
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  apply_inverse_impl(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  AssertDimension(this->m(), this->n());
+  AssertDimension(dst_view.size(), this->m());
+  AssertDimension(src_view.size(), this->m());
+
+  if(state == State::basic)
+  {
+    apply_inverse_impl_basic(dst_view, src_view);
+  }
+
+  else if(state == State::ranktwo || state == State::separable)
+  {
+    apply_inverse_impl_eigen(dst_view, src_view);
+  }
+
+  else if(state == State::invalid)
+  {
+    AssertThrow(false, ExcMessage("The state is invalid."));
+  }
+
+  else
+  {
+    AssertThrow(false, ExcMessage("Not implemented."));
+  }
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl_eigen(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  AssertDimension(this->m(), this->n());
+  AssertDimension(eigenvectors.m(), eigenvectors.n());
+  AssertDimension(eigenvectors.m(), this->m());
+
+  this->tmp_array.clear();
+  this->tmp_array.resize(this->m());
+  ArrayView<Number> tmp_view = make_array_view(this->tmp_array.begin(), this->tmp_array.end());
+
+  eigenvectors.Tvmult(tmp_view, src_view);
+
+  const auto & eigenvalues = get_eigenvalues();
+  std::transform(tmp_view.cbegin(),
+                 tmp_view.cend(),
+                 eigenvalues.begin(),
+                 tmp_view.begin(),
+                 std::divides<Number>{});
+
+  eigenvectors.vmult(dst_view, tmp_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl_basic(
+  const ArrayView<Number> &       dst_view,
+  const ArrayView<const Number> & src_view) const
+{
+  if(!basic_inverse)
+    basic_inverse = std::make_shared<const InverseTable<Number>>(as_table());
+  basic_inverse->vmult(dst_view, src_view);
+}
+
 
 
 template<int order, typename Number, int n_rows_1d>
@@ -461,12 +627,14 @@ TensorProductMatrix<order, Number, n_rows_1d>::as_table() const
 }
 
 
+
 template<int order, typename Number, int n_rows_1d>
 Table<2, Number>
 TensorProductMatrix<order, Number, n_rows_1d>::as_inverse_table() const
 {
   return Tensors::inverse_matrix_to_table(*this);
 }
+
 
 
 template<int order, typename Number, int n_rows_1d>
