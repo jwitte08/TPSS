@@ -15,6 +15,7 @@
 #include "TPSS.h"
 #include "alignedlinalg.h"
 #include "generic_functionalities.h"
+#include "vectorization.h"
 
 #include <sstream>
 
@@ -388,10 +389,9 @@ struct TensorHelper
  * Generates a tensor of zero matrices with order @p order. The number of rows and
  * columns are defined by @p rows and @p columns for each tensor direction.
  */
-template<int order, typename Number>
+template<int order, typename Number, typename IntType>
 std::array<Table<2, Number>, order>
-make_zero_tensor(const std::array<std::size_t, order> rows,
-                 const std::array<std::size_t, order> columns)
+make_zero_tensor(const std::array<IntType, order> rows, const std::array<IntType, order> columns)
 {
   std::array<Table<2, Number>, order> tensor;
   for(auto d = 0U; d < order; ++d)
@@ -406,16 +406,16 @@ make_zero_tensor(const std::array<std::size_t, order> rows,
  * order. Matrices are sized according to @p rows and @p columns (see
  * make_zero_tensor() for more details).
  */
-template<int order, typename Number>
+template<int order, typename Number, typename IntType>
 std::vector<std::array<Table<2, Number>, order>>
-make_zero_rank1_tensors(const std::size_t                    rank,
-                        const std::array<std::size_t, order> rows,
-                        const std::array<std::size_t, order> columns)
+make_zero_rank1_tensors(const std::size_t                rank,
+                        const std::array<IntType, order> rows,
+                        const std::array<IntType, order> columns)
 {
   std::vector<std::array<Table<2, Number>, order>> rank1_tensors;
   std::fill_n(std::back_inserter(rank1_tensors),
               rank,
-              make_zero_tensor<order, Number>(rows, columns));
+              make_zero_tensor<order, Number, IntType>(rows, columns));
   return rank1_tensors;
 }
 
@@ -667,23 +667,6 @@ scale(const Number & factor, const std::vector<std::array<Table<2, Number>, orde
       scaled_tensor[d] = tensor[d];
   }
   return scaled_tensors;
-}
-
-template<typename Number>
-bool
-is_nearly_zero_value(const Number & value)
-{
-  using scalar_value_type = typename ExtractScalarType<Number>::type;
-  static constexpr scalar_value_type threshold =
-    std::numeric_limits<scalar_value_type>::epsilon() * 100.;
-
-  bool is_nearly_zero = true;
-  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
-  {
-    const double scalar = scalar_value(value, lane);
-    is_nearly_zero &= std::abs(scalar) < threshold;
-  }
-  return is_nearly_zero;
 }
 
 template<typename Number>

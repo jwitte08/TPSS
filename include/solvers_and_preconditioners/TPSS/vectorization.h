@@ -8,14 +8,10 @@
 #ifndef TPSS_VECTORIZATION_H_
 #define TPSS_VECTORIZATION_H_
 
-// #include <deal.II/base/conditional_ostream.h>
-// #include <deal.II/base/mpi.h>
-// #include <deal.II/base/utilities.h>
 #include <deal.II/base/vectorization.h>
 
 #include <bitset>
 #include <type_traits>
-
 
 using namespace dealii;
 
@@ -27,11 +23,14 @@ struct ExtractScalarType
   using type = Number;
 };
 
+
+
 template<typename Number>
 struct ExtractScalarType<typename dealii::VectorizedArray<Number>>
 {
   using type = Number;
 };
+
 
 
 template<typename Number>
@@ -45,6 +44,7 @@ get_macro_size()
 }
 
 
+
 template<typename Number>
 Number &
 scalar_value(Number & value, const unsigned int /*dummy*/ = 0)
@@ -56,6 +56,7 @@ scalar_value(Number & value, const unsigned int /*dummy*/ = 0)
 }
 
 
+
 template<typename Number>
 Number &
 scalar_value(VectorizedArray<Number> & value, const unsigned int lane = 0)
@@ -63,6 +64,7 @@ scalar_value(VectorizedArray<Number> & value, const unsigned int lane = 0)
   AssertIndexRange(lane, VectorizedArray<Number>::size());
   return value[lane];
 }
+
 
 
 template<typename Number>
@@ -76,6 +78,7 @@ scalar_value(const Number & value, const unsigned int /*dummy*/ = 0)
 }
 
 
+
 template<typename Number>
 const Number &
 scalar_value(const VectorizedArray<Number> & value, const unsigned int lane = 0)
@@ -83,6 +86,54 @@ scalar_value(const VectorizedArray<Number> & value, const unsigned int lane = 0)
   AssertIndexRange(lane, VectorizedArray<Number>::size());
   return value[lane];
 }
+
+
+
+/**
+ * Returns true if the absolute value of @p value is below a certain
+ * threshold. For vectorized arithmetic type @p Number this function returns
+ * only true if all lanes are nearly zero.
+ */
+template<typename Number>
+bool
+is_nearly_zero_value(const Number & value)
+{
+  using scalar_value_type = typename ExtractScalarType<Number>::type;
+  static constexpr scalar_value_type threshold =
+    std::numeric_limits<scalar_value_type>::epsilon() * 100.;
+
+  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+  {
+    // const scalar_value_type scalar         = scalar_value(value, lane);
+    const bool is_nearly_zero = std::abs(scalar_value(value, lane)) < threshold;
+    if(!is_nearly_zero)
+      return false;
+  }
+  return true;
+}
+
+
+
+/**
+ * Returns the inverse of @p scalar. For vectorized arithmetic type @p Number
+ * each lane of @p scalar being nearly zero is set to zero in the returned
+ * inverse scalar (avoiding a division by zero). This procedure helps to write
+ * vectorized iterative algorithms reaching a state where at least one lane
+ * divides by zero before the remaining lanes have reached their stopping
+ * criterion. What "nearly zero" means is defined by the free function
+ * is_nearly_zero_value().
+ */
+template<typename Number>
+Number
+inverse_scalar_value_if(const Number & scalar)
+{
+  Number inverse_scalar(0.);
+  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+    scalar_value(inverse_scalar, lane) =
+      is_nearly_zero_value(scalar_value(scalar, lane)) ? 0. : 1. / scalar_value(scalar, lane);
+  return inverse_scalar;
+}
+
 
 
 template<typename Number>
@@ -96,6 +147,7 @@ less_than(const VectorizedArray<Number> & lhs, const VectorizedArray<Number> & r
 }
 
 
+
 template<typename Number>
 std::bitset<1>
 less_than(const Number & lhs, const Number & rhs)
@@ -106,6 +158,7 @@ less_than(const Number & lhs, const Number & rhs)
 }
 
 
+
 template<typename NumberType>
 bool
 less_than_all_lanes(const NumberType & lhs, const NumberType & rhs)
@@ -113,6 +166,7 @@ less_than_all_lanes(const NumberType & lhs, const NumberType & rhs)
   const auto & flag = less_than(lhs, rhs);
   return flag.all();
 }
+
 
 
 template<typename Number>
@@ -127,6 +181,7 @@ varray_to_string(const VectorizedArray<Number> & array)
   osstream << array[n_elems - 1] << "]";
   return osstream.str();
 }
+
 
 
 /**
@@ -147,12 +202,14 @@ vectorized_table_to_fullmatrix(const Table<2, VectorizedArray<Number>> & table,
 }
 
 
+
 template<typename Number>
 FullMatrix<Number>
 table_to_fullmatrix(const Table<2, VectorizedArray<Number>> & table, const unsigned int lane = 0)
 {
   return vectorized_table_to_fullmatrix(table, lane);
 }
+
 
 
 template<typename Number>
@@ -166,6 +223,8 @@ table_to_fullmatrix(const Table<2, Number> & table, const unsigned int dummy = 0
       matrix(i, j) = table(i, j);
   return matrix;
 }
+
+
 
 template<typename Number>
 std::vector<typename ExtractScalarType<Number>::type>
