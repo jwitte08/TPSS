@@ -397,11 +397,22 @@ TensorProductMatrix<order, Number, n_rows_1d>::vmult_impl(
 
 template<int order, typename Number, int n_rows_1d>
 void
-TensorProductMatrix<order, Number, n_rows_1d>::vmult(
-  const ArrayView<Number> &       dst_view,
-  const ArrayView<const Number> & src_view) const
+TensorProductMatrix<order, Number, n_rows_1d>::vmult(const ArrayView<Number> &       dst_view,
+                                                     const ArrayView<const Number> & src_view) const
 {
   vmult_impl</*add*/ false, /*transpose*/ false>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::vmult(AlignedVector<Number> &       dst,
+                                                     const AlignedVector<Number> & src) const
+{
+  const ArrayView<Number>       dst_view(dst.begin(), dst.size());
+  const ArrayView<const Number> src_view(src.begin(), src.size());
+  vmult(dst_view, src_view);
 }
 
 
@@ -419,6 +430,18 @@ TensorProductMatrix<order, Number, n_rows_1d>::vmult_add(
 
 template<int order, typename Number, int n_rows_1d>
 void
+TensorProductMatrix<order, Number, n_rows_1d>::vmult_add(AlignedVector<Number> &       dst,
+                                                         const AlignedVector<Number> & src) const
+{
+  const ArrayView<Number>       dst_view(dst.begin(), dst.size());
+  const ArrayView<const Number> src_view(src.begin(), src.size());
+  vmult_add(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
 TensorProductMatrix<order, Number, n_rows_1d>::Tvmult(
   const ArrayView<Number> &       dst_view,
   const ArrayView<const Number> & src_view) const
@@ -430,11 +453,35 @@ TensorProductMatrix<order, Number, n_rows_1d>::Tvmult(
 
 template<int order, typename Number, int n_rows_1d>
 void
+TensorProductMatrix<order, Number, n_rows_1d>::Tvmult(AlignedVector<Number> &       dst,
+                                                      const AlignedVector<Number> & src) const
+{
+  const ArrayView<Number>       dst_view(dst.begin(), dst.size());
+  const ArrayView<const Number> src_view(src.begin(), src.size());
+  Tvmult(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
 TensorProductMatrix<order, Number, n_rows_1d>::Tvmult_add(
   const ArrayView<Number> &       dst_view,
   const ArrayView<const Number> & src_view) const
 {
   vmult_impl</*add*/ true, /*transpose*/ true>(dst_view, src_view);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
+TensorProductMatrix<order, Number, n_rows_1d>::Tvmult_add(AlignedVector<Number> &       dst,
+                                                          const AlignedVector<Number> & src) const
+{
+  const ArrayView<Number>       dst_view(dst.begin(), dst.size());
+  const ArrayView<const Number> src_view(src.begin(), src.size());
+  Tvmult_add(dst_view, src_view);
 }
 
 

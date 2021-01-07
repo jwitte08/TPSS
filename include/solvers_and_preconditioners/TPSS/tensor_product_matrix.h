@@ -389,8 +389,8 @@ public:
   TensorProductMatrix(const tensor_type & rank1_tensor);
 
   TensorProductMatrix(const std::vector<tensor_type> & elementary_tensors,
-                          const State                      state_in    = State::basic,
-                          const std::bitset<order>         spd_mask_in = std::bitset<order>{});
+                      const State                      state_in    = State::basic,
+                      const std::bitset<order>         spd_mask_in = std::bitset<order>{});
 
   TensorProductMatrix &
   operator=(const TensorProductMatrix & other);
@@ -452,10 +452,22 @@ public:
   vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
   /**
-   * Same as above but adding into the destination vector @p dst_view.
+   * Same as above with different argument types.
+   */
+  void
+  vmult(AlignedVector<Number> & dst, const AlignedVector<Number> & src) const;
+
+  /**
+   * Same as vmult() but adding into the destination vector @p dst_view.
    */
   void
   vmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
+
+  /**
+   * Same as above with different argument types.
+   */
+  void
+  vmult_add(AlignedVector<Number> & dst, const AlignedVector<Number> & src) const;
 
   /**
    * Same as vmult() but multiplying with the transpose matrix.
@@ -464,10 +476,27 @@ public:
   Tvmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
   /**
-   * Same as above but adding into the destination vector @p dst_view.
+   * Same as above with different argument types.
+   */
+  void
+  Tvmult(AlignedVector<Number> & dst, const AlignedVector<Number> & src) const;
+
+  /**
+   * Same as Tvmult() but adding into the destination vector @p dst_view.
    */
   void
   Tvmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
+
+  /**
+   * Same as above with different argument types.
+   */
+  void
+  Tvmult_add(AlignedVector<Number> & dst, const AlignedVector<Number> & src) const;
+
+  operator std::vector<std::vector<std::array<Table<2, Number>, order>>> const &() const
+  {
+    return this->elementary_tensors;
+  }
 
   /**
    * Returns the number of rank-1 tensors used to initialize this tensor product
