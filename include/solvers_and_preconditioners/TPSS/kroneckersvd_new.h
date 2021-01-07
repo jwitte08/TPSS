@@ -59,7 +59,8 @@ compute_ksvd_new(const Table<2, Number> &                       in,
       i++)
   {
     beta.push_back(std::sqrt(inner_product(p.back(), p.back())));
-    v.push_back(vector_inverse_scaling(p.back(), beta.back()));
+    // v.push_back(vector_inverse_scaling(p.back(), beta.back()));
+    v.push_back(LinAlg::inverse_scaling_if(p.back(), beta.back()));
     r.push_back(vector_scaling(u.back(), -beta.back()));
     r.back() = vector_addition(r.back(), matrix_vector_multiplication(reshuffledIn, v.back()));
     orthogonalize(r);
@@ -125,7 +126,7 @@ compute_ksvd_new(const Table<2, Number> &                       in,
 template<typename Number>
 void
 compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & src,
-                 std::vector<std::array<Table<2, Number>, 2>> &       out,
+                 std::vector<std::array<Table<2, Number>, 2>> &       dst,
                  const std::size_t                                    lanczos_iterations_in = -1)
 {
   std::cout << "tensor path" << std::endl;
@@ -147,58 +148,69 @@ compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & src,
   Tensors::TensorProductMatrix<2, Number> shuffled_matrix(rank1_tensors_shuffled);
 
   const std::size_t max_tensor_rank_src = src.size();
-  std::size_t       tensor_rank_out     = out.size();
-  const auto        max_tensor_rank_out =
+  std::size_t       tensor_rank_dst     = dst.size();
+  const auto        max_tensor_rank_dst =
     std::min<std::size_t>(max_tensor_rank_src,
                           std::min<std::size_t>(shuffled_matrix.m(), shuffled_matrix.n()));
-  AssertIndexRange(tensor_rank_out, max_tensor_rank_out + 1);
+  AssertIndexRange(tensor_rank_dst, max_tensor_rank_dst + 1);
 
   const std::size_t lanczos_iterations = lanczos_iterations_in == static_cast<std::size_t>(-1) ?
-                                           tensor_rank_out * tensor_rank_out + 10 :
+                                           tensor_rank_dst * tensor_rank_dst + 10 :
                                            lanczos_iterations_in;
   /// TODO Number of iterations should not exceed maximal tensor rank !!!
   // const std::size_t lanczos_iterations =
   //   lanczos_iterations_in == static_cast<std::size_t>(-1) ?
-  //     std::min<std::size_t>(tensor_rank_out * tensor_rank_out + 10, max_tensor_rank_out) :
+  //     std::min<std::size_t>(tensor_rank_dst * tensor_rank_dst + 10, max_tensor_rank_dst) :
   //     lanczos_iterations_in;
-  // AssertIndexRange(lanczos_iterations, max_tensor_rank_out + 1);
+  // AssertIndexRange(lanczos_iterations, max_tensor_rank_dst + 1);
 
   AlignedVector<Number> beta;
-  beta.push_back(Number(1)); // we artificially introduce a first value for
+  // we artificially introduce a first value for
   // beta to define beta.back()
-  AlignedVector<Number>              alpha;
+  beta.push_back(Number(1));
+
+  AlignedVector<Number> alpha;
+
   std::vector<AlignedVector<Number>> r;
+
   std::vector<AlignedVector<Number>> p = {AlignedVector<Number>(m_B * n_B)};
   p.back()[0]                          = Number(1);
+
   std::vector<AlignedVector<Number>> u = {AlignedVector<Number>(m_A * n_A)};
+
   std::vector<AlignedVector<Number>> v;
+
   for(std::size_t i = 0;
       i < lanczos_iterations && std::abs(beta.back()) > std::numeric_limits<Number>::epsilon();
       i++)
   {
-    beta.push_back(std::sqrt(inner_product(p.back(), p.back())));
-    v.push_back(vector_inverse_scaling(p.back(), beta.back()));
-    r.push_back(vector_scaling(u.back(), -beta.back()));
-    // r.back() = vector_addition(r.back(),
-    //                            rankk_vector_multiplication(m_Aatrices_vectorized,
-    //                                                        m_Batrices_vectorized,
-    //                                                        v.back()));
+    /// beta_i = || p_i ||_2
+    beta.push_back(LinAlg::euclidean_norm(p.back()));
+
+    /// v_i = p_i / beta_i
+    v.push_back(LinAlg::inverse_scaling_if(p.back(), beta.back()));
+
+    /// r_i = R(A) v_i - beta * u_i
+    r.push_back(LinAlg::scaling(u.back(), -beta.back()));
     shuffled_matrix.vmult_add(r.back(), v.back());
 
     orthogonalize(r);
-    alpha.push_back(std::sqrt(inner_product(r.back(), r.back())));
-    u.push_back(vector_inverse_scaling(r.back(), alpha.back()));
-    p.push_back(vector_scaling(v.back(), -alpha.back()));
-    // p.back() = vector_addition(p.back(),
-    //                            rankk_vector_multiplication(m_Batrices_vectorized,
-    //                                                        m_Aatrices_vectorized,
-    //                                                        u.back()));
+
+    /// alpha_i = || r_i ||_2
+    alpha.push_back(LinAlg::euclidean_norm(r.back()));
+
+    /// u_{i+1} = r_i / alpha_i
+    u.push_back(LinAlg::inverse_scaling_if(r.back(), alpha.back()));
+
+    /// p_{i+1} = R(A)^T u_{i+1} - alpha_i * v_i
+    p.push_back(LinAlg::scaling(v.back(), -alpha.back()));
     shuffled_matrix.Tvmult_add(p.back(), u.back());
 
     orthogonalize(p);
   }
 
-  std::size_t           base_len = alpha.size() - 1;
+  std::size_t base_len = alpha.size() - 1;
+
   Table<2, Number>      U(base_len, m_A * n_A); // discard first value of u since it is zero
   Table<2, Number>      V(base_len,
                      m_B * n_B); // discard last value of v since it is zero
@@ -226,17 +238,18 @@ compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & src,
   Table<2, Number> left_singular_vectors  = matrix_transpose_multiplication(tildeU, U);
   Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
 
-  /// TODO mismatch between tensor_rank_out and base_len
-  AssertThrow(tensor_rank_out <= base_len,
+  /// TODO mismatch between tensor_rank_dst and base_len
+  AssertIndexRange(tensor_rank_dst, base_len + 2);
+  AssertThrow(tensor_rank_dst <= base_len,
               ExcMessage("TODO base_len determines the maximal Kronecker rank? ask Simon!"));
-  for(std::size_t i = 0; i < tensor_rank_out; i++)
+  for(std::size_t i = 0; i < tensor_rank_dst; i++)
   {
     for(std::size_t k = 0; k < m_A; k++)
       for(std::size_t l = 0; l < n_A; l++)
-        out[i][1](k, l) = left_singular_vectors(i, k * n_A + l) * std::sqrt(singular_values[i]);
+        dst[i][1](k, l) = left_singular_vectors(i, k * n_A + l) * std::sqrt(singular_values[i]);
     for(std::size_t k = 0; k < m_B; k++)
       for(std::size_t l = 0; l < n_B; l++)
-        out[i][0](k, l) = right_singular_vectors(i, k * n_B + l) * std::sqrt(singular_values[i]);
+        dst[i][0](k, l) = right_singular_vectors(i, k * n_B + l) * std::sqrt(singular_values[i]);
   }
 }
 
