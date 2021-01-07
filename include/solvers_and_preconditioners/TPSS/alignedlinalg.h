@@ -7,6 +7,8 @@
 #include <deal.II/base/vectorization.h>
 #include <deal.II/lac/lapack_full_matrix.h>
 
+#include "vectorization.h"
+
 using namespace dealii;
 
 
@@ -18,7 +20,7 @@ Number
 inner_product(const AlignedVector<Number> & lhs, const AlignedVector<Number> & rhs)
 {
   AssertDimension(lhs.size(), rhs.size());
-  return std::inner_product(lhs.begin(), lhs.end(), rhs.end(), static_cast<Number>(0.));
+  return std::inner_product(lhs.begin(), lhs.end(), rhs.begin(), static_cast<Number>(0.));
 }
 
 
@@ -74,6 +76,42 @@ Table<2, Number>
 Tvect(const Table<2, Number> & M)
 {
   return vect_impl<Number, true>(M);
+}
+
+
+
+/**
+ * Scales the vector @p vec by the inverse of @p scalar. For vectorized
+ * arithmetic type @p Number each lane where the corresponding value of @p
+ * scalar is nearly zero is scaled by zero instead of the inverse scalar
+ * avoiding a division by zero.
+ */
+template<typename Number>
+AlignedVector<Number>
+inverse_scaling_if(const AlignedVector<Number> & vec, const Number & scalar)
+{
+  const auto &          inverse_scalar = inverse_scalar_value_if(scalar);
+  AlignedVector<Number> scaled_vec(vec.size());
+  std::transform(vec.begin(), vec.end(), scaled_vec.begin(), [&](const auto & elem) {
+    return inverse_scalar * elem;
+  });
+  return scaled_vec;
+}
+
+
+
+/**
+ * Scales the vector @p vec by the factor @p scalar.
+ */
+template<typename Number>
+AlignedVector<Number>
+scaling(const AlignedVector<Number> & vec, const Number & scalar)
+{
+  AlignedVector<Number> scaled_vec(vec.size());
+  std::transform(vec.begin(), vec.end(), scaled_vec.begin(), [&](const auto & elem) {
+    return scalar * elem;
+  });
+  return scaled_vec;
 }
 
 } // namespace LinAlg
