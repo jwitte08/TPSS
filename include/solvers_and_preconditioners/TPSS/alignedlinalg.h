@@ -1,11 +1,84 @@
 #ifndef ALIGNEDLINALG_H_
 #define ALIGNEDLINALG_H_
 
+#include <numeric>
+
 #include <deal.II/base/table.h>
 #include <deal.II/base/vectorization.h>
 #include <deal.II/lac/lapack_full_matrix.h>
 
 using namespace dealii;
+
+
+
+namespace LinAlg
+{
+template<typename Number>
+Number
+inner_product(const AlignedVector<Number> & lhs, const AlignedVector<Number> & rhs)
+{
+  AssertDimension(lhs.size(), rhs.size());
+  return std::inner_product(lhs.begin(), lhs.end(), rhs.end(), static_cast<Number>(0.));
+}
+
+
+
+template<typename Number>
+Number
+euclidean_norm(const AlignedVector<Number> & vec)
+{
+  return std::sqrt(inner_product(vec, vec));
+}
+
+
+
+template<typename Number, bool transpose>
+Table<2, Number>
+vect_impl(const Table<2, Number> & M)
+{
+  const unsigned int m = M.size(0);
+  const unsigned int n = M.size(1);
+  Table<2, Number>   vect(transpose ? 1U : m * n, transpose ? m * n : 1U);
+
+  for(unsigned int k = 0; k < m; k++)
+    for(unsigned int l = 0; l < n; l++)
+      if(transpose)
+        vect(0U, k * n + l) = M(k, l);
+      else
+        vect(k * n + l, 0U) = M(k, l);
+  return vect;
+}
+
+
+
+/**
+ * The (mathematical) vectorization operator of a matrix M, in short vect(M),
+ * stacks all columns from left- to right-hand into one column-vector from top
+ * to bottom.
+ */
+template<typename Number>
+Table<2, Number>
+vect(const Table<2, Number> & M)
+{
+  return vect_impl<Number, false>(M);
+}
+
+
+
+/**
+ * The transpose of the (mathematical) vectorization operator of a matrix
+ * M. For details on the vectorization see above.
+ */
+template<typename Number>
+Table<2, Number>
+Tvect(const Table<2, Number> & M)
+{
+  return vect_impl<Number, true>(M);
+}
+
+} // namespace LinAlg
+
+
 
 // Calculate inner product of two AlignedVectors
 template<typename Number>
@@ -252,6 +325,7 @@ vectorize_matrix(const Table<2, Number> & tab)
 }
 
 
+// TODO remove
 // For vectorizedarray check if > holds for all elements
 template<typename Number>
 bool
