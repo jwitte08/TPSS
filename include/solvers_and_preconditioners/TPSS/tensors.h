@@ -383,6 +383,44 @@ struct TensorHelper
 };
 
 
+
+/**
+ * Generates a tensor of zero matrices with order @p order. The number of rows and
+ * columns are defined by @p rows and @p columns for each tensor direction.
+ */
+template<int order, typename Number>
+std::array<Table<2, Number>, order>
+make_zero_tensor(const std::array<std::size_t, order> rows,
+                 const std::array<std::size_t, order> columns)
+{
+  std::array<Table<2, Number>, order> tensor;
+  for(auto d = 0U; d < order; ++d)
+    tensor[d].reinit(rows[d], columns[d]);
+  return tensor;
+}
+
+
+
+/**
+ * Generates a vector of rank-1 tensors of zero matrices with order @p
+ * order. Matrices are sized according to @p rows and @p columns (see
+ * make_zero_tensor() for more details).
+ */
+template<int order, typename Number>
+std::vector<std::array<Table<2, Number>, order>>
+make_zero_rank1_tensors(const std::size_t                    rank,
+                        const std::array<std::size_t, order> rows,
+                        const std::array<std::size_t, order> columns)
+{
+  std::vector<std::array<Table<2, Number>, order>> rank1_tensors;
+  std::fill_n(std::back_inserter(rank1_tensors),
+              rank,
+              make_zero_tensor<order, Number>(rows, columns));
+  return rank1_tensors;
+}
+
+
+
 /**
  * Converts a matrix into a two dimensional table. MatrixType has to fulfill
  * following interface:
