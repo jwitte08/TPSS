@@ -10,8 +10,11 @@
 
 #include <deal.II/base/table.h>
 #include <deal.II/lac/lapack_full_matrix.h>
+
+
 #include "alignedlinalg.h"
 #include "kroneckersvd.h"
+#include "tensor_product_matrix.h"
 
 using namespace dealii;
 
@@ -121,36 +124,53 @@ compute_ksvd_new(const Table<2, Number> &                       in,
 */
 template<typename Number>
 void
-compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & in,
+compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & src,
                  std::vector<std::array<Table<2, Number>, 2>> &       out,
-                 std::size_t                                          lanczos_iterations = -1)
+                 const std::size_t                                    lanczos_iterations_in = -1)
 {
-  std::size_t in_rank  = in.size();
-  std::size_t out_rank = out.size();
-  if(lanczos_iterations == (std::size_t)-1)
-  {
-    lanczos_iterations = out_rank * out_rank + 10;
-  }
+  std::cout << "tensor path" << std::endl;
 
-  std::size_t                        big_m   = in[0][1].size()[0];
-  std::size_t                        big_n   = in[0][1].size()[1];
-  std::size_t                        small_m = in[0][0].size()[0];
-  std::size_t                        small_n = in[0][0].size()[1];
-  std::vector<AlignedVector<Number>> big_matrices_vectorized;
-  std::vector<AlignedVector<Number>> small_matrices_vectorized;
-  for(std::size_t i = 0; i < in_rank; i++)
-  {
-    small_matrices_vectorized.push_back(vectorize_matrix(in[i][0]));
-    big_matrices_vectorized.push_back(vectorize_matrix(in[i][1]));
-  }
+  const std::size_t m_B = src.front()[0].size(0);
+  const std::size_t n_B = src.front()[0].size(1);
+  const std::size_t m_A = src.front()[1].size(0);
+  const std::size_t n_A = src.front()[1].size(1);
+
+  /// the shuffled matrix reads SUM_i vect(A_i) (x) vect(B_i)^T
+  std::vector<std::array<Table<2, Number>, 2>> rank1_tensors_shuffled;
+  std::transform(src.cbegin(),
+                 src.cend(),
+                 std::back_inserter(rank1_tensors_shuffled),
+                 [&](const auto & tensor) -> std::array<Table<2, Number>, 2> {
+                   const auto & [B, A] = tensor;
+                   return {LinAlg::Tvect(B), LinAlg::vect(A)};
+                 });
+  Tensors::TensorProductMatrix<2, Number> shuffled_matrix(rank1_tensors_shuffled);
+
+  const std::size_t max_tensor_rank_src = src.size();
+  std::size_t       tensor_rank_out     = out.size();
+  const auto        max_tensor_rank_out =
+    std::min<std::size_t>(max_tensor_rank_src,
+                          std::min<std::size_t>(shuffled_matrix.m(), shuffled_matrix.n()));
+  AssertIndexRange(tensor_rank_out, max_tensor_rank_out + 1);
+
+  const std::size_t lanczos_iterations = lanczos_iterations_in == static_cast<std::size_t>(-1) ?
+                                           tensor_rank_out * tensor_rank_out + 10 :
+                                           lanczos_iterations_in;
+  /// TODO Number of iterations should not exceed maximal tensor rank !!!
+  // const std::size_t lanczos_iterations =
+  //   lanczos_iterations_in == static_cast<std::size_t>(-1) ?
+  //     std::min<std::size_t>(tensor_rank_out * tensor_rank_out + 10, max_tensor_rank_out) :
+  //     lanczos_iterations_in;
+  // AssertIndexRange(lanczos_iterations, max_tensor_rank_out + 1);
+
   AlignedVector<Number> beta;
   beta.push_back(Number(1)); // we artificially introduce a first value for
   // beta to define beta.back()
   AlignedVector<Number>              alpha;
   std::vector<AlignedVector<Number>> r;
-  std::vector<AlignedVector<Number>> p = {AlignedVector<Number>(small_m * small_n)};
+  std::vector<AlignedVector<Number>> p = {AlignedVector<Number>(m_B * n_B)};
   p.back()[0]                          = Number(1);
-  std::vector<AlignedVector<Number>> u = {AlignedVector<Number>(big_m * big_n)};
+  std::vector<AlignedVector<Number>> u = {AlignedVector<Number>(m_A * n_A)};
   std::vector<AlignedVector<Number>> v;
   for(std::size_t i = 0;
       i < lanczos_iterations && std::abs(beta.back()) > std::numeric_limits<Number>::epsilon();
@@ -159,25 +179,29 @@ compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & in,
     beta.push_back(std::sqrt(inner_product(p.back(), p.back())));
     v.push_back(vector_inverse_scaling(p.back(), beta.back()));
     r.push_back(vector_scaling(u.back(), -beta.back()));
-    r.back() = vector_addition(r.back(),
-                               rankk_vector_multiplication(big_matrices_vectorized,
-                                                           small_matrices_vectorized,
-                                                           v.back()));
+    // r.back() = vector_addition(r.back(),
+    //                            rankk_vector_multiplication(m_Aatrices_vectorized,
+    //                                                        m_Batrices_vectorized,
+    //                                                        v.back()));
+    shuffled_matrix.vmult_add(r.back(), v.back());
 
     orthogonalize(r);
     alpha.push_back(std::sqrt(inner_product(r.back(), r.back())));
     u.push_back(vector_inverse_scaling(r.back(), alpha.back()));
     p.push_back(vector_scaling(v.back(), -alpha.back()));
-    p.back() = vector_addition(p.back(),
-                               rankk_vector_multiplication(small_matrices_vectorized,
-                                                           big_matrices_vectorized,
-                                                           u.back()));
+    // p.back() = vector_addition(p.back(),
+    //                            rankk_vector_multiplication(m_Batrices_vectorized,
+    //                                                        m_Aatrices_vectorized,
+    //                                                        u.back()));
+    shuffled_matrix.Tvmult_add(p.back(), u.back());
+
     orthogonalize(p);
   }
+
   std::size_t           base_len = alpha.size() - 1;
-  Table<2, Number>      U(base_len, big_m * big_n); // discard first value of u since it is zero
+  Table<2, Number>      U(base_len, m_A * n_A); // discard first value of u since it is zero
   Table<2, Number>      V(base_len,
-                     small_m * small_n); // discard last value of v since it is zero
+                     m_B * n_B); // discard last value of v since it is zero
   AlignedVector<Number> real_beta(base_len -
                                   1); // discard first two values of beta, first is artificially
   // introduced, second only depends on inital guess
@@ -187,9 +211,9 @@ compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & in,
     real_alpha[i] = alpha[i];
     if(i < base_len - 1)
       real_beta[i] = beta[i + 2];
-    for(std::size_t j = 0; j < big_m * big_n; j++)
+    for(std::size_t j = 0; j < m_A * n_A; j++)
       U(i, j) = u[i + 1][j];
-    for(std::size_t j = 0; j < small_m * small_n; j++)
+    for(std::size_t j = 0; j < m_B * n_B; j++)
       V(i, j) = v[i][j];
   }
 
@@ -202,18 +226,17 @@ compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & in,
   Table<2, Number> left_singular_vectors  = matrix_transpose_multiplication(tildeU, U);
   Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
 
-  /// TODO mismatch between out_rank and base_len
-  AssertThrow(out_rank <= base_len,
+  /// TODO mismatch between tensor_rank_out and base_len
+  AssertThrow(tensor_rank_out <= base_len,
               ExcMessage("TODO base_len determines the maximal Kronecker rank? ask Simon!"));
-  for(std::size_t i = 0; i < out_rank; i++)
+  for(std::size_t i = 0; i < tensor_rank_out; i++)
   {
-    for(std::size_t k = 0; k < big_m; k++)
-      for(std::size_t l = 0; l < big_n; l++)
-        out[i][1](k, l) = left_singular_vectors(i, k * big_n + l) * std::sqrt(singular_values[i]);
-    for(std::size_t k = 0; k < small_m; k++)
-      for(std::size_t l = 0; l < small_n; l++)
-        out[i][0](k, l) =
-          right_singular_vectors(i, k * small_n + l) * std::sqrt(singular_values[i]);
+    for(std::size_t k = 0; k < m_A; k++)
+      for(std::size_t l = 0; l < n_A; l++)
+        out[i][1](k, l) = left_singular_vectors(i, k * n_A + l) * std::sqrt(singular_values[i]);
+    for(std::size_t k = 0; k < m_B; k++)
+      for(std::size_t l = 0; l < n_B; l++)
+        out[i][0](k, l) = right_singular_vectors(i, k * n_B + l) * std::sqrt(singular_values[i]);
   }
 }
 
@@ -233,14 +256,14 @@ compute_ksvd_new(const AlignedVector<Number> &                  in,
                  std::vector<std::array<Table<2, Number>, 2>> & out,
                  std::size_t                                    lanczos_iterations = -1)
 {
-  std::size_t out_rank = out.size();
+  std::size_t tensor_rank_out = out.size();
   if(lanczos_iterations == (std::size_t)-1)
   {
-    lanczos_iterations = out_rank * out_rank + 10;
+    lanczos_iterations = tensor_rank_out * tensor_rank_out + 10;
   }
 
-  std::size_t           big_m   = out[0][1].size()[0];
-  std::size_t           small_m = out[0][0].size()[0];
+  std::size_t           big_m   = out[0][1].size(0);
+  std::size_t           small_m = out[0][0].size(0);
   AlignedVector<Number> beta;
   beta.push_back(Number(1)); // we artificially introduce a first value for
   // beta to define beta.back()
@@ -295,7 +318,7 @@ compute_ksvd_new(const AlignedVector<Number> &                  in,
   Table<2, Number> left_singular_vectors  = matrix_transpose_multiplication(tildeU, U);
   Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
 
-  for(std::size_t i = 0; i < out_rank; i++)
+  for(std::size_t i = 0; i < tensor_rank_out; i++)
   {
     for(std::size_t k = 0; k < big_m; k++)
       for(std::size_t l = 0; l < big_m; l++)
