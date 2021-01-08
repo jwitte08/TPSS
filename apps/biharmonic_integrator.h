@@ -355,10 +355,12 @@ template<int dim, int fe_degree, typename Number = double>
 class MatrixIntegrator
 {
 public:
-  using This                    = MatrixIntegrator<dim, fe_degree, Number>;
-  using value_type              = Number;
-  using transfer_type           = typename TPSS::PatchTransfer<dim, Number>;
+  using This          = MatrixIntegrator<dim, fe_degree, Number>;
+  using value_type    = Number;
+  using transfer_type = typename TPSS::PatchTransfer<dim, Number>;
+  /// TODO static bounds (template parameter)
   using matrix_type             = Tensors::TensorProductMatrix<dim, VectorizedArray<Number>>;
+  using matrix_state            = typename matrix_type::State;
   using evaluator_type          = FDEvaluation<dim, fe_degree, fe_degree + 1, Number>;
   static constexpr int fe_order = fe_degree + 1;
 
@@ -380,28 +382,35 @@ public:
     evaluator_type eval(subdomain_handler); // common evaluator for test + ansatz
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
     {
-      /// compute 1D matrices
       eval.reinit(patch);
-      const auto mass_matrices      = assemble_mass_tensor(eval);
-      const auto bilaplace_matrices = assemble_bilaplace_tensor(eval);
-      const auto laplace_matrices   = assemble_laplace_tensor(eval);
 
-      /// store rank1 tensors of separable Kronecker representation
-      /// BxMxM + MxBxM + MxMxB
-      const auto & BxMxM = [&](const int direction) {
-        std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
-        for(auto d = 0; d < dim; ++d)
-          kronecker_tensor[d] = d == direction ? bilaplace_matrices[direction] : mass_matrices[d];
-        return kronecker_tensor;
-      };
       std::vector<std::array<Table<2, VectorizedArray<Number>>, dim>> rank1_tensors;
-      for(auto direction = 0; direction < dim; ++direction)
-        rank1_tensors.emplace_back(BxMxM(direction));
 
-      /// store rank1 tensors of mixed derivatives
-      /// 2(LxLxM + LxMxL + MxLxL)
-      if(equation_data.local_solver_variant == LocalSolverVariant::Exact)
+      if(equation_data.local_solver_variant == LocalSolverVariant::Bilaplacian)
       {
+        rank1_tensors.emplace_back(assemble_mass_tensor(eval));
+        rank1_tensors.emplace_back(assemble_bilaplace_tensor(eval));
+      }
+      else
+      {
+        /// compute 1D matrices
+        const auto mass_matrices      = assemble_mass_tensor(eval);
+        const auto bilaplace_matrices = assemble_bilaplace_tensor(eval);
+        const auto laplace_matrices   = assemble_laplace_tensor(eval);
+
+        /// store rank1 tensors of separable Kronecker representation
+        /// BxMxM + MxBxM + MxMxB
+        const auto & BxMxM = [&](const int direction) {
+          std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
+          for(auto d = 0; d < dim; ++d)
+            kronecker_tensor[d] = d == direction ? bilaplace_matrices[direction] : mass_matrices[d];
+          return kronecker_tensor;
+        };
+        for(auto direction = 0; direction < dim; ++direction)
+          rank1_tensors.emplace_back(BxMxM(direction));
+
+        /// store rank1 tensors of mixed derivatives
+        /// 2(LxLxM + LxMxL + MxLxL)
         const auto & LxLxM = [&](const int direction1, const int direction2) {
           std::array<Table<2, VectorizedArray<Number>>, dim> kronecker_tensor;
           for(auto d = 0; d < dim; ++d)
@@ -413,10 +422,23 @@ public:
           for(auto direction2 = 0; direction2 < dim; ++direction2)
             if(direction1 != direction2)
               rank1_tensors.emplace_back(LxLxM(direction1, direction2));
+
+        AssertDimension(rank1_tensors.size(), 2 * dim);
       }
 
       /// submit vector of rank1 Kronecker tensors
-      local_matrices[patch].reinit(rank1_tensors);
+      switch(equation_data.local_solver_variant)
+      {
+        case LocalSolverVariant::Exact:
+          local_matrices[patch].reinit(rank1_tensors);
+          break;
+        case LocalSolverVariant::Bilaplacian:
+          // local_matrices[patch].reinit(rank1_tensors);
+          local_matrices[patch].reinit(rank1_tensors, matrix_state::separable);
+          break;
+        default:
+          AssertThrow(false, ExcMessage("Local solver isn't supported."));
+      }
     }
   }
 
