@@ -798,6 +798,89 @@ contract_general_impl(const Number2 * DEAL_II_RESTRICT shape_data,
   }
 }
 
+
+
+/**
+ * A purely dynamic version of contract_general_impl() above.
+ */
+template<int dim,
+         typename Number,
+         int  direction,
+         bool contract_over_rows,
+         bool add,
+         typename Number2 = Number>
+void
+contract_general_impl(const Number2 * DEAL_II_RESTRICT shape_data,
+                      const Number *                   in,
+                      Number *                         out,
+                      const int                        n_rows_dynamic,
+                      const int                        n_columns_dynamic,
+                      const int                        n_pre_dynamic,
+                      const int                        n_post_dynamic)
+{
+  Assert(shape_data != nullptr,
+         ExcMessage("The given array shape_data must not be the null pointer!"));
+  AssertIndexRange(direction, dim);
+
+  Assert(n_rows_dynamic > 0, ExcMessage("Any reasonable n_rows_dynamic is at least one."));
+  Assert(n_columns_dynamic > 0, ExcMessage("Any reasonable n_columns_dynamic is at least one."));
+  Assert(n_pre_dynamic > 0, ExcMessage("Any reasonable n_pre_dynamic is at least one."));
+  Assert(n_post_dynamic > 0, ExcMessage("Any reasonable n_post_dynamic is at least one."));
+
+  const int mm               = contract_over_rows ? n_rows_dynamic : n_columns_dynamic;
+  const int nn               = contract_over_rows ? n_columns_dynamic : n_rows_dynamic;
+  const int n_columns_actual = n_columns_dynamic;
+  const int stride           = n_pre_dynamic;
+  const int n_blocks1        = n_pre_dynamic;
+  const int n_blocks2        = n_post_dynamic;
+
+  Assert(n_columns_actual > 0, ExcMessage("Any reasonable n_columns_actual is at least one."));
+
+  AlignedVector<Number> x(mm);
+  for(int i2 = 0; i2 < n_blocks2; ++i2)
+  {
+    for(int i1 = 0; i1 < n_blocks1; ++i1)
+    {
+      for(int i = 0; i < mm; ++i)
+        x[i] = in[stride * i];
+      for(int col = 0; col < nn; ++col)
+      {
+        Number2 val0;
+        if(contract_over_rows == true)
+          val0 = shape_data[col];
+        else
+          val0 = shape_data[col * n_columns_actual];
+        Number res0 = val0 * x[0];
+        for(int i = 1; i < mm; ++i)
+        {
+          if(contract_over_rows == true)
+            val0 = shape_data[i * n_columns_actual + col];
+          else
+            val0 = shape_data[col * n_columns_actual + i];
+          res0 += val0 * x[i];
+        }
+        if(add == false)
+          out[stride * col] = res0;
+        else
+          out[stride * col] += res0;
+      }
+
+      // if (one_line == false)
+      {
+        ++in;
+        ++out;
+      }
+    }
+    // if (one_line == false)
+    {
+      in += stride * (mm - 1);
+      out += stride * (nn - 1);
+    }
+  }
+}
+
+
+
 /**
  * Tensor product evaluator with static loop bounds (assuming isotropic tensors by default).
  */
@@ -888,7 +971,8 @@ struct EvaluatorTensorProduct<dim, Number, -1, -1, Number2>
     // const int n_pre_actual = collapse_sizes_pre(direction, size0_src, size1_src, size2_src);
     // const int n_post_actual = collapse_sizes_post(direction, size0_dst, size1_dst, size2_dst);
 
-    contract_general_impl<dim, Number, -1, -1, direction, -1, -1, contract_over_rows, add, Number2>(
+    /// TODO use static bounds whenever possible !!!
+    contract_general_impl<dim, Number, direction, contract_over_rows, add, Number2>(
       matrix,
       tensor_of_vectors_src,
       tensor_of_vectors_dst,
