@@ -16,6 +16,38 @@ using namespace dealii;
 namespace LinAlg
 {
 template<typename Number>
+AlignedVector<Number>
+sum(const AlignedVector<Number> & lhs, const AlignedVector<Number> & rhs)
+{
+  AssertDimension(lhs.size(), rhs.size());
+  AlignedVector<Number> sum;
+  std::transform(lhs.begin(), lhs.end(), rhs.begin(), std::back_inserter(sum), std::plus<Number>{});
+  return sum;
+}
+
+
+
+/**
+ * Scales a vector @p vec by a factor @p scalar.
+ */
+template<typename Number>
+AlignedVector<Number>
+scaling(const AlignedVector<Number> & vec, const Number & scalar)
+{
+  AlignedVector<Number> scaled_vec(vec.size());
+  std::transform(vec.begin(), vec.end(), scaled_vec.begin(), [&](const auto & elem) {
+    return scalar * elem;
+  });
+  return scaled_vec;
+}
+
+
+
+/**
+ * Computes the Euclidean inner product between a left-hand vector @p lhs and
+ * right-hand vector @p rhs.
+ */
+template<typename Number>
 Number
 inner_product(const AlignedVector<Number> & lhs, const AlignedVector<Number> & rhs)
 {
@@ -25,57 +57,14 @@ inner_product(const AlignedVector<Number> & lhs, const AlignedVector<Number> & r
 
 
 
+/**
+ * Computes the Euclidean norm of a vector @p vec.
+ */
 template<typename Number>
 Number
 euclidean_norm(const AlignedVector<Number> & vec)
 {
   return std::sqrt(inner_product(vec, vec));
-}
-
-
-
-template<typename Number, bool transpose>
-Table<2, Number>
-vect_impl(const Table<2, Number> & M)
-{
-  const unsigned int m = M.size(0);
-  const unsigned int n = M.size(1);
-  Table<2, Number>   vect(transpose ? 1U : m * n, transpose ? m * n : 1U);
-
-  for(unsigned int k = 0; k < m; k++)
-    for(unsigned int l = 0; l < n; l++)
-      if(transpose)
-        vect(0U, k * n + l) = M(k, l);
-      else
-        vect(k * n + l, 0U) = M(k, l);
-  return vect;
-}
-
-
-
-/**
- * The (mathematical) vectorization operator of a matrix M, in short vect(M),
- * stacks all columns from left- to right-hand into one column-vector from top
- * to bottom.
- */
-template<typename Number>
-Table<2, Number>
-vect(const Table<2, Number> & M)
-{
-  return vect_impl<Number, false>(M);
-}
-
-
-
-/**
- * The transpose of the (mathematical) vectorization operator of a matrix
- * M. For details on the vectorization see above.
- */
-template<typename Number>
-Table<2, Number>
-Tvect(const Table<2, Number> & M)
-{
-  return vect_impl<Number, true>(M);
 }
 
 
@@ -90,31 +79,189 @@ template<typename Number>
 AlignedVector<Number>
 inverse_scaling_if(const AlignedVector<Number> & vec, const Number & scalar)
 {
-  const auto &          inverse_scalar = inverse_scalar_value_if(scalar);
-  AlignedVector<Number> scaled_vec(vec.size());
-  std::transform(vec.begin(), vec.end(), scaled_vec.begin(), [&](const auto & elem) {
-    return inverse_scalar * elem;
-  });
-  return scaled_vec;
+  const auto & inverse_scalar = inverse_scalar_value_if(scalar);
+  return scaling(vec, inverse_scalar);
+}
+
+
+
+template<typename Number, bool transpose>
+Table<2, Number>
+vect_impl(const Table<2, Number> & M)
+{
+  const unsigned int m = M.size(0);
+  const unsigned int n = M.size(1);
+  Table<2, Number>   vect(transpose ? 1U : m * n, transpose ? m * n : 1U);
+
+  for(unsigned int i = 0; i < m; ++i)
+    for(unsigned int j = 0; j < n; ++j)
+      if(transpose)
+        vect(0U, i + j * m) = M(i, j);
+      else
+        vect(i + j * m, 0U) = M(i, j);
+  return vect;
 }
 
 
 
 /**
- * Scales the vector @p vec by the factor @p scalar.
+ * Returns the (mathematical) vectorization of a matrix @p M (in short vect(M))
+ * which stacks all columns of @p M (from left- to right-hand) into one long
+ * column-vector (from top to bottom) that is returned in the end.
  */
 template<typename Number>
-AlignedVector<Number>
-scaling(const AlignedVector<Number> & vec, const Number & scalar)
+Table<2, Number>
+vect(const Table<2, Number> & M)
 {
-  AlignedVector<Number> scaled_vec(vec.size());
-  std::transform(vec.begin(), vec.end(), scaled_vec.begin(), [&](const auto & elem) {
-    return scalar * elem;
-  });
-  return scaled_vec;
+  return vect_impl<Number, false>(M);
+}
+
+
+
+/**
+ * The transpose of the (mathematical) vectorization operator of a matrix
+ * M. For more details see vect() above.
+ */
+template<typename Number>
+Table<2, Number>
+Tvect(const Table<2, Number> & M)
+{
+  return vect_impl<Number, true>(M);
+}
+
+
+
+template<typename Number, bool do_scaling, typename OtherNumber>
+Table<2, Number>
+folding_impl(const Table<2, Number> & src,
+             const unsigned int       n_rows,
+             const unsigned int       n_columns,
+             const OtherNumber &      alpha,
+             const unsigned int       fixed_column)
+{
+  AssertIndexRange(fixed_column, src.size(1));
+  AssertDimension(src.size(0), n_rows * n_columns);
+  Table<2, Number> matrix(n_rows, n_columns);
+  for(auto i = 0U; i < n_rows; ++i)
+    for(auto j = 0U; j < n_columns; ++j)
+      if(do_scaling)
+      {
+        matrix(i, j) = alpha * src(i + j * n_rows, fixed_column);
+      }
+      else
+      {
+        (void)alpha;
+        matrix(i, j) = src(i + j * n_rows, fixed_column);
+      }
+  return matrix;
+}
+
+
+
+/**
+ * Folds the column vector @p src into a matrix with size according to @p n_rows
+ * and @p n_columns and returns the matrix. For safety the table @p src must not
+ * have more than one column and, obviously, the product of @p n_rows and @p
+ * n_columns must equal the length of the column vector @p src. Note that
+ * folding is the inverse operation of vectorization vect().
+ */
+template<typename Number, typename OtherNumber = Number>
+Table<2, Number>
+folding(const Table<2, Number> & src, const unsigned int n_rows, const unsigned int n_columns)
+{
+  AssertDimension(src.size(1), 1U);
+  return folding_impl<Number, false, OtherNumber>(src, n_rows, n_columns, 1., 0U);
+}
+
+
+
+template<typename Number, typename OtherNumber>
+Table<2, Number>
+sfolding_impl(const Table<2, Number> & src,
+              const unsigned int       n_rows,
+              const unsigned int       n_columns,
+              const OtherNumber &      alpha,
+              const unsigned int       fixed_column)
+{
+  return folding_impl<Number, true, OtherNumber>(src, n_rows, n_columns, alpha, fixed_column);
+}
+
+
+
+/**
+ * Adds a vector @p src to a vector @p dst, that is in pseudo-code dst += src.
+ */
+template<typename Number>
+void
+add(AlignedVector<Number> & dst, const AlignedVector<Number> & src)
+{
+  dst = std::move(sum(dst, src));
+}
+
+
+
+/**
+ * Adds a scaled vector @p src to a vector @p dst, that reads in pseudo-code
+ * dst += alpha * src with @p alpha being the scaling factor.
+ */
+template<typename Number>
+void
+sadd(AlignedVector<Number> & dst, const Number & alpha, const AlignedVector<Number> & src)
+{
+  dst = std::move(sum(dst, scaling(src, alpha)));
+}
+
+
+
+/**
+ * Orthogonalizes the last vector of a family of vectors @p vecs by means of a
+ * Gram-Schmidt process assuming all previous vectors are mutually orthogonal
+ * (but not necessarily normalized). For vectorized arithmetic type @p Number
+ * division by zero on any lane is avoided: the algorithm is aware of lanes
+ * consisting only of zeros and replaces inverse scalars by zero (all remaining
+ * lanes are processed as usual).
+ */
+template<typename Number>
+void
+orthogonalize_full(std::vector<AlignedVector<Number>> & vecs)
+{
+  const auto n   = vecs.size();
+  auto &     r_n = vecs.back();
+  for(auto j = 0U; j < n - 1; ++j)
+  {
+    const auto & r_j = vecs[j];
+    sadd(r_n, -inverse_scalar_value_if(inner_product(r_j, r_j)) * inner_product(r_n, r_j), r_j);
+  }
 }
 
 } // namespace LinAlg
+
+
+
+// Add two AlignedVectors
+template<typename Number>
+AlignedVector<Number>
+vector_addition(const AlignedVector<Number> & in1, const AlignedVector<Number> & in2)
+{
+  AssertDimension(in1.size(), in2.size());
+  AlignedVector<Number> ret = AlignedVector<Number>(in1);
+  for(std::size_t i = 0; i < in1.size(); i++)
+    ret[i] = in1[i] + in2[i];
+  return ret;
+}
+
+
+
+// Multiply AlignedVector with scalar
+template<typename Number>
+AlignedVector<Number>
+vector_scaling(const AlignedVector<Number> & in, const Number & scalar)
+{
+  AlignedVector<Number> ret = AlignedVector<Number>(in);
+  for(std::size_t i = 0; i < in.size(); i++)
+    ret[i] = in[i] * scalar;
+  return ret;
+}
 
 
 
@@ -145,19 +292,6 @@ matrix_addition(const Table<2, Number> & in1, const Table<2, Number> & in2)
   return ret;
 }
 
-// Add two AlignedVectors
-template<typename Number>
-AlignedVector<Number>
-vector_addition(const AlignedVector<Number> & in1, const AlignedVector<Number> & in2)
-{
-  AssertDimension(in1.size(), in2.size());
-  AlignedVector<Number> ret = AlignedVector<Number>(in1);
-  for(std::size_t i = 0; i < in1.size(); i++)
-    ret[i] = in1[i] + in2[i];
-  return ret;
-}
-
-
 // Multiply Table with scalar
 template<typename Number>
 Table<2, Number>
@@ -170,12 +304,16 @@ matrix_scaling(const Table<2, Number> & in, const Number & scalar)
   return ret;
 }
 
+
+
 template<typename Number>
 Table<2, Number>
 operator*(const Table<2, Number> & matrix, const Number & factor)
 {
   return matrix_scaling(matrix, factor);
 }
+
+
 
 template<typename Number>
 Table<2, Number>
@@ -184,12 +322,16 @@ operator*(const Number & factor, const Table<2, Number> & matrix)
   return matrix * factor;
 }
 
+
+
 template<typename Number>
 Table<2, VectorizedArray<Number>>
 operator*(const Table<2, VectorizedArray<Number>> & matrix, const Number & factor)
 {
   return matrix * make_vectorized_array<Number>(factor);
 }
+
+
 
 template<typename Number>
 Table<2, VectorizedArray<Number>>
@@ -198,16 +340,8 @@ operator*(const Number & factor, const Table<2, VectorizedArray<Number>> & matri
   return matrix * make_vectorized_array<Number>(factor);
 }
 
-// Multiply AlignedVector with scalar
-template<typename Number>
-AlignedVector<Number>
-vector_scaling(const AlignedVector<Number> & in, const Number & scalar)
-{
-  AlignedVector<Number> ret = AlignedVector<Number>(in);
-  for(std::size_t i = 0; i < in.size(); i++)
-    ret[i] = in[i] * scalar;
-  return ret;
-}
+
+
 // invert a number, if number is zero return zero
 template<typename Number>
 Number
@@ -218,6 +352,8 @@ invert_safe(const Number x)
   else
     return Number(1) / x;
 }
+
+
 
 // invert a VectirizedArray, if a component is zero return zero for that component
 template<typename Number>
@@ -237,6 +373,7 @@ invert_safe(const VectorizedArray<Number> x)
 }
 
 
+
 // Divide AlignedVector by scalar, if vector is zero allow scalar to be zero
 template<typename Number>
 AlignedVector<Number>
@@ -248,10 +385,11 @@ vector_inverse_scaling(const AlignedVector<Number> & in, const Number & scalar)
   return ret;
 }
 
+
+
 // Multiply Matrix by vector
 template<typename Number>
 AlignedVector<Number>
-
 matrix_vector_multiplication(const Table<2, Number> & in_mat, const AlignedVector<Number> & in_vec)
 {
   AssertDimension(in_mat.size()[1], in_vec.size());
@@ -261,6 +399,7 @@ matrix_vector_multiplication(const Table<2, Number> & in_mat, const AlignedVecto
       ret[i] += in_mat(i, j) * in_vec[j];
   return ret;
 }
+
 
 
 // Multiply transpose of Matrix by vector
@@ -276,7 +415,10 @@ matrix_transpose_vector_multiplication(const Table<2, Number> &      in_mat,
       ret[i] += in_mat(j, i) * in_vec[j];
   return ret;
 }
-// Multiply Matrix by Matrix
+
+
+
+// Multiply Matrix @p in1 by Matrix @p in2
 template<typename Number>
 Table<2, Number>
 matrix_multiplication(const Table<2, Number> & in1, const Table<2, Number> & in2)
@@ -291,7 +433,8 @@ matrix_multiplication(const Table<2, Number> & in1, const Table<2, Number> & in2
 }
 
 
-// Multiply transpose of Matrix by Matrix
+
+// Multiply transpose of Matrix @p in1 by Matrix @p in2
 template<typename Number>
 Table<2, Number>
 matrix_transpose_multiplication(const Table<2, Number> & in1, const Table<2, Number> & in2)
@@ -304,6 +447,8 @@ matrix_transpose_multiplication(const Table<2, Number> & in1, const Table<2, Num
         ret(i, j) += in1(k, i) * in2(k, j);
   return ret;
 }
+
+
 
 // Multiply Matrix by transpose of Matrix
 template<typename Number>
@@ -319,6 +464,8 @@ matrix_multiplication_transpose(const Table<2, Number> & in1, const Table<2, Num
   return ret;
 }
 
+
+
 // compute the Khatri-Rao product of two matrices
 template<typename Number>
 Table<2, Number>
@@ -333,6 +480,8 @@ khatri_rao(const Table<2, Number> & in1, const Table<2, Number> & in2)
   return ret;
 }
 
+
+
 // compute the Hadamard product of two matrices
 template<typename Number>
 Table<2, Number>
@@ -346,6 +495,7 @@ hadamard(const Table<2, Number> & in1, const Table<2, Number> & in2)
       ret(i, j) = in1(i, j) * in2(i, j);
   return ret;
 }
+
 
 
 // Flatten Table to AlignedVector
@@ -363,6 +513,7 @@ vectorize_matrix(const Table<2, Number> & tab)
 }
 
 
+
 // TODO remove
 // For vectorizedarray check if > holds for all elements
 template<typename Number>
@@ -375,6 +526,7 @@ operator>(VectorizedArray<Number> a, VectorizedArray<Number> b)
       return false;
   return true;
 }
+
 
 
 // For vectorizedarray check if > holds for all elements
@@ -390,6 +542,7 @@ operator>(VectorizedArray<Number> a, Number b)
 }
 
 
+
 namespace std
 {
 template<typename Number>
@@ -403,6 +556,7 @@ public:
   };
 };
 } // namespace std
+
 
 
 // Two Matrices are considered equal if all of their components are equal up to machine epsilon
@@ -435,6 +589,8 @@ operator==(Table<2, Number> tab1, Table<2, Number> tab2)
   return true;
 }
 
+
+
 // print a table up to digits sginificant digits
 template<typename Number>
 void
@@ -452,6 +608,8 @@ printTable(Table<2, Number> tab, double digits = 2)
   }
   std::cout << "------------------------------------\n";
 }
+
+
 
 template<typename Number>
 void
@@ -474,6 +632,9 @@ printTable(Table<2, VectorizedArray<Number>> tab)
   }
   std::cout << "------------------------------------\n";
 }
+
+
+
 // print aligned vector
 template<typename Number>
 void
@@ -485,6 +646,8 @@ printAlignedVector(AlignedVector<Number> vec)
     std::cout << ((int)(vec[i] * 100 + 0.5)) / 100.0 << "\t";
   std::cout << "\n######################################\n";
 }
+
+
 
 template<typename Number>
 void
@@ -501,6 +664,9 @@ printAlignedVector(AlignedVector<VectorizedArray<Number>> vec)
   }
   std::cout << "\n######################################\n";
 }
+
+
+
 // compute svd of a table by tranforming it into a lapack matrix and computing the svd there
 template<typename Number>
 void
@@ -531,6 +697,8 @@ svd(const Number *    matrix_begin,
   }
 }
 
+
+
 template<typename Number>
 void
 svd(const Table<2, Number>  matrix,
@@ -545,6 +713,9 @@ svd(const Table<2, Number>  matrix,
               &(singular_values[0]),
               &(VT(0, 0)));
 }
+
+
+
 // compute the svd lane wise and put everything together again
 template<typename Number>
 void
@@ -576,6 +747,8 @@ svd(const Table<2, VectorizedArray<Number>> & matrix,
     }
   }
 }
+
+
 
 // use the svd to compute a pseudo inverse, only for quadratic matrices!
 template<typename Number>
