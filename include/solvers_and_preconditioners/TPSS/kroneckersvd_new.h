@@ -20,6 +20,51 @@ using namespace dealii;
 
 
 
+namespace intern
+{
+template<typename Number>
+void
+compute_bidiagonal_svd(const AlignedVector<Number> & diagonal,
+                       const AlignedVector<Number> & super_diagonal,
+                       Table<2, Number> &            U,
+                       AlignedVector<Number> &       singular_values,
+                       Table<2, Number> &            VT)
+{
+  AssertDimension(diagonal.size(), super_diagonal.size() + 1);
+  AssertIndexRange(singular_values.size(), diagonal.size() + 1);
+  AssertDimension(diagonal.size(), U.size(0));
+  AssertDimension(singular_values.size(), U.size(1));
+  AssertDimension(diagonal.size(), VT.size(1));
+  AssertDimension(singular_values.size(), VT.size(0));
+
+  using scalar_value_type = typename ExtractScalarType<Number>::type;
+  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+  {
+    LAPACKFullMatrix<scalar_value_type> bidiagonal_matrix(diagonal.size());
+    for(auto i = 0U; i < diagonal.size(); ++i)
+      bidiagonal_matrix(i, i) = scalar_value(diagonal[i], lane);
+    for(auto i = 0U; i < super_diagonal.size(); ++i)
+      bidiagonal_matrix(i, i + 1) = scalar_value(super_diagonal[i], lane);
+
+    /// TODO compute only the singular_values.size() first singular values and
+    /// not the complete SVD
+    const auto & [tildeU, Sigma, tildeVT] = compute_svd(bidiagonal_matrix);
+
+    for(auto i = 0U; i < U.size(0); ++i)
+      for(auto j = 0U; j < U.size(1); ++j)
+        scalar_value(U(i, j), lane) = tildeU(i, j);
+
+    for(auto i = 0U; i < VT.size(0); ++i)
+      for(auto j = 0U; j < VT.size(1); ++j)
+        scalar_value(VT(i, j), lane) = tildeVT(i, j);
+
+    for(auto i = 0U; i < singular_values.size(); ++i)
+      scalar_value(singular_values[i], lane) = Sigma(i, i);
+  }
+}
+
+} // namespace intern
+
 /*
   Compute the low Kronecker rank approximation, i.e. the ksvd, of full Matrix M.
   We first reshuffle M and then compute the first few singular
@@ -147,6 +192,18 @@ compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & src,
                  });
   Tensors::TensorProductMatrix<2, Number> shuffled_matrix(rank1_tensors_shuffled);
 
+
+  // {
+  //   const auto & [B, A] = src.front();
+  //   std::cout << "A" << std::endl;
+  //   table_to_fullmatrix(A).print_formatted(std::cout);
+  //   std::cout << "vectA" << std::endl;
+  //   table_to_fullmatrix(LinAlg::vect(A)).print_formatted(std::cout);
+  //   std::cout << "folding vectA" << std::endl;
+  //   table_to_fullmatrix(LinAlg::folding(LinAlg::vect(A),A.size(0),A.size(1))).print_formatted(std::cout);
+  // }
+
+
   const std::size_t max_tensor_rank_src = src.size();
   std::size_t       tensor_rank_dst     = dst.size();
   const auto        max_tensor_rank_dst =
@@ -167,37 +224,55 @@ compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & src,
   AlignedVector<Number> beta;
   // we artificially introduce a first value for
   // beta to define beta.back()
-  beta.push_back(Number(1));
+  beta.push_back(Number(1.));
 
   AlignedVector<Number> alpha;
 
   std::vector<AlignedVector<Number>> r;
 
   std::vector<AlignedVector<Number>> p = {AlignedVector<Number>(m_B * n_B)};
-  p.back()[0]                          = Number(1);
+  p.back()[0]                          = Number(1.);
 
   std::vector<AlignedVector<Number>> u = {AlignedVector<Number>(m_A * n_A)};
 
   std::vector<AlignedVector<Number>> v;
 
-  for(std::size_t i = 0;
-      i < lanczos_iterations && std::abs(beta.back()) > std::numeric_limits<Number>::epsilon();
-      i++)
+  Assert(has_nearly_zero_abs(LinAlg::euclidean_norm(p.back()) - (Number)1.),
+         ExcMessage("Euclidean norm of p_0 must be one!"));
+  for(std::size_t i = 0; i < lanczos_iterations && !has_nearly_zero_abs(std::abs(beta.back())); ++i)
   {
     /// beta_i = || p_i ||_2
     beta.push_back(LinAlg::euclidean_norm(p.back()));
+    std::cout << "beta_" << i << ": " << varray_to_string(beta.back()) << std::endl;
+    std::cout << std::boolalpha << "is nearly zero: " << has_nearly_zero_abs(std::abs(beta.back()))
+              << std::endl;
+    std::cout << std::boolalpha << "first lane is nearly zero: "
+              << has_nearly_zero_abs(std::abs(scalar_value(beta.back(), 0))) << std::endl;
 
     /// v_i = p_i / beta_i
     v.push_back(LinAlg::inverse_scaling_if(p.back(), beta.back()));
+    std::cout << "||v_" << i << "||: " << varray_to_string(LinAlg::euclidean_norm(v.back()))
+              << std::endl;
 
     /// r_i = R(A) v_i - beta * u_i
     r.push_back(LinAlg::scaling(u.back(), -beta.back()));
     shuffled_matrix.vmult_add(r.back(), v.back());
+    std::cout << "||r_" << i << "||: " << varray_to_string(LinAlg::euclidean_norm(r.back()))
+              << std::endl;
 
-    orthogonalize(r);
+    // orthogonalize(r);
+    LinAlg::orthogonalize_full(r);
+
+    std::cout << "||r_" << i << "||: " << varray_to_string(LinAlg::euclidean_norm(r.back()))
+              << std::endl;
 
     /// alpha_i = || r_i ||_2
     alpha.push_back(LinAlg::euclidean_norm(r.back()));
+    std::cout << "alpha_" << i << ": " << varray_to_string(alpha.back()) << std::endl;
+    std::cout << std::boolalpha << "is nearly zero: " << has_nearly_zero_abs(std::abs(alpha.back()))
+              << std::endl;
+    std::cout << std::boolalpha << "first lane is nearly zero: "
+              << has_nearly_zero_abs(std::abs(scalar_value(alpha.back(), 0))) << std::endl;
 
     /// u_{i+1} = r_i / alpha_i
     u.push_back(LinAlg::inverse_scaling_if(r.back(), alpha.back()));
@@ -206,18 +281,25 @@ compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & src,
     p.push_back(LinAlg::scaling(v.back(), -alpha.back()));
     shuffled_matrix.Tvmult_add(p.back(), u.back());
 
-    orthogonalize(p);
+    // orthogonalize(p);
+    LinAlg::orthogonalize_full(p);
   }
 
   std::size_t base_len = alpha.size() - 1;
 
-  Table<2, Number>      U(base_len, m_A * n_A); // discard first value of u since it is zero
-  Table<2, Number>      V(base_len,
-                     m_B * n_B); // discard last value of v since it is zero
-  AlignedVector<Number> real_beta(base_len -
-                                  1); // discard first two values of beta, first is artificially
+  // discard first value of u since it is zero
+  Table<2, Number> U(base_len, m_A * n_A);
+
+  // discard last value of v since it is zero
+  Table<2, Number> V(base_len, m_B * n_B);
+
+  // discard first two values of beta, first is artificially
   // introduced, second only depends on inital guess
-  AlignedVector<Number> real_alpha(base_len); // discard last value of alpha since it is zero
+  AlignedVector<Number> real_beta(base_len - 1);
+
+  // discard last value of alpha since it is zero
+  AlignedVector<Number> real_alpha(base_len);
+
   for(std::size_t i = 0; i < base_len; i++)
   {
     real_alpha[i] = alpha[i];
@@ -233,24 +315,73 @@ compute_ksvd_new(const std::vector<std::array<Table<2, Number>, 2>> & src,
   Table<2, Number>      tildeU(base_len, base_len);
   Table<2, Number>      tildeVT(base_len, base_len);
 
-  bidiagonal_svd(real_alpha, real_beta, tildeU, singular_values, tildeVT);
+  // bidiagonal_svd(real_alpha, real_beta, tildeU, singular_values, tildeVT);
+  intern::compute_bidiagonal_svd(real_alpha, real_beta, tildeU, singular_values, tildeVT);
 
   Table<2, Number> left_singular_vectors  = matrix_transpose_multiplication(tildeU, U);
   Table<2, Number> right_singular_vectors = matrix_multiplication(tildeVT, V);
 
   /// TODO mismatch between tensor_rank_dst and base_len
-  AssertIndexRange(tensor_rank_dst, base_len + 2);
+  AssertIndexRange(tensor_rank_dst, base_len + 1);
   AssertThrow(tensor_rank_dst <= base_len,
               ExcMessage("TODO base_len determines the maximal Kronecker rank? ask Simon!"));
-  for(std::size_t i = 0; i < tensor_rank_dst; i++)
+
+  // for(std::size_t i = 0; i < tensor_rank_dst; i++)
+  // {
+  //   for(std::size_t k = 0; k < m_A; k++)
+  //     for(std::size_t l = 0; l < n_A; l++)
+  //       dst[i][1](k, l) = left_singular_vectors(i, k * n_A + l) * std::sqrt(singular_values[i]);
+  //   for(std::size_t k = 0; k < m_B; k++)
+  //     for(std::size_t l = 0; l < n_B; l++)
+  //       dst[i][0](k, l) = right_singular_vectors(i, k * n_B + l) * std::sqrt(singular_values[i]);
+  // }
+
+  /// NOTE U is actually UT
+  const auto & left = Tensors::Tmmult(U, tildeU);
+  // table_to_fullmatrix(std::sqrt(singular_values[0]) *
+  // left_singular_vectors).print_formatted(std::cout); std::cout << std::endl;
+  // table_to_fullmatrix(std::sqrt(singular_values[0]) * left).print_formatted(std::cout);
+  // std::cout << std::endl;
+
+  /// NOTE V is actually VT
+  const auto & rightT = Tensors::mmult(tildeVT, V);
+  // table_to_fullmatrix(std::sqrt(singular_values[0]) *
+  // right_singular_vectors).print_formatted(std::cout); std::cout << "rsv" << std::endl;
+  // table_to_fullmatrix(std::sqrt(singular_values[0]) * rightT).print_formatted(std::cout);
+  // std::cout << "rightT" << std::endl;
+  const auto & right = Tensors::transpose(rightT);
+
+  for(std::size_t i = 0; i < std::min(tensor_rank_dst, singular_values.size()); ++i)
   {
-    for(std::size_t k = 0; k < m_A; k++)
-      for(std::size_t l = 0; l < n_A; l++)
-        dst[i][1](k, l) = left_singular_vectors(i, k * n_A + l) * std::sqrt(singular_values[i]);
-    for(std::size_t k = 0; k < m_B; k++)
-      for(std::size_t l = 0; l < n_B; l++)
-        dst[i][0](k, l) = right_singular_vectors(i, k * n_B + l) * std::sqrt(singular_values[i]);
+    // table_to_fullmatrix(dst[i][1]).print_formatted(std::cout);
+    // std::cout << i << std::endl;
+    dst[i][1] = LinAlg::sfolding_impl(
+      left, dst[i][1].size(0), dst[i][1].size(1), std::sqrt(singular_values[i]), i);
+    // table_to_fullmatrix(dst[i][1]).print_formatted(std::cout);
+    // std::cout << i << std::endl;
+
+    // table_to_fullmatrix(dst[i][0]).print_formatted(std::cout);
+    // std::cout << "right" << i << std::endl;
+    dst[i][0] = LinAlg::sfolding_impl(
+      right, dst[i][0].size(0), dst[i][0].size(1), std::sqrt(singular_values[i]), i);
+    // table_to_fullmatrix(dst[i][0]).print_formatted(std::cout);
+    // std::cout << "right" << i << std::endl;
   }
+
+
+  // {
+  //   const auto lane = 0U;
+  //   const auto myU = table_to_fullmatrix(Tensors::Tmmult(U, tildeU),lane);
+  //   const auto myV = table_to_fullmatrix(Tensors::transpose(Tensors::mmult(tildeVT, V)),lane);
+  //   AssertDimension(myU.n(), myV.n());
+  //   FullMatrix<typename ExtractScalarType<Number>::type> Sigma(singular_values.size());
+  //   for (auto i = 0U; i < singular_values.size(); ++i)
+  //     Sigma(i,i) = scalar_value(singular_values[i],lane);
+  //   std::cout << "U Sigma VT" << std::endl;
+  //   merge_decomposition(myU, Sigma, myV).print_formatted(std::cout);
+  //   std::cout << "shuffled matrix" << std::endl;
+  //   table_to_fullmatrix(shuffled_matrix.as_table(),lane).print_formatted(std::cout);
+  // }
 }
 
 

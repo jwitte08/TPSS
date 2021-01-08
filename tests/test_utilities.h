@@ -17,6 +17,8 @@
 
 #include <gtest/gtest.h>
 
+#include "solvers_and_preconditioners/TPSS/generic_functionalities.h"
+
 #include <array>
 #include <functional>
 #include <iostream>
@@ -283,6 +285,75 @@ print_matrix(const FullMatrix<Number> & matrix,
   else
     pcout << "...printing is suppressed!";
 }
+
+
+
+template<typename Number>
+Table<2, Number>
+make_random_matrix(const unsigned int n_rows, const unsigned int n_cols)
+{
+  Table<2, Number> rndm_matrix;
+  fill_matrix_with_random_values(rndm_matrix, n_rows, n_cols);
+  return rndm_matrix;
+}
+
+
+
+template<typename Number>
+Table<2, Number>
+make_random_matrix_symm(const unsigned int n_rows, const unsigned int n_cols)
+{
+  Table<2, Number> rndm_matrix;
+  fill_matrix_with_random_values(rndm_matrix, n_rows, n_cols);
+
+  /// symmetrize
+  Table<2, Number> matrix;
+  matrix.reinit(n_rows, n_cols);
+  for(auto i = 0U; i < n_rows; ++i)
+    for(auto j = 0U; j < n_cols; ++j)
+      matrix(i, j) = (rndm_matrix(i, j) + rndm_matrix(j, i)) / 2.;
+  return matrix;
+}
+
+
+
+template<typename Number>
+Table<2, Number>
+make_random_matrix_spd(const unsigned int n_rows, const unsigned int n_cols)
+{
+  /// symmetric
+  Table<2, Number> matrix = make_random_matrix_symm<Number>(n_rows, n_cols);
+  /// positive definite?
+  for(auto i = 0U; i < std::min(n_rows, n_cols); ++i)
+    matrix(i, i) += static_cast<Number>(std::max(n_rows, n_cols));
+  return matrix;
+}
+
+
+
+template<typename Number>
+Table<2, Number>
+make_one_matrix(const unsigned int n_rows, const unsigned int n_cols)
+{
+  Table<2, Number> matrix;
+  matrix.reinit(n_rows, n_cols);
+  matrix.fill(static_cast<Number>(1.));
+  return matrix;
+}
+
+
+
+template<typename Number>
+Table<2, Number>
+make_identity_matrix(const unsigned int n_rows, const unsigned int n_cols)
+{
+  Table<2, Number> matrix;
+  matrix.reinit(n_rows, n_cols);
+  for(auto i = 0U; i < std::min(n_rows, n_cols); ++i)
+    matrix(i, i) = static_cast<Number>(1.);
+  return matrix;
+}
+
 
 
 /// Convert any array-type into a tuple

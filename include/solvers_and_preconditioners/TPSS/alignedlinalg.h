@@ -79,7 +79,7 @@ template<typename Number>
 AlignedVector<Number>
 inverse_scaling_if(const AlignedVector<Number> & vec, const Number & scalar)
 {
-  const auto & inverse_scalar = inverse_scalar_value_if(scalar);
+  const auto & inverse_scalar = inverse_scalar_if(scalar);
   return scaling(vec, inverse_scalar);
 }
 
@@ -230,7 +230,7 @@ orthogonalize_full(std::vector<AlignedVector<Number>> & vecs)
   for(auto j = 0U; j < n - 1; ++j)
   {
     const auto & r_j = vecs[j];
-    sadd(r_n, -inverse_scalar_value_if(inner_product(r_j, r_j)) * inner_product(r_n, r_j), r_j);
+    sadd(r_n, -inverse_scalar_if(inner_product(r_j, r_j)) * inner_product(r_n, r_j), r_j);
   }
 }
 

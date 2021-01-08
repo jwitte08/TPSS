@@ -96,7 +96,7 @@ scalar_value(const VectorizedArray<Number> & value, const unsigned int lane = 0)
  */
 template<typename Number>
 bool
-is_nearly_zero_value(const Number & value)
+has_nearly_zero_abs(const Number & value)
 {
   using scalar_value_type = typename ExtractScalarType<Number>::type;
   static constexpr scalar_value_type threshold =
@@ -104,7 +104,6 @@ is_nearly_zero_value(const Number & value)
 
   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
   {
-    // const scalar_value_type scalar         = scalar_value(value, lane);
     const bool is_nearly_zero = std::abs(scalar_value(value, lane)) < threshold;
     if(!is_nearly_zero)
       return false;
@@ -121,16 +120,16 @@ is_nearly_zero_value(const Number & value)
  * vectorized iterative algorithms reaching a state where at least one lane
  * divides by zero before the remaining lanes have reached their stopping
  * criterion. What "nearly zero" means is defined by the free function
- * is_nearly_zero_value().
+ * has_nearly_zero_abs().
  */
 template<typename Number>
 Number
-inverse_scalar_value_if(const Number & scalar)
+inverse_scalar_if(const Number & scalar)
 {
   Number inverse_scalar(0.);
   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
     scalar_value(inverse_scalar, lane) =
-      is_nearly_zero_value(scalar_value(scalar, lane)) ? 0. : 1. / scalar_value(scalar, lane);
+      has_nearly_zero_abs(scalar_value(scalar, lane)) ? 0. : 1. / scalar_value(scalar, lane);
   return inverse_scalar;
 }
 
@@ -179,6 +178,17 @@ varray_to_string(const VectorizedArray<Number> & array)
   for(unsigned int k = 0; k < n_elems - 1; ++k)
     osstream << array[k] << "|";
   osstream << array[n_elems - 1] << "]";
+  return osstream.str();
+}
+
+
+
+template<typename Number>
+std::string
+varray_to_string(const Number & value)
+{
+  std::ostringstream osstream;
+  osstream << "[" << value << "]";
   return osstream.str();
 }
 

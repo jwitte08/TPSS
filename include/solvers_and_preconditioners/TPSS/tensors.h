@@ -677,7 +677,7 @@ is_nearly_zero(const Table<2, Number> & matrix)
   const auto           n     = matrix.size(1);
   const Number * const begin = &(matrix(0, 0));
   const Number * const end   = std::next(&(matrix(m - 1, n - 1)));
-  return std::all_of(begin, end, is_nearly_zero_value<Number>);
+  return std::all_of(begin, end, has_nearly_zero_abs<Number>);
 }
 
 template<int N, typename Number>
@@ -719,6 +719,34 @@ sum(MatrixTypeIn1 && left_matrix, MatrixTypeIn2 && right_matrix)
 
   return matrix_out;
 }
+
+
+
+/**
+ * Matrix multiplication between left-hand matrix @p lhs and right-hand matrix
+ * @p rhs.
+ */
+template<typename Number>
+Table<2, Number>
+mmult(const Table<2, Number> & lhs, const Table<2, Number> & rhs)
+{
+  return matrix_multiplication(lhs, rhs);
+}
+
+
+
+/**
+ * Matrix multiplication between the transpose of left-hand matrix @p lhs and
+ * right-hand matrix @p rhs.
+ */
+template<typename Number>
+Table<2, Number>
+Tmmult(const Table<2, Number> & lhs, const Table<2, Number> & rhs)
+{
+  return matrix_transpose_multiplication(lhs, rhs);
+}
+
+
 
 /**
  * Returns the transpose of the input matrix @p matrix_in

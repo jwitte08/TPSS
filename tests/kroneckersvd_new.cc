@@ -97,6 +97,58 @@ check_kronecker_svd(const Table<2, Number> &                       matrix,
 
 
 
+template<typename Number, bool do_zero_out_first_lane = false>
+void
+test_kronecker_svd()
+{
+  const auto test_impl = [&](std::array<unsigned int, 2> rows,
+                             std::array<unsigned int, 2> columns) {
+    const auto zero_out_first_lane = [&](auto & rank1_tensors) {
+      for(auto & tensor : rank1_tensors)
+        for(auto & mat : tensor)
+          for(auto i = 0U; i < mat.size(0); ++i)
+            for(auto j = 0U; j < mat.size(0); ++j)
+              scalar_value(mat(i, j), /*lane*/ 0U) = 0.;
+    };
+
+    const auto check_kronecker_svd_impl = [&](auto & rank1_tensors) {
+      if(do_zero_out_first_lane)
+        zero_out_first_lane(rank1_tensors);
+
+      std::vector<std::array<Table<2, Number>, 2>> ksvd =
+        Tensors::make_zero_rank1_tensors<2, Number>(rank1_tensors.size(), rows, columns);
+
+      check_kronecker_svd(Tensors::TensorProductMatrix<2, Number>(rank1_tensors), ksvd);
+    };
+
+    const auto & [m1, m0] = rows;
+    const auto & [n1, n0] = columns;
+
+    const auto Id0 = Util::make_identity_matrix<Number>(m0, n0);
+    const auto Id1 = Util::make_identity_matrix<Number>(m1, n1);
+    const auto A0  = Util::make_random_matrix<Number>(m0, n0);
+    const auto A1  = Util::make_random_matrix<Number>(m1, n1);
+    const auto B0  = Util::make_random_matrix<Number>(m0, n0);
+    const auto B1  = Util::make_random_matrix<Number>(m1, n1);
+
+    {
+      std::vector<std::array<Table<2, Number>, 2>> rank1_tensors{{B1, B0}, {A1, A0}};
+      check_kronecker_svd_impl(rank1_tensors);
+    }
+
+    {
+      std::vector<std::array<Table<2, Number>, 2>> rank1_tensors{{Id1, Id0}, {Id1, Id0}};
+      check_kronecker_svd_impl(rank1_tensors);
+    }
+  };
+
+  const std::array<unsigned int, 2> rows    = {2U, 3U};
+  const std::array<unsigned int, 2> columns = {3U, 3U};
+  test_impl(rows, columns);
+}
+
+
+
 void
 test_rank_two_kronecker_svd_full()
 {
@@ -417,6 +469,16 @@ test_rank_one_kronecker_svd()
 // {
 //   test_diagonal_vectorized_kronecker_svd();
 // }
+
+TEST(Anisotropic_Double, compute_ksvd_tensor)
+{
+  test_kronecker_svd<double>();
+}
+
+TEST(AnisotropicZeroLane_VectorizedArrayDouble, compute_ksvd_tensor)
+{
+  test_kronecker_svd<VectorizedArray<double>, /*zero_out_first_lane*/ true>();
+}
 
 TEST(RankOne_Double, compute_ksvd_tensor)
 {
