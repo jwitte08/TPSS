@@ -131,46 +131,31 @@ Tvect(const Table<2, Number> & M)
 
 
 
-template<typename Number, bool do_scaling, typename OtherNumber>
+template<typename Number, typename OtherNumber, bool do_scaling, bool transpose_src>
 Table<2, Number>
 folding_impl(const Table<2, Number> & src,
              const unsigned int       n_rows,
              const unsigned int       n_columns,
              const OtherNumber &      alpha,
-             const unsigned int       fixed_column)
+             const unsigned int       fixed_column_or_row)
 {
-  AssertIndexRange(fixed_column, src.size(1));
-  AssertDimension(src.size(0), n_rows * n_columns);
+  AssertIndexRange(fixed_column_or_row, transpose_src ? src.size(0) : src.size(1));
+  AssertDimension(transpose_src ? src.size(1) : src.size(0), n_rows * n_columns);
   Table<2, Number> matrix(n_rows, n_columns);
   for(auto i = 0U; i < n_rows; ++i)
     for(auto j = 0U; j < n_columns; ++j)
       if(do_scaling)
       {
-        matrix(i, j) = alpha * src(i + j * n_rows, fixed_column);
+        matrix(i, j) = alpha * (transpose_src ? src(fixed_column_or_row, i + j * n_rows) :
+                                                src(i + j * n_rows, fixed_column_or_row));
       }
       else
       {
         (void)alpha;
-        matrix(i, j) = src(i + j * n_rows, fixed_column);
+        matrix(i, j) = (transpose_src ? src(fixed_column_or_row, i + j * n_rows) :
+                                        src(i + j * n_rows, fixed_column_or_row));
       }
   return matrix;
-}
-
-
-
-/**
- * Folds the column vector @p src into a matrix with size according to @p n_rows
- * and @p n_columns and returns the matrix. For safety the table @p src must not
- * have more than one column and, obviously, the product of @p n_rows and @p
- * n_columns must equal the length of the column vector @p src. Note that
- * folding is the inverse operation of vectorization vect().
- */
-template<typename Number, typename OtherNumber = Number>
-Table<2, Number>
-folding(const Table<2, Number> & src, const unsigned int n_rows, const unsigned int n_columns)
-{
-  AssertDimension(src.size(1), 1U);
-  return folding_impl<Number, false, OtherNumber>(src, n_rows, n_columns, 1., 0U);
 }
 
 
@@ -183,7 +168,55 @@ sfolding_impl(const Table<2, Number> & src,
               const OtherNumber &      alpha,
               const unsigned int       fixed_column)
 {
-  return folding_impl<Number, true, OtherNumber>(src, n_rows, n_columns, alpha, fixed_column);
+  return folding_impl<Number, OtherNumber, true, false>(
+    src, n_rows, n_columns, alpha, fixed_column);
+}
+
+
+
+template<typename Number, typename OtherNumber>
+Table<2, Number>
+sfoldingT_impl(const Table<2, Number> & src,
+               const unsigned int       n_rows,
+               const unsigned int       n_columns,
+               const OtherNumber &      alpha,
+               const unsigned int       fixed_row)
+{
+  return folding_impl<Number, OtherNumber, true, true>(src, n_rows, n_columns, alpha, fixed_row);
+}
+
+
+
+/**
+ * Folds the column vector @p src into a matrix with size according to @p n_rows
+ * and @p n_columns and returns the matrix. For safety the table @p src must not
+ * have more than one column and, obviously, the product of @p n_rows and @p
+ * n_columns must equal the length of @p src. Note that this is the inverse
+ * operation of vectorization vect().
+ */
+template<typename Number, typename OtherNumber = Number>
+Table<2, Number>
+folding(const Table<2, Number> & src, const unsigned int n_rows, const unsigned int n_columns)
+{
+  AssertDimension(src.size(1), 1U);
+  return folding_impl<Number, OtherNumber, false, false>(src, n_rows, n_columns, 1., 0U);
+}
+
+
+
+/**
+ * Folds the row vector @p src into a matrix with size according to @p n_rows
+ * and @p n_columns and returns the matrix. For safety the table @p src must not
+ * have more than one row and, obviously, the product of @p n_rows and @p
+ * n_columns must equal the length of @p src. Note that this is the inverse
+ * operation of vectorization vectT().
+ */
+template<typename Number, typename OtherNumber = Number>
+Table<2, Number>
+foldingT(const Table<2, Number> & src, const unsigned int n_rows, const unsigned int n_columns)
+{
+  AssertDimension(src.size(1), 1U);
+  return folding_impl<Number, OtherNumber, false, true>(src, n_rows, n_columns, 1., 0U);
 }
 
 
