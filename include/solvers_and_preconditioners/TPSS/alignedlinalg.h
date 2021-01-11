@@ -833,4 +833,54 @@ pseudo_inverse(const Table<2, Number> matrix)
 
 
 
+// Calculate the unfolding matrix in some direction of a third order tensor with polyadic rank one,
+// that is a tensor given as the polyadic product of three vectors
+template<typename Number>
+Table<2, Number>
+unfold_rank1(std::array<AlignedVector<Number>, 3> polyadic_factors, std::size_t direction)
+{
+  AlignedVector<Number> first;
+  AlignedVector<Number> second;
+  AlignedVector<Number> third;
+  if(direction == 0)
+  {
+    first  = polyadic_factors[0];
+    second = polyadic_factors[2];
+    third  = polyadic_factors[1];
+  }
+  if(direction == 1)
+  {
+    first  = polyadic_factors[1];
+    second = polyadic_factors[2];
+    third  = polyadic_factors[0];
+  }
+  if(direction == 2)
+  {
+    first  = polyadic_factors[2];
+    second = polyadic_factors[1];
+    third  = polyadic_factors[0];
+  }
+  Table<2, Number> ret(first.size(), second.size() * third.size());
+  for(std::size_t i = 0; i < first.size(); i++)
+    for(std::size_t j = 0; j < second.size(); j++)
+      for(std::size_t k = 0; k < third.size(); k++)
+        ret(i, j * third.size() + k) = first[i] * second[j] * third[k];
+  return ret;
+}
+// Calculate the unfolding matrix in some direction of a third order tensor with higher polyadic
+// rank, that is a tensor given as the sum of polyadic products of three vectors, here each polyadic
+// product is given as one entry of the vector polyadic_factors
+template<typename Number>
+Table<2, Number>
+unfold_rankk(std::vector<std::array<AlignedVector<Number>, 3>> polyadic_factors,
+             std::size_t                                       direction)
+{
+  Table<2, Number> ret = unfold_rank1(polyadic_factors[0], direction);
+  for(std::size_t i = 1; i < polyadic_factors.size(); i++)
+    ret = matrix_addition(ret, unfold_rank1(polyadic_factors[i], direction));
+  return ret;
+}
+
+
+
 #endif

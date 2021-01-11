@@ -39,7 +39,6 @@ set (src_files
   tensors.cc
   tensor_product_matrix.cc
   kroneckersvd.cc
-  kroneckersvd_new.cc
   block_matrix_base.cc
   )
 
