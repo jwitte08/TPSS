@@ -10,6 +10,7 @@
 
 #include <deal.II/lac/lapack_full_matrix.h>
 
+#include "alignedlinalg.h"
 #include "generic_functionalities.h"
 #include "tensors.h"
 #include "vectorization.h"
@@ -18,6 +19,13 @@ using namespace dealii;
 
 
 
+/**
+ * A wrapper class representing an inverse matrix based on dealii::Table type,
+ * thus allowing vectorized arithmetic type @p Number.
+ *
+ * Internally, each lane is inverted by means of LAPACKFullMatrix's inverse
+ * singular value decomposition.
+ */
 template<typename Number>
 struct InverseTable
 {
@@ -120,6 +128,12 @@ struct InverseTable
 
 
 
+/**
+ * A matrix wrapper class around a dealii::Table class providing a basic feature
+ * set one expects from a matrix. In particular, this class enables vectorized
+ * arithmetic type @p Number in contrast to dealii::FullMatrix or
+ * dealii::LAPACKFullMatrix.
+ */
 template<typename Number>
 class MatrixAsTable
 {
@@ -132,26 +146,47 @@ public:
   unsigned int
   m() const
   {
-    return matrix.size(0);
+    return this->matrix.size(0);
   }
 
   unsigned int
   n() const
   {
-    return matrix.size(1);
+    return this->matrix.size(1);
   }
 
-  template<bool add>
+  // template<bool add>
+  // void
+  // vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  // {
+  //   AssertDimension(dst_view.size(), m());
+  //   AssertDimension(src_view.size(), n());
+  //   for(auto i = 0U; i < m(); ++i)
+  //   {
+  //     Number value(0.);
+  //     for(auto j = 0U; j < n(); ++j)
+  //       value += matrix(i, j) * src_view[j];
+  //     if(add)
+  //       dst_view[i] += value;
+  //     else
+  //       dst_view[i] = value;
+  //   }
+  // }
+
+  template<bool add, bool transpose>
   void
   vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    AssertDimension(dst_view.size(), m());
-    AssertDimension(src_view.size(), n());
-    for(auto i = 0U; i < m(); ++i)
+    const unsigned int m = transpose ? this->n() : this->m();
+    const unsigned int n = transpose ? this->m() : this->n();
+    AssertDimension(dst_view.size(), m);
+    AssertDimension(src_view.size(), n);
+
+    for(auto i = 0U; i < m; ++i)
     {
       Number value(0.);
-      for(auto j = 0U; j < n(); ++j)
-        value += matrix(i, j) * src_view[j];
+      for(auto j = 0U; j < n; ++j)
+        value += matrix(transpose ? j : i, transpose ? i : j) * src_view[j];
       if(add)
         dst_view[i] += value;
       else
@@ -162,13 +197,71 @@ public:
   void
   vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    vmult_impl<false>(dst_view, src_view);
+    vmult_impl<false, /*transpose*/ false>(dst_view, src_view);
   }
 
   void
   vmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    vmult_impl<true>(dst_view, src_view);
+    vmult_impl<true, /*transpose*/ false>(dst_view, src_view);
+  }
+
+  void
+  vmult_add(AlignedVector<Number> & dst, const AlignedVector<Number> & src) const
+  {
+    const ArrayView<Number>       dst_view(dst.begin(), dst.size());
+    const ArrayView<const Number> src_view(src.begin(), src.size());
+    vmult_add(dst_view, src_view);
+  }
+
+  void
+  Tvmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    vmult_impl<false, /*transpose*/ true>(dst_view, src_view);
+  }
+
+  void
+  Tvmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    vmult_impl<true, /*transpose*/ true>(dst_view, src_view);
+  }
+
+  void
+  Tvmult_add(AlignedVector<Number> & dst, const AlignedVector<Number> & src) const
+  {
+    const ArrayView<Number>       dst_view(dst.begin(), dst.size());
+    const ArrayView<const Number> src_view(src.begin(), src.size());
+    Tvmult_add(dst_view, src_view);
+  }
+
+  /**
+   * TODO...
+   */
+  void
+  shuffle(const std::array<std::size_t, 2> & size_of_blockmatrix,
+          const std::array<std::size_t, 2> & size_of_blocks)
+  {
+    const auto & [m_of_blocks, n_of_blocks] = size_of_blocks;
+    const auto & [m, n]                     = size_of_blockmatrix;
+
+    AssertDimension(m * m_of_blocks, this->m());
+    AssertDimension(n * n_of_blocks, this->n());
+
+    Table<2, Number> shuffled_matrix(m * n, m_of_blocks * n_of_blocks);
+    for(auto i = 0U; i < m; ++i)
+      for(auto j = 0U; j < n; ++j)
+      {
+        const auto fixed_row = i + j * m;
+
+        LinAlg::vect_of_block_impl<Number, /*transpose*/ true>(
+          shuffled_matrix,
+          fixed_row,
+          this->matrix,
+          /*range of rows*/ {i * m_of_blocks, (i + 1) * m_of_blocks},
+          /*range of columns*/ {j * n_of_blocks, (j + 1) * n_of_blocks});
+      }
+
+    this->matrix = std::move(shuffled_matrix);
   }
 
   /**
