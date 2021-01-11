@@ -71,7 +71,7 @@ check_kronecker_svd(const Tensors::TensorProductMatrix<2, Number> & matrix,
     const auto fullksvd =
       table_to_fullmatrix(Tensors::TensorProductMatrix<2, Number>(ksvd).as_table(), lane);
 
-    tester << "lane: " << lane << " | lanczos_iterations: " << lanczos_iterations << std::endl;
+    // tester << "lane: " << lane << " | lanczos_iterations: " << lanczos_iterations << std::endl;
     tester.compare_matrix(fullksvd, fullmatrix);
   }
 }
@@ -133,6 +133,113 @@ test_kronecker_svd()
                             rank1_tensors.size() + 1);
       else
         check_kronecker_svd(Tensors::TensorProductMatrix<2, Number>(rank1_tensors), ksvd);
+    };
+
+    const auto & [m1, m0] = rows;
+    const auto & [n1, n0] = columns;
+
+    const auto Id0 = Util::make_identity_matrix<Number>(m0, n0);
+    const auto Id1 = Util::make_identity_matrix<Number>(m1, n1);
+    const auto A0  = Util::make_random_matrix<Number>(m0, n0);
+    const auto A1  = Util::make_random_matrix<Number>(m1, n1);
+    const auto B0  = Util::make_random_matrix<Number>(m0, n0);
+    const auto B1  = Util::make_random_matrix<Number>(m1, n1);
+    const auto C0  = Util::make_random_matrix<Number>(m0, n0);
+    const auto C1  = Util::make_random_matrix<Number>(m1, n1);
+
+    {
+      std::vector<std::array<Table<2, Number>, 2>> rank1_tensors{{Id1, Id0}};
+      check_kronecker_svd_impl(rank1_tensors, 1U);
+    }
+
+    {
+      std::vector<std::array<Table<2, Number>, 2>> rank1_tensors{{Id1, Id0}, {Id1, Id0}};
+      check_kronecker_svd_impl(rank1_tensors, 1U);
+    }
+
+    {
+      std::vector<std::array<Table<2, Number>, 2>> rank1_tensors{{Id1, Id0},
+                                                                 {Id1, Id0},
+                                                                 {Id1, Id0}};
+      check_kronecker_svd_impl(rank1_tensors, 1U);
+    }
+
+    {
+      std::vector<std::array<Table<2, Number>, 2>> rank1_tensors{{A1, A0}, {A1, A0}, {A1, A0}};
+      check_kronecker_svd_impl(rank1_tensors, 1U);
+    }
+
+    {
+      std::vector<std::array<Table<2, Number>, 2>> rank1_tensors{{B1, B0}, {A1, A0}};
+      check_kronecker_svd_impl(rank1_tensors);
+    }
+
+    {
+      std::vector<std::array<Table<2, Number>, 2>> rank1_tensors{{C1, C0},
+                                                                 {B1, B0},
+                                                                 {A1, A0},
+                                                                 {Id1, Id0}};
+      check_kronecker_svd_impl(rank1_tensors);
+    }
+  };
+
+  if(test_large_sizes)
+  {
+    // test_impl({14U, 11U}, {13U, 7U});
+
+    test_impl({24U, 21U}, {23U, 27U});
+  }
+
+  else
+  {
+    test_impl({3U, 4U}, {3U, 4U});
+
+    test_impl({7U, 7U}, {11U, 11U});
+
+    test_impl({2U, 4U}, {5U, 3U});
+
+    test_impl({4U, 7U}, {9U, 8U});
+  }
+}
+
+
+
+template<typename Number,
+         bool do_zero_out_first_lane          = false,
+         bool test_minimal_lanczos_iterations = false,
+         bool test_large_sizes                = false>
+void
+test_kronecker_svd_full()
+{
+  const auto test_impl = [&](std::array<unsigned int, 2> rows,
+                             std::array<unsigned int, 2> columns) {
+    const auto zero_out_first_lane = [&](auto & rank1_tensors) {
+      for(auto & tensor : rank1_tensors)
+        for(auto & mat : tensor)
+          for(auto i = 0U; i < mat.size(0); ++i)
+            for(auto j = 0U; j < mat.size(1); ++j)
+              scalar_value(mat(i, j), /*lane*/ 0U) = 0.;
+    };
+
+    const auto check_kronecker_svd_impl = [&](auto &            rank1_tensors,
+                                              const std::size_t ksvd_rank_in = -1) {
+      if(do_zero_out_first_lane)
+        zero_out_first_lane(rank1_tensors);
+
+      const std::size_t ksvd_rank =
+        ksvd_rank_in == static_cast<std::size_t>(-1) ? rank1_tensors.size() : ksvd_rank_in;
+
+      std::vector<std::array<Table<2, Number>, 2>> ksvd =
+        Tensors::make_zero_rank1_tensors<2, Number>(ksvd_rank, rows, columns);
+
+
+      if(test_minimal_lanczos_iterations)
+        check_kronecker_svd(Tensors::TensorProductMatrix<2, Number>(rank1_tensors).as_table(),
+                            ksvd,
+                            rank1_tensors.size() + 1);
+      else
+        check_kronecker_svd(Tensors::TensorProductMatrix<2, Number>(rank1_tensors).as_table(),
+                            ksvd);
     };
 
     const auto & [m1, m0] = rows;
@@ -515,19 +622,14 @@ test_rank_one_kronecker_svd()
 
 
 
-// TEST(Diagonal_Double, compute_ksvd_diagonal)
-// {
-//   test_diagonal_kronecker_svd();
-// }
-
-// TEST(Diagonal_VectorizedArrayDouble, compute_ksvd_diagonal)
-// {
-//   test_diagonal_vectorized_kronecker_svd();
-// }
-
 TEST(Anisotropic_Double, compute_ksvd_tensor)
 {
   test_kronecker_svd<double>();
+}
+
+TEST(Anisotropic_VectorizedArrayDouble, compute_ksvd_tensor)
+{
+  test_kronecker_svd<VectorizedArray<double>>();
 }
 
 TEST(AnisotropicZeroLane_VectorizedArrayDouble, compute_ksvd_tensor)
@@ -540,14 +642,14 @@ TEST(AnisotropicMinimalLanczosIterations_Double, compute_ksvd_tensor)
   test_kronecker_svd<double, false, /*test_minimal_lanczos_iteratios*/ true>();
 }
 
-TEST(LargeAnisotropicMinimalLanczosIterations_Double, compute_ksvd_tensor)
-{
-  test_kronecker_svd<double, false, true, true>();
-}
-
 TEST(AnisotropicMinimalLanczosIterationsVectorizedArrayDouble, compute_ksvd_tensor)
 {
   test_kronecker_svd<VectorizedArray<double>, false, /*test_minimal_lanczos_iteratios*/ true>();
+}
+
+TEST(LargeAnisotropicMinimalLanczosIterations_Double, compute_ksvd_tensor)
+{
+  test_kronecker_svd<double, false, true, true>();
 }
 
 TEST(LargeAnisotropicMinimalLanczosIterationsVectorizedArrayDouble, compute_ksvd_tensor)
@@ -565,15 +667,49 @@ TEST(RankTwo_Double, compute_ksvd_tensor)
   test_rank_two_kronecker_svd();
 }
 
+TEST(RankTwo_VectorizedArrayDouble, compute_ksvd_tensor)
+{
+  test_rank_two_vectorized_kronecker_svd();
+}
+
+
+
 TEST(RankTwo_Double, compute_ksvd_full)
 {
   test_rank_two_kronecker_svd_full();
 }
 
-TEST(RankTwo_VectorizedArrayDouble, compute_ksvd_tensor)
+TEST(Anisotropic_Double, compute_ksvd_full)
 {
-  test_rank_two_vectorized_kronecker_svd();
+  test_kronecker_svd_full<double>();
 }
+
+TEST(Anisotropic_VectorizedArrayDouble, compute_ksvd_full)
+{
+  test_kronecker_svd_full<VectorizedArray<double>>();
+}
+
+TEST(AnisotropicZeroLane_VectorizedArrayDouble, compute_ksvd_full)
+{
+  test_kronecker_svd_full<VectorizedArray<double>, /*zero_out_first_lane*/ true>();
+}
+
+TEST(AnisotropicMinimalLanczosIterations_Double, compute_ksvd_full)
+{
+  test_kronecker_svd_full<double, false, /*test_minimal_lanczos_iteratios*/ true>();
+}
+
+
+
+// TEST(Diagonal_Double, compute_ksvd_diagonal)
+// {
+//   test_diagonal_kronecker_svd();
+// }
+
+// TEST(Diagonal_VectorizedArrayDouble, compute_ksvd_diagonal)
+// {
+//   test_diagonal_vectorized_kronecker_svd();
+// }
 
 TEST(RandomDiagonal_VectorizedArrayDouble, compute_ksvd_diagonal)
 {
