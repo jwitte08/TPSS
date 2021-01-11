@@ -8,6 +8,9 @@
 #ifndef MATRIX_HELPER_H_
 #define MATRIX_HELPER_H_
 
+#include <deal.II/base/aligned_vector.h>
+
+#include <deal.II/lac/diagonal_matrix.h>
 #include <deal.II/lac/lapack_full_matrix.h>
 
 #include "alignedlinalg.h"
@@ -154,24 +157,6 @@ public:
   {
     return this->matrix.size(1);
   }
-
-  // template<bool add>
-  // void
-  // vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
-  // {
-  //   AssertDimension(dst_view.size(), m());
-  //   AssertDimension(src_view.size(), n());
-  //   for(auto i = 0U; i < m(); ++i)
-  //   {
-  //     Number value(0.);
-  //     for(auto j = 0U; j < n(); ++j)
-  //       value += matrix(i, j) * src_view[j];
-  //     if(add)
-  //       dst_view[i] += value;
-  //     else
-  //       dst_view[i] = value;
-  //   }
-  // }
 
   template<bool add, bool transpose>
   void
@@ -382,6 +367,204 @@ public:
 private:
   Table<2, Number>                      matrix;
   std::shared_ptr<InverseTable<Number>> inverse_matrix;
+};
+
+
+
+/**
+ * A matrix wrapper class around a dealii::Table class providing a basic feature
+ * set one expects from a matrix. In particular, this class enables vectorized
+ * arithmetic type @p Number in contrast to dealii::FullMatrix or
+ * dealii::LAPACKFullMatrix.
+ */
+template<typename Number>
+class DiagonalMatrixWrap
+{
+public:
+  using value_type = Number;
+
+  static constexpr unsigned int macro_size = get_macro_size<Number>();
+
+  DiagonalMatrixWrap()
+  {
+    reinit(AlignedVector<Number>());
+  }
+
+  DiagonalMatrixWrap(const AlignedVector<Number> &    diagonal_in,
+                     const std::array<std::size_t, 2> size_in = {static_cast<std::size_t>(-1),
+                                                                 static_cast<std::size_t>(-1)})
+  {
+    reinit(diagonal_in, size_in);
+  }
+
+  void
+  reinit(const AlignedVector<Number> &    diagonal_in,
+         const std::array<std::size_t, 2> size_in = {static_cast<std::size_t>(-1),
+                                                     static_cast<std::size_t>(-1)})
+  {
+    const auto [m_in, n_in] = size_in;
+    const bool treat_as_square =
+      m_in == static_cast<std::size_t>(-1) && n_in == static_cast<std::size_t>(-1);
+    size = treat_as_square ? std::array<std::size_t, 2>{diagonal_in.size(), diagonal_in.size()} :
+                             size_in;
+
+    const auto [m, n] = size;
+    Assert(diagonal_in.size() == m || diagonal_in.size() == n, ExcMessage("Mismatching size."));
+    AssertIndexRange(diagonal_in.size(), m + 1);
+    AssertIndexRange(diagonal_in.size(), n + 1);
+    diagonal = diagonal_in;
+
+    size_of_blockmatrix = {0U, 0U};
+    size_of_blocks      = {0U, 0U};
+    is_shuffled         = false;
+  }
+
+  void
+  clear()
+  {
+    size = {0U, 0U};
+    diagonal.clear();
+    size_of_blockmatrix = {0U, 0U};
+    size_of_blocks      = {0U, 0U};
+    is_shuffled         = false;
+  }
+
+  unsigned int
+  m() const
+  {
+    return this->size[0];
+  }
+
+  unsigned int
+  n() const
+  {
+    return this->size[1];
+  }
+
+  template<bool add, bool transpose>
+  void
+  vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    const unsigned int m = transpose ? this->n() : this->m();
+    const unsigned int n = transpose ? this->m() : this->n();
+    AssertDimension(dst_view.size(), m);
+    AssertDimension(src_view.size(), n);
+
+    /// clear dst if not adding into it
+    if(!add)
+      std::fill(dst_view.begin(), dst_view.end(), static_cast<Number>(0.));
+
+    if(is_shuffled)
+    {
+      const auto & [m, n]   = size_of_blocks;
+      const auto & [mm, nn] = size_of_blockmatrix;
+
+      /// assuming squared blocks TODO rectangular blocks...
+      AssertDimension(m, n);
+      /// assuming squared blockmatrix TODO rectangular...
+      AssertDimension(mm, nn);
+
+      for(auto ii = 0U; ii < mm; ++ii)
+        for(auto i = 0U; i < m; ++i)
+          dst_view[transpose ? i + i * m : ii + ii * mm] +=
+            diagonal[i + ii * m] * src_view[transpose ? ii + ii * mm : i + i * m];
+    }
+
+    else
+    {
+      /// if the matrix isn't squared the diagonal has either less elements than
+      /// rows or than columns, thus, the loop is bound by diagonal.size()
+      for(auto i = 0U; i < diagonal.size(); ++i)
+      {
+        if(add)
+          dst_view[i] += diagonal[i] * src_view[i];
+        else
+          dst_view[i] = diagonal[i] * src_view[i];
+      }
+    }
+  }
+
+  void
+  vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    vmult_impl<false, /*transpose*/ false>(dst_view, src_view);
+  }
+
+  void
+  vmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    vmult_impl<true, /*transpose*/ false>(dst_view, src_view);
+  }
+
+  void
+  vmult_add(AlignedVector<Number> & dst, const AlignedVector<Number> & src) const
+  {
+    const ArrayView<Number>       dst_view(dst.begin(), dst.size());
+    const ArrayView<const Number> src_view(src.begin(), src.size());
+    vmult_add(dst_view, src_view);
+  }
+
+  void
+  Tvmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    vmult_impl<false, /*transpose*/ true>(dst_view, src_view);
+  }
+
+  void
+  Tvmult_add(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
+  {
+    vmult_impl<true, /*transpose*/ true>(dst_view, src_view);
+  }
+
+  void
+  Tvmult_add(AlignedVector<Number> & dst, const AlignedVector<Number> & src) const
+  {
+    const ArrayView<Number>       dst_view(dst.begin(), dst.size());
+    const ArrayView<const Number> src_view(src.begin(), src.size());
+    Tvmult_add(dst_view, src_view);
+  }
+
+  /**
+   * TODO...
+   */
+  void
+  shuffle(const std::array<std::size_t, 2> & size_of_blockmatrix_in,
+          const std::array<std::size_t, 2> & size_of_blocks_in)
+  {
+    const auto & [m_of_blocks, n_of_blocks] = size_of_blocks_in;
+    const auto & [m, n]                     = size_of_blockmatrix_in;
+
+    AssertDimension(m * m_of_blocks, this->m());
+    AssertDimension(n * n_of_blocks, this->n());
+
+    size                = {m * n, m_of_blocks * n_of_blocks};
+    size_of_blockmatrix = size_of_blockmatrix_in;
+    size_of_blocks      = size_of_blocks_in;
+    is_shuffled         = true;
+  }
+
+  const AlignedVector<Number> &
+  get_diagonal() const
+  {
+    return diagonal;
+  }
+
+  /**
+   * Return the current diagonal matrix as table. Note that after a call to
+   * shuffle() this matrix is no longer in diagonal form.
+   */
+  Table<2, Number>
+  as_table() const
+  {
+    return Tensors::matrix_to_table(*this);
+  }
+
+private:
+  std::array<std::size_t, 2> size;
+  AlignedVector<Number>      diagonal;
+  std::array<std::size_t, 2> size_of_blockmatrix;
+  std::array<std::size_t, 2> size_of_blocks;
+  bool                       is_shuffled;
 };
 
 
