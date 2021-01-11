@@ -86,19 +86,48 @@ inverse_scaling_if(const AlignedVector<Number> & vec, const Number & scalar)
 
 
 template<typename Number, bool transpose>
+void
+vect_of_block_impl(Table<2, Number> &                 dst,
+                   const std::size_t                  fixed_col_or_row,
+                   const Table<2, Number> &           src,
+                   const std::array<std::size_t, 2> & row_range,
+                   const std::array<std::size_t, 2> & column_range)
+{
+  const auto & [row_begin, row_end] = row_range;
+  Assert(row_begin < row_end, ExcMessage("Empty range of rows."));
+  AssertIndexRange(row_end, src.size(0) + 1);
+
+  const auto & [column_begin, column_end] = column_range;
+  Assert(column_begin < column_end, ExcMessage("Empty range of columns."));
+  AssertIndexRange(column_end, src.size(1) + 1);
+
+  const auto m = row_end - row_begin;
+  const auto n = column_end - column_begin;
+
+  AssertIndexRange(fixed_col_or_row, (transpose ? dst.size(0) : dst.size(1)) + 1U);
+  AssertDimension(m * n, (transpose ? dst.size(1) : dst.size(0)));
+
+  for(std::size_t i = 0; i < m; ++i)
+    for(std::size_t j = 0; j < n; ++j)
+    {
+      if(transpose)
+        dst(fixed_col_or_row, i + j * m) = src(i + row_begin, j + column_begin);
+      else
+        dst(i + j * m, fixed_col_or_row) = src(i + row_begin, j + column_begin);
+    }
+}
+
+
+
+template<typename Number, bool transpose>
 Table<2, Number>
 vect_impl(const Table<2, Number> & M)
 {
-  const unsigned int m = M.size(0);
-  const unsigned int n = M.size(1);
-  Table<2, Number>   vect(transpose ? 1U : m * n, transpose ? m * n : 1U);
+  const std::size_t m = M.size(0);
+  const std::size_t n = M.size(1);
+  Table<2, Number>  vect(transpose ? 1U : m * n, transpose ? m * n : 1U);
 
-  for(unsigned int i = 0; i < m; ++i)
-    for(unsigned int j = 0; j < n; ++j)
-      if(transpose)
-        vect(0U, i + j * m) = M(i, j);
-      else
-        vect(i + j * m, 0U) = M(i, j);
+  vect_of_block_impl<Number, transpose>(vect, 0U, M, {0U, M.size(0)}, {0U, M.size(1)});
   return vect;
 }
 
