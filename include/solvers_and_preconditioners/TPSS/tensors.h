@@ -389,7 +389,7 @@ struct TensorHelper
  * Generates a tensor of zero matrices with order @p order. The number of rows and
  * columns are defined by @p rows and @p columns for each tensor direction.
  */
-template<int order, typename Number, typename IntType>
+template<int order, typename Number, typename IntType = std::size_t>
 std::array<Table<2, Number>, order>
 make_zero_tensor(const std::array<IntType, order> rows, const std::array<IntType, order> columns)
 {
@@ -406,7 +406,7 @@ make_zero_tensor(const std::array<IntType, order> rows, const std::array<IntType
  * order. Matrices are sized according to @p rows and @p columns (see
  * make_zero_tensor() for more details).
  */
-template<int order, typename Number, typename IntType>
+template<int order, typename Number, typename IntType = std::size_t>
 std::vector<std::array<Table<2, Number>, order>>
 make_zero_rank1_tensors(const std::size_t                rank,
                         const std::array<IntType, order> rows,

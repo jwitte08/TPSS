@@ -409,6 +409,7 @@ public:
                              size_in;
 
     const auto [m, n] = size;
+    (void)m, (void)n;
     Assert(diagonal_in.size() == m || diagonal_in.size() == n, ExcMessage("Mismatching size."));
     AssertIndexRange(diagonal_in.size(), m + 1);
     AssertIndexRange(diagonal_in.size(), n + 1);
@@ -445,10 +446,8 @@ public:
   void
   vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const
   {
-    const unsigned int m = transpose ? this->n() : this->m();
-    const unsigned int n = transpose ? this->m() : this->n();
-    AssertDimension(dst_view.size(), m);
-    AssertDimension(src_view.size(), n);
+    AssertDimension(dst_view.size(), transpose ? this->n() : this->m());
+    AssertDimension(src_view.size(), transpose ? this->m() : this->n());
 
     /// clear dst if not adding into it
     if(!add)

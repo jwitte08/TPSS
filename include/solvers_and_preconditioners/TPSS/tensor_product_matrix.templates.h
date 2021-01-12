@@ -350,6 +350,7 @@ TensorProductMatrix<order, Number, n_rows_1d>::reinit(
       }
 
     Base::reinit(expanded_tensors);
+    AssertDimension(this->elementary_tensors.size(), order);
 
     tensor_type eigenvector_tensor;
     internal::ComputeGeneralizedEigendecomposition<order, Number, n_rows_1d>{}(
@@ -522,6 +523,18 @@ TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvectors() const
   Assert(state == State::ranktwo || state == State::separable,
          ExcMessage("Functionality isn't supported in current state."));
   return Tensors::matrix_to_table(eigenvectors);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+const typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type &
+TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvector_tensor() const
+{
+  Assert(state == State::ranktwo || state == State::separable,
+         ExcMessage("Functionality isn't supported in current state."));
+  AssertDimension(this->eigenvectors.get_elementary_tensors().size(), 1U);
+  return this->eigenvectors.get_elementary_tensors().front();
 }
 
 

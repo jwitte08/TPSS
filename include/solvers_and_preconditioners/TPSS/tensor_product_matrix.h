@@ -531,6 +531,9 @@ public:
   Table<2, Number>
   get_eigenvectors() const;
 
+  const tensor_type &
+  get_eigenvector_tensor() const;
+
   /**
    * Returns the current matrix state.
    */
@@ -588,7 +591,7 @@ private:
    * separable : TensorProductMatrixSymmetricSum
    * ranktwo   : TODO...
    */
-  State state = State::invalid;
+  State state;
 
   /**
    * In case of State::ranktwo defines which one-dimensional matrix is
@@ -794,6 +797,14 @@ TensorProductMatrix<order, Number, n_rows_1d>::n_max_rank() const
   }
 
   return numbers::invalid_unsigned_int;
+}
+
+
+template<int order, typename Number, int n_rows_1d>
+inline typename TensorProductMatrix<order, Number, n_rows_1d>::State
+TensorProductMatrix<order, Number, n_rows_1d>::get_state() const
+{
+  return this->state;
 }
 
 } // namespace Tensors

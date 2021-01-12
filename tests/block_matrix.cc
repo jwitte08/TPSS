@@ -411,7 +411,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastEigenvalueKSVD)
   }
 
   std::vector<std::array<Table<2, value_type>, dim>> eigenvectors(1), eigenvectorsT(1);
-  eigenvectors.front() = AA.get_eigenvectors();
+  eigenvectors.front() = AA.get_eigenvector_tensor();
   std::transform(eigenvectors.front().cbegin(),
                  eigenvectors.front().cend(),
                  eigenvectorsT.front().begin(),

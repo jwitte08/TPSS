@@ -85,7 +85,7 @@ public:
 
       /// compute elementary tensors representing approximation of -A^{-1}
       std::vector<std::array<Table<2, Number>, order>> eigenvectors;
-      eigenvectors.emplace_back(A_in.get_eigenvectors());
+      eigenvectors.emplace_back(A_in.get_eigenvector_tensor());
       scratch = Tensors::productT<order, Number>(ksvd_eigenvalues, eigenvectors);
       const auto & minus_eigenvectors = Tensors::scale<order, Number>(-1., eigenvectors);
       scratch        = Tensors::product<order, Number>(minus_eigenvectors, scratch);
@@ -142,11 +142,11 @@ public:
 
     /// Kronecker decomposition of generalized eigenvectors(D) and mass(D)
     std::vector<std::array<Table<2, Number>, order>> eigenvectors;
-    eigenvectors.emplace_back(D_in.get_eigenvectors());
+    eigenvectors.emplace_back(D_in.get_eigenvector_tensor());
     Q = std::make_shared<TensorProductMatrix<order, Number, n_rows_1d>>(eigenvectors);
-    std::vector<std::array<Table<2, Number>, order>> mass;
-    mass.emplace_back(D_in.get_mass());
-    M = std::make_shared<TensorProductMatrix<order, Number, n_rows_1d>>(mass);
+    // std::vector<std::array<Table<2, Number>, order>> mass;
+    // mass.emplace_back(D_in.get_mass());
+    // M = std::make_shared<TensorProductMatrix<order, Number, n_rows_1d>>(mass);
 
     /// Z = (I - L^{-1/2}Q^TCA^{-1}BQL^{-1/2})
     scratch = Tensors::product<order, Number>(minus_C_Ainv_B, eigenvectors);
