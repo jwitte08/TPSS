@@ -519,7 +519,7 @@ public:
         eval_test.patch_action(eval_ansatz, void_op, nitsche_op, nitsche_op);
 
       /// (mu *  G(1)^T + N(1)) x G(0)   NOTE: mu is included in Nitsche N(1)
-      const auto & mu_derivativeT = Tensors::scale(equation_data.mu, tensor_derivative[1]);
+      const auto & mu_derivativeT = LinAlg::scaling(equation_data.mu, tensor_derivative[1]);
       elementary_tensors.emplace_back(
         std::array<VectorizedMatrixType, dim>{tensor_derivative[0], mu_derivativeT});
       elementary_tensors.emplace_back(
@@ -553,7 +553,7 @@ public:
         eval_test.patch_action(eval_ansatz, void_op, nitsche_op, nitsche_op);
 
       /// (lambda * G(1) + N(1)) x G(0)^T    NOTE: lambda is included in Nitsche N(1)
-      const auto & lambda_derivative = Tensors::scale(equation_data.lambda, tensor_derivative[1]);
+      const auto & lambda_derivative = LinAlg::scaling(equation_data.lambda, tensor_derivative[1]);
       elementary_tensors.emplace_back(
         std::array<VectorizedMatrixType, dim>{tensor_derivative[0], lambda_derivative});
       elementary_tensors.emplace_back(
@@ -580,7 +580,7 @@ public:
     AssertDimension(nitsche_graddiv_operations.size(), dim);
     const auto & sum_matrices = [](auto & A, const auto & B) {
       for(unsigned int d = 0; d < dim; ++d)
-        A[d] = Tensors::sum(A[d], B[d]);
+        A[d] = LinAlg::sum(A[d], B[d]);
     };
 
     for(unsigned int comp = 0; comp < dim; ++comp)
@@ -717,7 +717,7 @@ public:
                                         tensor.cend(),
                                         tensorT.begin(),
                                         [](const auto & matrix) {
-                                          return Tensors::transpose(matrix);
+                                          return LinAlg::transpose(matrix);
                                         });
                          return tensorT;
                        });

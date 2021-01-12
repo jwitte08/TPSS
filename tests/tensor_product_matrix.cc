@@ -146,7 +146,7 @@ using namespace dealii;
 //     FullMatrix<Number> sum_of_products(products.front().m());
 //     sum_of_products = 0.;
 //     for(const auto & mat : products)
-//       sum_of_products = Tensors::sum(sum_of_products, mat);
+//       sum_of_products = LinAlg::sum(sum_of_products, mat);
 //     return sum_of_products;
 //   }
 
@@ -885,7 +885,7 @@ check_basic_vmult(
   {
     const auto & [M0, M1, M2] = tensors.at(r);
     const auto & M2_x_M1_x_M0 = Tensors::kronecker_product(M2, Tensors::kronecker_product(M1, M0));
-    reference_matrix          = Tensors::sum(reference_matrix, M2_x_M1_x_M0);
+    reference_matrix          = LinAlg::sum(reference_matrix, M2_x_M1_x_M0);
   }
 
   Tensors::TensorProductMatrix<3, Number> tpm_basic(tensors);

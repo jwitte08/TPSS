@@ -302,7 +302,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastBlockDiagonal)
     for(auto & matrix : tensor)
       fill_matrix_with_random_values(matrix, m, m);
     std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [m](const auto & A) {
-      auto B = Tensors::sum(A, Tensors::transpose(A));
+      auto B = LinAlg::sum(A, LinAlg::transpose(A));
       for(auto i = 0U; i < m; ++i)
         B(i, i) = 10. * B(i, i);
       return B;
@@ -372,7 +372,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastEigenvalueKSVD)
     for(auto & matrix : tensor)
       fill_matrix_with_random_values(matrix, m, m);
     std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [m](const auto & A) {
-      auto B = Tensors::sum(A, Tensors::transpose(A));
+      auto B = LinAlg::sum(A, LinAlg::transpose(A));
       for(auto i = 0U; i < m; ++i)
         B(i, i) = static_cast<value_type>(m) * B(i, i);
       return B;
@@ -415,7 +415,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastEigenvalueKSVD)
   std::transform(eigenvectors.front().cbegin(),
                  eigenvectors.front().cend(),
                  eigenvectorsT.front().begin(),
-                 [](const auto & tab) { return Tensors::transpose(tab); });
+                 [](const auto & tab) { return LinAlg::transpose(tab); });
 
   /// check eigenvectors
   Tensors::TensorProductMatrix<dim, value_type> Q(eigenvectors);
@@ -495,7 +495,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, SchurComplementFastReinit)
     for(auto & matrix : tensor)
       fill_matrix_with_random_values(matrix, m, m);
     std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [m](const auto & A) {
-      auto B = Tensors::sum(A, Tensors::transpose(A));
+      auto B = LinAlg::sum(A, LinAlg::transpose(A));
       for(auto i = 0U; i < m; ++i)
         B(i, i) = static_cast<value_type>(m) * B(i, i);
       return B;
@@ -566,7 +566,7 @@ TYPED_TEST_P(FixBlockMatrixVmult, CompareSchurFastOffDiagonals)
     for(auto & matrix : tensor)
       fill_matrix_with_random_values(matrix, m, m);
     std::transform(tensor.cbegin(), tensor.cend(), tensor.begin(), [m](const auto & A) {
-      auto B = Tensors::sum(A, Tensors::transpose(A));
+      auto B = LinAlg::sum(A, LinAlg::transpose(A));
       for(auto i = 0U; i < m; ++i)
         B(i, i) = static_cast<value_type>(m) * B(i, i);
       return B;

@@ -508,7 +508,7 @@ test_rank_two_kronecker_svd_full()
   std::array<Table<2, double>, 2> kp1 = {t2, t1};
   std::array<Table<2, double>, 2> kp2 = {t4, t3};
   Table<2, double>                mat1 =
-    Tensors::sum(Tensors::kronecker_product(t1, t2), Tensors::kronecker_product(t3, t4));
+    LinAlg::sum(Tensors::kronecker_product(t1, t2), Tensors::kronecker_product(t3, t4));
 
   std::array<std::size_t, 2>                   rows{t2.size(0), t1.size(0)};
   std::array<std::size_t, 2>                   columns{t2.size(1), t1.size(1)};
@@ -959,15 +959,15 @@ test_three_dim_kronecker_cp()
   compute_kcp<double>(mat1, approx);
 
   Table<2, double> approximate_matrix =
-    Tensors::sum(Tensors::kronecker_product(approx[0][0],
-                                            Tensors::kronecker_product(approx[0][1], approx[0][2])),
-                 Tensors::kronecker_product(
-                   approx[1][0], Tensors::kronecker_product(approx[1][1], approx[1][2])));
+    LinAlg::sum(Tensors::kronecker_product(approx[0][0],
+                                           Tensors::kronecker_product(approx[0][1], approx[0][2])),
+                Tensors::kronecker_product(approx[1][0],
+                                           Tensors::kronecker_product(approx[1][1], approx[1][2])));
 
   Table<2, double> original_matrix =
-    Tensors::sum(Tensors::kronecker_product(t1, Tensors::kronecker_product(t2, t2)),
-                 Tensors::sum(Tensors::kronecker_product(t3, Tensors::kronecker_product(t4, t4)),
-                              Tensors::kronecker_product(t5, Tensors::kronecker_product(t4, t4))));
+    LinAlg::sum(Tensors::kronecker_product(t1, Tensors::kronecker_product(t2, t2)),
+                LinAlg::sum(Tensors::kronecker_product(t3, Tensors::kronecker_product(t4, t4)),
+                            Tensors::kronecker_product(t5, Tensors::kronecker_product(t4, t4))));
 
   Tester       tester;
   const auto & fullmatrix = table_to_fullmatrix(approximate_matrix);
@@ -1025,15 +1025,15 @@ test_three_dim_kronecker_cp_vectorized()
   compute_kcp<VectorizedArray<double>>(mat1, approx);
 
   Table<2, VectorizedArray<double>> approximate_matrix =
-    Tensors::sum(Tensors::kronecker_product(approx[0][0],
-                                            Tensors::kronecker_product(approx[0][1], approx[0][2])),
-                 Tensors::kronecker_product(
-                   approx[1][0], Tensors::kronecker_product(approx[1][1], approx[1][2])));
+    LinAlg::sum(Tensors::kronecker_product(approx[0][0],
+                                           Tensors::kronecker_product(approx[0][1], approx[0][2])),
+                Tensors::kronecker_product(approx[1][0],
+                                           Tensors::kronecker_product(approx[1][1], approx[1][2])));
 
   Table<2, VectorizedArray<double>> original_matrix =
-    Tensors::sum(Tensors::kronecker_product(t1, Tensors::kronecker_product(t2, t2)),
-                 Tensors::sum(Tensors::kronecker_product(t3, Tensors::kronecker_product(t4, t4)),
-                              Tensors::kronecker_product(t5, Tensors::kronecker_product(t4, t4))));
+    LinAlg::sum(Tensors::kronecker_product(t1, Tensors::kronecker_product(t2, t2)),
+                LinAlg::sum(Tensors::kronecker_product(t3, Tensors::kronecker_product(t4, t4)),
+                            Tensors::kronecker_product(t5, Tensors::kronecker_product(t4, t4))));
 
   Tester tester;
   for(auto lane = 0U; lane < VectorizedArray<double>::size(); ++lane)

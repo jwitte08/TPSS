@@ -63,6 +63,36 @@ make_zero_rank1_tensors(const std::size_t                rank,
 
 
 /**
+ * Compute the Kronecker product of two matrices. Each input
+ * MatrixType must contain at least the operator(n,m) to acces the
+ * elements at row n and column m.
+ */
+template<typename MatrixTypeIn1, typename MatrixTypeIn2, typename MatrixTypeOut = MatrixTypeIn1>
+typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type
+kronecker_product(MatrixTypeIn1 && left_matrix, MatrixTypeIn2 && right_matrix)
+{
+  auto && matrix1 = std::forward<MatrixTypeIn1>(left_matrix);
+  auto && matrix0 = std::forward<MatrixTypeIn2>(right_matrix);
+
+  const unsigned int n_rows0 = matrix0.n_rows();
+  const unsigned int n_cols0 = matrix0.n_cols();
+  const unsigned int n_rows1 = matrix1.n_rows();
+  const unsigned int n_cols1 = matrix1.n_cols();
+  typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type matrix_out;
+  matrix_out.reinit(n_rows1 * n_rows0, n_cols1 * n_cols0);
+
+  for(unsigned int i1 = 0; i1 < n_rows1; ++i1)
+    for(unsigned int j1 = 0; j1 < n_cols1; ++j1)
+      for(unsigned int i0 = 0; i0 < n_rows0; ++i0)
+        for(unsigned int j0 = 0; j0 < n_cols0; ++j0)
+          matrix_out(i1 * n_rows0 + i0, j1 * n_cols0 + j0) = matrix1(i1, j1) * matrix0(i0, j0);
+
+  return matrix_out;
+}
+
+
+
+/**
  * Converts a matrix into a two dimensional table. MatrixType has to fulfill
  * following interface:
  *
@@ -91,6 +121,8 @@ matrix_to_table(const MatrixType & matrix)
   }
   return table;
 }
+
+
 
 /**
  * Converts a matrix into a two dimensional table. MatrixType has to fulfill
@@ -122,6 +154,8 @@ transpose_matrix_to_table(const MatrixType & matrix)
   return table;
 }
 
+
+
 /**
  * Converts a matrix into a two dimensional table. MatrixType has to fulfill
  * following interface:
@@ -149,6 +183,8 @@ lapack_matrix_to_table(const LAPACKFullMatrix<Number> & matrix)
   }
   return table;
 }
+
+
 
 /**
  * Converts the inverse of a matrix into a two dimensional table. MatrixType has
@@ -180,6 +216,12 @@ inverse_matrix_to_table(const MatrixType & matrix)
   return table;
 }
 
+
+
+/**
+ * Insert the rectangular block @p src into the matrix @p dst with lower left
+ * corner at index @p row_dst, @p col_dst.
+ */
 template<typename MatrixType1, typename MatrixType2 = MatrixType1>
 void
 insert_block(MatrixType1 &       dst,
@@ -194,105 +236,64 @@ insert_block(MatrixType1 &       dst,
       dst(row_dst + i, col_dst + j) = src(i, j);
 }
 
-/**
- * Compute the Kronecker product of two matrices. Each input
- * MatrixType must contain at least the operator(n,m) to acces the
- * elements at row n and column m.
- */
-template<typename MatrixTypeIn1, typename MatrixTypeIn2, typename MatrixTypeOut = MatrixTypeIn1>
-typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type
-kronecker_product(MatrixTypeIn1 && left_matrix, MatrixTypeIn2 && right_matrix)
+
+
+template<int order, typename Number, bool transpose1, bool transpose2>
+std::vector<std::array<Table<2, Number>, order>>
+product_impl(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
+             const std::vector<std::array<Table<2, Number>, order>> & tensors2)
 {
-  auto && matrix1 = std::forward<MatrixTypeIn1>(left_matrix);
-  auto && matrix0 = std::forward<MatrixTypeIn2>(right_matrix);
-
-  const unsigned int n_rows0 = matrix0.n_rows();
-  const unsigned int n_cols0 = matrix0.n_cols();
-  const unsigned int n_rows1 = matrix1.n_rows();
-  const unsigned int n_cols1 = matrix1.n_cols();
-  typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type matrix_out;
-  matrix_out.reinit(n_rows1 * n_rows0, n_cols1 * n_cols0);
-
-  for(unsigned int i1 = 0; i1 < n_rows1; ++i1)
-    for(unsigned int j1 = 0; j1 < n_cols1; ++j1)
-      for(unsigned int i0 = 0; i0 < n_rows0; ++i0)
-        for(unsigned int j0 = 0; j0 < n_cols0; ++j0)
-          matrix_out(i1 * n_rows0 + i0, j1 * n_cols0 + j0) = matrix1(i1, j1) * matrix0(i0, j0);
-
-  return matrix_out;
+  std::vector<std::array<Table<2, Number>, order>> prod_of_tensors(tensors1.size() *
+                                                                   tensors2.size());
+  for(auto i2 = 0U; i2 < tensors2.size(); ++i2)
+    for(auto i1 = 0U; i1 < tensors1.size(); ++i1)
+      std::transform(tensors1[i1].cbegin(),
+                     tensors1[i1].cend(),
+                     tensors2[i2].cbegin(),
+                     prod_of_tensors[i1 + tensors1.size() * i2].begin(),
+                     [](const auto & A, const auto & B) {
+                       Assert(A.n_rows() > 0, ExcMessage("Empty."));
+                       Assert(B.n_cols() > 0, ExcMessage("Empty."));
+                       auto C =
+                         LinAlg::product_impl<Number, Number, false, transpose1, transpose2>(A, B);
+                       AssertDimension(C.n_rows(), A.n_rows());
+                       AssertDimension(C.n_cols(), B.n_cols());
+                       return C;
+                     });
+  return prod_of_tensors;
 }
+
+
 
 template<int order, typename Number>
 std::vector<std::array<Table<2, Number>, order>>
 product(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
         const std::vector<std::array<Table<2, Number>, order>> & tensors2)
 {
-  std::vector<std::array<Table<2, Number>, order>> prod_of_tensors(tensors1.size() *
-                                                                   tensors2.size());
-  for(auto i2 = 0U; i2 < tensors2.size(); ++i2)
-    for(auto i1 = 0U; i1 < tensors1.size(); ++i1)
-      std::transform(tensors1[i1].cbegin(),
-                     tensors1[i1].cend(),
-                     tensors2[i2].cbegin(),
-                     prod_of_tensors[i1 + tensors1.size() * i2].begin(),
-                     [](const auto & A, const auto & B) {
-                       Assert(A.n_rows() > 0, ExcMessage("Empty."));
-                       Assert(B.n_cols() > 0, ExcMessage("Empty."));
-                       auto C = LinAlg::product(A, B);
-                       AssertDimension(C.n_rows(), A.n_rows());
-                       AssertDimension(C.n_cols(), B.n_cols());
-                       return C;
-                     });
-  return prod_of_tensors;
+  return product_impl<order, Number, false, false>(tensors1, tensors2);
 }
+
+
 
 template<int order, typename Number>
 std::vector<std::array<Table<2, Number>, order>>
 Tproduct(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
          const std::vector<std::array<Table<2, Number>, order>> & tensors2)
 {
-  std::vector<std::array<Table<2, Number>, order>> prod_of_tensors(tensors1.size() *
-                                                                   tensors2.size());
-  for(auto i2 = 0U; i2 < tensors2.size(); ++i2)
-    for(auto i1 = 0U; i1 < tensors1.size(); ++i1)
-      std::transform(tensors1[i1].cbegin(),
-                     tensors1[i1].cend(),
-                     tensors2[i2].cbegin(),
-                     prod_of_tensors[i1 + tensors1.size() * i2].begin(),
-                     [](const auto & A, const auto & B) {
-                       Assert(A.n_rows() > 0, ExcMessage("Empty."));
-                       Assert(B.n_cols() > 0, ExcMessage("Empty."));
-                       auto C = LinAlg::Tproduct(A, B);
-                       AssertDimension(C.n_rows(), A.n_rows());
-                       AssertDimension(C.n_cols(), B.n_cols());
-                       return C;
-                     });
-  return prod_of_tensors;
+  return product_impl<order, Number, true, false>(tensors1, tensors2);
 }
+
+
 
 template<int order, typename Number>
 std::vector<std::array<Table<2, Number>, order>>
 productT(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
          const std::vector<std::array<Table<2, Number>, order>> & tensors2)
 {
-  std::vector<std::array<Table<2, Number>, order>> prod_of_tensors(tensors1.size() *
-                                                                   tensors2.size());
-  for(auto i2 = 0U; i2 < tensors2.size(); ++i2)
-    for(auto i1 = 0U; i1 < tensors1.size(); ++i1)
-      std::transform(tensors1[i1].cbegin(),
-                     tensors1[i1].cend(),
-                     tensors2[i2].cbegin(),
-                     prod_of_tensors[i1 + tensors1.size() * i2].begin(),
-                     [](const auto & A, const auto & B) {
-                       Assert(A.n_rows() > 0, ExcMessage("Empty."));
-                       Assert(B.n_cols() > 0, ExcMessage("Empty."));
-                       auto C = LinAlg::productT(A, B);
-                       AssertDimension(C.n_rows(), A.n_rows());
-                       AssertDimension(C.n_cols(), B.n_cols());
-                       return C;
-                     });
-  return prod_of_tensors;
+  return product_impl<order, Number, false, true>(tensors1, tensors2);
 }
+
+
 
 template<int order, typename Number>
 std::vector<std::array<Table<2, Number>, order>>
@@ -310,6 +311,8 @@ scale(const Number & factor, const std::vector<std::array<Table<2, Number>, orde
   return scaled_tensors;
 }
 
+
+
 template<typename Number>
 bool
 is_nearly_zero(const Table<2, Number> & matrix)
@@ -321,6 +324,8 @@ is_nearly_zero(const Table<2, Number> & matrix)
   return std::all_of(begin, end, has_nearly_zero_abs<Number>);
 }
 
+
+
 template<int N, typename Number>
 bool
 is_nearly_zero(const std::array<Table<2, Number>, N> & array)
@@ -329,132 +334,16 @@ is_nearly_zero(const std::array<Table<2, Number>, N> & array)
 }
 
 
-/**
- * Computes the sum of two equally sized matrices. Each input
- * MatrixType must contain at least the operator(n,m) to acces the
- * elements at row n and column m.
- */
-template<typename MatrixTypeIn1, typename MatrixTypeIn2, typename MatrixTypeOut = MatrixTypeIn1>
-typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type
-sum(MatrixTypeIn1 && left_matrix, MatrixTypeIn2 && right_matrix)
-{
-  using namespace dealii;
-  auto && matrix1 = std::forward<MatrixTypeIn1>(left_matrix);
-  auto && matrix0 = std::forward<MatrixTypeIn2>(right_matrix);
-
-  const unsigned int n_rows0 = matrix0.n_rows();
-  const unsigned int n_cols0 = matrix0.n_cols();
-#ifdef DEBUG
-  const unsigned int n_rows1 = matrix1.n_rows();
-  const unsigned int n_cols1 = matrix1.n_cols();
-  AssertDimension(n_rows0, n_rows1);
-  AssertDimension(n_cols0, n_cols1);
-#endif
-
-  typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type matrix_out;
-  matrix_out.reinit(n_rows0, n_cols0);
-
-  for(unsigned int i = 0; i < n_rows0; ++i)
-    for(unsigned int j = 0; j < n_cols0; ++j)
-      matrix_out(i, j) = matrix1(i, j) + matrix0(i, j);
-
-  return matrix_out;
-}
-
-
-
-/**
- * Matrix multiplication between left-hand matrix @p lhs and right-hand matrix
- * @p rhs.
- */
-template<typename Number>
-Table<2, Number>
-mmult(const Table<2, Number> & lhs, const Table<2, Number> & rhs)
-{
-  return LinAlg::product(lhs, rhs);
-}
-
-
-
-/**
- * Matrix multiplication between the transpose of left-hand matrix @p lhs and
- * right-hand matrix @p rhs.
- */
-template<typename Number>
-Table<2, Number>
-Tmmult(const Table<2, Number> & lhs, const Table<2, Number> & rhs)
-{
-  return LinAlg::Tproduct(lhs, rhs);
-}
-
-
-
-/**
- * Returns the transpose of the input matrix @p matrix_in
- * MatrixType must contain at least the operator(n,m) to acces the
- * elements at row n and column m.
- */
-template<typename MatrixTypeIn1, typename MatrixTypeOut = MatrixTypeIn1>
-typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type
-// scale(MatrixTypeIn1 && matrix_in,const typename ExtractScalarType<typename
-// MatrixTypeIn1::value_type>::type factor)
-scale(const double factor, MatrixTypeIn1 && matrix_in) // TODO
-{
-  auto && matrix0 = std::forward<MatrixTypeIn1>(matrix_in);
-
-  const unsigned int n_rows0 = matrix0.n_rows();
-  const unsigned int n_cols0 = matrix0.n_cols();
-
-  typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type matrix_out;
-  matrix_out.reinit(n_rows0, n_cols0);
-
-  for(unsigned int i = 0; i < n_rows0; ++i)
-    for(unsigned int j = 0; j < n_cols0; ++j)
-      matrix_out(i, j) = factor * matrix0(i, j);
-
-  return matrix_out;
-}
-
-/**
- * Returns the transpose of the input matrix @p matrix_in
- * MatrixType must contain at least the operator(n,m) to acces the
- * elements at row n and column m.
- */
-template<typename MatrixTypeIn1, typename MatrixTypeOut = MatrixTypeIn1>
-typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type
-transpose(MatrixTypeIn1 && matrix_in)
-{
-  auto && matrix_src = std::forward<MatrixTypeIn1>(matrix_in);
-
-  const unsigned int n_rows_src = matrix_src.n_rows();
-  const unsigned int n_cols_src = matrix_src.n_cols();
-
-  typename std::remove_const<typename std::remove_reference<MatrixTypeOut>::type>::type matrix_out;
-  matrix_out.reinit(n_cols_src, n_rows_src);
-
-  for(unsigned int i = 0; i < n_rows_src; ++i)
-    for(unsigned int j = 0; j < n_cols_src; ++j)
-      matrix_out(j, i) = matrix_src(i, j);
-
-  return matrix_out;
-}
 
 template<int order, typename Number>
-// std::array<Table<2, VectorizedArray<Number>>, order>
 void
 transpose_tensor(std::array<Table<2, VectorizedArray<Number>>, order> & tensor)
 {
   for(auto & matrix : tensor)
-    matrix = transpose(matrix);
+    matrix = LinAlg::transpose(matrix);
 }
 
-// template<int order, typename Number>
-// std::vector<std::array<Table<2, Number>, order>> elementary_tensors;
-// assemble_elementary_tensors(const Table<2, Number> * mass, const Table<2, Number> * driv)
-// {
-//   std::vector<std::array<Table<2, Number>, order>> elementary_tensors(order);
 
-// }
 
 /**
  * Assembles the separable Kronecker product form of a collection of

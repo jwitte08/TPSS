@@ -678,8 +678,8 @@ protected:
   //                      macro_tensors10.cend(),
   //                      std::back_inserter(tensors01),
   //                      [lane](const auto & t) -> std::array<Table<2, double>, dim> {
-  //                        return {table_to_fullmatrix(Tensors::transpose(t[0]), lane),
-  //                                table_to_fullmatrix(Tensors::transpose(t[1]), lane)};
+  //                        return {table_to_fullmatrix(LinAlg::transpose(t[0]), lane),
+  //                                table_to_fullmatrix(LinAlg::transpose(t[1]), lane)};
   //                      });
   //       patch_matrix.get_block(0U, 1U).reinit(tensors01);
   //     }

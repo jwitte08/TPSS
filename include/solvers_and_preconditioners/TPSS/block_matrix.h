@@ -308,7 +308,7 @@ public:
 
       /// compute remainder Z - Ztilde1
       auto tensor_ksvd1    = rank1_ksvd.front();
-      tensor_ksvd1.front() = Tensors::scale(-1., tensor_ksvd1.front());
+      tensor_ksvd1.front() = LinAlg::scaling(-1., tensor_ksvd1.front());
       Z_tensors.emplace_back(tensor_ksvd1);
       // {
       //   print_eigenvalues(Z_tensors, "Z - rank1_ksvd_of_Z");

@@ -1758,7 +1758,7 @@ public:
                 if(d == deriv_index_ansatz)
                   kronecker_tensor[d] = gradient_matrices[deriv_index_ansatz];
                 else if(d == deriv_index_test)
-                  kronecker_tensor[d] = Tensors::transpose(gradient_matrices[deriv_index_test]);
+                  kronecker_tensor[d] = LinAlg::transpose(gradient_matrices[deriv_index_test]);
                 else
                   kronecker_tensor[d] = mass_matrices[d];
               }
@@ -1797,7 +1797,7 @@ public:
                   if(d == comp_test)
                     kronecker_tensor[d] = point_mass_matrices[comp_test];
                   else if(d == comp_ansatz)
-                    kronecker_tensor[d] = Tensors::transpose(gradient_matrices[comp_ansatz]);
+                    kronecker_tensor[d] = LinAlg::transpose(gradient_matrices[comp_ansatz]);
                   else
                     kronecker_tensor[d] = mass_matrices[d];
                 }
@@ -2745,7 +2745,7 @@ public:
           std::array<matrix_type_1d, dim> kronecker_tensor;
           for(auto d = 0U; d < dim; ++d)
             kronecker_tensor[d] = d == direction_of_div ?
-                                    -1. * Tensors::transpose(gradient_matrices[direction_of_div]) :
+                                    -1. * LinAlg::transpose(gradient_matrices[direction_of_div]) :
                                     mass_matrices[d];
           return kronecker_tensor;
         };

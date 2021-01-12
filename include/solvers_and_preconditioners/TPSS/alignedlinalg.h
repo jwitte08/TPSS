@@ -699,6 +699,19 @@ productT(const AlignedVector<Number> & v, const Table<2, Number> & A)
   return product_impl<Number, true, false>(A, v);
 }
 
+
+
+template<typename Number>
+Table<2, Number>
+transpose(const Table<2, Number> & matrix)
+{
+  Table<2, Number> transpose_matrix(matrix.size(1), matrix.size(0));
+  for(unsigned int i = 0; i < transpose_matrix.size(0); ++i)
+    for(unsigned int j = 0; j < transpose_matrix.size(1); ++j)
+      transpose_matrix(i, j) = matrix(j, i);
+  return transpose_matrix;
+}
+
 } // namespace LinAlg
 
 

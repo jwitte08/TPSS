@@ -226,8 +226,8 @@ compute_ksvd_impl(std::vector<std::array<Table<2, Number>, 2>> & dst,
 
   intern::compute_bidiagonal_svd(alpha_view, beta_view, tildeU, singular_values, tildeVT);
 
-  const auto & left_singular_vectors   = Tensors::mmult(U, tildeU);
-  const auto & right_singular_vectorsT = Tensors::mmult(tildeVT, VT);
+  const auto & left_singular_vectors   = LinAlg::product(U, tildeU);
+  const auto & right_singular_vectorsT = LinAlg::product(tildeVT, VT);
 
   /// fill tensors of matrices of the form SUM_i A_i (x) B_i
   const auto actual_ksvd_rank = std::min<std::size_t>(demanded_ksvd_rank, singular_values.size());
