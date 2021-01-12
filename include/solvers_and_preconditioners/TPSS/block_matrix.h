@@ -144,9 +144,9 @@ public:
     std::vector<std::array<Table<2, Number>, order>> eigenvectors;
     eigenvectors.emplace_back(D_in.get_eigenvector_tensor());
     Q = std::make_shared<TensorProductMatrix<order, Number, n_rows_1d>>(eigenvectors);
-    // std::vector<std::array<Table<2, Number>, order>> mass;
-    // mass.emplace_back(D_in.get_mass());
-    // M = std::make_shared<TensorProductMatrix<order, Number, n_rows_1d>>(mass);
+    std::vector<std::array<Table<2, Number>, order>> mass;
+    mass.emplace_back(D_in.get_mass_tensor());
+    M = std::make_shared<TensorProductMatrix<order, Number, n_rows_1d>>(mass);
 
     /// Z = (I - L^{-1/2}Q^TCA^{-1}BQL^{-1/2})
     scratch = Tensors::product<order, Number>(minus_C_Ainv_B, eigenvectors);
@@ -388,6 +388,13 @@ public:
       matrix_type::vmult(dst_view, src_view);
     else if(mode == Mode::ksvd)
     {
+      Assert(M, ExcMessage("M isn't initialized."));
+      Assert(!(M->empty()), ExcMessage("M is empty"));
+      Assert(Q, ExcMessage("Q isn't initialized."));
+      Assert(!(Q->empty()), ExcMessage("Q is empty"));
+      Assert(sqrt_of_Lambda, ExcMessage("sqrt_of_Lambda isn't initialized."));
+      Assert(!(sqrt_of_Lambda->empty()), ExcMessage("sqrt_of_Lambda is empty"));
+
       AlignedVector<Number> tmp(dst_view.size());
       const auto            tmp_view = make_array_view<Number>(tmp.begin(), tmp.end());
       M->vmult(dst_view, src_view);
@@ -1182,7 +1189,7 @@ public:
      * product A_1 (x) A_0
      */
     std::array<std::pair<unsigned int, unsigned int>, 2> size_of_kronecker_factors;
-    unsigned int lanczos_iterations = numbers::invalid_unsigned_int;
+    std::size_t lanczos_iterations = static_cast<std::size_t>(-1);
   };
 
   using matrix_type = MatrixType;
