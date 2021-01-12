@@ -301,7 +301,7 @@ public:
   unsigned int
   n(unsigned int dimension) const;
 
-  std::vector<tensor_type>
+  const std::vector<tensor_type> &
   get_elementary_tensors() const;
 
   const matrix_type_1d &
@@ -526,13 +526,25 @@ public:
    * the class' documentation on the requirements for a tensor product matrix
    * with valid ranktwo or separable state.
    *
-   * This functionality is only supported in ranktwo state.
+   * This functionality is only supported in separable or ranktwo state.
    */
   Table<2, Number>
   get_eigenvectors() const;
 
+  /**
+   * Returns the tensor of (generalized) eigenvectors. The univariate
+   * eigenvectors are stored column-wise.
+   *
+   * This functionality is only supported in separable or ranktwo state.
+   */
   const tensor_type &
   get_eigenvector_tensor() const;
+
+  /**
+   * Assembles and returns the tensor of mass matrices if in separable state.
+   */
+  tensor_type
+  get_mass_tensor() const;
 
   /**
    * Returns the current matrix state.
@@ -627,7 +639,7 @@ private:
 
 
 template<int order, typename Number, int n_rows_1d>
-inline std::vector<std::array<Table<2, Number>, order>>
+inline const std::vector<std::array<Table<2, Number>, order>> &
 TensorProductMatrixBase<order, Number, n_rows_1d>::get_elementary_tensors() const
 {
   return elementary_tensors;

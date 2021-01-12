@@ -534,7 +534,21 @@ TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvector_tensor() const
   Assert(state == State::ranktwo || state == State::separable,
          ExcMessage("Functionality isn't supported in current state."));
   AssertDimension(this->eigenvectors.get_elementary_tensors().size(), 1U);
-  return this->eigenvectors.get_elementary_tensors().front();
+  return eigenvectors.get_elementary_tensors().front();
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type
+TensorProductMatrix<order, Number, n_rows_1d>::get_mass_tensor() const
+{
+  Assert(state == State::separable, ExcMessage("Current matrix state isn't supported."));
+  AssertDimension(this->elementary_tensors.size(), order);
+  tensor_type mass_tensor;
+  for(auto d = 0U; d < order; ++d)
+    mass_tensor[d] = this->elementary_tensors[d][(d + 1) % order];
+  return mass_tensor;
 }
 
 
