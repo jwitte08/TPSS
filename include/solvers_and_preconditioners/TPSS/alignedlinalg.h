@@ -352,6 +352,113 @@ frobenius_norm(const Table<2, Number> & matrix)
   return std::sqrt(norm);
 }
 
+
+
+template<typename Number, typename Number2 = Number, bool scale_lhs, bool scale_sum, bool scale_rhs>
+Table<2, Number>
+sum_impl(const Table<2, Number> & lhs,
+         const Table<2, Number> & rhs,
+         const Number2 &          lhs_factor = 1.,
+         const Number2 &          sum_factor = 1.,
+         const Number2 &          rhs_factor = 1.)
+{
+  AssertDimension(lhs.size(0), rhs.size(0));
+  AssertDimension(lhs.size(1), rhs.size(1));
+  Table<2, Number> sum(lhs.size(0), lhs.size(1));
+
+  for(auto i = 0U; i < lhs.size(0); ++i)
+    for(auto j = 0U; j < lhs.size(1); ++j)
+    {
+      sum(i, j) = (scale_lhs ? lhs_factor * lhs(i, j) : lhs(i, j)) +
+                  (scale_rhs ? rhs_factor * rhs(i, j) : rhs(i, j));
+      if(scale_sum)
+        sum(i, j) = sum_factor * sum(i, j);
+    }
+
+  return sum;
+}
+
+
+
+template<typename Number>
+Table<2, Number>
+sum(const Table<2, Number> & lhs, const Table<2, Number> & rhs)
+{
+  return sum_impl<Number, Number, false, false, false>(lhs, rhs);
+}
+
+
+
+template<typename Number, typename Number2 = Number>
+Table<2, Number>
+scaled_sum(const Number2 & alpha, const Table<2, Number> & lhs, const Table<2, Number> & rhs)
+{
+  return sum_impl<Number, Number2, false, true, false>(lhs, rhs, 1., alpha, 1.);
+}
+
+
+
+template<typename Number, typename Number2 = Number>
+Table<2, Number>
+ssum(const Number2 & alpha, const Table<2, Number> & lhs, const Table<2, Number> & rhs)
+{
+  return sum_impl<Number, Number2, true, false, false>(lhs, rhs, alpha, 1., 1.);
+}
+
+
+
+template<typename Number, typename Number2 = Number>
+Table<2, Number>
+sums(const Table<2, Number> & lhs, const Number2 & beta, const Table<2, Number> & rhs)
+{
+  return sum_impl<Number, Number2, false, false, true>(lhs, rhs, 1., 1., beta);
+}
+
+
+
+template<typename Number, typename Number2 = Number>
+Table<2, Number>
+ssums(const Number2 &          alpha,
+      const Table<2, Number> & lhs,
+      const Number2 &          beta,
+      const Table<2, Number> & rhs)
+{
+  return sum_impl<Number, Number2, true, false, true>(lhs, rhs, alpha, 1., beta);
+}
+
+
+
+template<typename Number, typename Number2 = Number>
+Table<2, Number>
+scaling_impl(const Number2 & factor, const Table<2, Number> & matrix)
+{
+  Table<2, Number> scaled_matrix(matrix.size(0), matrix.size(1));
+  for(auto i = 0U; i < scaled_matrix.size(0); ++i)
+    for(auto j = 0U; j < scaled_matrix.size(1); ++j)
+      scaled_matrix(i, j) = factor * matrix(i, j);
+  return scaled_matrix;
+}
+
+
+
+template<typename Number, typename Number2 = Number>
+Table<2, Number>
+scaling(const Table<2, Number> & matrix, const Number2 & factor)
+{
+  return scaling_impl(factor, matrix);
+}
+
+
+
+template<typename Number, typename Number2 = Number>
+Table<2, Number>
+scaling(const Number2 & factor, const Table<2, Number> & matrix)
+{
+  return scaling_impl(factor, matrix);
+}
+
+
+
 } // namespace LinAlg
 
 
@@ -396,30 +503,34 @@ inner_product(const AlignedVector<Number> & in1, const AlignedVector<Number> & i
 }
 
 
+/// DEPRECATED
 // Add two Tables
 template<typename Number>
 Table<2, Number>
 matrix_addition(const Table<2, Number> & in1, const Table<2, Number> & in2)
 {
-  AssertDimension(in1.size()[0], in2.size()[0]);
-  AssertDimension(in1.size()[1], in2.size()[1]);
-  Table<2, Number> ret = Table<2, Number>(in1);
-  for(std::size_t i = 0; i < in1.size()[0]; i++)
-    for(std::size_t j = 0; j < in1.size()[1]; j++)
-      ret(i, j) = in1(i, j) + in2(i, j);
-  return ret;
+  // AssertDimension(in1.size()[0], in2.size()[0]);
+  // AssertDimension(in1.size()[1], in2.size()[1]);
+  // Table<2, Number> ret = Table<2, Number>(in1);
+  // for(std::size_t i = 0; i < in1.size()[0]; i++)
+  //   for(std::size_t j = 0; j < in1.size()[1]; j++)
+  //     ret(i, j) = in1(i, j) + in2(i, j);
+  // return ret;
+  return LinAlg::sum(in1, in2);
 }
 
+/// DEPRECATED
 // Multiply Table with scalar
 template<typename Number>
 Table<2, Number>
 matrix_scaling(const Table<2, Number> & in, const Number & scalar)
 {
-  Table<2, Number> ret = Table<2, Number>(in);
-  for(std::size_t i = 0; i < in.size()[0]; i++)
-    for(std::size_t j = 0; j < in.size()[1]; j++)
-      ret(i, j) = in(i, j) * scalar;
-  return ret;
+  // Table<2, Number> ret = Table<2, Number>(in);
+  // for(std::size_t i = 0; i < in.size()[0]; i++)
+  //   for(std::size_t j = 0; j < in.size()[1]; j++)
+  //     ret(i, j) = in(i, j) * scalar;
+  // return ret;
+  return LinAlg::scaling(scalar, in);
 }
 
 
