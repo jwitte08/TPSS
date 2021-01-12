@@ -947,7 +947,7 @@ test_three_dim_kronecker_cp()
   t4(1, 1)                                          = 0;
   t4(0, 1)                                          = 1;
   t4(1, 0)                                          = 1;
-  Table<2, double>                             t5   = matrix_scaling(t3, 0.8);
+  Table<2, double>                             t5   = LinAlg::scaling(t3, 0.8);
   std::array<Table<2, double>, 3>              kp1  = {t1, t2, t2};
   std::array<Table<2, double>, 3>              kp2  = {t3, t4, t4};
   std::array<Table<2, double>, 3>              kp3  = {t5, t4, t4};
@@ -957,16 +957,22 @@ test_three_dim_kronecker_cp()
   // start with a Rank-3 representation of a Kronecker-rank 2 matrix
   std::vector<std::array<Table<2, double>, 3>> approx = {kp1, kp1};
   compute_kcp<double>(mat1, approx);
+
   Table<2, double> approximate_matrix =
     Tensors::sum(Tensors::kronecker_product(approx[0][0],
                                             Tensors::kronecker_product(approx[0][1], approx[0][2])),
                  Tensors::kronecker_product(
                    approx[1][0], Tensors::kronecker_product(approx[1][1], approx[1][2])));
+
   Table<2, double> original_matrix =
     Tensors::sum(Tensors::kronecker_product(t1, Tensors::kronecker_product(t2, t2)),
                  Tensors::sum(Tensors::kronecker_product(t3, Tensors::kronecker_product(t4, t4)),
                               Tensors::kronecker_product(t5, Tensors::kronecker_product(t4, t4))));
-  EXPECT_TRUE(approximate_matrix == original_matrix);
+
+  Tester       tester;
+  const auto & fullmatrix = table_to_fullmatrix(approximate_matrix);
+  const auto & reference  = table_to_fullmatrix(original_matrix);
+  tester.compare_matrix(fullmatrix, reference);
 }
 
 
@@ -1007,7 +1013,7 @@ test_three_dim_kronecker_cp_vectorized()
   t4(0, 1)                             = make_vectorized_array<double>(1);
   t4(1, 0)                             = make_vectorized_array<double>(1);
   t4(1, 1)[0]                          = 999;
-  Table<2, VectorizedArray<double>> t5 = matrix_scaling(t3, make_vectorized_array(0.8));
+  Table<2, VectorizedArray<double>> t5 = LinAlg::scaling(t3, make_vectorized_array(0.8));
   std::array<Table<2, VectorizedArray<double>>, 3>              kp1  = {t1, t2, t2};
   std::array<Table<2, VectorizedArray<double>>, 3>              kp2  = {t3, t4, t4};
   std::array<Table<2, VectorizedArray<double>>, 3>              kp3  = {t5, t4, t4};
@@ -1017,16 +1023,25 @@ test_three_dim_kronecker_cp_vectorized()
   // start with a Rank-3 representation of a Kronecker-rank 2 matrix
   std::vector<std::array<Table<2, VectorizedArray<double>>, 3>> approx = {kp1, kp1};
   compute_kcp<VectorizedArray<double>>(mat1, approx);
+
   Table<2, VectorizedArray<double>> approximate_matrix =
     Tensors::sum(Tensors::kronecker_product(approx[0][0],
                                             Tensors::kronecker_product(approx[0][1], approx[0][2])),
                  Tensors::kronecker_product(
                    approx[1][0], Tensors::kronecker_product(approx[1][1], approx[1][2])));
+
   Table<2, VectorizedArray<double>> original_matrix =
     Tensors::sum(Tensors::kronecker_product(t1, Tensors::kronecker_product(t2, t2)),
                  Tensors::sum(Tensors::kronecker_product(t3, Tensors::kronecker_product(t4, t4)),
                               Tensors::kronecker_product(t5, Tensors::kronecker_product(t4, t4))));
-  EXPECT_TRUE(approximate_matrix == original_matrix);
+
+  Tester tester;
+  for(auto lane = 0U; lane < VectorizedArray<double>::size(); ++lane)
+  {
+    const auto & fullmatrix = table_to_fullmatrix(approximate_matrix, lane);
+    const auto & reference  = table_to_fullmatrix(original_matrix, lane);
+    tester.compare_matrix(fullmatrix, reference);
+  }
 }
 
 TEST(KroneckerSVD, ThreeDim)

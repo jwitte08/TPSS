@@ -113,7 +113,7 @@ compute_bidiagonal_svd(const AlignedVector<Number> & diagonal,
 
 
 template<typename Number, typename ShuffledMatrixType>
-void
+AlignedVector<Number>
 compute_ksvd_impl(std::vector<std::array<Table<2, Number>, 2>> & dst,
                   const ShuffledMatrixType &                     shuffled_matrix,
                   const std::size_t                              lanczos_iterations_in = -1,
@@ -129,6 +129,7 @@ compute_ksvd_impl(std::vector<std::array<Table<2, Number>, 2>> & dst,
   const auto max_demanded_ksvd_rank =
     std::min<std::size_t>(max_tensor_rank_guess, max_matrix_rank_shuffled);
 
+  (void)max_demanded_ksvd_rank;
   AssertIndexRange(demanded_ksvd_rank, max_demanded_ksvd_rank + 1);
 
   /// TODO tests have shown that the actual tensor rank of the inserted matrix
@@ -241,6 +242,8 @@ compute_ksvd_impl(std::vector<std::array<Table<2, Number>, 2>> & dst,
     B_i = LinAlg::sfoldingT_impl(
       right_singular_vectorsT, B_i.size(0), B_i.size(1), std::sqrt(singular_values[i]), i);
   }
+
+  return singular_values;
 }
 
 
@@ -269,7 +272,7 @@ compute_ksvd_impl(std::vector<std::array<Table<2, Number>, 2>> & dst,
  * tensors of matrices are passed as {B_i, A_i} and {V_i, U_i}, respectively.
  */
 template<typename Number>
-void
+AlignedVector<Number>
 compute_ksvd(const std::vector<std::array<Table<2, Number>, 2>> & src,
              std::vector<std::array<Table<2, Number>, 2>> &       dst,
              const std::size_t                                    lanczos_iterations_in = -1)
@@ -290,7 +293,7 @@ compute_ksvd(const std::vector<std::array<Table<2, Number>, 2>> & src,
   /// TODO...
   // const std::size_t max_tensor_rank_src = src.size();
 
-  compute_ksvd_impl<Number, Tensors::TensorProductMatrix<2, Number>>(dst,
+  return compute_ksvd_impl<Number, Tensors::TensorProductMatrix<2, Number>>(dst,
                                                                      shuffled_matrix,
                                                                      lanczos_iterations_in/*
                                                                      ,max_tensor_rank_src*/);
@@ -304,7 +307,7 @@ compute_ksvd(const std::vector<std::array<Table<2, Number>, 2>> & src,
  * Pitsianis and implemented here in MatrixAsTable::shuffle().
  */
 template<typename Number>
-void
+AlignedVector<Number>
 compute_ksvd(const Table<2, Number> &                       src,
              std::vector<std::array<Table<2, Number>, 2>> & dst,
              const std::size_t                              lanczos_iterations_in = -1)
@@ -318,7 +321,9 @@ compute_ksvd(const Table<2, Number> &                       src,
   shuffled_matrix.as_table() = src;
   shuffled_matrix.shuffle({A_0.size(0), A_0.size(1)}, {B_0.size(0), B_0.size(1)});
 
-  compute_ksvd_impl<Number, MatrixAsTable<Number>>(dst, shuffled_matrix, lanczos_iterations_in);
+  return compute_ksvd_impl<Number, MatrixAsTable<Number>>(dst,
+                                                          shuffled_matrix,
+                                                          lanczos_iterations_in);
 }
 
 
@@ -333,7 +338,7 @@ compute_ksvd(const Table<2, Number> &                       src,
  * Note that only squared diagonal matrices are supported so far.
  */
 template<typename Number>
-void
+AlignedVector<Number>
 compute_ksvd(const AlignedVector<Number> &                  diagonal,
              std::vector<std::array<Table<2, Number>, 2>> & dst,
              const std::size_t                              lanczos_iterations_in = -1)
@@ -347,9 +352,9 @@ compute_ksvd(const AlignedVector<Number> &                  diagonal,
   shuffled_matrix.reinit(diagonal);
   shuffled_matrix.shuffle({A_0.size(0), A_0.size(1)}, {B_0.size(0), B_0.size(1)});
 
-  compute_ksvd_impl<Number, DiagonalMatrixWrap<Number>>(dst,
-                                                        shuffled_matrix,
-                                                        lanczos_iterations_in);
+  return compute_ksvd_impl<Number, DiagonalMatrixWrap<Number>>(dst,
+                                                               shuffled_matrix,
+                                                               lanczos_iterations_in);
 }
 
 
@@ -421,15 +426,15 @@ compute_kcp(const std::vector<std::array<Table<2, Number>, 3>> & in,
   Table<2, Number> V;
   for(std::size_t i = 0; i < als_iterations; i++)
   {
-    V  = hadamard(matrix_transpose_multiplication(A1, A1), matrix_transpose_multiplication(A2, A2));
-    A0 = matrix_multiplication(unfold_rankk(matrices_vectorized, 0),
-                               matrix_multiplication(khatri_rao(A2, A1), pseudo_inverse(V)));
-    V  = hadamard(matrix_transpose_multiplication(A0, A0), matrix_transpose_multiplication(A2, A2));
-    A1 = matrix_multiplication(unfold_rankk(matrices_vectorized, 1),
-                               matrix_multiplication(khatri_rao(A2, A0), pseudo_inverse(V)));
-    V  = hadamard(matrix_transpose_multiplication(A0, A0), matrix_transpose_multiplication(A1, A1));
-    A2 = matrix_multiplication(unfold_rankk(matrices_vectorized, 2),
-                               matrix_multiplication(khatri_rao(A1, A0), pseudo_inverse(V)));
+    V  = hadamard(LinAlg::Tproduct(A1, A1), LinAlg::Tproduct(A2, A2));
+    A0 = LinAlg::product(unfold_rankk(matrices_vectorized, 0),
+                         LinAlg::product(khatri_rao(A2, A1), pseudo_inverse(V)));
+    V  = hadamard(LinAlg::Tproduct(A0, A0), LinAlg::Tproduct(A2, A2));
+    A1 = LinAlg::product(unfold_rankk(matrices_vectorized, 1),
+                         LinAlg::product(khatri_rao(A2, A0), pseudo_inverse(V)));
+    V  = hadamard(LinAlg::Tproduct(A0, A0), LinAlg::Tproduct(A1, A1));
+    A2 = LinAlg::product(unfold_rankk(matrices_vectorized, 2),
+                         LinAlg::product(khatri_rao(A1, A0), pseudo_inverse(V)));
   }
 
 
