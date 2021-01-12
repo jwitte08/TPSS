@@ -72,7 +72,7 @@ euclidean_norm(const AlignedVector<Number> & vec)
 /**
  * Scales the vector @p vec by the inverse of @p scalar. For vectorized
  * arithmetic type @p Number each lane where the corresponding value of @p
- * scalar is nearly zero is scaled by zero instead of the inverse scalar
+ * scalar is nearly zero is scaled by zero instead of the actual inverse scalar
  * avoiding a division by zero.
  */
 template<typename Number>
@@ -294,6 +294,62 @@ orthogonalize_full(std::vector<AlignedVector<Number>> & vecs)
     const auto & r_j = vecs[j];
     sadd(r_n, -inverse_scalar_if(inner_product(r_j, r_j)) * inner_product(r_n, r_j), r_j);
   }
+}
+
+
+
+template<typename Number>
+std::pair<std::bitset<get_macro_size<Number>()>, AlignedVector<Number>>
+is_positive_definite_impl(const Table<2, Number> & matrix)
+{
+  AssertDimension(matrix.size(0), matrix.size(1));
+
+  std::bitset<get_macro_size<Number>()> is_posdef;
+  is_posdef.flip();
+
+  AlignedVector<Number> eigenvalues_real(matrix.size(0));
+
+  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+  {
+    const auto & eigenvalues = compute_eigenvalues(table_to_fullmatrix(matrix, lane));
+    Assert(std::all_of(eigenvalues.cbegin(),
+                       eigenvalues.cend(),
+                       [](const auto & val) { return has_nearly_zero_abs(val.imag()); }),
+           ExcMessage("Not all eigenvalues are real!"));
+
+    const bool is_positive = eigenvalues.back().real() > 0.;
+    is_posdef[lane]        = is_positive;
+
+    AssertDimension(eigenvalues.size(), eigenvalues_real.size());
+    for(auto i = 0U; i < eigenvalues.size(); ++i)
+      scalar_value(eigenvalues_real[i], lane) = eigenvalues[i].real();
+  }
+
+  return {is_posdef, eigenvalues_real};
+}
+
+
+
+template<typename Number>
+std::bitset<get_macro_size<Number>()>
+is_positive_definite(const Table<2, Number> & matrix)
+{
+  const auto & [is_posdef, dummy] = is_positive_definite_impl(matrix);
+  (void)dummy;
+  return is_posdef;
+}
+
+
+
+template<typename Number>
+Number
+frobenius_norm(const Table<2, Number> & matrix)
+{
+  Number norm(0.);
+  for(auto i = 0U; i < matrix.size(0); ++i)
+    for(auto j = 0U; j < matrix.size(1); ++j)
+      norm += matrix(i, j) * matrix(i, j);
+  return std::sqrt(norm);
 }
 
 } // namespace LinAlg
