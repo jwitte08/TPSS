@@ -238,7 +238,7 @@ product(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
                      [](const auto & A, const auto & B) {
                        Assert(A.n_rows() > 0, ExcMessage("Empty."));
                        Assert(B.n_cols() > 0, ExcMessage("Empty."));
-                       auto C = matrix_multiplication(A, B);
+                       auto C = LinAlg::product(A, B);
                        AssertDimension(C.n_rows(), A.n_rows());
                        AssertDimension(C.n_cols(), B.n_cols());
                        return C;
@@ -262,7 +262,7 @@ Tproduct(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
                      [](const auto & A, const auto & B) {
                        Assert(A.n_rows() > 0, ExcMessage("Empty."));
                        Assert(B.n_cols() > 0, ExcMessage("Empty."));
-                       auto C = matrix_transpose_multiplication(A, B);
+                       auto C = LinAlg::Tproduct(A, B);
                        AssertDimension(C.n_rows(), A.n_rows());
                        AssertDimension(C.n_cols(), B.n_cols());
                        return C;
@@ -286,7 +286,7 @@ productT(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
                      [](const auto & A, const auto & B) {
                        Assert(A.n_rows() > 0, ExcMessage("Empty."));
                        Assert(B.n_cols() > 0, ExcMessage("Empty."));
-                       auto C = matrix_multiplication_transpose(A, B);
+                       auto C = LinAlg::productT(A, B);
                        AssertDimension(C.n_rows(), A.n_rows());
                        AssertDimension(C.n_cols(), B.n_cols());
                        return C;
@@ -371,7 +371,7 @@ template<typename Number>
 Table<2, Number>
 mmult(const Table<2, Number> & lhs, const Table<2, Number> & rhs)
 {
-  return matrix_multiplication(lhs, rhs);
+  return LinAlg::product(lhs, rhs);
 }
 
 
@@ -384,7 +384,7 @@ template<typename Number>
 Table<2, Number>
 Tmmult(const Table<2, Number> & lhs, const Table<2, Number> & rhs)
 {
-  return matrix_transpose_multiplication(lhs, rhs);
+  return LinAlg::Tproduct(lhs, rhs);
 }
 
 

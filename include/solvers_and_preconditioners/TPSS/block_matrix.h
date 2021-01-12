@@ -337,7 +337,7 @@ public:
         {
           // !!!
           pd_factor += delta;
-          Z_tensors.front().front() = matrix_scaling(get_identity_tensor(D_in).front(), pd_factor);
+          Z_tensors.front().front() = LinAlg::scaling(get_identity_tensor(D_in).front(), pd_factor);
           compute_ksvd<Number>(Z_tensors, rank1_ksvd);
           // {
           //   print_eigenvalues(Z_tensors, "scaled Z - rank1_ksvd_of_Z");

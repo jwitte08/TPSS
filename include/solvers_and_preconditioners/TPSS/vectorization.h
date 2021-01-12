@@ -94,14 +94,12 @@ scalar_value(const VectorizedArray<Number> & value, const unsigned int lane = 0)
  * threshold. For vectorized arithmetic type @p Number this function returns
  * only true if all lanes are nearly zero.
  */
-template<typename Number>
+template<typename Number, typename scalar_value_type = typename ExtractScalarType<Number>::type>
 bool
-has_nearly_zero_abs(const Number & value)
+has_nearly_zero_abs_impl(
+  const Number &            value,
+  const scalar_value_type & threshold = std::numeric_limits<scalar_value_type>::epsilon() * 100.)
 {
-  using scalar_value_type = typename ExtractScalarType<Number>::type;
-  static constexpr scalar_value_type threshold =
-    std::numeric_limits<scalar_value_type>::epsilon() * 100.;
-
   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
   {
     const bool is_nearly_zero = std::abs(scalar_value(value, lane)) < threshold;
@@ -109,6 +107,37 @@ has_nearly_zero_abs(const Number & value)
       return false;
   }
   return true;
+}
+
+
+
+/**
+ * Returns true if the absolute value of @p value is below a certain
+ * threshold. For vectorized arithmetic type @p Number this function returns
+ * only true if all lanes are nearly zero.
+ */
+template<typename Number>
+bool
+has_nearly_zero_abs(const Number & value)
+{
+  return has_nearly_zero_abs_impl(value);
+}
+
+
+
+template<typename Number, typename scalar_value_type = typename ExtractScalarType<Number>::type>
+Number
+inverse_scalar_if_impl(
+  const Number &          scalar,
+  const scalar_value_type threshold = std::numeric_limits<scalar_value_type>::epsilon() * 100.)
+{
+  Number inverse_scalar(0.);
+  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
+    scalar_value(inverse_scalar, lane) =
+      has_nearly_zero_abs_impl(scalar_value(scalar, lane), threshold) ?
+        static_cast<scalar_value_type>(0.) :
+        1. / scalar_value(scalar, lane);
+  return inverse_scalar;
 }
 
 
@@ -126,11 +155,7 @@ template<typename Number>
 Number
 inverse_scalar_if(const Number & scalar)
 {
-  Number inverse_scalar(0.);
-  for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
-    scalar_value(inverse_scalar, lane) =
-      has_nearly_zero_abs(scalar_value(scalar, lane)) ? 0. : 1. / scalar_value(scalar, lane);
-  return inverse_scalar;
+  return inverse_scalar_if_impl(scalar);
 }
 
 
