@@ -217,6 +217,7 @@ struct ComputeGeneralizedEigendecomposition<order, VectorizedArray<Number>, n_ro
 
 
 
+/// TODO refactor documentation for this and derived classes...
 /**
  * This struct implements a tensor product matrix in the sense of a sum over
  * rank-1 tensors of matrices (so-called elementary tensors) where the tensor
@@ -301,9 +302,15 @@ public:
   unsigned int
   n(unsigned int dimension) const;
 
+  /**
+   * Returns the number of rows for all tensor directions as multi-index.
+   */
   const std::array<unsigned int, order> &
   tensor_m() const;
 
+  /**
+   * Returns the number of columns for all tensor directions as multi-index.
+   */
   const std::array<unsigned int, order> &
   tensor_n() const;
 
@@ -438,22 +445,32 @@ public:
   operator=(const TensorProductMatrix & other);
 
   /**
-   * Depending on the matrix state @p additional_data_in.state the rank-1 tensors of matrices @p
-   * elementary_tensors_in initialize this tensor product matrix.
+   * Depending on the matrix state @p additional_data_in.state the rank-1
+   * tensors of matrices @p elementary_tensors_in initialize this tensor product
+   * matrix.
    *
    * basic : All rank-1 tensors are treated in the way they are passed, see the
    * class' description.
    *
-   * ranktwo : Accepts two and only two rank-1 tensors passed by @p elementary_tensors,
-   * see the class' description. The bitset @p additional_data_in.spd_mask defines for each
-   * direction which matrix is symmetric, positive definite (requirement for
-   * generalized eigenvalue problem). The bit position coincides with the tensor
-   * direction.
+   * ranktwo : Accepts two and only two rank-1 tensors passed by @p
+   * elementary_tensors. During initialization a generalized eigendecomposition
+   * is computed which enables an efficient implementation of apply_inverse()
+   * (see the class' description.) The bitset @p additional_data_in.spd_mask
+   * defines for each direction which matrix is symmetric, positive definite
+   * (requirement for generalized eigenvalue problem). The bit position
+   * coincides with the tensor direction.
    *
    * separable : Accepts two and only two rank-1 tensors passed by @p
-   * elementary_tensors, see the class' description. The first rank-1 tensor
-   * needs to contain mass matrices (symmetric, positive definite) and the
-   * second derivative matrices, in the context of Rice, Lynch and Thomas.
+   * elementary_tensors. During initialization a generalized eigendecomposition
+   * is computed which enables an efficient implementation of apply_inverse()
+   * (see the class' description). The first rank-1 tensor needs to contain mass
+   * matrices (symmetric, positive definite) and the second derivative matrices,
+   * in the context of Rice, Lynch and Thomas.
+   *
+   * rankone : Accepts one and only one rank-1 tensor passed in @p
+   * elementary_tensors. During initialization a specific eigendecomposition is
+   * computed which enables an efficient implementation of apply_inverse() (see
+   * the class' description for more details).
    */
   void
   reinit(const std::vector<tensor_type> & elementary_tensors_in,
@@ -490,6 +507,13 @@ public:
    *
    * separable : We use the (generalized) eigendecomposition computed during
    * (re-)initialization to apply the inverse via fast diagonalization.
+   *
+   * rankone : We use the eigendecomposition computed during (re-)initialization
+   * to apply the inverse via fast diagonalization.
+   *
+   * Note that for each vectorization lane of arithmetic type @p Number the
+   * inverse of (nearly) zero eigenvalues is replaced by zero avoiding division
+   * by zero.
    */
   void
   apply_inverse(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
@@ -564,7 +588,7 @@ public:
    * requires the number of rows @p m() and number of columns @p n() to be
    * equal).
    *
-   * This functionality is only supported in ranktwo state.
+   * This functionality is only supported in separable/ranktwo/rankone state.
    */
   AlignedVector<Number>
   get_eigenvalues() const;
@@ -576,9 +600,9 @@ public:
    * n() to be equal). The (generalized) eigenvectors are representable as
    * rank-1 tensor of univariate eigenvectors if the matrix is appropriate (see
    * the class' documentation on the requirements for a tensor product matrix
-   * with valid ranktwo or separable state.
+   * with valid ranktwo/separable/rankone state.
    *
-   * This functionality is only supported in separable or ranktwo state.
+   * This functionality is only supported in separable/ranktwo/rankone state.
    */
   Table<2, Number>
   get_eigenvectors() const;
@@ -587,7 +611,7 @@ public:
    * Returns the tensor of (generalized) eigenvectors. The univariate
    * eigenvectors are stored column-wise.
    *
-   * This functionality is only supported in separable or ranktwo state.
+   * This functionality is only supported in separable/ranktwo/rankone state.
    */
   const tensor_type &
   get_eigenvector_tensor() const;
@@ -651,7 +675,7 @@ private:
                            const ArrayView<const Number> & src_view) const;
 
   /**
-   * Additional data storing (essential) features.
+   * Additional data storing (essential) matrix features.
    */
   AdditionalData additional_data;
 
@@ -661,16 +685,18 @@ private:
   mutable std::shared_ptr<const InverseTable<Number>> basic_inverse;
 
   /**
-   * The eigenvalues stored in tensor product form if in ranktwo state. The
-   * eigenvalues of the underlying m() times n() matrix can be computed as sum
-   * over Kronecker products of diagonal matrices.
+   * The eigenvalues stored in tensor product form if in
+   * ranktwo/separable/rankone state. The eigenvalues of the underlying m()
+   * times n() matrix can be computed as sum over Kronecker products of diagonal
+   * matrices.
    */
   std::array<AlignedVector<Number>, order> eigenvalues;
 
   /**
-   * The (generalized) eigenvectors stored in tensor product form if in ranktwo
-   * state. The (generalized) eigenvectors of the underlying m() times n()
-   * matrix are a rank-1 tensor of univariate eigenvectors.
+   * The (generalized) eigenvectors stored in tensor product form if in
+   * rankone/ranktwo/separable state. The (generalized) eigenvectors of the
+   * underlying m() times n() matrix are a rank-1 tensor of univariate
+   * eigenvectors.
    */
   TensorProductMatrixBase<order, Number, n_rows_1d> eigenvectors;
 };

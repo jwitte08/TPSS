@@ -2306,6 +2306,172 @@ TEST(AnisotropicSquare_3VectorizedArrayDouble, rankone_reinit)
 
 
 
+template<int order, typename Number>
+void
+test_rankone_get_eigenvalues(const std::array<unsigned int, order> & size)
+{
+  Tester::Features test_features;
+  test_features.method_variant = Tester::Method::get_eigenvalues;
+  test_rankone<order, Number>(size, test_features);
+}
+
+TEST(IsotropicSquare_2Double, rankone_get_eigenvalues)
+{
+  constexpr int order = 2;
+  using Number        = double;
+  test_rankone_get_eigenvalues<order, Number>({2U, 2U});
+  test_rankone_get_eigenvalues<order, Number>({3U, 3U});
+  test_rankone_get_eigenvalues<order, Number>({7U, 7U});
+}
+
+TEST(IsotropicSquare_2VectorizedArrayDouble, rankone_get_eigenvalues)
+{
+  constexpr int order = 2;
+  using Number        = VectorizedArray<double>;
+  test_rankone_get_eigenvalues<order, Number>({2U, 2U});
+  test_rankone_get_eigenvalues<order, Number>({3U, 3U});
+  test_rankone_get_eigenvalues<order, Number>({7U, 7U});
+}
+
+TEST(AnisotropicSquare_2Double, rankone_get_eigenvalues)
+{
+  constexpr int order = 2;
+  using Number        = double;
+  test_rankone_get_eigenvalues<order, Number>({2U, 3U});
+  test_rankone_get_eigenvalues<order, Number>({5U, 3U});
+  test_rankone_get_eigenvalues<order, Number>({7U, 9U});
+}
+
+TEST(AnisotropicSquare_2VectorizedArrayDouble, rankone_get_eigenvalues)
+{
+  constexpr int order = 2;
+  using Number        = VectorizedArray<double>;
+  test_rankone_get_eigenvalues<order, Number>({2U, 3U});
+  test_rankone_get_eigenvalues<order, Number>({5U, 3U});
+  test_rankone_get_eigenvalues<order, Number>({7U, 9U});
+}
+
+TEST(IsotropicSquare_3Double, rankone_get_eigenvalues)
+{
+  constexpr int order = 3;
+  using Number        = double;
+  test_rankone_get_eigenvalues<order, Number>({2U, 2U, 2U});
+  test_rankone_get_eigenvalues<order, Number>({3U, 3U, 3U});
+  test_rankone_get_eigenvalues<order, Number>({7U, 7U, 7U});
+}
+
+TEST(IsotropicSquare_3VectorizedArrayDouble, rankone_get_eigenvalues)
+{
+  constexpr int order = 3;
+  using Number        = VectorizedArray<double>;
+  test_rankone_get_eigenvalues<order, Number>({2U, 2U, 2U});
+  test_rankone_get_eigenvalues<order, Number>({3U, 3U, 3U});
+  test_rankone_get_eigenvalues<order, Number>({7U, 7U, 7U});
+}
+
+TEST(AnisotropicSquare_3Double, rankone_get_eigenvalues)
+{
+  constexpr int order = 3;
+  using Number        = double;
+  test_rankone_get_eigenvalues<order, Number>({2U, 3U, 4U});
+  test_rankone_get_eigenvalues<order, Number>({5U, 3U, 3U});
+  test_rankone_get_eigenvalues<order, Number>({7U, 9U, 2U});
+}
+
+TEST(AnisotropicSquare_3VectorizedArrayDouble, rankone_get_eigenvalues)
+{
+  constexpr int order = 3;
+  using Number        = VectorizedArray<double>;
+  test_rankone_get_eigenvalues<order, Number>({2U, 3U, 4U});
+  test_rankone_get_eigenvalues<order, Number>({5U, 3U, 3U});
+  test_rankone_get_eigenvalues<order, Number>({7U, 9U, 2U});
+}
+
+
+
+template<int order, typename Number>
+void
+test_rankone_apply_inverse(const std::array<unsigned int, order> & size)
+{
+  Tester::Features test_features;
+  test_features.method_variant = Tester::Method::apply_inverse;
+  test_rankone<order, Number>(size, test_features);
+}
+
+TEST(IsotropicSquare_2Double, rankone_apply_inverse)
+{
+  constexpr int order = 2;
+  using Number        = double;
+  test_rankone_apply_inverse<order, Number>({2U, 2U});
+  test_rankone_apply_inverse<order, Number>({3U, 3U});
+  test_rankone_apply_inverse<order, Number>({7U, 7U});
+}
+
+TEST(IsotropicSquare_2VectorizedArrayDouble, rankone_apply_inverse)
+{
+  constexpr int order = 2;
+  using Number        = VectorizedArray<double>;
+  test_rankone_apply_inverse<order, Number>({2U, 2U});
+  test_rankone_apply_inverse<order, Number>({3U, 3U});
+  test_rankone_apply_inverse<order, Number>({7U, 7U});
+}
+
+TEST(AnisotropicSquare_2Double, rankone_apply_inverse)
+{
+  constexpr int order = 2;
+  using Number        = double;
+  test_rankone_apply_inverse<order, Number>({2U, 3U});
+  test_rankone_apply_inverse<order, Number>({5U, 3U});
+  test_rankone_apply_inverse<order, Number>({7U, 9U});
+}
+
+TEST(AnisotropicSquare_2VectorizedArrayDouble, rankone_apply_inverse)
+{
+  constexpr int order = 2;
+  using Number        = VectorizedArray<double>;
+  test_rankone_apply_inverse<order, Number>({2U, 3U});
+  test_rankone_apply_inverse<order, Number>({5U, 3U});
+  test_rankone_apply_inverse<order, Number>({7U, 9U});
+}
+
+TEST(IsotropicSquare_3Double, rankone_apply_inverse)
+{
+  constexpr int order = 3;
+  using Number        = double;
+  test_rankone_apply_inverse<order, Number>({2U, 2U, 2U});
+  test_rankone_apply_inverse<order, Number>({3U, 3U, 3U});
+  test_rankone_apply_inverse<order, Number>({7U, 7U, 7U});
+}
+
+TEST(IsotropicSquare_3VectorizedArrayDouble, rankone_apply_inverse)
+{
+  constexpr int order = 3;
+  using Number        = VectorizedArray<double>;
+  test_rankone_apply_inverse<order, Number>({2U, 2U, 2U});
+  test_rankone_apply_inverse<order, Number>({3U, 3U, 3U});
+  test_rankone_apply_inverse<order, Number>({7U, 7U, 7U});
+}
+
+TEST(AnisotropicSquare_3Double, rankone_apply_inverse)
+{
+  constexpr int order = 3;
+  using Number        = double;
+  test_rankone_apply_inverse<order, Number>({2U, 3U, 4U});
+  test_rankone_apply_inverse<order, Number>({5U, 3U, 3U});
+  test_rankone_apply_inverse<order, Number>({7U, 9U, 2U});
+}
+
+TEST(AnisotropicSquare_3VectorizedArrayDouble, rankone_apply_inverse)
+{
+  constexpr int order = 3;
+  using Number        = VectorizedArray<double>;
+  test_rankone_apply_inverse<order, Number>({2U, 3U, 4U});
+  test_rankone_apply_inverse<order, Number>({5U, 3U, 3U});
+  test_rankone_apply_inverse<order, Number>({7U, 9U, 2U});
+}
+
+
+
 int
 main(int argc, char ** argv)
 {

@@ -584,7 +584,8 @@ template<int order, typename Number, int n_rows_1d>
 const typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type &
 TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvector_tensor() const
 {
-  Assert(additional_data.state == State::ranktwo || additional_data.state == State::separable,
+  Assert(additional_data.state == State::ranktwo || additional_data.state == State::separable ||
+           additional_data.state == State::rankone,
          ExcMessage("Functionality isn't supported in current state."));
   AssertDimension(this->eigenvectors.get_elementary_tensors().size(), 1U);
   return eigenvectors.get_elementary_tensors().front();
@@ -715,7 +716,8 @@ TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl(
     apply_inverse_impl_basic(dst_view, src_view);
   }
 
-  else if(additional_data.state == State::ranktwo || additional_data.state == State::separable)
+  else if(additional_data.state == State::ranktwo || additional_data.state == State::separable ||
+          additional_data.state == State::rankone)
   {
     apply_inverse_impl_eigen(dst_view, src_view);
   }
@@ -754,7 +756,10 @@ TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl_eigen(
                  tmp_view.cend(),
                  eigenvalues.begin(),
                  tmp_view.begin(),
-                 std::divides<Number>{});
+                 /// avoid division by zero for each lane
+                 [](const auto & value, const auto & lambda) {
+                   return value * inverse_scalar_if<Number>(lambda);
+                 });
 
   eigenvectors.vmult(dst_view, tmp_view);
 }
