@@ -1121,7 +1121,7 @@ TEST(IsotropicSquare_3VectorizedArrayDouble, basic_apply_inverse)
 
 template<int order, typename Number>
 void
-check_ranktwo_or_separable(
+check_special_state(
   std::vector<typename Tensors::TensorProductMatrix<order, Number>::tensor_type> tensors,
   typename Tensors::TensorProductMatrix<order, Number>::State                    state,
   std::bitset<order>                                                             spd_mask,
@@ -1133,12 +1133,13 @@ check_ranktwo_or_separable(
 
   Tester tester;
 
-  ASSERT_TRUE(state == State::ranktwo || state == State::separable) << "Invalid state!";
+  ASSERT_TRUE(state == State::ranktwo || state == State::separable || state == State::rankone)
+    << "Invalid state!";
 
   typename Tensors::TensorProductMatrix<order, Number>::AdditionalData additional_data;
   additional_data.state    = state;
   additional_data.spd_mask = spd_mask;
-  Tensors::TensorProductMatrix<order, Number> tpm_ranktwo(tensors, additional_data);
+  Tensors::TensorProductMatrix<order, Number> tpm_with_state(tensors, additional_data);
   Tensors::TensorProductMatrix<order, Number> tpm_basic;
   if(state == State::separable)
   {
@@ -1159,8 +1160,8 @@ check_ranktwo_or_separable(
   else
     tpm_basic.reinit(tensors);
 
-  const auto & eigenvalues  = tpm_ranktwo.get_eigenvalues();
-  const auto & eigenvectors = tpm_ranktwo.get_eigenvectors();
+  const auto & eigenvalues  = tpm_with_state.get_eigenvalues();
+  const auto & eigenvectors = tpm_with_state.get_eigenvectors();
 
   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
   {
@@ -1200,7 +1201,7 @@ check_ranktwo_or_separable(
 
     else if(features.method_variant == Tester::Method::apply_inverse)
     {
-      const auto fullinverse = table_to_fullmatrix(tpm_ranktwo.as_inverse_table(), lane);
+      const auto fullinverse = table_to_fullmatrix(tpm_with_state.as_inverse_table(), lane);
       tester.compare_inverse_matrix(fullinverse, reference_fullmatrix);
     }
 
@@ -1217,7 +1218,7 @@ check_ranktwo(
   const Tester::Features &                                                       features)
 {
   using State = typename Tensors::TensorProductMatrix<order, Number>::State;
-  check_ranktwo_or_separable<order, Number>(tensors, State::ranktwo, spd_mask, features);
+  check_special_state<order, Number>(tensors, State::ranktwo, spd_mask, features);
 }
 
 template<int order, typename Number>
@@ -1227,10 +1228,17 @@ check_separable(
   const Tester::Features &                                                       features)
 {
   using State = typename Tensors::TensorProductMatrix<order, Number>::State;
-  check_ranktwo_or_separable<order, Number>(tensors,
-                                            State::separable,
-                                            std::bitset<order>{},
-                                            features);
+  check_special_state<order, Number>(tensors, State::separable, std::bitset<order>{}, features);
+}
+
+template<int order, typename Number>
+void
+check_rankone(
+  std::vector<typename Tensors::TensorProductMatrix<order, Number>::tensor_type> tensors,
+  const Tester::Features &                                                       features)
+{
+  using State = typename Tensors::TensorProductMatrix<order, Number>::State;
+  check_special_state<order, Number>(tensors, State::rankone, std::bitset<order>{}, features);
 }
 
 
@@ -2169,6 +2177,131 @@ TEST(AnisotropicSquare_3VectorizedArrayDouble, separable_apply_inverse)
   Tester::Features test_features;
   test_features.method_variant = Tester::Method::apply_inverse;
   test_separable_3D_anisotropic<Number>(test_features);
+}
+
+
+
+template<int order, typename Number>
+void
+test_rankone(const std::array<unsigned int, order> & size, const Tester::Features & test_features)
+{
+  using tensor_type = typename Tensors::TensorProductMatrix<order, Number>::tensor_type;
+
+  /// identity tensor
+  {
+    std::vector<tensor_type> tensors(1U);
+    for(auto d = 0U; d < order; ++d)
+    {
+      const auto m       = size[d];
+      tensors.front()[d] = make_identity_matrix<Number>(m, m);
+    }
+    check_rankone<order, Number>(tensors, test_features);
+  }
+
+  /// tensor of s.p.d. matrices
+  {
+    std::vector<tensor_type> tensors(1U);
+    for(auto d = 0U; d < order; ++d)
+    {
+      const auto m       = size[d];
+      tensors.front()[d] = make_random_matrix_spd<Number>(m, m);
+    }
+    check_rankone<order, Number>(tensors, test_features);
+  }
+
+  /// tensor of symmetric matrices
+  {
+    std::vector<tensor_type> tensors(1U);
+    for(auto d = 0U; d < order; ++d)
+    {
+      const auto m       = size[d];
+      tensors.front()[d] = make_random_matrix_symm<Number>(m, m);
+    }
+    check_rankone<order, Number>(tensors, test_features);
+  }
+}
+
+
+
+template<int order, typename Number>
+void
+test_rankone_reinit(const std::array<unsigned int, order> & size)
+{
+  Tester::Features test_features;
+  test_features.method_variant = Tester::Method::reinit;
+  test_rankone<order, Number>(size, test_features);
+}
+
+TEST(IsotropicSquare_2Double, rankone_reinit)
+{
+  constexpr int order = 2;
+  using Number        = double;
+  test_rankone_reinit<order, Number>({2U, 2U});
+  test_rankone_reinit<order, Number>({3U, 3U});
+  test_rankone_reinit<order, Number>({7U, 7U});
+}
+
+TEST(IsotropicSquare_2VectorizedArrayDouble, rankone_reinit)
+{
+  constexpr int order = 2;
+  using Number        = VectorizedArray<double>;
+  test_rankone_reinit<order, Number>({2U, 2U});
+  test_rankone_reinit<order, Number>({3U, 3U});
+  test_rankone_reinit<order, Number>({7U, 7U});
+}
+
+TEST(AnisotropicSquare_2Double, rankone_reinit)
+{
+  constexpr int order = 2;
+  using Number        = double;
+  test_rankone_reinit<order, Number>({2U, 3U});
+  test_rankone_reinit<order, Number>({5U, 3U});
+  test_rankone_reinit<order, Number>({7U, 9U});
+}
+
+TEST(AnisotropicSquare_2VectorizedArrayDouble, rankone_reinit)
+{
+  constexpr int order = 2;
+  using Number        = VectorizedArray<double>;
+  test_rankone_reinit<order, Number>({2U, 3U});
+  test_rankone_reinit<order, Number>({5U, 3U});
+  test_rankone_reinit<order, Number>({7U, 9U});
+}
+
+TEST(IsotropicSquare_3Double, rankone_reinit)
+{
+  constexpr int order = 3;
+  using Number        = double;
+  test_rankone_reinit<order, Number>({2U, 2U, 2U});
+  test_rankone_reinit<order, Number>({3U, 3U, 3U});
+  test_rankone_reinit<order, Number>({7U, 7U, 7U});
+}
+
+TEST(IsotropicSquare_3VectorizedArrayDouble, rankone_reinit)
+{
+  constexpr int order = 3;
+  using Number        = VectorizedArray<double>;
+  test_rankone_reinit<order, Number>({2U, 2U, 2U});
+  test_rankone_reinit<order, Number>({3U, 3U, 3U});
+  test_rankone_reinit<order, Number>({7U, 7U, 7U});
+}
+
+TEST(AnisotropicSquare_3Double, rankone_reinit)
+{
+  constexpr int order = 3;
+  using Number        = double;
+  test_rankone_reinit<order, Number>({2U, 3U, 4U});
+  test_rankone_reinit<order, Number>({5U, 3U, 3U});
+  test_rankone_reinit<order, Number>({7U, 9U, 2U});
+}
+
+TEST(AnisotropicSquare_3VectorizedArrayDouble, rankone_reinit)
+{
+  constexpr int order = 3;
+  using Number        = VectorizedArray<double>;
+  test_rankone_reinit<order, Number>({2U, 3U, 4U});
+  test_rankone_reinit<order, Number>({5U, 3U, 3U});
+  test_rankone_reinit<order, Number>({7U, 9U, 2U});
 }
 
 
