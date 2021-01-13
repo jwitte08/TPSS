@@ -330,6 +330,8 @@ TensorProductMatrix<order, Number, n_rows_1d>::reinit(
 
   else if(additional_data.state == State::ranktwo)
   {
+    AssertDimension(elementary_tensors_in.size(), 2U);
+
     Base::reinit(elementary_tensors_in);
 
     tensor_type eigenvector_tensor;
@@ -365,6 +367,25 @@ TensorProductMatrix<order, Number, n_rows_1d>::reinit(
     tensor_type eigenvector_tensor;
     internal::ComputeGeneralizedEigendecomposition<order, Number, n_rows_1d>{}(
       this->eigenvalues, eigenvector_tensor, elementary_tensors_in, std::bitset<order>{});
+    this->eigenvectors.reinit(std::vector<tensor_type>{eigenvector_tensor});
+  }
+
+  else if(additional_data.state == State::rankone)
+  {
+    AssertDimension(elementary_tensors_in.size(), 1U);
+
+    Base::reinit(elementary_tensors_in);
+
+    /// due to laziness compute gen. eigendecomp. w.r.t. identity matrices
+    std::vector<tensor_type> ranktwo_tensors;
+    ranktwo_tensors.emplace_back(
+      make_id_tensor<order, Number, unsigned int>(this->tensor_m(), this->tensor_n()));
+    ranktwo_tensors.emplace_back(elementary_tensors_in.front());
+    Assert(this->check_n_rows_and_columns_1d(ranktwo_tensors),
+           ExcMessage("Mismatching matrix sizes."));
+    tensor_type eigenvector_tensor;
+    internal::ComputeGeneralizedEigendecomposition<order, Number, n_rows_1d>{}(
+      this->eigenvalues, eigenvector_tensor, ranktwo_tensors, std::bitset<order>{});
     this->eigenvectors.reinit(std::vector<tensor_type>{eigenvector_tensor});
   }
 
@@ -526,6 +547,11 @@ TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvalues() const
     return compute_eigenvalues_impl_separable();
   }
 
+  else if(additional_data.state == State::rankone)
+  {
+    return compute_eigenvalues_impl_rankone();
+  }
+
   else if(additional_data.state == State::invalid)
   {
     AssertThrow(false, ExcMessage("State is invalid."));
@@ -545,8 +571,10 @@ template<int order, typename Number, int n_rows_1d>
 Table<2, Number>
 TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvectors() const
 {
-  Assert(additional_data.state == State::ranktwo || additional_data.state == State::separable,
-         ExcMessage("Functionality isn't supported in current state."));
+  Assert(additional_data.state == State::ranktwo || additional_data.state == State::separable ||
+           additional_data.state == State::rankone,
+         ExcMessage("Current state isn't supported."));
+  Assert(!eigenvectors.empty(), ExcMessage("eigenvectors is empty."));
   return Tensors::matrix_to_table(eigenvectors);
 }
 
@@ -605,6 +633,33 @@ TensorProductMatrix<order, Number, n_rows_1d>::compute_eigenvalues_impl_ranktwo(
       }
       eigenvalues[i] += lambda_r;
     }
+  }
+
+  return eigenvalues;
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+AlignedVector<Number>
+TensorProductMatrix<order, Number, n_rows_1d>::compute_eigenvalues_impl_rankone() const
+{
+  AssertDimension(this->m(), this->n()); // square matrix?
+  AssertDimension(n_max_rank(), 1U);
+
+  const auto & eigenvalues_foreach_dimension = this->eigenvalues;
+
+  Number                lambda_r(0.);
+  AlignedVector<Number> eigenvalues(this->m());
+  for(unsigned int i = 0; i < eigenvalues.size(); ++i)
+  {
+    const auto & ii = this->tensor_helper_row->multi_index(i);
+
+    lambda_r = eigenvalues_foreach_dimension[0][ii[0]];
+    for(auto d = 1; d < order; ++d)
+      lambda_r *= eigenvalues_foreach_dimension[d][ii[d]];
+
+    eigenvalues[i] += lambda_r;
   }
 
   return eigenvalues;

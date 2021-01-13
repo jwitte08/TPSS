@@ -301,6 +301,12 @@ public:
   unsigned int
   n(unsigned int dimension) const;
 
+  const std::array<unsigned int, order> &
+  tensor_m() const;
+
+  const std::array<unsigned int, order> &
+  tensor_n() const;
+
   const std::vector<tensor_type> &
   get_elementary_tensors() const;
 
@@ -629,6 +635,9 @@ private:
   AlignedVector<Number>
   compute_eigenvalues_impl_separable() const;
 
+  AlignedVector<Number>
+  compute_eigenvalues_impl_rankone() const;
+
   void
   apply_inverse_impl(const ArrayView<Number> &       dst_view,
                      const ArrayView<const Number> & src_view) const;
@@ -736,6 +745,26 @@ TensorProductMatrixBase<order, Number, n_rows_1d>::n(unsigned int dimension) con
 
 
 template<int order, typename Number, int n_rows_1d>
+inline const std::array<unsigned int, order> &
+TensorProductMatrixBase<order, Number, n_rows_1d>::tensor_m() const
+{
+  Assert(tensor_helper_row, ExcMessage("tensor_helper_row is not initialized."));
+  return tensor_helper_row->size();
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+inline const std::array<unsigned int, order> &
+TensorProductMatrixBase<order, Number, n_rows_1d>::tensor_n() const
+{
+  Assert(tensor_helper_column, ExcMessage("tensor_helper_column is not initialized."));
+  return tensor_helper_column->size();
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
 inline bool
 TensorProductMatrixBase<order, Number, n_rows_1d>::empty() const
 {
@@ -832,6 +861,11 @@ TensorProductMatrix<order, Number, n_rows_1d>::n_max_rank() const
   {
     AssertDimension(this->elementary_tensors.size(), order); // TODO
     return order;
+  }
+  else if(additional_data.state == State::rankone)
+  {
+    AssertDimension(this->elementary_tensors.size(), 1U);
+    return 1U;
   }
   else if(additional_data.state == State::invalid)
   {
