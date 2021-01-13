@@ -1135,7 +1135,10 @@ check_ranktwo_or_separable(
 
   ASSERT_TRUE(state == State::ranktwo || state == State::separable) << "Invalid state!";
 
-  Tensors::TensorProductMatrix<order, Number> tpm_ranktwo(tensors, state, spd_mask);
+  typename Tensors::TensorProductMatrix<order, Number>::AdditionalData additional_data;
+  additional_data.state    = state;
+  additional_data.spd_mask = spd_mask;
+  Tensors::TensorProductMatrix<order, Number> tpm_ranktwo(tensors, additional_data);
   Tensors::TensorProductMatrix<order, Number> tpm_basic;
   if(state == State::separable)
   {

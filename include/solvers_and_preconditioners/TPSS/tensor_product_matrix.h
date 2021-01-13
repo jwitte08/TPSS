@@ -372,7 +372,34 @@ public:
     invalid,
     basic,
     separable,
-    ranktwo
+    ranktwo,
+    rankone
+  };
+
+
+  struct AdditionalData
+  {
+    /**
+     * The state switches which functionalities are accessible:
+     *
+     * basic     : TensorProductMatrix
+     * separable : ...
+     * ranktwo   : ...
+     * rankone   : TODO...
+     */
+    State state = State::invalid;
+
+    /**
+     * In case of State::ranktwo defines which one-dimensional matrix is
+     * symmetric, positive definite and on the right-hand side of the generalized
+     * eigenvalue problem.
+     */
+    std::bitset<order> spd_mask;
+
+    /**
+     * TODO...
+     */
+    bool force_positive_definite_inverse = false;
   };
 
 
@@ -389,21 +416,30 @@ public:
   TensorProductMatrix(const tensor_type & rank1_tensor);
 
   TensorProductMatrix(const std::vector<tensor_type> & elementary_tensors,
-                      const State                      state_in    = State::basic,
+                      const AdditionalData &           additional_data = {State::basic,
+                                                                std::bitset<order>{},
+                                                                false});
+
+  /**
+   * Same as constructor above when passing AdditionalData with variables @p
+   * state and @p spd_mask set to @p state_in and @p spd_mask_in, respectively.
+   */
+  TensorProductMatrix(const std::vector<tensor_type> & elementary_tensors,
+                      const State                      state_in,
                       const std::bitset<order>         spd_mask_in = std::bitset<order>{});
 
   TensorProductMatrix &
   operator=(const TensorProductMatrix & other);
 
   /**
-   * Depending on the matrix state @p state_in the rank-1 tensors of matrices @p
+   * Depending on the matrix state @p additional_data_in.state the rank-1 tensors of matrices @p
    * elementary_tensors_in initialize this tensor product matrix.
    *
    * basic : All rank-1 tensors are treated in the way they are passed, see the
    * class' description.
    *
    * ranktwo : Accepts two and only two rank-1 tensors passed by @p elementary_tensors,
-   * see the class' description. The bitset @p spd_mask_in defines for each
+   * see the class' description. The bitset @p additional_data_in.spd_mask defines for each
    * direction which matrix is symmetric, positive definite (requirement for
    * generalized eigenvalue problem). The bit position coincides with the tensor
    * direction.
@@ -415,7 +451,16 @@ public:
    */
   void
   reinit(const std::vector<tensor_type> & elementary_tensors_in,
-         const State                      state_in    = State::basic,
+         const AdditionalData & additional_data_in = {State::basic, std::bitset<order>{}, false});
+
+
+  /**
+   * Same as reinit() above when passing AdditionalData with variables @p state
+   * and @p spd_mask set to @p state_in and @p spd_mask_in, respectively.
+   */
+  void
+  reinit(const std::vector<tensor_type> & elementary_tensors_in,
+         const State                      state_in,
          const std::bitset<order>         spd_mask_in = std::bitset<order>{});
 
   /**
@@ -493,6 +538,7 @@ public:
   void
   Tvmult_add(AlignedVector<Number> & dst, const AlignedVector<Number> & src) const;
 
+  /// TODO does this conversion make sense?!...
   operator std::vector<std::vector<std::array<Table<2, Number>, order>>> const &() const
   {
     return this->elementary_tensors;
@@ -595,22 +641,10 @@ private:
   apply_inverse_impl_eigen(const ArrayView<Number> &       dst_view,
                            const ArrayView<const Number> & src_view) const;
 
-
   /**
-   * The state switches which functionalities are accessible:
-   *
-   * basic     : TensorProductMatrix
-   * separable : TensorProductMatrixSymmetricSum
-   * ranktwo   : TODO...
+   * Additional data storing (essential) features.
    */
-  State state;
-
-  /**
-   * In case of State::ranktwo defines which one-dimensional matrix is
-   * symmetric, positive definite and on the right-hand side of the generalized
-   * eigenvalue problem.
-   */
-  std::bitset<order> spd_mask;
+  AdditionalData additional_data;
 
   /**
    * The (naively computed) inverse of the underlying matrix if in basic state.
@@ -785,21 +819,21 @@ template<int order, typename Number, int n_rows_1d>
 inline unsigned int
 TensorProductMatrix<order, Number, n_rows_1d>::n_max_rank() const
 {
-  if(state == State::basic)
+  if(additional_data.state == State::basic)
   {
     return this->elementary_tensors.size();
   }
-  else if(state == State::ranktwo)
+  else if(additional_data.state == State::ranktwo)
   {
     AssertDimension(this->elementary_tensors.size(), 2U);
     return 2;
   }
-  else if(state == State::separable)
+  else if(additional_data.state == State::separable)
   {
     AssertDimension(this->elementary_tensors.size(), order); // TODO
     return order;
   }
-  else if(state == State::invalid)
+  else if(additional_data.state == State::invalid)
   {
     AssertThrow(false, ExcMessage("State is invalid."));
   }
@@ -816,7 +850,7 @@ template<int order, typename Number, int n_rows_1d>
 inline typename TensorProductMatrix<order, Number, n_rows_1d>::State
 TensorProductMatrix<order, Number, n_rows_1d>::get_state() const
 {
-  return this->state;
+  return this->additional_data.state;
 }
 
 } // namespace Tensors

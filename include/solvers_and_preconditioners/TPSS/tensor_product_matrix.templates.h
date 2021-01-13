@@ -261,10 +261,19 @@ TensorProductMatrixBase<order, Number, n_rows_1d>::Tvmult_add(
 
 template<int order, typename Number, int n_rows_1d>
 TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix()
-  : TensorProductMatrixBase<order, Number, n_rows_1d>(),
-    state(State::invalid),
-    spd_mask(std::bitset<order>{})
+  : TensorProductMatrixBase<order, Number, n_rows_1d>()
 {
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix(
+  const std::vector<typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type> &
+                         elementary_tensors_in,
+  const AdditionalData & additional_data_in)
+{
+  reinit(elementary_tensors_in, additional_data_in);
 }
 
 
@@ -275,8 +284,9 @@ TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix(
                            elementary_tensors_in,
   const State              state_in,
   const std::bitset<order> spd_mask_in)
+  : TensorProductMatrix<order, Number, n_rows_1d>::TensorProductMatrix(elementary_tensors_in,
+                                                                       {state_in, spd_mask_in})
 {
-  reinit(elementary_tensors_in, state_in, spd_mask_in);
 }
 
 
@@ -296,7 +306,7 @@ template<int order, typename Number, int n_rows_1d>
 TensorProductMatrix<order, Number, n_rows_1d> &
 TensorProductMatrix<order, Number, n_rows_1d>::operator=(const TensorProductMatrix & other)
 {
-  reinit(other.elementary_tensors, other.state, other.spd_mask);
+  reinit(other.elementary_tensors, other.additional_data);
   return *this;
 }
 
@@ -306,31 +316,29 @@ template<int order, typename Number, int n_rows_1d>
 void
 TensorProductMatrix<order, Number, n_rows_1d>::reinit(
   const std::vector<typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type> &
-                           elementary_tensors_in,
-  const State              state_in,
-  const std::bitset<order> spd_mask_in)
+                         elementary_tensors_in,
+  const AdditionalData & additional_data_in)
 {
   clear();
 
-  state    = state_in;
-  spd_mask = spd_mask_in;
+  additional_data = additional_data_in;
 
-  if(state == State::basic)
+  if(additional_data.state == State::basic)
   {
     Base::reinit(elementary_tensors_in);
   }
 
-  else if(state == State::ranktwo)
+  else if(additional_data.state == State::ranktwo)
   {
     Base::reinit(elementary_tensors_in);
 
     tensor_type eigenvector_tensor;
     internal::ComputeGeneralizedEigendecomposition<order, Number, n_rows_1d>{}(
-      this->eigenvalues, eigenvector_tensor, elementary_tensors_in, spd_mask_in);
+      this->eigenvalues, eigenvector_tensor, elementary_tensors_in, additional_data_in.spd_mask);
     this->eigenvectors.reinit(std::vector<tensor_type>{eigenvector_tensor});
   }
 
-  else if(state == State::separable)
+  else if(additional_data.state == State::separable)
   {
     AssertThrow(
       elementary_tensors_in.size() == 2U,
@@ -352,13 +360,15 @@ TensorProductMatrix<order, Number, n_rows_1d>::reinit(
     Base::reinit(expanded_tensors);
     AssertDimension(this->elementary_tensors.size(), order);
 
+    Assert(additional_data_in.spd_mask == std::bitset<order>{},
+           ExcMessage("mass muss be first and s.p.d."));
     tensor_type eigenvector_tensor;
     internal::ComputeGeneralizedEigendecomposition<order, Number, n_rows_1d>{}(
       this->eigenvalues, eigenvector_tensor, elementary_tensors_in, std::bitset<order>{});
     this->eigenvectors.reinit(std::vector<tensor_type>{eigenvector_tensor});
   }
 
-  else if(state == State::invalid)
+  else if(additional_data.state == State::invalid)
   {
     AssertThrow(false, ExcMessage("State is invalid."));
   }
@@ -373,10 +383,25 @@ TensorProductMatrix<order, Number, n_rows_1d>::reinit(
 
 template<int order, typename Number, int n_rows_1d>
 void
+TensorProductMatrix<order, Number, n_rows_1d>::reinit(
+  const std::vector<typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type> &
+                           elementary_tensors_in,
+  const State              state_in,
+  const std::bitset<order> spd_mask_in)
+{
+  AdditionalData additional_data_in;
+  additional_data_in.state    = state_in;
+  additional_data_in.spd_mask = spd_mask_in;
+  reinit(elementary_tensors_in, additional_data_in);
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
+void
 TensorProductMatrix<order, Number, n_rows_1d>::clear()
 {
-  state    = State::invalid;
-  spd_mask = std::bitset<order>{};
+  additional_data = {State::invalid, std::bitset<order>{}, false};
   basic_inverse.reset();
   Base::clear();
 }
@@ -491,17 +516,17 @@ template<int order, typename Number, int n_rows_1d>
 AlignedVector<Number>
 TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvalues() const
 {
-  if(state == State::ranktwo)
+  if(additional_data.state == State::ranktwo)
   {
     return compute_eigenvalues_impl_ranktwo();
   }
 
-  else if(state == State::separable)
+  else if(additional_data.state == State::separable)
   {
     return compute_eigenvalues_impl_separable();
   }
 
-  else if(state == State::invalid)
+  else if(additional_data.state == State::invalid)
   {
     AssertThrow(false, ExcMessage("State is invalid."));
   }
@@ -520,7 +545,7 @@ template<int order, typename Number, int n_rows_1d>
 Table<2, Number>
 TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvectors() const
 {
-  Assert(state == State::ranktwo || state == State::separable,
+  Assert(additional_data.state == State::ranktwo || additional_data.state == State::separable,
          ExcMessage("Functionality isn't supported in current state."));
   return Tensors::matrix_to_table(eigenvectors);
 }
@@ -531,7 +556,7 @@ template<int order, typename Number, int n_rows_1d>
 const typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type &
 TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvector_tensor() const
 {
-  Assert(state == State::ranktwo || state == State::separable,
+  Assert(additional_data.state == State::ranktwo || additional_data.state == State::separable,
          ExcMessage("Functionality isn't supported in current state."));
   AssertDimension(this->eigenvectors.get_elementary_tensors().size(), 1U);
   return eigenvectors.get_elementary_tensors().front();
@@ -543,7 +568,8 @@ template<int order, typename Number, int n_rows_1d>
 typename TensorProductMatrix<order, Number, n_rows_1d>::tensor_type
 TensorProductMatrix<order, Number, n_rows_1d>::get_mass_tensor() const
 {
-  Assert(state == State::separable, ExcMessage("Current matrix state isn't supported."));
+  Assert(additional_data.state == State::separable,
+         ExcMessage("Current matrix state isn't supported."));
   AssertDimension(this->elementary_tensors.size(), order);
   tensor_type mass_tensor;
   for(auto d = 0U; d < order; ++d)
@@ -570,11 +596,11 @@ TensorProductMatrix<order, Number, n_rows_1d>::compute_eigenvalues_impl_ranktwo(
     AssertDimension(n_max_rank(), 2U);
     for(auto r = 0U; r < 2U; ++r)
     {
-      const bool is_one = r == static_cast<unsigned int>(spd_mask[0]);
+      const bool is_one = r == static_cast<unsigned int>(additional_data.spd_mask[0]);
       lambda_r = is_one ? static_cast<Number>(1.) : eigenvalues_foreach_dimension[0][ii[0]];
       for(auto d = 1; d < order; ++d)
       {
-        const bool is_one = r == static_cast<unsigned int>(spd_mask[d]);
+        const bool is_one = r == static_cast<unsigned int>(additional_data.spd_mask[d]);
         lambda_r *= is_one ? static_cast<Number>(1.) : eigenvalues_foreach_dimension[d][ii[d]];
       }
       eigenvalues[i] += lambda_r;
@@ -629,17 +655,17 @@ TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl(
   AssertDimension(dst_view.size(), this->m());
   AssertDimension(src_view.size(), this->m());
 
-  if(state == State::basic)
+  if(additional_data.state == State::basic)
   {
     apply_inverse_impl_basic(dst_view, src_view);
   }
 
-  else if(state == State::ranktwo || state == State::separable)
+  else if(additional_data.state == State::ranktwo || additional_data.state == State::separable)
   {
     apply_inverse_impl_eigen(dst_view, src_view);
   }
 
-  else if(state == State::invalid)
+  else if(additional_data.state == State::invalid)
   {
     AssertThrow(false, ExcMessage("The state is invalid."));
   }
