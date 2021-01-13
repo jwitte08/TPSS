@@ -506,7 +506,8 @@ product_impl(const Table<2, Number> & lhs,
   const auto rm = transpose_rhs ? rhs.size(1) : rhs.size(0);
   const auto rn = transpose_rhs ? rhs.size(0) : rhs.size(1);
   AssertDimension(ln, rm);
-  const auto n = ln;
+  (void)rm;
+  const auto & n = ln;
 
   Table<2, Number> prod(lm, rn);
 
