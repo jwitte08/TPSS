@@ -63,6 +63,29 @@ make_zero_rank1_tensors(const std::size_t                rank,
 
 
 /**
+ * Generates a tensor of "identity" matrices with order @p order. The number of
+ * rows and columns are defined by @p rows and @p columns for each tensor
+ * direction. For non-square matrices only the diagonal of the square with
+ * north-west corner attached to the first matrix element is filled with ones.
+ */
+template<int order, typename Number, typename IntType = std::size_t>
+std::array<Table<2, Number>, order>
+make_id_tensor(const std::array<IntType, order> rows, const std::array<IntType, order> columns)
+{
+  std::array<Table<2, Number>, order> tensor;
+  for(auto d = 0U; d < order; ++d)
+    tensor[d].reinit(rows[d], columns[d]);
+
+  for(auto & matrix : tensor)
+    for(auto i = 0U; i < std::min(matrix.size(0), matrix.size(1)); ++i)
+      matrix(i, i) = 1.;
+
+  return tensor;
+}
+
+
+
+/**
  * Compute the Kronecker product of two matrices. Each input
  * MatrixType must contain at least the operator(n,m) to acces the
  * elements at row n and column m.
