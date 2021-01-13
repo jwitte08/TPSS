@@ -102,6 +102,9 @@ get_filename(const RT::Parameter & prms, const Biharmonic::EquationData & equati
   {
     oss << "_" << str_schwarz_variant;
     oss << "_" << Util::short_name(equation_data.sstr_local_solver());
+    if (equation_data.local_solver_variant == Biharmonic::LocalSolverVariant::KSVD)
+      for (const auto index : equation_data.ksvd_tensor_indices)
+	oss << index;
   }
   oss << "_" << CT::DIMENSION_ << "D";
   oss << "_" << CT::FE_DEGREE_ << "deg";
@@ -138,17 +141,21 @@ main(int argc, char * argv[])
     unsigned int use_hierarchical_elements = false;
     unsigned int use_doubling_of_steps     = false;
     unsigned int n_smoothing_steps         = 2;
+    unsigned int local_solver_index        = 0; // exact
+    unsigned int ksvd_rank                 = 1;
 
     //: parse arguments
     atoi_if(solver_index, 1);
     atoi_if(pde_index, 2);
     atof_if(damping, 3);
-    atoi_if(n_threads_max, 4);
-    atoi_if(n_smoothing_steps, 5);
-    atoi_if(use_doubling_of_steps, 6);
+    atof_if(local_solver_index, 4);
+    atof_if(ksvd_rank, 5);
+    atoi_if(n_smoothing_steps, 6);
     atof_if(ip_factor, 7);
-    atoi_if(debug_depth, 8);
-    atoi_if(use_hierarchical_elements, 9);
+    atoi_if(n_threads_max, 8);
+    atoi_if(use_doubling_of_steps, 9);
+    atoi_if(debug_depth, 10);
+    atoi_if(use_hierarchical_elements, 11);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
@@ -179,13 +186,14 @@ main(int argc, char * argv[])
     AssertThrow(use_doubling_of_steps == 0 || use_doubling_of_steps == 1,
                 ExcMessage("use_doubling_of_steps is treated as boolean"));
     AssertThrow(n_smoothing_steps < 10, ExcMessage("Check n_smoothing_steps!"));
+    AssertThrow(local_solver_index < 3U, ExcMessage("invalid local solver"));
 
     RT::Parameter prms;
     {
       prms.use_tbb = MultithreadInfo::n_threads() > 1;
 
       //: discretization
-      prms.n_cycles              = 13;
+      prms.n_cycles              = 12;
       prms.dof_limits            = {1e1, 2e5}; //{1e5, 1e7};
       prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
       prms.mesh.n_refinements    = 1;
@@ -230,8 +238,21 @@ main(int argc, char * argv[])
     AssertThrow(pde_index < EquationData::n_variants,
                 ExcMessage("This equation is not implemented."));
     equation_data.variant              = static_cast<EquationData::Variant>(pde_index);
-    equation_data.local_solver_variant = LocalSolverVariant::Bilaplacian; // Exact;!!!
-    equation_data.ip_factor            = ip_factor;
+    equation_data.local_solver_variant = (LocalSolverVariant)local_solver_index;
+    equation_data.ksvd_tensor_indices  = [&]() -> std::set<unsigned int> {
+      if(ksvd_rank == 1U)
+        return {0U};
+      else if(ksvd_rank == 2U)
+        return {0U, 1U};
+      else if(ksvd_rank == 12U)
+        return {0U, 2U};
+      else if(ksvd_rank == 3U)
+        return {0U, 1U, 2U};
+      else
+        AssertThrow(false, ExcMessage("KSVD rank isn't supported."));
+      return {};
+    }();
+    equation_data.ip_factor = ip_factor;
 
     const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0U;
 

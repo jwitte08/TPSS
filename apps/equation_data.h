@@ -901,7 +901,8 @@ namespace Biharmonic
 enum LocalSolverVariant
 {
   Exact,
-  Bilaplacian
+  Bilaplacian,
+  KSVD
 };
 
 
@@ -948,6 +949,7 @@ struct EquationData
   std::set<types::boundary_id> dirichlet_boundary_ids = {0};
   double                       ip_factor              = 1.;
   LocalSolverVariant           local_solver_variant   = LocalSolverVariant::Exact;
+  std::set<unsigned int>       ksvd_tensor_indices    = {0U};
 };
 
 
@@ -989,7 +991,9 @@ EquationData::sstr_equation_variant() const
 std::string
 EquationData::str_local_solver(const LocalSolverVariant variant)
 {
-  const std::string str_variant[] = {"Exact", "Bilaplacian (no mixed derivatives)"};
+  const std::string str_variant[] = {"Exact",
+                                     "Bilaplacian (no mixed derivatives)",
+                                     "Kronecker SVD"};
   return str_variant[(int)variant];
 }
 
@@ -1004,7 +1008,8 @@ EquationData::str_local_solver() const
 std::string
 EquationData::sstr_local_solver() const
 {
-  const std::string str_variant[] = {"exact", "bilapl"};
+  const std::string str_variant[] = {
+    "exact", "bilapl", "ksvd"};
   return str_variant[(int)local_solver_variant];
 }
 
@@ -1016,6 +1021,8 @@ EquationData::to_string() const
   oss << Util::parameter_to_fstring("Equation Data:", str_equation_variant(variant));
   oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
   oss << Util::parameter_to_fstring("Local solver:", str_local_solver(local_solver_variant));
+  if(local_solver_variant == LocalSolverVariant::KSVD)
+    oss << Util::parameter_to_fstring("selected KSVD tensors:", set_to_string(ksvd_tensor_indices));
   oss << Util::parameter_to_fstring("Stream function formulation (Stokes):", is_stream_function());
   return oss.str();
 }

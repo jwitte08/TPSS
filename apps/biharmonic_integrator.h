@@ -391,7 +391,8 @@ public:
         rank1_tensors.emplace_back(assemble_mass_tensor(eval));
         rank1_tensors.emplace_back(assemble_bilaplace_tensor(eval));
       }
-      else
+      else if(equation_data.local_solver_variant == LocalSolverVariant::Exact ||
+              equation_data.local_solver_variant == LocalSolverVariant::KSVD)
       {
         /// compute 1D matrices
         const auto mass_matrices      = assemble_mass_tensor(eval);
@@ -433,9 +434,106 @@ public:
           local_matrices[patch].reinit(rank1_tensors);
           break;
         case LocalSolverVariant::Bilaplacian:
-          // local_matrices[patch].reinit(rank1_tensors);
           local_matrices[patch].reinit(rank1_tensors, matrix_state::separable);
           break;
+        case LocalSolverVariant::KSVD:
+        {
+          std::array<std::size_t, dim> rows, columns;
+          for(auto d = 0U; d < dim; ++d)
+          {
+            const auto & A_d = rank1_tensors.front()[d];
+            rows[d]          = A_d.size(0);
+            columns[d]       = A_d.size(1);
+          }
+
+
+          const auto ksvd_rank = *(equation_data.ksvd_tensor_indices.rbegin()) + 1;
+          AssertIndexRange(ksvd_rank, rank1_tensors.size() + 1);
+          auto ksvd_tensors =
+            Tensors::make_zero_rank1_tensors<dim, VectorizedArray<Number>>(ksvd_rank,
+                                                                           rows,
+                                                                           columns);
+          compute_ksvd(rank1_tensors, ksvd_tensors);
+
+          std::vector<std::array<Table<2, VectorizedArray<Number>>, dim>> approximation;
+          for(auto i = 0U; i < ksvd_tensors.size(); ++i)
+            if(equation_data.ksvd_tensor_indices.find(i) !=
+               equation_data.ksvd_tensor_indices.cend())
+              approximation.emplace_back(ksvd_tensors[i]);
+
+          AssertDimension(equation_data.ksvd_tensor_indices.size(), approximation.size());
+
+          if(approximation.size() == 2U)
+            /// first tensor must contain s.p.d. matrices ("mass matrices")
+            local_matrices[patch].reinit(approximation, matrix_state::ranktwo);
+          else
+            local_matrices[patch].reinit(approximation);
+
+          // /// DEBUG
+          // {
+          //   auto complete_ksvd_tensors =
+          //     Tensors::make_zero_rank1_tensors<dim,
+          //     VectorizedArray<Number>>(rank1_tensors.size(),
+          //                                                                    rows,
+          //                                                                    columns);
+          //   const auto & singular_values = compute_ksvd(rank1_tensors, complete_ksvd_tensors);
+
+          //   std::cout << "singular values of KSVD" << std::endl;
+          //   for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
+          //     std::cout << vector_to_string(alignedvector_to_vector(singular_values, lane))
+          //               << std::endl;
+
+          //   Tensors::TensorProductMatrix<2, VectorizedArray<Number>> Z(complete_ksvd_tensors);
+          //   Tensors::TensorProductMatrix<2, VectorizedArray<Number>> Z0(
+          //     complete_ksvd_tensors.front());
+          //   Tensors::TensorProductMatrix<2, VectorizedArray<Number>> Z1(
+          //     complete_ksvd_tensors.at(1U));
+          //   Tensors::TensorProductMatrix<2, VectorizedArray<Number>> Z2(
+          //     complete_ksvd_tensors.at(2U));
+          //   Tensors::TensorProductMatrix<2, VectorizedArray<Number>> Z0_plus_Z1(
+          //     {complete_ksvd_tensors.at(0U), complete_ksvd_tensors.at(1U)},
+          //     matrix_state::ranktwo);
+          //   Tensors::TensorProductMatrix<2, VectorizedArray<Number>> Z0_plus_Z2(
+          //     {complete_ksvd_tensors.at(0U), complete_ksvd_tensors.at(2U)},
+          //     matrix_state::ranktwo);
+
+          //   const auto Z_is_posdef = LinAlg::is_positive_definite(Z.as_table());
+          //   if(!Z_is_posdef.all())
+          //     std::cout << "patch: " << patch << " Z isn't p.d.: " << Z_is_posdef << std::endl;
+
+          //   const auto Z0_is_posdef = LinAlg::is_positive_definite(Z0.as_table());
+          //   if(!Z0_is_posdef.all())
+          //     std::cout << "patch: " << patch << " Z0 isn't p.d.: " << Z0_is_posdef << std::endl;
+
+          //   const auto Z1_is_posdef = LinAlg::is_positive_definite(Z1.as_table());
+          //   if(!Z1_is_posdef.all())
+          //     std::cout << "patch: " << patch << " Z1 isn't p.d.: " << Z1_is_posdef << std::endl;
+
+          //   const auto Z2_is_posdef = LinAlg::is_positive_definite(Z2.as_table());
+          //   if(!Z2_is_posdef.all())
+          //     std::cout << "patch: " << patch << " Z2 isn't p.d.: " << Z2_is_posdef << std::endl;
+
+          //   const auto Z0_plus_Z1_is_posdef =
+          //   LinAlg::is_positive_definite(Z0_plus_Z1.as_table()); if(!Z0_plus_Z1_is_posdef.all())
+          //   {
+          //     std::cout << "patch: " << patch << " Z0_plus_Z1 isn't p.d.: " <<
+          //     Z0_plus_Z1_is_posdef
+          //               << std::endl;
+          //     for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
+          //       std::cout << vector_to_string(
+          //                      alignedvector_to_vector(Z0_plus_Z1.get_eigenvalues(), lane))
+          //                 << std::endl;
+          //   }
+
+          //   const auto Z0_plus_Z2_is_posdef =
+          //   LinAlg::is_positive_definite(Z0_plus_Z2.as_table()); if(!Z0_plus_Z2_is_posdef.all())
+          //     std::cout << "patch: " << patch << " Z0_plus_Z2 isn't p.d.: " <<
+          //     Z0_plus_Z2_is_posdef
+          //               << std::endl;
+          // }
+
+          break;
+        }
         default:
           AssertThrow(false, ExcMessage("Local solver isn't supported."));
       }
