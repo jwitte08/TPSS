@@ -670,6 +670,7 @@ private:
   apply_inverse_impl_basic(const ArrayView<Number> &       dst_view,
                            const ArrayView<const Number> & src_view) const;
 
+  template<bool zero_out_negative_eigenvalues>
   void
   apply_inverse_impl_eigen(const ArrayView<Number> &       dst_view,
                            const ArrayView<const Number> & src_view) const;

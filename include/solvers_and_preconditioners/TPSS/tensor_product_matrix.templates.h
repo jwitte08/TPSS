@@ -541,25 +541,21 @@ TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvalues() const
   {
     return compute_eigenvalues_impl_ranktwo();
   }
-
   else if(additional_data.state == State::separable)
   {
     return compute_eigenvalues_impl_separable();
   }
-
   else if(additional_data.state == State::rankone)
   {
     return compute_eigenvalues_impl_rankone();
   }
-
   else if(additional_data.state == State::invalid)
   {
     AssertThrow(false, ExcMessage("State is invalid."));
   }
-
   else
   {
-    Assert(false, ExcMessage("Functionality isn't supported in current state."));
+    Assert(false, ExcMessage("Current state isn't supported."));
   }
 
   return AlignedVector<Number>{};
@@ -713,13 +709,17 @@ TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl(
 
   if(additional_data.state == State::basic)
   {
+    Assert(!additional_data.force_positive_definite_inverse, ExcMessage("Not supported."));
     apply_inverse_impl_basic(dst_view, src_view);
   }
 
   else if(additional_data.state == State::ranktwo || additional_data.state == State::separable ||
           additional_data.state == State::rankone)
   {
-    apply_inverse_impl_eigen(dst_view, src_view);
+    if(additional_data.force_positive_definite_inverse)
+      apply_inverse_impl_eigen<true>(dst_view, src_view);
+    else
+      apply_inverse_impl_eigen<false>(dst_view, src_view);
   }
 
   else if(additional_data.state == State::invalid)
@@ -736,6 +736,7 @@ TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl(
 
 
 template<int order, typename Number, int n_rows_1d>
+template<bool zero_out_negative_eigenvalues>
 void
 TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl_eigen(
   const ArrayView<Number> &       dst_view,
@@ -752,13 +753,22 @@ TensorProductMatrix<order, Number, n_rows_1d>::apply_inverse_impl_eigen(
   eigenvectors.Tvmult(tmp_view, src_view);
 
   const auto & eigenvalues = get_eigenvalues();
+  // if(additional_data.force_positive_definite_inverse)
+  //   std::transform(eigenvalues.begin(),
+  //                  eigenvalues.end(),
+  //                  eigenvalues.begin(),
+  //                  [](const auto & lambda) { return zero_out_negative_value(lambda); });
   std::transform(tmp_view.cbegin(),
                  tmp_view.cend(),
                  eigenvalues.begin(),
                  tmp_view.begin(),
                  /// avoid division by zero for each lane
                  [](const auto & value, const auto & lambda) {
-                   return value * inverse_scalar_if<Number>(lambda);
+                   const auto & inverse_lambda =
+                     (zero_out_negative_eigenvalues ?
+                        zero_out_negative_value(inverse_scalar_if<Number>(lambda)) :
+                        inverse_scalar_if<Number>(lambda));
+                   return value * inverse_lambda;
                  });
 
   eigenvectors.vmult(dst_view, tmp_view);
