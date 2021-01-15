@@ -102,9 +102,9 @@ get_filename(const RT::Parameter & prms, const Biharmonic::EquationData & equati
   {
     oss << "_" << str_schwarz_variant;
     oss << "_" << Util::short_name(equation_data.sstr_local_solver());
-    if (equation_data.local_solver_variant == Biharmonic::LocalSolverVariant::KSVD)
-      for (const auto index : equation_data.ksvd_tensor_indices)
-	oss << index;
+    if(equation_data.local_solver_variant == Biharmonic::LocalSolverVariant::KSVD)
+      for(const auto index : equation_data.ksvd_tensor_indices)
+        oss << index;
   }
   oss << "_" << CT::DIMENSION_ << "D";
   oss << "_" << CT::FE_DEGREE_ << "deg";
@@ -252,6 +252,8 @@ main(int argc, char * argv[])
         AssertThrow(false, ExcMessage("KSVD rank isn't supported."));
       return {};
     }();
+    if(equation_data.ksvd_tensor_indices == std::set<unsigned int>{0U, 1U})
+      equation_data.force_positive_definite_inverse = true;
     equation_data.ip_factor = ip_factor;
 
     const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0U;
