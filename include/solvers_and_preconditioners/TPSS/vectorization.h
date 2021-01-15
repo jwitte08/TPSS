@@ -18,8 +18,7 @@ using namespace dealii;
 
 
 template<typename Number>
-struct
-ZeroThresholdImpl
+struct ZeroThresholdImpl
 {
   static_assert(std::is_floating_point_v<Number>, "Number is no floating point type.");
 
@@ -32,14 +31,14 @@ const Number ZeroThresholdImpl<Number>::value = std::numeric_limits<Number>::eps
 
 
 template<typename Number>
-struct
-ZeroThresholdImpl<VectorizedArray<Number>>
+struct ZeroThresholdImpl<VectorizedArray<Number>>
 {
   static const VectorizedArray<Number> value;
 };
 
 template<typename Number>
-const VectorizedArray<Number> ZeroThresholdImpl<VectorizedArray<Number>>::value = ZeroThresholdImpl<Number>::value;
+const VectorizedArray<Number> ZeroThresholdImpl<VectorizedArray<Number>>::value =
+  ZeroThresholdImpl<Number>::value;
 
 
 
@@ -130,9 +129,8 @@ scalar_value(const VectorizedArray<Number> & value, const unsigned int lane = 0)
  */
 template<typename Number, typename scalar_value_type = typename ExtractScalarType<Number>::type>
 bool
-has_nearly_zero_abs_impl(
-  const Number &            value,
-  const scalar_value_type & threshold = zero_threshold<scalar_value_type>)
+has_nearly_zero_abs_impl(const Number &            value,
+                         const scalar_value_type & threshold = zero_threshold<scalar_value_type>)
 {
   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
   {
@@ -161,9 +159,8 @@ has_nearly_zero_abs(const Number & value)
 
 template<typename Number, typename scalar_value_type = typename ExtractScalarType<Number>::type>
 Number
-inverse_scalar_if_impl(
-  const Number &          scalar,
-  const scalar_value_type threshold = zero_threshold<scalar_value_type>)
+inverse_scalar_if_impl(const Number &          scalar,
+                       const scalar_value_type threshold = zero_threshold<scalar_value_type>)
 {
   Number inverse_scalar(0.);
   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
