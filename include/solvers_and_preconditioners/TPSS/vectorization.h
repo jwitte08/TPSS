@@ -18,6 +18,40 @@ using namespace dealii;
 
 
 template<typename Number>
+struct
+ZeroThresholdImpl
+{
+  static_assert(std::is_floating_point_v<Number>, "Number is no floating point type.");
+
+  static const Number value;
+};
+
+template<typename Number>
+const Number ZeroThresholdImpl<Number>::value = std::numeric_limits<Number>::epsilon() * 100.;
+
+
+
+template<typename Number>
+struct
+ZeroThresholdImpl<VectorizedArray<Number>>
+{
+  static const VectorizedArray<Number> value;
+};
+
+template<typename Number>
+const VectorizedArray<Number> ZeroThresholdImpl<VectorizedArray<Number>>::value = ZeroThresholdImpl<Number>::value;
+
+
+
+/**
+ * Defines a threshold below which all positive numbers are treated as zero.
+ */
+template<typename Number>
+static const Number zero_threshold = ZeroThresholdImpl<Number>::value;
+
+
+
+template<typename Number>
 struct ExtractScalarType
 {
   using type = Number;
@@ -98,7 +132,7 @@ template<typename Number, typename scalar_value_type = typename ExtractScalarTyp
 bool
 has_nearly_zero_abs_impl(
   const Number &            value,
-  const scalar_value_type & threshold = std::numeric_limits<scalar_value_type>::epsilon() * 100.)
+  const scalar_value_type & threshold = zero_threshold<scalar_value_type>)
 {
   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
   {
@@ -129,7 +163,7 @@ template<typename Number, typename scalar_value_type = typename ExtractScalarTyp
 Number
 inverse_scalar_if_impl(
   const Number &          scalar,
-  const scalar_value_type threshold = std::numeric_limits<scalar_value_type>::epsilon() * 100.)
+  const scalar_value_type threshold = zero_threshold<scalar_value_type>)
 {
   Number inverse_scalar(0.);
   for(auto lane = 0U; lane < get_macro_size<Number>(); ++lane)
@@ -189,6 +223,27 @@ less_than_all_lanes(const NumberType & lhs, const NumberType & rhs)
 {
   const auto & flag = less_than(lhs, rhs);
   return flag.all();
+}
+
+
+
+template<typename Number>
+Number
+zero_out_negative_value(const Number & scalar)
+{
+  return scalar < 0. ? zero_threshold<Number> : scalar;
+}
+
+
+
+template<typename Number>
+VectorizedArray<Number>
+zero_out_negative_value(const VectorizedArray<Number> & scalar)
+{
+  VectorizedArray<Number> positive_scalar;
+  for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
+    positive_scalar[lane] = zero_out_negative_value<Number>(scalar[lane]);
+  return positive_scalar;
 }
 
 

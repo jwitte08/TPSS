@@ -200,7 +200,7 @@ compute_svd(LAPACKFullMatrix<Number> & matrix)
 template<typename Number>
 std::array<LAPACKFullMatrix<Number>, 3>
 compute_inverse_svd(LAPACKFullMatrix<Number> & matrix,
-                    const Number threshold = std::numeric_limits<Number>::epsilon() * 100.)
+                    const Number threshold = zero_threshold<Number>)
 {
   matrix.compute_svd();
 
