@@ -116,6 +116,39 @@ kronecker_product(MatrixTypeIn1 && left_matrix, MatrixTypeIn2 && right_matrix)
 
 
 /**
+ * Compute the Kronecker product of tensors of diagonal matrices for arbitrary
+ * order @p order. To be memory efficientonly the diagonal of univariate
+ * matrices and kronecker product matrix is passed or returned as vector,
+ * respectively.
+ */
+template<int order, typename Number>
+AlignedVector<Number>
+kronecker_product(const std::array<AlignedVector<Number>, order> & diagonals_1d)
+{
+  std::array<unsigned int, order> sizes;
+  for(auto d = 0U; d < order; ++d)
+    sizes[d] = diagonals_1d[d].size();
+  TensorHelper<order, unsigned int> tensor_rows(sizes);
+
+  AlignedVector<Number> diagonal(tensor_rows.n_flat());
+  Number                elem_i(0.);
+  for(auto i = 0U; i < diagonal.size(); ++i)
+  {
+    const auto & ii = tensor_rows.multi_index(i);
+
+    elem_i = diagonals_1d[0][ii[0]];
+    for(auto d = 1; d < order; ++d)
+      elem_i *= diagonals_1d[d][ii[d]];
+
+    diagonal[i] = elem_i;
+  }
+
+  return diagonal;
+}
+
+
+
+/**
  * Converts a matrix into a two dimensional table. MatrixType has to fulfill
  * following interface:
  *
@@ -314,6 +347,16 @@ productT(const std::vector<std::array<Table<2, Number>, order>> & tensors1,
          const std::vector<std::array<Table<2, Number>, order>> & tensors2)
 {
   return product_impl<order, Number, false, true>(tensors1, tensors2);
+}
+
+
+
+template<int order, typename Number>
+void
+scaling(const Number & factor, std::array<Table<2, Number>, order> & tensor)
+{
+  static_assert(order > 0, "order isn't positive");
+  tensor.front() = std::move(LinAlg::scaling(factor, tensor.front()));
 }
 
 
