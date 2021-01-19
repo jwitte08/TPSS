@@ -248,13 +248,16 @@ main(int argc, char * argv[])
         return {0U, 2U};
       else if(ksvd_rank == 3U)
         return {0U, 1U, 2U};
+      else if(ksvd_rank == 4U)
+        return {0U, 1U, 2U, 3U};
       else
         AssertThrow(false, ExcMessage("KSVD rank isn't supported."));
       return {};
     }();
     if(equation_data.ksvd_tensor_indices == std::set<unsigned int>{0U, 1U})
-      equation_data.force_positive_definite_inverse = true;
-    equation_data.ip_factor = ip_factor;
+      equation_data.addition_to_min_eigenvalue = 0.01;
+    equation_data.ip_factor            = ip_factor;
+    equation_data.n_lanczos_iterations = 4 + 1;
 
     const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0U;
 

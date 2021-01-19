@@ -453,7 +453,8 @@ public:
             Tensors::make_zero_rank1_tensors<dim, VectorizedArray<Number>>(ksvd_rank,
                                                                            rows,
                                                                            columns);
-          compute_ksvd(rank1_tensors, ksvd_tensors);
+          const auto & ksvd_singular_values =
+            compute_ksvd(rank1_tensors, ksvd_tensors, equation_data.n_lanczos_iterations);
 
           std::vector<std::array<Table<2, VectorizedArray<Number>>, dim>> approximation;
           for(auto i = 0U; i < ksvd_tensors.size(); ++i)
@@ -473,25 +474,63 @@ public:
             /// first tensor must contain s.p.d. matrices ("mass matrices")
             typename matrix_type::AdditionalData additional_data;
             additional_data.state = matrix_state::ranktwo;
-            additional_data.force_positive_definite_inverse =
-              equation_data.force_positive_definite_inverse;
+
             local_matrices[patch].reinit(approximation, additional_data);
-            // /// DEBUG
-            // const auto & [is_posdef, eigenvalues] =
-            //   LinAlg::is_positive_definite_impl(local_matrices[patch].as_inverse_table());
-            // if(!is_posdef.all())
-            // {
-            //   std::cout << "patch: " << patch << " " << is_posdef << std::endl;
-            //   for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
-            //     std::cout << vector_to_string(alignedvector_to_vector(eigenvalues, lane))
-            //               << std::endl;
-            // }
+
+            const auto & tensor_of_eigenvalues = local_matrices[patch].get_eigenvalue_tensor();
+            const auto   eigenvalues_ksvd1 =
+              Tensors::kronecker_product<dim, VectorizedArray<Number>>(tensor_of_eigenvalues);
+
+            /// if the rank-2 KSVD isn't positive definite we scale the second
+            /// tensor of matrices by a factor \alpha (with 0 < \alpha < 1),
+            /// thus obtaing an approximation that is better than the best
+            /// rank-1 approximation but worse than the best rank-2
+            /// approximation. \alpha is computed at negligible costs due to the
+            /// specific eigendecomposition with tensor structure
+            if(equation_data.ksvd_tensor_indices == std::set<unsigned int>{0U, 1U})
+            {
+              VectorizedArray<Number> alpha(1.);
+              for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
+              {
+                // std::cout << "eigenvalues of KSVD[1]:\n"
+                //           << vector_to_string(alignedvector_to_vector(eigenvalues_ksvd1, lane))
+                //           << std::endl;
+                const auto   min_elem   = std::min_element(eigenvalues_ksvd1.begin(),
+                                                       eigenvalues_ksvd1.end(),
+                                                       [&](const auto & lhs, const auto & rhs) {
+                                                         return lhs[lane] < rhs[lane];
+                                                       });
+                const Number lambda_min = (*min_elem)[lane];
+
+                /// \alpha = -1 / ((1 + \epsilon) * \lambda_{min})
+                if(lambda_min < -1.) // KSVD isn't positive definite
+                  alpha[lane] /= -(1. + equation_data.addition_to_min_eigenvalue) * lambda_min;
+              }
+
+              // std::cout << "alpha: " << varray_to_string(alpha) << std::endl;
+              Tensors::scaling<dim>(alpha, approximation.at(1U));
+              local_matrices[patch].reinit(approximation, additional_data);
+            }
           }
 
           else
           {
             local_matrices[patch].reinit(approximation);
           }
+
+          // /// DEBUG
+          // const auto & [is_posdef, eigenvalues] =
+          //   LinAlg::is_positive_definite_impl(local_matrices[patch].as_inverse_table());
+          // if(!is_posdef.all())
+          // {
+          //   std::cout << "patch: " << patch << " " << is_posdef << std::endl;
+          //   for(auto lane = 0U; lane < VectorizedArray<Number>::size(); ++lane)
+          //     std::cout << "singular values of KSVD:\n"
+          //               << vector_to_string(alignedvector_to_vector(ksvd_singular_values, lane))
+          //               << "eigenvalues of inverse:\n"
+          //               << vector_to_string(alignedvector_to_vector(eigenvalues, lane))
+          //               << std::endl;
+          // }
 
           break;
         }
