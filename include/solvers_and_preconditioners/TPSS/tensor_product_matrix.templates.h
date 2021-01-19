@@ -564,6 +564,18 @@ TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvalues() const
 
 
 template<int order, typename Number, int n_rows_1d>
+const std::array<AlignedVector<Number>, order> &
+TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvalue_tensor() const
+{
+  Assert(additional_data.state == State::ranktwo || additional_data.state == State::separable ||
+           additional_data.state == State::rankone,
+         ExcMessage("Functionality isn't supported in current state."));
+  return eigenvalues;
+}
+
+
+
+template<int order, typename Number, int n_rows_1d>
 Table<2, Number>
 TensorProductMatrix<order, Number, n_rows_1d>::get_eigenvectors() const
 {

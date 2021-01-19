@@ -594,6 +594,15 @@ public:
   get_eigenvalues() const;
 
   /**
+   * Returns the tensor of vectors containing the (generalized) eigenvalues for
+   * each direction computed during reinit().
+   *
+   * This functionality is only supported in separable/ranktwo/rankone state.
+   */
+  const std::array<AlignedVector<Number>, order> &
+  get_eigenvalue_tensor() const;
+
+  /**
    * Returns the (generalized) eigenvectors of the underlying matrix, to be
    * precise for the @p m() times @p n() matrix with Kronecker products resolved
    * (note that this requires the number of rows @p m() and number of columns @p
