@@ -503,8 +503,10 @@ public:
                 const Number lambda_min = (*min_elem)[lane];
 
                 /// \alpha = -1 / ((1 + \epsilon) * \lambda_{min})
-                if(lambda_min < -1.) // KSVD isn't positive definite
+                if(lambda_min < -0.99) // KSVD isn't positive definite
                   alpha[lane] /= -(1. + equation_data.addition_to_min_eigenvalue) * lambda_min;
+                if(alpha[lane] > 1.)
+                  alpha[lane] = 0.99;
               }
 
               // std::cout << "alpha: " << varray_to_string(alpha) << std::endl;

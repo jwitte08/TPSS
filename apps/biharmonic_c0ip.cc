@@ -255,7 +255,7 @@ main(int argc, char * argv[])
       return {};
     }();
     if(equation_data.ksvd_tensor_indices == std::set<unsigned int>{0U, 1U})
-      equation_data.addition_to_min_eigenvalue = 0.01;
+      equation_data.addition_to_min_eigenvalue = 0.025;
     equation_data.ip_factor            = ip_factor;
     equation_data.n_lanczos_iterations = 4 + 1;
 
