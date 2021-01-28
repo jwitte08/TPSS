@@ -101,25 +101,6 @@ namespace Stokes
 using namespace dealii;
 
 
-//   /// DEPRECATED
-//   template<TPSS::DoFLayout dof_layout_v, bool is_multigrid>
-// MeshWorker::AssembleFlags
-// get_assemble_flags_impl()
-// {
-//   const auto assemble_flags_conforming = MeshWorker::assemble_own_cells;
-//   const auto assemble_flags_dg =
-//     MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-//                      MeshWorker::assemble_own_interior_faces_once;
-//   if(dof_layout_v == TPSS::DoFLayout::Q)
-//     return assemble_flags_conforming;
-//   else if(dof_layout_v == TPSS::DoFLayout::DGQ)
-//     return assemble_flags_dg;
-//   AssertThrow(false, ExcMessage("FE is not supported."));
-//   return MeshWorker::assemble_nothing;
-// }
-
-
-
 /**
  * TODO...
  */
@@ -749,10 +730,6 @@ struct MGCollectionVelocityPressure
   void
   clear();
 
-  /// DEPRECATED
-  // MeshWorker::AssembleFlags
-  // get_mg_assemble_flags() const;
-
   void
   prepare_multigrid(const unsigned int                               mg_level_max,
                     const std::shared_ptr<ColoringBase<dim>>         user_coloring,
@@ -836,18 +813,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   mg_constrained_dofs.reset();
 }
 
-// /// DEPRECATED
-// template<int             dim,
-//          int             fe_degree_p,
-//          TPSS::DoFLayout dof_layout_v,
-//          int             fe_degree_v,
-//          LocalAssembly   local_assembly>
-// MeshWorker::AssembleFlags
-// MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-//   get_mg_assemble_flags() const
-// {
-//   return get_assemble_flags_impl<dof_layout_v, true>();
-// }
+
 
 template<int             dim,
          int             fe_degree_p,
@@ -1449,10 +1415,6 @@ public:
   void
   setup_system_pressure(const bool do_cuthill_mckee);
 
-  /// DEPRECATED
-  // MeshWorker::AssembleFlags
-  // get_assemble_flags() const;
-
   void
   assemble_system();
 
@@ -1778,16 +1740,6 @@ ModelProblem<dim, fe_degree_p, method>::print_informations() const
   *pcout << rt_parameters.to_string();
   *pcout << std::endl;
 }
-
-
-
-/// DEPRECATED
-// template<int dim, int fe_degree_p, Method method>
-// MeshWorker::AssembleFlags
-// ModelProblem<dim, fe_degree_p, method>::get_assemble_flags() const
-// {
-//   return get_assemble_flags_impl<dof_layout_v, false>();
-// }
 
 
 
@@ -2280,582 +2232,584 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
 
 
-template<int dim, int fe_degree_p, Method method>
-void
-ModelProblem<dim, fe_degree_p, method>::assemble_system_step56()
-{
-  using VelocityPressure::MW::CopyData;
-  using VelocityPressure::MW::ScratchData;
-  using MatrixIntegrator = VelocityPressure::MW::MatrixIntegrator<dim, /*is_multigrid*/ false>;
-
-  const auto *     particular_solution = &system_solution;
-  MatrixIntegrator matrix_integrator(load_function.get(),
-                                     analytical_solution.get(),
-                                     particular_solution,
-                                     equation_data);
-
-  auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-    matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-  };
-
-  const auto copier = [&](const CopyData & copy_data) {
-    zero_constraints
-      .template distribute_local_to_global<BlockSparseMatrix<double>, BlockVector<double>>(
-        copy_data.cell_matrix,
-        copy_data.cell_rhs,
-        copy_data.local_dof_indices,
-        system_matrix,
-        system_rhs);
-  };
-
-  ScratchData<dim> scratch_data(mapping,
-                                *fe,
-                                n_q_points_1d,
-                                update_values | update_gradients | update_quadrature_points |
-                                  update_JxW_values,
-                                update_values | update_gradients | update_quadrature_points |
-                                  update_JxW_values | update_normal_vectors);
-  CopyData         copy_data(dof_handler.get_fe().dofs_per_cell);
-  MeshWorker::mesh_loop(dof_handler.begin_active(),
-                        dof_handler.end(),
-                        cell_worker,
-                        copier,
-                        scratch_data,
-                        copy_data,
-                        MeshWorker::assemble_own_cells);
-}
-
-
-
-template<int dim, int fe_degree_p, Method method>
-void
-ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
-{
-  constexpr bool use_sipg_method    = dof_layout_v == TPSS::DoFLayout::DGQ;
-  constexpr bool use_hdiv_ip_method = dof_layout_v == TPSS::DoFLayout::RT;
-  constexpr bool use_conf_method    = dof_layout_v == TPSS::DoFLayout::Q;
-
-  /// Assemble the velocity block, here block(0,0).
-  {
-    using Velocity::SIPG::MW::CopyData;
-    using Velocity::SIPG::MW::ScratchData;
-    using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, false>;
-
-    const auto             component_range = std::make_pair<unsigned int>(0, dim);
-    FunctionExtractor<dim> load_function_velocity(load_function.get(), component_range);
-    FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
-
-    const auto * particular_solution_velocity =
-      (use_conf_method || use_hdiv_ip_method) ? &(system_solution.block(0)) : nullptr;
-
-    MatrixIntegrator matrix_integrator(&load_function_velocity,
-                                       &analytical_solution_velocity,
-                                       particular_solution_velocity,
-                                       equation_data);
-
-    auto cell_worker =
-      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-      };
-
-    auto face_worker = [&](const auto &         cell,
-                           const unsigned int & f,
-                           const unsigned int & sf,
-                           const auto &         ncell,
-                           const unsigned int & nf,
-                           const unsigned int & nsf,
-                           ScratchData<dim> &   scratch_data,
-                           CopyData &           copy_data) {
-      if(use_sipg_method)
-        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-      else if(use_hdiv_ip_method)
-        // matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-        matrix_integrator.face_worker_tangential(
-          cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-      else
-        AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
-    };
-
-    auto boundary_worker = [&](const auto &         cell,
-                               const unsigned int & face_no,
-                               ScratchData<dim> &   scratch_data,
-                               CopyData &           copy_data) {
-      if(use_sipg_method)
-        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-      else if(use_hdiv_ip_method)
-        // matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-        matrix_integrator.boundary_worker_tangential(cell, face_no, scratch_data, copy_data);
-      // matrix_integrator.boundary_worker_tangential_old(cell, face_no, scratch_data, copy_data);
-      else
-        AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
-    };
-
-    const auto copier = [&](const CopyData & copy_data) {
-      zero_constraints_velocity
-        .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
-          copy_data.cell_matrix,
-          copy_data.cell_rhs_test,
-          copy_data.local_dof_indices_test,
-          system_matrix.block(0, 0),
-          system_rhs.block(0));
-
-      for(auto & cdf : copy_data.face_data)
-      {
-        if(!use_hdiv_ip_method)
-          AssertDimension(cdf.cell_rhs_test.size(), 0);
-
-        if(cdf.cell_rhs_test.size() == 0)
-          zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-            cdf.cell_matrix, cdf.joint_dof_indices_test, system_matrix.block(0, 0));
-        else
-        {
-          zero_constraints_velocity
-            .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
-              cdf.cell_matrix,
-              cdf.cell_rhs_test,
-              cdf.joint_dof_indices_test,
-              system_matrix.block(0, 0),
-              system_rhs.block(0));
-        }
-      }
-    };
-
-    const UpdateFlags update_flags =
-      update_values | update_gradients | update_quadrature_points | update_JxW_values;
-    const UpdateFlags interface_update_flags = update_values | update_gradients |
-                                               update_quadrature_points | update_JxW_values |
-                                               update_normal_vectors;
-
-    ScratchData<dim> scratch_data(mapping,
-                                  dof_handler_velocity.get_fe(),
-                                  dof_handler_velocity.get_fe(),
-                                  n_q_points_1d,
-                                  update_flags,
-                                  update_flags,
-                                  interface_update_flags,
-                                  interface_update_flags);
-
-    CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
-
-    if(use_conf_method)
-      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                            dof_handler_velocity.end(),
-                            cell_worker,
-                            copier,
-                            scratch_data,
-                            copy_data,
-                            MeshWorker::assemble_own_cells);
-    else if(use_sipg_method || use_hdiv_ip_method)
-      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                            dof_handler_velocity.end(),
-                            cell_worker,
-                            copier,
-                            scratch_data,
-                            copy_data,
-                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                              MeshWorker::assemble_own_interior_faces_once,
-                            boundary_worker,
-                            face_worker);
-    else
-      AssertThrow(false, ExcMessage("This FEM is not implemented."));
-  }
-
-  /// Assemble the pressure block, here block(1,1).
-  {
-    using Pressure::MW::CopyData;
-    using Pressure::MW::ScratchData;
-    using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
-
-    const auto             component_range = std::make_pair<unsigned int>(dim, dim + 1);
-    FunctionExtractor<dim> load_function_pressure(load_function.get(), component_range);
-
-    MatrixIntegrator matrix_integrator(&load_function_pressure, nullptr, nullptr, equation_data);
-
-    auto cell_worker =
-      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-      };
-
-    const auto copier = [&](const CopyData & copy_data) {
-      constraints_pressure
-        .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
-          copy_data.cell_matrix,
-          copy_data.cell_rhs,
-          copy_data.local_dof_indices,
-          system_matrix.block(1, 1),
-          system_rhs.block(1));
-    };
-
-    const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
-    const UpdateFlags interface_update_flags = update_default;
-
-    ScratchData<dim> scratch_data(
-      mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
-
-    CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
-
-    MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
-                          dof_handler_pressure.end(),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells);
-  }
-
-  /// Assemble the mixed velocity-pressure block, that is test functions are
-  /// from velocity space and ansatz functions from pressure space. The
-  /// "flipped" pressure-velocity block is assembled as well.
-  {
-    using VelocityPressure::MW::Mixed::CopyData;
-    using VelocityPressure::MW::Mixed::ScratchData;
-    using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, false>;
-    using CellIterator     = typename MatrixIntegrator::IteratorType;
-
-    const auto * particular_solution_velocity =
-      (use_conf_method || use_hdiv_ip_method) ? &(system_solution.block(0)) : nullptr;
-
-    const auto             component_range_velocity = std::make_pair<unsigned int>(0, dim);
-    FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(),
-                                                        component_range_velocity);
-
-    MatrixIntegrator matrix_integrator(particular_solution_velocity,
-                                       /*particular_solution_pressure*/ nullptr,
-                                       &analytical_solution_velocity,
-                                       /*&analytical_solution_pressure*/ nullptr,
-                                       equation_data);
-
-    auto cell_worker =
-      [&](const CellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
-                                 cell->level(),
-                                 cell->index(),
-                                 &dof_handler_pressure);
-        matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
-      };
-
-    auto face_worker = [&](const auto &         cell,
-                           const unsigned int & f,
-                           const unsigned int & sf,
-                           const auto &         ncell,
-                           const unsigned int & nf,
-                           const unsigned int & nsf,
-                           ScratchData<dim> &   scratch_data,
-                           CopyData &           copy_data) {
-      CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
-                               cell->level(),
-                               cell->index(),
-                               &dof_handler_pressure);
-      CellIterator ncell_ansatz(&dof_handler_pressure.get_triangulation(),
-                                ncell->level(),
-                                ncell->index(),
-                                &dof_handler_pressure);
-      if(use_sipg_method)
-        matrix_integrator.face_worker(
-          cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
-      else
-        AssertThrow(false, ExcMessage("This FEM is not supported."));
-    };
-
-    auto boundary_worker = [&](const CellIterator & cell,
-                               const unsigned int & face_no,
-                               ScratchData<dim> &   scratch_data,
-                               CopyData &           copy_data) {
-      CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
-                               cell->level(),
-                               cell->index(),
-                               &dof_handler_pressure);
-      if(use_sipg_method)
-        matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
-      else
-        AssertThrow(false, ExcMessage("This FEM is not supported."));
-    };
-
-    const auto copier = [&](const CopyData & copy_data) {
-      zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-        copy_data.cell_matrix,
-        copy_data.local_dof_indices_test,
-        constraints_pressure,
-        copy_data.local_dof_indices_ansatz,
-        system_matrix.block(0, 1));
-      constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
-        copy_data.cell_matrix_flipped,
-        copy_data.local_dof_indices_ansatz,
-        zero_constraints_velocity,
-        copy_data.local_dof_indices_test,
-        system_matrix.block(1, 0));
-
-      zero_constraints_velocity.template distribute_local_to_global<Vector<double>>(
-        copy_data.cell_rhs_test, copy_data.local_dof_indices_test, system_rhs.block(0));
-      constraints_pressure.template distribute_local_to_global<Vector<double>>(
-        copy_data.cell_rhs_ansatz, copy_data.local_dof_indices_ansatz, system_rhs.block(1));
-
-      for(auto & cdf : copy_data.face_data)
-      {
-        zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-          cdf.cell_matrix,
-          cdf.joint_dof_indices_test,
-          constraints_pressure,
-          cdf.joint_dof_indices_ansatz,
-          system_matrix.block(0, 1));
-        constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
-          cdf.cell_matrix_flipped,
-          cdf.joint_dof_indices_ansatz,
-          zero_constraints_velocity,
-          cdf.joint_dof_indices_test,
-          system_matrix.block(1, 0));
-
-        /// For Hdiv-IP there might be liftings from the velocity written to the
-        /// pressure RHS.
-        AssertDimension(cdf.cell_rhs_test.size(), 0);
-        if(dof_layout_v != TPSS::DoFLayout::RT)
-          AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
-
-        if(cdf.cell_rhs_test.size() != 0)
-          zero_constraints_velocity.template distribute_local_to_global<Vector<double>>(
-            cdf.cell_rhs_test, cdf.joint_dof_indices_test, system_rhs.block(0));
-        if(cdf.cell_rhs_ansatz.size() != 0)
-          constraints_pressure.template distribute_local_to_global<Vector<double>>(
-            cdf.cell_rhs_ansatz, cdf.joint_dof_indices_ansatz, system_rhs.block(1));
-      }
-    };
-
-    const UpdateFlags update_flags_velocity =
-      update_values | update_gradients | update_quadrature_points | update_JxW_values;
-    const UpdateFlags update_flags_pressure =
-      update_values | update_gradients | update_quadrature_points | update_JxW_values;
-    const UpdateFlags interface_update_flags_velocity =
-      update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
-    const UpdateFlags interface_update_flags_pressure =
-      update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
-
-    ScratchData<dim> scratch_data(mapping,
-                                  dof_handler_velocity.get_fe(),
-                                  dof_handler_pressure.get_fe(),
-                                  n_q_points_1d,
-                                  update_flags_velocity,
-                                  update_flags_pressure,
-                                  interface_update_flags_velocity,
-                                  interface_update_flags_pressure);
-
-    CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell,
-                       dof_handler_pressure.get_fe().dofs_per_cell);
-
-    if(use_conf_method || use_hdiv_ip_method)
-      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                            dof_handler_velocity.end(),
-                            cell_worker,
-                            copier,
-                            scratch_data,
-                            copy_data,
-                            MeshWorker::assemble_own_cells);
-    else if(use_sipg_method)
-      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                            dof_handler_velocity.end(),
-                            cell_worker,
-                            copier,
-                            scratch_data,
-                            copy_data,
-                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                              MeshWorker::assemble_own_interior_faces_once,
-                            boundary_worker,
-                            face_worker);
-    else
-      AssertThrow(false, ExcMessage("This FEM is not supported."));
-  }
-}
-
-
-
-template<int dim, int fe_degree_p, Method method>
-void
-ModelProblem<dim, fe_degree_p, method>::assemble_system()
-{
-  assemble_system_velocity_pressure();
-
-  if(rt_parameters.solver.variant == "FGMRES_ILU" ||
-     rt_parameters.solver.variant == "FGMRES_GMGvelocity")
-  {
-    pressure_mass_matrix.reinit(sparsity_pattern.block(1, 1));
-
-    using Pressure::MW::CopyData;
-    using Pressure::MW::ScratchData;
-    using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
-
-    MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
-
-    auto cell_worker =
-      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        matrix_integrator.cell_mass_worker(cell, scratch_data, copy_data);
-      };
-
-    const auto copier = [&](const CopyData & copy_data) {
-      constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
-        copy_data.cell_matrix, copy_data.local_dof_indices, pressure_mass_matrix);
-    };
-
-    const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
-    const UpdateFlags interface_update_flags = update_default;
-
-    ScratchData<dim> scratch_data(
-      mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
-    CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
-    MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
-                          dof_handler_pressure.end(),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells);
-  }
-}
-
-
-
-template<int dim, int fe_degree_p, Method method>
-void
-ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity()
-{
-  AssertThrow(mgc_velocity.system_matrix.m() != 0,
-              ExcMessage("The velocity system matrix does not seem to be initialized."));
-
-  using Velocity::SIPG::MW::CopyData;
-  using Velocity::SIPG::MW::ScratchData;
-  using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, false>;
-  MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
-
-  auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-    matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-  };
-
-  auto face_worker = [&](const auto &         cell,
-                         const unsigned int & f,
-                         const unsigned int & sf,
-                         const auto &         ncell,
-                         const unsigned int & nf,
-                         const unsigned int & nsf,
-                         ScratchData<dim> &   scratch_data,
-                         CopyData &           copy_data) {
-    matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-  };
-
-  auto boundary_worker = [&](const auto &         cell,
-                             const unsigned int & face_no,
-                             ScratchData<dim> &   scratch_data,
-                             CopyData &           copy_data) {
-    matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-  };
-
-  const auto copier = [&](const CopyData & copy_data) {
-    constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-      copy_data.cell_matrix, copy_data.local_dof_indices_test, mgc_velocity.system_matrix);
-
-    for(auto & cdf : copy_data.face_data)
-    {
-      constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-        cdf.cell_matrix, cdf.joint_dof_indices_test, mgc_velocity.system_matrix);
-    }
-  };
-
-  ScratchData<dim> scratch_data(mapping,
-                                get_fe_velocity(),
-                                n_q_points_1d,
-                                update_values | update_gradients | update_quadrature_points |
-                                  update_JxW_values,
-                                update_values | update_gradients | update_quadrature_points |
-                                  update_JxW_values | update_normal_vectors);
-  CopyData         copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
-  MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-                        dof_handler_velocity.end(),
-                        cell_worker,
-                        copier,
-                        scratch_data,
-                        copy_data,
-                        MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                          MeshWorker::assemble_own_interior_faces_once,
-                        boundary_worker,
-                        face_worker);
-}
-
-
-
-template<int dim, int fe_degree_p, Method method>
-void
-ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity()
-{
-  dof_handler_velocity.distribute_mg_dofs();
-
-  mgc_velocity.dof_handler = &dof_handler_velocity;
-  mgc_velocity.mapping     = &mapping;
-  mgc_velocity.cell_integrals_mask.reinit(dim, dim);
-  mgc_velocity.face_integrals_mask.reinit(dim, dim);
-  for(auto i = 0U; i < dim; ++i)
-    for(auto j = 0U; j < dim; ++j)
-    {
-      mgc_velocity.cell_integrals_mask(i, j) = cell_integrals_mask(i, j);
-      mgc_velocity.face_integrals_mask(i, j) = face_integrals_mask(i, j);
-    }
-
-  mgc_velocity.prepare_multigrid(max_level(), user_coloring);
-
-  const unsigned int mg_level_max = max_level();
-  const unsigned int mg_level_min = rt_parameters.multigrid.coarse_level;
-  pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
-  pp_data.n_colors_system.push_back(n_colors_system());
-}
-
-
-
-template<int dim, int fe_degree_p, Method method>
-void
-ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity_pressure()
-{
-  const unsigned int mg_level_max = max_level();
-  const unsigned int mg_level_min = rt_parameters.multigrid.coarse_level;
-
-  dof_handler.distribute_mg_dofs();
-  /// This aligns dof numbering of dof_handler's first block and
-  /// dof_handler_velocity on each level!
-  for(auto level = 0U /*!!! mg_level_min?*/; level <= max_level(); ++level)
-    DoFRenumbering::block_wise(dof_handler, level);
-  dof_handler_velocity.distribute_mg_dofs();
-  dof_handler_pressure.distribute_mg_dofs();
-
-  mgc_velocity_pressure.dof_handler          = &dof_handler;
-  mgc_velocity_pressure.dof_handler_velocity = &dof_handler_velocity;
-  mgc_velocity_pressure.dof_handler_pressure = &dof_handler_pressure;
-  mgc_velocity_pressure.mapping              = &mapping;
-  mgc_velocity_pressure.cell_integrals_mask  = cell_integrals_mask;
-  mgc_velocity_pressure.face_integrals_mask  = face_integrals_mask;
-
-
-  /// TODO I am not sure if it is possible to impose mean value constraints on
-  /// all level matrices in dealii and if this makes sense at all...
-  ///
-  /// One way could be to use a mean_value_filter() (see deal.II) instead of a
-  /// distribute() call. This would still require an assembly w.r.t. the mean
-  /// value constraint!?
-  MGLevelObject<AffineConstraints<double>> mg_constraints_pressure(mg_level_min, mg_level_max);
-  for(auto level = mg_level_min; level <= mg_level_max; ++level)
-  {
-    // const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof(level);
-    // const auto & mass_foreach_dof     = *mass_foreach_dof_ptr;
-    // const auto   n_dofs_pressure      = dof_handler_pressure.n_dofs(level);
-
-    auto & level_constraints_pressure = mg_constraints_pressure[level];
-    level_constraints_pressure.clear();
-    if(equation_data.force_mean_value_constraint)
-    {
-      AssertThrow(false, ExcMessage("TODO..."));
-    }
-    level_constraints_pressure.close();
-  }
-
-  mgc_velocity_pressure.prepare_multigrid(mg_level_max, user_coloring, mg_constraints_pressure);
-
-  pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
-  pp_data.n_colors_system.push_back(n_colors_system());
-}
+// template<int dim, int fe_degree_p, Method method>
+// void
+// ModelProblem<dim, fe_degree_p, method>::assemble_system_step56()
+// {
+//   using VelocityPressure::MW::CopyData;
+//   using VelocityPressure::MW::ScratchData;
+//   using MatrixIntegrator = VelocityPressure::MW::MatrixIntegrator<dim, /*is_multigrid*/ false>;
+
+//   const auto *     particular_solution = &system_solution;
+//   MatrixIntegrator matrix_integrator(load_function.get(),
+//                                      analytical_solution.get(),
+//                                      particular_solution,
+//                                      equation_data);
+
+//   auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+//     matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+//   };
+
+//   const auto copier = [&](const CopyData & copy_data) {
+//     zero_constraints
+//       .template distribute_local_to_global<BlockSparseMatrix<double>, BlockVector<double>>(
+//         copy_data.cell_matrix,
+//         copy_data.cell_rhs,
+//         copy_data.local_dof_indices,
+//         system_matrix,
+//         system_rhs);
+//   };
+
+//   ScratchData<dim> scratch_data(mapping,
+//                                 *fe,
+//                                 n_q_points_1d,
+//                                 update_values | update_gradients | update_quadrature_points |
+//                                   update_JxW_values,
+//                                 update_values | update_gradients | update_quadrature_points |
+//                                   update_JxW_values | update_normal_vectors);
+//   CopyData         copy_data(dof_handler.get_fe().dofs_per_cell);
+//   MeshWorker::mesh_loop(dof_handler.begin_active(),
+//                         dof_handler.end(),
+//                         cell_worker,
+//                         copier,
+//                         scratch_data,
+//                         copy_data,
+//                         MeshWorker::assemble_own_cells);
+// }
+
+
+/// TODO
+// template<int dim, int fe_degree_p, Method method>
+// void
+// ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
+// {
+//   constexpr bool use_sipg_method    = dof_layout_v == TPSS::DoFLayout::DGQ;
+//   constexpr bool use_hdiv_ip_method = dof_layout_v == TPSS::DoFLayout::RT;
+//   constexpr bool use_conf_method    = dof_layout_v == TPSS::DoFLayout::Q;
+
+//   /// Assemble the velocity block, here block(0,0).
+//   {
+//     using Velocity::SIPG::MW::CopyData;
+//     using Velocity::SIPG::MW::ScratchData;
+//     using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, false>;
+
+//     const auto             component_range = std::make_pair<unsigned int>(0, dim);
+//     FunctionExtractor<dim> load_function_velocity(load_function.get(), component_range);
+//     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
+
+//     const auto * particular_solution_velocity =
+//       (use_conf_method || use_hdiv_ip_method) ? &(system_solution.block(0)) : nullptr;
+
+//     MatrixIntegrator matrix_integrator(&load_function_velocity,
+//                                        &analytical_solution_velocity,
+//                                        particular_solution_velocity,
+//                                        equation_data);
+
+//     auto cell_worker =
+//       [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+//         matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+//       };
+
+//     auto face_worker = [&](const auto &         cell,
+//                            const unsigned int & f,
+//                            const unsigned int & sf,
+//                            const auto &         ncell,
+//                            const unsigned int & nf,
+//                            const unsigned int & nsf,
+//                            ScratchData<dim> &   scratch_data,
+//                            CopyData &           copy_data) {
+//       if(use_sipg_method)
+//         matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+//       else if(use_hdiv_ip_method)
+//         // matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+//         matrix_integrator.face_worker_tangential(
+//           cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+//       else
+//         AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
+//     };
+
+//     auto boundary_worker = [&](const auto &         cell,
+//                                const unsigned int & face_no,
+//                                ScratchData<dim> &   scratch_data,
+//                                CopyData &           copy_data) {
+//       if(use_sipg_method)
+//         matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+//       else if(use_hdiv_ip_method)
+//         // matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+//         matrix_integrator.boundary_worker_tangential(cell, face_no, scratch_data, copy_data);
+//       // matrix_integrator.boundary_worker_tangential_old(cell, face_no, scratch_data, copy_data);
+//       else
+//         AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
+//     };
+
+//     const auto copier = [&](const CopyData & copy_data) {
+//       zero_constraints_velocity
+//         .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
+//           copy_data.cell_matrix,
+//           copy_data.cell_rhs_test,
+//           copy_data.local_dof_indices_test,
+//           system_matrix.block(0, 0),
+//           system_rhs.block(0));
+
+//       for(auto & cdf : copy_data.face_data)
+//       {
+//         if(!use_hdiv_ip_method)
+//           AssertDimension(cdf.cell_rhs_test.size(), 0);
+
+//         if(cdf.cell_rhs_test.size() == 0)
+//           zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
+//             cdf.cell_matrix, cdf.joint_dof_indices_test, system_matrix.block(0, 0));
+//         else
+//         {
+//           zero_constraints_velocity
+//             .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
+//               cdf.cell_matrix,
+//               cdf.cell_rhs_test,
+//               cdf.joint_dof_indices_test,
+//               system_matrix.block(0, 0),
+//               system_rhs.block(0));
+//         }
+//       }
+//     };
+
+//     const UpdateFlags update_flags =
+//       update_values | update_gradients | update_quadrature_points | update_JxW_values;
+//     const UpdateFlags interface_update_flags = update_values | update_gradients |
+//                                                update_quadrature_points | update_JxW_values |
+//                                                update_normal_vectors;
+
+//     ScratchData<dim> scratch_data(mapping,
+//                                   dof_handler_velocity.get_fe(),
+//                                   dof_handler_velocity.get_fe(),
+//                                   n_q_points_1d,
+//                                   update_flags,
+//                                   update_flags,
+//                                   interface_update_flags,
+//                                   interface_update_flags);
+
+//     CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
+
+//     if(use_conf_method)
+//       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+//                             dof_handler_velocity.end(),
+//                             cell_worker,
+//                             copier,
+//                             scratch_data,
+//                             copy_data,
+//                             MeshWorker::assemble_own_cells);
+//     else if(use_sipg_method || use_hdiv_ip_method)
+//       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+//                             dof_handler_velocity.end(),
+//                             cell_worker,
+//                             copier,
+//                             scratch_data,
+//                             copy_data,
+//                             MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+//                               MeshWorker::assemble_own_interior_faces_once,
+//                             boundary_worker,
+//                             face_worker);
+//     else
+//       AssertThrow(false, ExcMessage("This FEM is not implemented."));
+//   }
+
+//   /// Assemble the pressure block, here block(1,1).
+//   {
+//     using Pressure::MW::CopyData;
+//     using Pressure::MW::ScratchData;
+//     using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
+
+//     const auto             component_range = std::make_pair<unsigned int>(dim, dim + 1);
+//     FunctionExtractor<dim> load_function_pressure(load_function.get(), component_range);
+
+//     MatrixIntegrator matrix_integrator(&load_function_pressure, nullptr, nullptr, equation_data);
+
+//     auto cell_worker =
+//       [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+//         matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+//       };
+
+//     const auto copier = [&](const CopyData & copy_data) {
+//       constraints_pressure
+//         .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
+//           copy_data.cell_matrix,
+//           copy_data.cell_rhs,
+//           copy_data.local_dof_indices,
+//           system_matrix.block(1, 1),
+//           system_rhs.block(1));
+//     };
+
+//     const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
+//     const UpdateFlags interface_update_flags = update_default;
+
+//     ScratchData<dim> scratch_data(
+//       mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
+
+//     CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
+
+//     MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
+//                           dof_handler_pressure.end(),
+//                           cell_worker,
+//                           copier,
+//                           scratch_data,
+//                           copy_data,
+//                           MeshWorker::assemble_own_cells);
+//   }
+
+//   /// Assemble the mixed velocity-pressure block, that is test functions are
+//   /// from velocity space and ansatz functions from pressure space. The
+//   /// "flipped" pressure-velocity block is assembled as well.
+//   {
+//     using VelocityPressure::MW::Mixed::CopyData;
+//     using VelocityPressure::MW::Mixed::ScratchData;
+//     using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, false>;
+//     using CellIterator     = typename MatrixIntegrator::IteratorType;
+
+//     const auto * particular_solution_velocity =
+//       (use_conf_method || use_hdiv_ip_method) ? &(system_solution.block(0)) : nullptr;
+
+//     const auto             component_range_velocity = std::make_pair<unsigned int>(0, dim);
+//     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(),
+//                                                         component_range_velocity);
+
+//     MatrixIntegrator matrix_integrator(particular_solution_velocity,
+//                                        /*particular_solution_pressure*/ nullptr,
+//                                        &analytical_solution_velocity,
+//                                        /*&analytical_solution_pressure*/ nullptr,
+//                                        equation_data);
+
+//     auto cell_worker =
+//       [&](const CellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+//         CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
+//                                  cell->level(),
+//                                  cell->index(),
+//                                  &dof_handler_pressure);
+//         matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
+//       };
+
+//     auto face_worker = [&](const auto &         cell,
+//                            const unsigned int & f,
+//                            const unsigned int & sf,
+//                            const auto &         ncell,
+//                            const unsigned int & nf,
+//                            const unsigned int & nsf,
+//                            ScratchData<dim> &   scratch_data,
+//                            CopyData &           copy_data) {
+//       CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
+//                                cell->level(),
+//                                cell->index(),
+//                                &dof_handler_pressure);
+//       CellIterator ncell_ansatz(&dof_handler_pressure.get_triangulation(),
+//                                 ncell->level(),
+//                                 ncell->index(),
+//                                 &dof_handler_pressure);
+//       if(use_sipg_method)
+//         matrix_integrator.face_worker(
+//           cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
+//       else
+//         AssertThrow(false, ExcMessage("This FEM is not supported."));
+//     };
+
+//     auto boundary_worker = [&](const CellIterator & cell,
+//                                const unsigned int & face_no,
+//                                ScratchData<dim> &   scratch_data,
+//                                CopyData &           copy_data) {
+//       CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
+//                                cell->level(),
+//                                cell->index(),
+//                                &dof_handler_pressure);
+//       if(use_sipg_method)
+//         matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
+//       else
+//         AssertThrow(false, ExcMessage("This FEM is not supported."));
+//     };
+
+//     const auto copier = [&](const CopyData & copy_data) {
+//       zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
+//         copy_data.cell_matrix,
+//         copy_data.local_dof_indices_test,
+//         constraints_pressure,
+//         copy_data.local_dof_indices_ansatz,
+//         system_matrix.block(0, 1));
+//       constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
+//         copy_data.cell_matrix_flipped,
+//         copy_data.local_dof_indices_ansatz,
+//         zero_constraints_velocity,
+//         copy_data.local_dof_indices_test,
+//         system_matrix.block(1, 0));
+
+//       zero_constraints_velocity.template distribute_local_to_global<Vector<double>>(
+//         copy_data.cell_rhs_test, copy_data.local_dof_indices_test, system_rhs.block(0));
+//       constraints_pressure.template distribute_local_to_global<Vector<double>>(
+//         copy_data.cell_rhs_ansatz, copy_data.local_dof_indices_ansatz, system_rhs.block(1));
+
+//       for(auto & cdf : copy_data.face_data)
+//       {
+//         zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
+//           cdf.cell_matrix,
+//           cdf.joint_dof_indices_test,
+//           constraints_pressure,
+//           cdf.joint_dof_indices_ansatz,
+//           system_matrix.block(0, 1));
+//         constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
+//           cdf.cell_matrix_flipped,
+//           cdf.joint_dof_indices_ansatz,
+//           zero_constraints_velocity,
+//           cdf.joint_dof_indices_test,
+//           system_matrix.block(1, 0));
+
+//         /// For Hdiv-IP there might be liftings from the velocity written to the
+//         /// pressure RHS.
+//         AssertDimension(cdf.cell_rhs_test.size(), 0);
+//         if(dof_layout_v != TPSS::DoFLayout::RT)
+//           AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
+
+//         if(cdf.cell_rhs_test.size() != 0)
+//           zero_constraints_velocity.template distribute_local_to_global<Vector<double>>(
+//             cdf.cell_rhs_test, cdf.joint_dof_indices_test, system_rhs.block(0));
+//         if(cdf.cell_rhs_ansatz.size() != 0)
+//           constraints_pressure.template distribute_local_to_global<Vector<double>>(
+//             cdf.cell_rhs_ansatz, cdf.joint_dof_indices_ansatz, system_rhs.block(1));
+//       }
+//     };
+
+//     const UpdateFlags update_flags_velocity =
+//       update_values | update_gradients | update_quadrature_points | update_JxW_values;
+//     const UpdateFlags update_flags_pressure =
+//       update_values | update_gradients | update_quadrature_points | update_JxW_values;
+//     const UpdateFlags interface_update_flags_velocity =
+//       update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+//     const UpdateFlags interface_update_flags_pressure =
+//       update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+
+//     ScratchData<dim> scratch_data(mapping,
+//                                   dof_handler_velocity.get_fe(),
+//                                   dof_handler_pressure.get_fe(),
+//                                   n_q_points_1d,
+//                                   update_flags_velocity,
+//                                   update_flags_pressure,
+//                                   interface_update_flags_velocity,
+//                                   interface_update_flags_pressure);
+
+//     CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell,
+//                        dof_handler_pressure.get_fe().dofs_per_cell);
+
+//     if(use_conf_method || use_hdiv_ip_method)
+//       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+//                             dof_handler_velocity.end(),
+//                             cell_worker,
+//                             copier,
+//                             scratch_data,
+//                             copy_data,
+//                             MeshWorker::assemble_own_cells);
+//     else if(use_sipg_method)
+//       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+//                             dof_handler_velocity.end(),
+//                             cell_worker,
+//                             copier,
+//                             scratch_data,
+//                             copy_data,
+//                             MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+//                               MeshWorker::assemble_own_interior_faces_once,
+//                             boundary_worker,
+//                             face_worker);
+//     else
+//       AssertThrow(false, ExcMessage("This FEM is not supported."));
+//   }
+// }
+
+
+
+/// TODO
+// template<int dim, int fe_degree_p, Method method>
+// void
+// ModelProblem<dim, fe_degree_p, method>::assemble_system()
+// {
+//   assemble_system_velocity_pressure();
+
+//   if(rt_parameters.solver.variant == "FGMRES_ILU" ||
+//      rt_parameters.solver.variant == "FGMRES_GMGvelocity")
+//   {
+//     pressure_mass_matrix.reinit(sparsity_pattern.block(1, 1));
+
+//     using Pressure::MW::CopyData;
+//     using Pressure::MW::ScratchData;
+//     using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
+
+//     MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+
+//     auto cell_worker =
+//       [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+//         matrix_integrator.cell_mass_worker(cell, scratch_data, copy_data);
+//       };
+
+//     const auto copier = [&](const CopyData & copy_data) {
+//       constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
+//         copy_data.cell_matrix, copy_data.local_dof_indices, pressure_mass_matrix);
+//     };
+
+//     const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
+//     const UpdateFlags interface_update_flags = update_default;
+
+//     ScratchData<dim> scratch_data(
+//       mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
+//     CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
+//     MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
+//                           dof_handler_pressure.end(),
+//                           cell_worker,
+//                           copier,
+//                           scratch_data,
+//                           copy_data,
+//                           MeshWorker::assemble_own_cells);
+//   }
+// }
+
+
+
+/// TODO
+// template<int dim, int fe_degree_p, Method method>
+// void
+// ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity()
+// {
+//   AssertThrow(mgc_velocity.system_matrix.m() != 0,
+//               ExcMessage("The velocity system matrix does not seem to be initialized."));
+
+//   using Velocity::SIPG::MW::CopyData;
+//   using Velocity::SIPG::MW::ScratchData;
+//   using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, false>;
+//   MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+
+//   auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+//     matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+//   };
+
+//   auto face_worker = [&](const auto &         cell,
+//                          const unsigned int & f,
+//                          const unsigned int & sf,
+//                          const auto &         ncell,
+//                          const unsigned int & nf,
+//                          const unsigned int & nsf,
+//                          ScratchData<dim> &   scratch_data,
+//                          CopyData &           copy_data) {
+//     matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+//   };
+
+//   auto boundary_worker = [&](const auto &         cell,
+//                              const unsigned int & face_no,
+//                              ScratchData<dim> &   scratch_data,
+//                              CopyData &           copy_data) {
+//     matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+//   };
+
+//   const auto copier = [&](const CopyData & copy_data) {
+//     constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
+//       copy_data.cell_matrix, copy_data.local_dof_indices_test, mgc_velocity.system_matrix);
+
+//     for(auto & cdf : copy_data.face_data)
+//     {
+//       constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
+//         cdf.cell_matrix, cdf.joint_dof_indices_test, mgc_velocity.system_matrix);
+//     }
+//   };
+
+//   ScratchData<dim> scratch_data(mapping,
+//                                 get_fe_velocity(),
+//                                 n_q_points_1d,
+//                                 update_values | update_gradients | update_quadrature_points |
+//                                   update_JxW_values,
+//                                 update_values | update_gradients | update_quadrature_points |
+//                                   update_JxW_values | update_normal_vectors);
+//   CopyData         copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
+//   MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+//                         dof_handler_velocity.end(),
+//                         cell_worker,
+//                         copier,
+//                         scratch_data,
+//                         copy_data,
+//                         MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+//                           MeshWorker::assemble_own_interior_faces_once,
+//                         boundary_worker,
+//                         face_worker);
+// }
+
+
+
+// template<int dim, int fe_degree_p, Method method>
+// void
+// ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity()
+// {
+//   dof_handler_velocity.distribute_mg_dofs();
+
+//   mgc_velocity.dof_handler = &dof_handler_velocity;
+//   mgc_velocity.mapping     = &mapping;
+//   mgc_velocity.cell_integrals_mask.reinit(dim, dim);
+//   mgc_velocity.face_integrals_mask.reinit(dim, dim);
+//   for(auto i = 0U; i < dim; ++i)
+//     for(auto j = 0U; j < dim; ++j)
+//     {
+//       mgc_velocity.cell_integrals_mask(i, j) = cell_integrals_mask(i, j);
+//       mgc_velocity.face_integrals_mask(i, j) = face_integrals_mask(i, j);
+//     }
+
+//   mgc_velocity.prepare_multigrid(max_level(), user_coloring);
+
+//   const unsigned int mg_level_max = max_level();
+//   const unsigned int mg_level_min = rt_parameters.multigrid.coarse_level;
+//   pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
+//   pp_data.n_colors_system.push_back(n_colors_system());
+// }
+
+
+
+// template<int dim, int fe_degree_p, Method method>
+// void
+// ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity_pressure()
+// {
+//   const unsigned int mg_level_max = max_level();
+//   const unsigned int mg_level_min = rt_parameters.multigrid.coarse_level;
+
+//   dof_handler.distribute_mg_dofs();
+//   /// This aligns dof numbering of dof_handler's first block and
+//   /// dof_handler_velocity on each level!
+//   for(auto level = 0U /*!!! mg_level_min?*/; level <= max_level(); ++level)
+//     DoFRenumbering::block_wise(dof_handler, level);
+//   dof_handler_velocity.distribute_mg_dofs();
+//   dof_handler_pressure.distribute_mg_dofs();
+
+//   mgc_velocity_pressure.dof_handler          = &dof_handler;
+//   mgc_velocity_pressure.dof_handler_velocity = &dof_handler_velocity;
+//   mgc_velocity_pressure.dof_handler_pressure = &dof_handler_pressure;
+//   mgc_velocity_pressure.mapping              = &mapping;
+//   mgc_velocity_pressure.cell_integrals_mask  = cell_integrals_mask;
+//   mgc_velocity_pressure.face_integrals_mask  = face_integrals_mask;
+
+
+//   /// TODO I am not sure if it is possible to impose mean value constraints on
+//   /// all level matrices in dealii and if this makes sense at all...
+//   ///
+//   /// One way could be to use a mean_value_filter() (see deal.II) instead of a
+//   /// distribute() call. This would still require an assembly w.r.t. the mean
+//   /// value constraint!?
+//   MGLevelObject<AffineConstraints<double>> mg_constraints_pressure(mg_level_min, mg_level_max);
+//   for(auto level = mg_level_min; level <= mg_level_max; ++level)
+//   {
+//     // const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof(level);
+//     // const auto & mass_foreach_dof     = *mass_foreach_dof_ptr;
+//     // const auto   n_dofs_pressure      = dof_handler_pressure.n_dofs(level);
+
+//     auto & level_constraints_pressure = mg_constraints_pressure[level];
+//     level_constraints_pressure.clear();
+//     if(equation_data.force_mean_value_constraint)
+//     {
+//       AssertThrow(false, ExcMessage("TODO..."));
+//     }
+//     level_constraints_pressure.close();
+//   }
+
+//   mgc_velocity_pressure.prepare_multigrid(mg_level_max, user_coloring, mg_constraints_pressure);
+
+//   pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
+//   pp_data.n_colors_system.push_back(n_colors_system());
+// }
 
 
 
@@ -3157,48 +3111,48 @@ ModelProblem<dim, fe_degree_p, method>::compute_errors()
 
 
 
-template<int dim, int fe_degree_p, Method method>
-void
-ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refinement_cycle) const
-{
-  std::vector<DataComponentInterpretation::DataComponentInterpretation>
-    data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
-  data_component_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
+// template<int dim, int fe_degree_p, Method method>
+// void
+// ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refinement_cycle) const
+// {
+//   std::vector<DataComponentInterpretation::DataComponentInterpretation>
+//     data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
+//   data_component_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
 
-  DataOut<dim> data_out;
-  data_out.attach_dof_handler(dof_handler);
+//   DataOut<dim> data_out;
+//   data_out.attach_dof_handler(dof_handler);
 
-  /// discrete solution (velocity, pressure): (u, p)
-  std::vector<std::string> solution_names(dim, "velocity");
-  solution_names.emplace_back("pressure");
-  data_out.add_data_vector(system_solution,
-                           solution_names,
-                           DataOut<dim>::type_dof_data,
-                           data_component_interpretation);
+//   /// discrete solution (velocity, pressure): (u, p)
+//   std::vector<std::string> solution_names(dim, "velocity");
+//   solution_names.emplace_back("pressure");
+//   data_out.add_data_vector(system_solution,
+//                            solution_names,
+//                            DataOut<dim>::type_dof_data,
+//                            data_component_interpretation);
 
-  /// discrete right hand side (velocity, pressure): (Fu, Fp)
-  std::vector<std::string> rhs_names(dim, "rhs_velocity");
-  rhs_names.emplace_back("rhs_pressure");
-  data_out.add_data_vector(system_rhs,
-                           rhs_names,
-                           DataOut<dim>::type_dof_data,
-                           data_component_interpretation);
+//   /// discrete right hand side (velocity, pressure): (Fu, Fp)
+//   std::vector<std::string> rhs_names(dim, "rhs_velocity");
+//   rhs_names.emplace_back("rhs_pressure");
+//   data_out.add_data_vector(system_rhs,
+//                            rhs_names,
+//                            DataOut<dim>::type_dof_data,
+//                            data_component_interpretation);
 
-  const auto L2_error_v = compute_L2_error_velocity();
-  data_out.add_data_vector(*L2_error_v, "velocity_L2_error", DataOut<dim>::type_cell_data);
+//   const auto L2_error_v = compute_L2_error_velocity();
+//   data_out.add_data_vector(*L2_error_v, "velocity_L2_error", DataOut<dim>::type_cell_data);
 
-  const auto L2_error_p = compute_L2_error_pressure();
-  data_out.add_data_vector(*L2_error_p, "pressure_L2_error", DataOut<dim>::type_cell_data);
+//   const auto L2_error_p = compute_L2_error_pressure();
+//   data_out.add_data_vector(*L2_error_p, "pressure_L2_error", DataOut<dim>::type_cell_data);
 
-  const auto H1semi_error_v = compute_H1semi_error_velocity();
-  data_out.add_data_vector(*H1semi_error_v, "velocity_H1semi_error", DataOut<dim>::type_cell_data);
+//   const auto H1semi_error_v = compute_H1semi_error_velocity();
+//   data_out.add_data_vector(*H1semi_error_v, "velocity_H1semi_error", DataOut<dim>::type_cell_data);
 
-  data_out.build_patches();
+//   data_out.build_patches();
 
-  std::ofstream output("stokes_" + equation_data.sstr_equation_variant() + "_" +
-                       Utilities::int_to_string(refinement_cycle, 3) + ".vtk");
-  data_out.write_vtk(output);
-}
+//   std::ofstream output("stokes_" + equation_data.sstr_equation_variant() + "_" +
+//                        Utilities::int_to_string(refinement_cycle, 3) + ".vtk");
+//   data_out.write_vtk(output);
+// }
 
 
 
@@ -3211,28 +3165,33 @@ ModelProblem<dim, fe_degree_p, method>::run()
   const unsigned int n_cycles = rt_parameters.n_cycles;
   for(unsigned int cycle = 0; cycle < n_cycles; ++cycle)
   {
-    *pcout << "Cycle: " << cycle + 1 << " of " << n_cycles << std::endl;
+    {
+      std::ostringstream oss;
+      oss << "Starting cycle " << cycle + 1 << " of " << n_cycles;
+      print_parameter(oss.str(), "...");
+    }
 
     const unsigned int n_refinements = rt_parameters.mesh.n_refinements + cycle;
     if(!make_grid(n_refinements))
     {
-      *pcout << "NO MESH CREATED AT CYCLE " << cycle << " !\n\n";
+      print_parameter("No mesh created", "...");
+      *pcout << std::endl << std::endl;
       continue;
     }
 
     setup_system();
 
-    assemble_system();
+    // assemble_system();
 
-    solve();
+    // solve();
 
-    compute_errors();
+    // compute_errors();
 
-    output_results(cycle);
+    // output_results(cycle);
 
     Utilities::System::MemoryStats mem;
     Utilities::System::get_memory_stats(mem);
-    print_parameter("Memory used (VM Peak)", mem.VmPeak);
+    print_parameter("Memory used (VM Peak):", mem.VmPeak);
 
     *pcout << std::endl;
   }
