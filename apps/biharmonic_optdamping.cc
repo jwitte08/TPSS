@@ -51,19 +51,25 @@ main(int argc, char * argv[])
   constexpr auto smoother_variant = CT::SMOOTHER_VARIANT_;
 
   //: default
-  unsigned n_refinements = 0;
-  unsigned n_repetitions = 3;
-  double   damping       = 1.;
-  double   omega         = 1.; // local stability constant
-  int      n_threads_max = 1;
-  double   ip_factor     = 1.;
+  unsigned     n_refinements      = 0;
+  unsigned     n_repetitions      = 3;
+  double       damping            = 1.;
+  double       omega              = 1.; // local stability constant
+  int          n_threads_max      = 1;
+  double       ip_factor          = 1.;
+  unsigned int local_solver_index = 0; // exact
+  unsigned int ksvd_rank          = 1;
 
   //: parse runtime arguments
   atoi_if(n_refinements, 1);
   atoi_if(n_repetitions, 2);
   atof_if(damping, 3);
   atof_if(omega, 4);
-  atoi_if(n_threads_max, 5);
+  atof_if(local_solver_index, 5);
+  atof_if(ksvd_rank, 6);
+  atoi_if(n_threads_max, 7);
+
+  AssertThrow(local_solver_index < 3U, ExcMessage("invalid local solver"));
 
   Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
                                                       argv,
@@ -100,10 +106,32 @@ main(int argc, char * argv[])
 
   EquationData equation_data;
   equation_data.variant              = EquationData::Variant::ClampedBell;
-  equation_data.local_solver_variant = LocalSolverVariant::Bilaplacian; // Exact; !!!
+  equation_data.local_solver_variant = (LocalSolverVariant)local_solver_index;
+  equation_data.ksvd_tensor_indices  = [&]() -> std::set<unsigned int> {
+    if(ksvd_rank == 1U)
+      return {0U};
+    else if(ksvd_rank == 2U)
+      return {0U, 1U};
+    else if(ksvd_rank == 12U)
+      return {0U, 2U};
+    else if(ksvd_rank == 3U)
+      return {0U, 1U, 2U};
+    else if(ksvd_rank == 4U)
+      return {0U, 1U, 2U, 3U};
+    else
+      AssertThrow(false, ExcMessage("KSVD rank isn't supported."));
+    return {};
+  }();
+  if(equation_data.ksvd_tensor_indices == std::set<unsigned int>{0U, 1U})
+    equation_data.addition_to_min_eigenvalue = 0.025;
   equation_data.ip_factor            = ip_factor;
+  equation_data.n_lanczos_iterations = 4 + 1;
 
   auto biharmonic_problem = std::make_shared<BiharmonicProblem>(rt_parameters, equation_data);
+
+  const bool is_first_proc  = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0U;
+  auto       pcout          = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);
+  biharmonic_problem->pcout = pcout;
 
   biharmonic_problem->make_grid();
   biharmonic_problem->setup_system();
@@ -130,8 +158,7 @@ main(int argc, char * argv[])
               ExcMessage("MPI not supported."));
 
   ////////// LAMBDAS
-  constexpr unsigned int max_size       = 50;
-  constexpr unsigned int max_subdomains = 5;
+  constexpr unsigned int max_size = 50;
 
   const auto & print_fullmatrix = [&](const FullMatrix<double> & matrix,
                                       const std::string &        description) {
@@ -205,7 +232,7 @@ main(int argc, char * argv[])
 
       FullMatrix<double> Q(Aj.m());
       const auto &       geigenvalues = compute_generalized_eigenvalues_symm(Aj, tildeAj, Q);
-      std::cout << "generalized eigenvalues of Rj A Rj^T x = \lambda Aj x:" << std::endl;
+      std::cout << "generalized eigenvalues of Rj A Rj^T x = lambda Aj x:" << std::endl;
       std::cout << vector_to_string(geigenvalues) << std::endl;
     }
   }
