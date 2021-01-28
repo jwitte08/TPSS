@@ -1,8 +1,8 @@
 #ifndef APPS_BIHARMONICPROBLEM_H_
 #define APPS_BIHARMONICPROBLEM_H_
 
+/// based on step-47
 /* ---------------------------------------------------------------------
- * based on step-47
  *
  * Copyright (C) 2019 by the deal.II authors
  *
@@ -25,6 +25,12 @@
  *          Zhuroan Wang, Colorado State University
  */
 
+/**
+ * Biharmonic problem...
+ *
+ * Created on: ??? ??, 2020
+ *     Author: witte
+ */
 
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/function.h>
@@ -531,7 +537,7 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
     if(options_stokes.prms.solver.variant == "GMRES_GMG" ||
        options_stokes.prms.solver.variant == "CG_GMG")
       equation_data_stokes.local_kernel_size = 1U;
-    if(options_stokes.prms.solver.variant == "UMFPACK")
+    if(options_stokes.prms.solver.variant == "direct")
       equation_data_stokes.force_mean_value_constraint = true;
 
     stokes_problem = std::make_shared<

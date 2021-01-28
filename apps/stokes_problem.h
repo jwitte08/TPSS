@@ -1,16 +1,8 @@
 #ifndef APPS_STOKESPROBLEM_H_
 #define APPS_STOKESPROBLEM_H_
 
-/**
- * Stokes...
- *
- * Created on: May 18, 2020
- *     Author: witte
- */
-
-
+/// based on step-56
 /* ---------------------------------------------------------------------
- * based on step-56
  *
  * Copyright (C) 2016 - 2020 by the deal.II authors
  *
@@ -27,6 +19,13 @@
 
  * Author: Ryan Grove, Clemson University
  *         Timo Heister, Clemson University
+ */
+
+/**
+ * Stokes problem...
+ *
+ * Created on: May 18, 2020
+ *     Author: witte
  */
 
 #include <deal.II/base/function.h>
@@ -2008,7 +2007,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
   //   DoFTools::make_flux_sparsity_pattern(dof_handler_velocity,
   //                                        dsp,
   //                                        constraints_velocity,
-  //                                        rt_parameters.solver.variant == "UMFPACK" ? true :
+  //                                        rt_parameters.solver.variant == "direct" ? true :
   //                                        false);
   //   mgc_velocity.sparsity_pattern.copy_from(dsp);
   //   mgc_velocity.system_matrix.reinit(mgc_velocity.sparsity_pattern);
@@ -2846,7 +2845,7 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::solve()
 {
-  if(rt_parameters.solver.variant == "UMFPACK")
+  if(rt_parameters.solver.variant == "direct")
   {
     SparseDirectUMFPACK A_direct;
     A_direct.template initialize<BlockSparseMatrix<double>>(system_matrix);

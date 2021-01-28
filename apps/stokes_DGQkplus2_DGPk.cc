@@ -61,7 +61,7 @@ main(int argc, char * argv[])
     AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
                 ExcMessage("Invalid."));
     equation_data.force_mean_value_constraint =
-      options.prms.solver.variant == "UMFPACK" ?
+      options.prms.solver.variant == "direct" ?
         true :
         static_cast<bool>(force_mean_value_constraint); // !!!
     equation_data.ip_factor    = ip_factor;             // !!!

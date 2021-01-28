@@ -89,7 +89,7 @@ struct StokesFlow
     prms.multigrid.post_smoother.schwarz.reverse_smoothing = true;
   }
 
-  const std::string str_solver_variant[test_index_max + 1] = {"UMFPACK",
+  const std::string str_solver_variant[test_index_max + 1] = {"direct",
                                                               "FGMRES_ILU",
                                                               "FGMRES_GMGvelocity",
                                                               "FGMRES_GMGvelocity",
