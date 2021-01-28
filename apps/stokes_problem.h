@@ -44,6 +44,8 @@
 #include <deal.II/lac/solver_cg.h>
 #include <deal.II/lac/solver_gmres.h>
 #include <deal.II/lac/trilinos_precondition.h>
+#include <deal.II/lac/trilinos_solver.h>
+#include <deal.II/lac/trilinos_sparse_matrix.h>
 
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/grid_refinement.h>
@@ -140,54 +142,20 @@ public:
 
   void
   initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
-             const EquationData                             equation_data_in)
-  {
-    mf_storage = mf_storage_in;
-    local_integrator_type::initialize(equation_data_in);
-  }
+             const EquationData                             equation_data_in);
 
   void
-  clear()
-  {
-    fullmatrix.reset();
-    mf_storage.reset();
-    matrix_type::clear();
-  }
+  clear();
 
   std::shared_ptr<const MatrixFree<dim, Number>>
-  get_matrix_free() const
-  {
-    AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
-    return mf_storage;
-  }
+  get_matrix_free() const;
 
   using matrix_type::vmult;
 
   void
-  vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const
-  {
-    AssertDimension(dst.size(), matrix_type::m());
-    AssertDimension(src.size(), matrix_type::n());
-    std::vector<typename matrix_type::size_type> n_rows_per_block;
-    AssertDimension(matrix_type::n_block_rows(), matrix_type::n_block_cols());
-    for(auto b = 0U; b < matrix_type::n_block_rows(); ++b)
-      n_rows_per_block.emplace_back(matrix_type::block(b, b).m());
-    BlockVector<Number> v(n_rows_per_block); // src
-    std::copy(src.cbegin(), src.cend(), v.begin());
-    BlockVector<Number> w(n_rows_per_block); // dst
-    matrix_type::vmult(w, v);                // w = A v
-    std::copy(w.begin(), w.end(), dst.begin());
-  }
+  vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const;
 
-  operator const FullMatrix<Number> &() const
-  {
-    if(!fullmatrix)
-    {
-      const auto & tmp = Tensors::matrix_to_table(*this);
-      fullmatrix       = std::make_shared<FullMatrix<Number>>(table_to_fullmatrix(tmp));
-    }
-    return *fullmatrix;
-  }
+  operator const FullMatrix<Number> &() const;
 
   std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
   mutable std::shared_ptr<FullMatrix<Number>>    fullmatrix;
@@ -1604,6 +1572,106 @@ private:
 
 
 
+////////// Definitions
+
+
+
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         LocalAssembly   local_assembly>
+void
+BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
+  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
+             const EquationData                             equation_data_in)
+{
+  mf_storage = mf_storage_in;
+  local_integrator_type::initialize(equation_data_in);
+}
+
+
+
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         LocalAssembly   local_assembly>
+void
+BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
+  clear()
+{
+  fullmatrix.reset();
+  mf_storage.reset();
+  matrix_type::clear();
+}
+
+
+
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         LocalAssembly   local_assembly>
+std::shared_ptr<const MatrixFree<dim, Number>>
+BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
+  get_matrix_free() const
+{
+  AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
+  return mf_storage;
+}
+
+
+
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         LocalAssembly   local_assembly>
+void
+BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
+  vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const
+{
+  AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1, ExcMessage("No MPI support"));
+  AssertDimension(dst.size(), matrix_type::m());
+  AssertDimension(src.size(), matrix_type::n());
+  std::vector<typename matrix_type::size_type> n_rows_per_block;
+  AssertDimension(matrix_type::n_block_rows(), matrix_type::n_block_cols());
+  for(auto b = 0U; b < matrix_type::n_block_rows(); ++b)
+    n_rows_per_block.emplace_back(matrix_type::block(b, b).m());
+  BlockVector<Number> v(n_rows_per_block); // src
+  std::copy(src.cbegin(), src.cend(), v.begin());
+  BlockVector<Number> w(n_rows_per_block); // dst
+  matrix_type::vmult(w, v);                // w = A v
+  std::copy(w.begin(), w.end(), dst.begin());
+}
+
+
+
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         LocalAssembly   local_assembly>
+BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
+operator const FullMatrix<Number> &() const
+{
+  AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1, ExcMessage("No MPI support"));
+  if(!fullmatrix)
+  {
+    const auto & tmp = Tensors::matrix_to_table(*this);
+    fullmatrix       = std::make_shared<FullMatrix<Number>>(table_to_fullmatrix(tmp));
+  }
+  return *fullmatrix;
+}
+
+
+
 template<int dim, int fe_degree_p, Method method>
 ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_parameters_in,
                                                      const EquationData &  equation_data_in)
@@ -1997,7 +2065,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
   }
   constraints_velocity.close();
 
-  // //: setup system matrix (DEBUG)
+  /// setup system matrix (DEBUG)
   // if(do_system_matrix)
   // {
   //   Assert(constraints_velocity.n_constraints() != 0,
@@ -2030,7 +2098,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
     AssertThrow(
       cuthill_mckee_is_compatible,
       ExcMessage(
-        "The concatenation of the Cuthill-Mckee renumberings on the velocity and pressure dofs each does not result in the same Cuthill-McKee renumbering applied to the whole velocity-pressure block system. They should be compatible if the velocity components and pressure functions have the same dof layout."));
+        "The concatenation of the Cuthill-Mckee renumberings for the velocity and pressure dofs does not result in the same Cuthill-McKee renumbering applied to the whole velocity-pressure block system. They should be compatible if the velocity components and pressure functions have the same dof layout."));
     DoFRenumbering::Cuthill_McKee(dof_handler_pressure);
   }
 
@@ -2094,6 +2162,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   // us to get the same DoF numbering for dof_handler and its unmerged
   // counterparts dof_handler_velocity and dof_handler_pressure.
   DoFRenumbering::block_wise(dof_handler);
+
   std::vector<unsigned int>                  block_component{0U, 1U};
   const std::vector<types::global_dof_index> dofs_per_block =
     DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
@@ -2164,14 +2233,6 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
     mean_value_constraints.close();
   }
-
-  // // 2!!! clear all constraints
-  // zero_constraints.clear();
-  // zero_constraints.close();
-  // zero_constraints_velocity.clear();
-  // zero_constraints_velocity.close();
-  // constraints_velocity.clear();
-  // constraints_velocity.close();
 
   zero_constraints.merge(mean_value_constraints);
 
