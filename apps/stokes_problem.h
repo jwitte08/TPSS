@@ -2423,393 +2423,401 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 // }
 
 
-/// TODO
-// template<int dim, int fe_degree_p, Method method>
-// void
-// ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
-// {
-//   constexpr bool use_sipg_method    = dof_layout_v == TPSS::DoFLayout::DGQ;
-//   constexpr bool use_hdiv_ip_method = dof_layout_v == TPSS::DoFLayout::RT;
-//   constexpr bool use_conf_method    = dof_layout_v == TPSS::DoFLayout::Q;
 
-//   /// Assemble the velocity block, here block(0,0).
-//   {
-//     using Velocity::SIPG::MW::CopyData;
-//     using Velocity::SIPG::MW::ScratchData;
-//     using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, false>;
+template<int dim, int fe_degree_p, Method method>
+void
+ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
+{
+  constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
+  constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
+  constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
 
-//     const auto             component_range = std::make_pair<unsigned int>(0, dim);
-//     FunctionExtractor<dim> load_function_velocity(load_function.get(), component_range);
-//     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(),
-//     component_range);
+  system_rhs.zero_out_ghosts();
 
-//     const auto * particular_solution_velocity =
-//       (use_conf_method || use_hdiv_ip_method) ? &(system_solution.block(0)) : nullptr;
+  /// Assemble the velocity block, here block(0,0).
+  {
+    using Velocity::SIPG::MW::CopyData;
+    using Velocity::SIPG::MW::ScratchData;
+    using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, false>;
 
-//     MatrixIntegrator matrix_integrator(&load_function_velocity,
-//                                        &analytical_solution_velocity,
-//                                        particular_solution_velocity,
-//                                        equation_data);
+    const auto             component_range = std::make_pair<unsigned int>(0, dim);
+    FunctionExtractor<dim> load_function_velocity(load_function.get(), component_range);
+    FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
 
-//     auto cell_worker =
-//       [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-//         matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-//       };
+    system_solution.block(0).update_ghost_values();
+    const auto * particular_solution_velocity =
+      (use_conf_method || use_hdivsipg_method) ? &(system_solution.block(0)) : nullptr;
 
-//     auto face_worker = [&](const auto &         cell,
-//                            const unsigned int & f,
-//                            const unsigned int & sf,
-//                            const auto &         ncell,
-//                            const unsigned int & nf,
-//                            const unsigned int & nsf,
-//                            ScratchData<dim> &   scratch_data,
-//                            CopyData &           copy_data) {
-//       if(use_sipg_method)
-//         matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-//       else if(use_hdiv_ip_method)
-//         // matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-//         matrix_integrator.face_worker_tangential(
-//           cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-//       else
-//         AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
-//     };
+    MatrixIntegrator matrix_integrator(&load_function_velocity,
+                                       &analytical_solution_velocity,
+                                       particular_solution_velocity,
+                                       equation_data);
 
-//     auto boundary_worker = [&](const auto &         cell,
-//                                const unsigned int & face_no,
-//                                ScratchData<dim> &   scratch_data,
-//                                CopyData &           copy_data) {
-//       if(use_sipg_method)
-//         matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-//       else if(use_hdiv_ip_method)
-//         // matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-//         matrix_integrator.boundary_worker_tangential(cell, face_no, scratch_data, copy_data);
-//       // matrix_integrator.boundary_worker_tangential_old(cell, face_no, scratch_data,
-//       copy_data); else
-//         AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
-//     };
+    auto cell_worker =
+      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+        matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+      };
 
-//     const auto copier = [&](const CopyData & copy_data) {
-//       zero_constraints_velocity
-//         .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
-//           copy_data.cell_matrix,
-//           copy_data.cell_rhs_test,
-//           copy_data.local_dof_indices_test,
-//           system_matrix.block(0, 0),
-//           system_rhs.block(0));
+    auto face_worker = [&](const auto &         cell,
+                           const unsigned int & f,
+                           const unsigned int & sf,
+                           const auto &         ncell,
+                           const unsigned int & nf,
+                           const unsigned int & nsf,
+                           ScratchData<dim> &   scratch_data,
+                           CopyData &           copy_data) {
+      if(use_sipg_method)
+        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+      else if(use_hdivsipg_method)
+        // matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+        matrix_integrator.face_worker_tangential(
+          cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+      else
+        AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
+    };
 
-//       for(auto & cdf : copy_data.face_data)
-//       {
-//         if(!use_hdiv_ip_method)
-//           AssertDimension(cdf.cell_rhs_test.size(), 0);
+    auto boundary_worker = [&](const auto &         cell,
+                               const unsigned int & face_no,
+                               ScratchData<dim> &   scratch_data,
+                               CopyData &           copy_data) {
+      if(use_sipg_method)
+        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+      else if(use_hdivsipg_method)
+        // matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+        matrix_integrator.boundary_worker_tangential(cell, face_no, scratch_data, copy_data);
+      // matrix_integrator.boundary_worker_tangential_old(cell, face_no, scratch_data,  copy_data);
+      else
+        AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
+    };
 
-//         if(cdf.cell_rhs_test.size() == 0)
-//           zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-//             cdf.cell_matrix, cdf.joint_dof_indices_test, system_matrix.block(0, 0));
-//         else
-//         {
-//           zero_constraints_velocity
-//             .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
-//               cdf.cell_matrix,
-//               cdf.cell_rhs_test,
-//               cdf.joint_dof_indices_test,
-//               system_matrix.block(0, 0),
-//               system_rhs.block(0));
-//         }
-//       }
-//     };
+    const auto copier = [&](const CopyData & copy_data) {
+      zero_constraints_velocity.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+        copy_data.cell_matrix,
+        copy_data.cell_rhs_test,
+        copy_data.local_dof_indices_test,
+        system_matrix.block(0, 0),
+        system_rhs.block(0));
 
-//     const UpdateFlags update_flags =
-//       update_values | update_gradients | update_quadrature_points | update_JxW_values;
-//     const UpdateFlags interface_update_flags = update_values | update_gradients |
-//                                                update_quadrature_points | update_JxW_values |
-//                                                update_normal_vectors;
+      for(auto & cdf : copy_data.face_data)
+      {
+        if(!use_hdivsipg_method)
+          AssertDimension(cdf.cell_rhs_test.size(), 0);
 
-//     ScratchData<dim> scratch_data(mapping,
-//                                   dof_handler_velocity.get_fe(),
-//                                   dof_handler_velocity.get_fe(),
-//                                   n_q_points_1d,
-//                                   update_flags,
-//                                   update_flags,
-//                                   interface_update_flags,
-//                                   interface_update_flags);
+        if(cdf.cell_rhs_test.size() == 0)
+          zero_constraints_velocity
+            .template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+              cdf.cell_matrix, cdf.joint_dof_indices_test, system_matrix.block(0, 0));
+        else
+        {
+          zero_constraints_velocity
+            .template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+              cdf.cell_matrix,
+              cdf.cell_rhs_test,
+              cdf.joint_dof_indices_test,
+              system_matrix.block(0, 0),
+              system_rhs.block(0));
+        }
+      }
+    };
 
-//     CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
+    const UpdateFlags update_flags =
+      update_values | update_gradients | update_quadrature_points | update_JxW_values;
+    const UpdateFlags interface_update_flags = update_values | update_gradients |
+                                               update_quadrature_points | update_JxW_values |
+                                               update_normal_vectors;
 
-//     if(use_conf_method)
-//       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-//                             dof_handler_velocity.end(),
-//                             cell_worker,
-//                             copier,
-//                             scratch_data,
-//                             copy_data,
-//                             MeshWorker::assemble_own_cells);
-//     else if(use_sipg_method || use_hdiv_ip_method)
-//       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-//                             dof_handler_velocity.end(),
-//                             cell_worker,
-//                             copier,
-//                             scratch_data,
-//                             copy_data,
-//                             MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-//                               MeshWorker::assemble_own_interior_faces_once,
-//                             boundary_worker,
-//                             face_worker);
-//     else
-//       AssertThrow(false, ExcMessage("This FEM is not implemented."));
-//   }
+    ScratchData<dim> scratch_data(mapping,
+                                  dof_handler_velocity.get_fe(),
+                                  dof_handler_velocity.get_fe(),
+                                  n_q_points_1d,
+                                  update_flags,
+                                  update_flags,
+                                  interface_update_flags,
+                                  interface_update_flags);
 
-//   /// Assemble the pressure block, here block(1,1).
-//   {
-//     using Pressure::MW::CopyData;
-//     using Pressure::MW::ScratchData;
-//     using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
+    CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
 
-//     const auto             component_range = std::make_pair<unsigned int>(dim, dim + 1);
-//     FunctionExtractor<dim> load_function_pressure(load_function.get(), component_range);
+    if(use_conf_method)
+      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+                            dof_handler_velocity.end(),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells);
+    else if(use_sipg_method || use_hdivsipg_method)
+      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+                            dof_handler_velocity.end(),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                              MeshWorker::assemble_own_interior_faces_once,
+                            boundary_worker,
+                            face_worker);
+    else
+      AssertThrow(false, ExcMessage("This FEM is not implemented."));
+  }
 
-//     MatrixIntegrator matrix_integrator(&load_function_pressure, nullptr, nullptr, equation_data);
+  /// Assemble the pressure block, here block(1,1).
+  {
+    using Pressure::MW::CopyData;
+    using Pressure::MW::ScratchData;
+    using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
 
-//     auto cell_worker =
-//       [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-//         matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-//       };
+    const auto             component_range = std::make_pair<unsigned int>(dim, dim + 1);
+    FunctionExtractor<dim> load_function_pressure(load_function.get(), component_range);
 
-//     const auto copier = [&](const CopyData & copy_data) {
-//       constraints_pressure
-//         .template distribute_local_to_global<SparseMatrix<double>, Vector<double>>(
-//           copy_data.cell_matrix,
-//           copy_data.cell_rhs,
-//           copy_data.local_dof_indices,
-//           system_matrix.block(1, 1),
-//           system_rhs.block(1));
-//     };
+    MatrixIntegrator matrix_integrator(&load_function_pressure, nullptr, nullptr, equation_data);
 
-//     const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
-//     const UpdateFlags interface_update_flags = update_default;
+    auto cell_worker =
+      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+        matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+      };
 
-//     ScratchData<dim> scratch_data(
-//       mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags,
-//       interface_update_flags);
+    const auto copier = [&](const CopyData & copy_data) {
+      constraints_pressure.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+        copy_data.cell_matrix,
+        copy_data.cell_rhs,
+        copy_data.local_dof_indices,
+        system_matrix.block(1, 1),
+        system_rhs.block(1));
+    };
 
-//     CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
+    const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
+    const UpdateFlags interface_update_flags = update_default;
 
-//     MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
-//                           dof_handler_pressure.end(),
-//                           cell_worker,
-//                           copier,
-//                           scratch_data,
-//                           copy_data,
-//                           MeshWorker::assemble_own_cells);
-//   }
+    ScratchData<dim> scratch_data(
+      mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
 
-//   /// Assemble the mixed velocity-pressure block, that is test functions are
-//   /// from velocity space and ansatz functions from pressure space. The
-//   /// "flipped" pressure-velocity block is assembled as well.
-//   {
-//     using VelocityPressure::MW::Mixed::CopyData;
-//     using VelocityPressure::MW::Mixed::ScratchData;
-//     using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, false>;
-//     using CellIterator     = typename MatrixIntegrator::IteratorType;
+    CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
 
-//     const auto * particular_solution_velocity =
-//       (use_conf_method || use_hdiv_ip_method) ? &(system_solution.block(0)) : nullptr;
+    MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
+                          dof_handler_pressure.end(),
+                          cell_worker,
+                          copier,
+                          scratch_data,
+                          copy_data,
+                          MeshWorker::assemble_own_cells);
+  }
 
-//     const auto             component_range_velocity = std::make_pair<unsigned int>(0, dim);
-//     FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(),
-//                                                         component_range_velocity);
+  /// Assemble the mixed velocity-pressure block, that is test functions are
+  /// from velocity space and ansatz functions from pressure space. The
+  /// "flipped" pressure-velocity block is assembled as well.
+  {
+    using VelocityPressure::MW::Mixed::CopyData;
+    using VelocityPressure::MW::Mixed::ScratchData;
+    using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, false>;
+    using CellIterator     = typename MatrixIntegrator::IteratorType;
 
-//     MatrixIntegrator matrix_integrator(particular_solution_velocity,
-//                                        /*particular_solution_pressure*/ nullptr,
-//                                        &analytical_solution_velocity,
-//                                        /*&analytical_solution_pressure*/ nullptr,
-//                                        equation_data);
+    const auto * particular_solution_velocity =
+      (use_conf_method || use_hdivsipg_method) ? &(system_solution.block(0)) : nullptr;
 
-//     auto cell_worker =
-//       [&](const CellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-//         CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
-//                                  cell->level(),
-//                                  cell->index(),
-//                                  &dof_handler_pressure);
-//         matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
-//       };
+    const auto             component_range_velocity = std::make_pair<unsigned int>(0, dim);
+    FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(),
+                                                        component_range_velocity);
 
-//     auto face_worker = [&](const auto &         cell,
-//                            const unsigned int & f,
-//                            const unsigned int & sf,
-//                            const auto &         ncell,
-//                            const unsigned int & nf,
-//                            const unsigned int & nsf,
-//                            ScratchData<dim> &   scratch_data,
-//                            CopyData &           copy_data) {
-//       CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
-//                                cell->level(),
-//                                cell->index(),
-//                                &dof_handler_pressure);
-//       CellIterator ncell_ansatz(&dof_handler_pressure.get_triangulation(),
-//                                 ncell->level(),
-//                                 ncell->index(),
-//                                 &dof_handler_pressure);
-//       if(use_sipg_method)
-//         matrix_integrator.face_worker(
-//           cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
-//       else
-//         AssertThrow(false, ExcMessage("This FEM is not supported."));
-//     };
+    MatrixIntegrator matrix_integrator(particular_solution_velocity,
+                                       /*particular_solution_pressure*/ nullptr,
+                                       &analytical_solution_velocity,
+                                       /*&analytical_solution_pressure*/ nullptr,
+                                       equation_data);
 
-//     auto boundary_worker = [&](const CellIterator & cell,
-//                                const unsigned int & face_no,
-//                                ScratchData<dim> &   scratch_data,
-//                                CopyData &           copy_data) {
-//       CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
-//                                cell->level(),
-//                                cell->index(),
-//                                &dof_handler_pressure);
-//       if(use_sipg_method)
-//         matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
-//       else
-//         AssertThrow(false, ExcMessage("This FEM is not supported."));
-//     };
+    auto cell_worker =
+      [&](const CellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+        CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
+                                 cell->level(),
+                                 cell->index(),
+                                 &dof_handler_pressure);
+        matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
+      };
 
-//     const auto copier = [&](const CopyData & copy_data) {
-//       zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-//         copy_data.cell_matrix,
-//         copy_data.local_dof_indices_test,
-//         constraints_pressure,
-//         copy_data.local_dof_indices_ansatz,
-//         system_matrix.block(0, 1));
-//       constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
-//         copy_data.cell_matrix_flipped,
-//         copy_data.local_dof_indices_ansatz,
-//         zero_constraints_velocity,
-//         copy_data.local_dof_indices_test,
-//         system_matrix.block(1, 0));
+    auto face_worker = [&](const auto &         cell,
+                           const unsigned int & f,
+                           const unsigned int & sf,
+                           const auto &         ncell,
+                           const unsigned int & nf,
+                           const unsigned int & nsf,
+                           ScratchData<dim> &   scratch_data,
+                           CopyData &           copy_data) {
+      CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
+                               cell->level(),
+                               cell->index(),
+                               &dof_handler_pressure);
+      CellIterator ncell_ansatz(&dof_handler_pressure.get_triangulation(),
+                                ncell->level(),
+                                ncell->index(),
+                                &dof_handler_pressure);
+      if(use_sipg_method)
+        matrix_integrator.face_worker(
+          cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
+      else
+        AssertThrow(false, ExcMessage("This FEM is not supported."));
+    };
 
-//       zero_constraints_velocity.template distribute_local_to_global<Vector<double>>(
-//         copy_data.cell_rhs_test, copy_data.local_dof_indices_test, system_rhs.block(0));
-//       constraints_pressure.template distribute_local_to_global<Vector<double>>(
-//         copy_data.cell_rhs_ansatz, copy_data.local_dof_indices_ansatz, system_rhs.block(1));
+    auto boundary_worker = [&](const CellIterator & cell,
+                               const unsigned int & face_no,
+                               ScratchData<dim> &   scratch_data,
+                               CopyData &           copy_data) {
+      CellIterator cell_ansatz(&dof_handler_pressure.get_triangulation(),
+                               cell->level(),
+                               cell->index(),
+                               &dof_handler_pressure);
+      if(use_sipg_method)
+        matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
+      else
+        AssertThrow(false, ExcMessage("This FEM is not supported."));
+    };
 
-//       for(auto & cdf : copy_data.face_data)
-//       {
-//         zero_constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-//           cdf.cell_matrix,
-//           cdf.joint_dof_indices_test,
-//           constraints_pressure,
-//           cdf.joint_dof_indices_ansatz,
-//           system_matrix.block(0, 1));
-//         constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
-//           cdf.cell_matrix_flipped,
-//           cdf.joint_dof_indices_ansatz,
-//           zero_constraints_velocity,
-//           cdf.joint_dof_indices_test,
-//           system_matrix.block(1, 0));
+    const auto copier = [&](const CopyData & copy_data) {
+      zero_constraints_velocity.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+        copy_data.cell_matrix,
+        copy_data.local_dof_indices_test,
+        constraints_pressure,
+        copy_data.local_dof_indices_ansatz,
+        system_matrix.block(0, 1));
+      constraints_pressure.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+        copy_data.cell_matrix_flipped,
+        copy_data.local_dof_indices_ansatz,
+        zero_constraints_velocity,
+        copy_data.local_dof_indices_test,
+        system_matrix.block(1, 0));
 
-//         /// For Hdiv-IP there might be liftings from the velocity written to the
-//         /// pressure RHS.
-//         AssertDimension(cdf.cell_rhs_test.size(), 0);
-//         if(dof_layout_v != TPSS::DoFLayout::RT)
-//           AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
+      zero_constraints_velocity.distribute_local_to_global(copy_data.cell_rhs_test,
+                                                           copy_data.local_dof_indices_test,
+                                                           system_rhs.block(0));
+      constraints_pressure.distribute_local_to_global(copy_data.cell_rhs_ansatz,
+                                                      copy_data.local_dof_indices_ansatz,
+                                                      system_rhs.block(1));
 
-//         if(cdf.cell_rhs_test.size() != 0)
-//           zero_constraints_velocity.template distribute_local_to_global<Vector<double>>(
-//             cdf.cell_rhs_test, cdf.joint_dof_indices_test, system_rhs.block(0));
-//         if(cdf.cell_rhs_ansatz.size() != 0)
-//           constraints_pressure.template distribute_local_to_global<Vector<double>>(
-//             cdf.cell_rhs_ansatz, cdf.joint_dof_indices_ansatz, system_rhs.block(1));
-//       }
-//     };
+      for(auto & cdf : copy_data.face_data)
+      {
+        zero_constraints_velocity
+          .template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+            cdf.cell_matrix,
+            cdf.joint_dof_indices_test,
+            constraints_pressure,
+            cdf.joint_dof_indices_ansatz,
+            system_matrix.block(0, 1));
+        constraints_pressure.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+          cdf.cell_matrix_flipped,
+          cdf.joint_dof_indices_ansatz,
+          zero_constraints_velocity,
+          cdf.joint_dof_indices_test,
+          system_matrix.block(1, 0));
 
-//     const UpdateFlags update_flags_velocity =
-//       update_values | update_gradients | update_quadrature_points | update_JxW_values;
-//     const UpdateFlags update_flags_pressure =
-//       update_values | update_gradients | update_quadrature_points | update_JxW_values;
-//     const UpdateFlags interface_update_flags_velocity =
-//       update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
-//     const UpdateFlags interface_update_flags_pressure =
-//       update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+        /// For Hdiv-IP there might be liftings from the velocity written to the
+        /// pressure RHS.
+        AssertDimension(cdf.cell_rhs_test.size(), 0);
+        if(dof_layout_v != TPSS::DoFLayout::RT)
+          AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
 
-//     ScratchData<dim> scratch_data(mapping,
-//                                   dof_handler_velocity.get_fe(),
-//                                   dof_handler_pressure.get_fe(),
-//                                   n_q_points_1d,
-//                                   update_flags_velocity,
-//                                   update_flags_pressure,
-//                                   interface_update_flags_velocity,
-//                                   interface_update_flags_pressure);
+        if(cdf.cell_rhs_test.size() != 0)
+          zero_constraints_velocity.distribute_local_to_global(cdf.cell_rhs_test,
+                                                               cdf.joint_dof_indices_test,
+                                                               system_rhs.block(0));
+        if(cdf.cell_rhs_ansatz.size() != 0)
+          constraints_pressure.distribute_local_to_global(cdf.cell_rhs_ansatz,
+                                                          cdf.joint_dof_indices_ansatz,
+                                                          system_rhs.block(1));
+      }
+    };
 
-//     CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell,
-//                        dof_handler_pressure.get_fe().dofs_per_cell);
+    const UpdateFlags update_flags_velocity =
+      update_values | update_gradients | update_quadrature_points | update_JxW_values;
+    const UpdateFlags update_flags_pressure =
+      update_values | update_gradients | update_quadrature_points | update_JxW_values;
+    const UpdateFlags interface_update_flags_velocity =
+      update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+    const UpdateFlags interface_update_flags_pressure =
+      update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
 
-//     if(use_conf_method || use_hdiv_ip_method)
-//       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-//                             dof_handler_velocity.end(),
-//                             cell_worker,
-//                             copier,
-//                             scratch_data,
-//                             copy_data,
-//                             MeshWorker::assemble_own_cells);
-//     else if(use_sipg_method)
-//       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-//                             dof_handler_velocity.end(),
-//                             cell_worker,
-//                             copier,
-//                             scratch_data,
-//                             copy_data,
-//                             MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-//                               MeshWorker::assemble_own_interior_faces_once,
-//                             boundary_worker,
-//                             face_worker);
-//     else
-//       AssertThrow(false, ExcMessage("This FEM is not supported."));
-//   }
-// }
+    ScratchData<dim> scratch_data(mapping,
+                                  dof_handler_velocity.get_fe(),
+                                  dof_handler_pressure.get_fe(),
+                                  n_q_points_1d,
+                                  update_flags_velocity,
+                                  update_flags_pressure,
+                                  interface_update_flags_velocity,
+                                  interface_update_flags_pressure);
+
+    CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell,
+                       dof_handler_pressure.get_fe().dofs_per_cell);
+
+    if(use_conf_method || use_hdivsipg_method)
+      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+                            dof_handler_velocity.end(),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells);
+    else if(use_sipg_method)
+      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+                            dof_handler_velocity.end(),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                              MeshWorker::assemble_own_interior_faces_once,
+                            boundary_worker,
+                            face_worker);
+    else
+      AssertThrow(false, ExcMessage("This FEM is not supported."));
+  }
+
+  system_matrix.compress(VectorOperation::add);
+  system_rhs.compress(VectorOperation::add);
+}
 
 
 
-/// TODO
-// template<int dim, int fe_degree_p, Method method>
-// void
-// ModelProblem<dim, fe_degree_p, method>::assemble_system()
-// {
-//   assemble_system_velocity_pressure();
+template<int dim, int fe_degree_p, Method method>
+void
+ModelProblem<dim, fe_degree_p, method>::assemble_system()
+{
+  assemble_system_velocity_pressure();
 
-//   if(rt_parameters.solver.variant == "FGMRES_ILU" ||
-//      rt_parameters.solver.variant == "FGMRES_GMGvelocity")
-//   {
-//     pressure_mass_matrix.reinit(sparsity_pattern.block(1, 1));
+  if(rt_parameters.solver.variant == "FGMRES_ILU" ||
+     rt_parameters.solver.variant == "FGMRES_GMGvelocity")
+  {
+    AssertThrow(false, ExcMessage("TODO MPI..."));
+    // pressure_mass_matrix.reinit(sparsity_pattern.block(1, 1));
 
-//     using Pressure::MW::CopyData;
-//     using Pressure::MW::ScratchData;
-//     using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
+    // using Pressure::MW::CopyData;
+    // using Pressure::MW::ScratchData;
+    // using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
 
-//     MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+    // MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
 
-//     auto cell_worker =
-//       [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-//         matrix_integrator.cell_mass_worker(cell, scratch_data, copy_data);
-//       };
+    // auto cell_worker =
+    //   [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+    //     matrix_integrator.cell_mass_worker(cell, scratch_data, copy_data);
+    //   };
 
-//     const auto copier = [&](const CopyData & copy_data) {
-//       constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
-//         copy_data.cell_matrix, copy_data.local_dof_indices, pressure_mass_matrix);
-//     };
+    // const auto copier = [&](const CopyData & copy_data) {
+    //   constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
+    //     copy_data.cell_matrix, copy_data.local_dof_indices, pressure_mass_matrix);
+    // };
 
-//     const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
-//     const UpdateFlags interface_update_flags = update_default;
+    // const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
+    // const UpdateFlags interface_update_flags = update_default;
 
-//     ScratchData<dim> scratch_data(
-//       mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags,
-//       interface_update_flags);
-//     CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
-//     MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
-//                           dof_handler_pressure.end(),
-//                           cell_worker,
-//                           copier,
-//                           scratch_data,
-//                           copy_data,
-//                           MeshWorker::assemble_own_cells);
-//   }
-// }
+    // ScratchData<dim> scratch_data(
+    //   mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags,
+    //   interface_update_flags);
+    // CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
+    // MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
+    //                       dof_handler_pressure.end(),
+    //                       cell_worker,
+    //                       copier,
+    //                       scratch_data,
+    //                       copy_data,
+    //                       MeshWorker::assemble_own_cells);
+  }
+}
 
 
 
@@ -3340,7 +3348,13 @@ ModelProblem<dim, fe_degree_p, method>::run()
 
     setup_system();
 
-    // assemble_system();
+    assemble_system();
+    /// DEBUG
+    // if (pcout->is_active())
+    //   {
+    // 	table_to_fullmatrix(Tensors::matrix_to_table(system_matrix)).print_formatted(std::cout);
+    // 	*pcout << std::endl << std::endl;
+    //   }
 
     // solve();
 

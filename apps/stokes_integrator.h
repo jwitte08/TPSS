@@ -164,10 +164,10 @@ struct MatrixIntegrator
 {
   using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
 
-  MatrixIntegrator(const Function<dim> *         load_function_in,
-                   const Function<dim> *         analytical_solution_in,
-                   const Vector<double> *        particular_solution,
-                   const EquationData &          equation_data_in,
+  MatrixIntegrator(const Function<dim> *                              load_function_in,
+                   const Function<dim> *                              analytical_solution_in,
+                   const LinearAlgebra::distributed::Vector<double> * particular_solution,
+                   const EquationData &                               equation_data_in,
                    const InterfaceHandler<dim> * interface_handler_in = nullptr)
     : load_function(load_function_in),
       analytical_solution(analytical_solution_in),
@@ -360,11 +360,11 @@ struct MatrixIntegrator
     const std::vector<unsigned int> &            testfunc_indices_right,
     const std::vector<types::global_dof_index> & dof_indices_on_rcell) const;
 
-  const Function<dim> *         load_function;
-  const Function<dim> *         analytical_solution;
-  const Vector<double> *        discrete_solution;
-  const EquationData            equation_data;
-  const InterfaceHandler<dim> * interface_handler;
+  const Function<dim> *                              load_function;
+  const Function<dim> *                              analytical_solution;
+  const LinearAlgebra::distributed::Vector<double> * discrete_solution;
+  const EquationData                                 equation_data;
+  const InterfaceHandler<dim> *                      interface_handler;
 };
 
 
@@ -2037,10 +2037,10 @@ struct MatrixIntegrator
 {
   using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
 
-  MatrixIntegrator(const Function<dim> *  load_function_in,
-                   const Function<dim> *  analytical_solution_in,
-                   const Vector<double> * particular_solution,
-                   const EquationData &   equation_data_in)
+  MatrixIntegrator(const Function<dim> *                              load_function_in,
+                   const Function<dim> *                              analytical_solution_in,
+                   const LinearAlgebra::distributed::Vector<double> * particular_solution,
+                   const EquationData &                               equation_data_in)
     : load_function(load_function_in),
       analytical_solution(analytical_solution_in),
       discrete_solution(particular_solution),
@@ -2058,10 +2058,10 @@ struct MatrixIntegrator
                    ScratchData<dim> &   scratch_data,
                    CopyData &           copy_data) const;
 
-  const Function<dim> *  load_function;
-  const Function<dim> *  analytical_solution;
-  const Vector<double> * discrete_solution;
-  const EquationData     equation_data;
+  const Function<dim> *                              load_function;
+  const Function<dim> *                              analytical_solution;
+  const LinearAlgebra::distributed::Vector<double> * discrete_solution;
+  const EquationData                                 equation_data;
 };
 
 template<int dim, bool is_multigrid>
@@ -2140,10 +2140,10 @@ struct MatrixIntegrator
 
   using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
 
-  MatrixIntegrator(const Function<dim> *       load_function_in,
-                   const Function<dim> *       analytical_solution_in,
-                   const BlockVector<double> * particular_solution,
-                   const EquationData &        equation_data_in)
+  MatrixIntegrator(const Function<dim> *                                   load_function_in,
+                   const Function<dim> *                                   analytical_solution_in,
+                   const LinearAlgebra::distributed::BlockVector<double> * particular_solution,
+                   const EquationData &                                    equation_data_in)
     : load_function(load_function_in),
       analytical_solution(analytical_solution_in),
       discrete_solution(particular_solution),
@@ -2218,10 +2218,10 @@ struct MatrixIntegrator
     }
   }
 
-  const Function<dim> *       load_function;
-  const Function<dim> *       analytical_solution;
-  const BlockVector<double> * discrete_solution;
-  const EquationData          equation_data;
+  const Function<dim> *                                   load_function;
+  const Function<dim> *                                   analytical_solution;
+  const LinearAlgebra::distributed::BlockVector<double> * discrete_solution;
+  const EquationData                                      equation_data;
 };
 
 
@@ -2243,11 +2243,11 @@ struct MatrixIntegrator
 {
   using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
 
-  MatrixIntegrator(const Vector<double> * particular_solutionU,
-                   const Vector<double> * particular_solutionP,
-                   const Function<dim> *  analytical_solutionU_in,
-                   const Function<dim> *  analytical_solutionP_in,
-                   const EquationData &   equation_data_in)
+  MatrixIntegrator(const LinearAlgebra::distributed::Vector<double> * particular_solutionU,
+                   const LinearAlgebra::distributed::Vector<double> * particular_solutionP,
+                   const Function<dim> *                              analytical_solutionU_in,
+                   const Function<dim> *                              analytical_solutionP_in,
+                   const EquationData &                               equation_data_in)
     : discrete_solutionU(particular_solutionU),
       discrete_solutionP(particular_solutionP),
       analytical_solutionU(analytical_solutionU_in),
@@ -2295,11 +2295,11 @@ struct MatrixIntegrator
                   ScratchData<dim> &   scratch_data,
                   CopyData &           copy_data) const;
 
-  const Vector<double> * discrete_solutionU;
-  const Vector<double> * discrete_solutionP;
-  const Function<dim> *  analytical_solutionU;
-  const Function<dim> *  analytical_solutionP;
-  const EquationData     equation_data;
+  const LinearAlgebra::distributed::Vector<double> * discrete_solutionU;
+  const LinearAlgebra::distributed::Vector<double> * discrete_solutionP;
+  const Function<dim> *                              analytical_solutionU;
+  const Function<dim> *                              analytical_solutionP;
+  const EquationData                                 equation_data;
 };
 
 
