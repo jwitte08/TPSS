@@ -9,14 +9,8 @@
 #ifndef SOLVER_H
 #define SOLVER_H
 
-// #include <deal.II/base/conditional_ostream.h>
-// #include <deal.II/base/utilities.h>
+#include <deal.II/lac/solver_control.h>
 #include <deal.II/lac/trilinos_solver.h>
-
-// #include "mesh.h"
-// #include "multigrid.h"
-// #include "solvers_and_preconditioners/TPSS/schwarz_smoother_data.h"
-// #include "utilities.h"
 
 using namespace dealii;
 
@@ -59,6 +53,42 @@ struct SolverParameter
   std::string
   to_string() const;
 };
+
+
+
+std::shared_ptr<SolverControl>
+get_solver_control_impl(const SolverParameter & solver_prms)
+{
+  auto solver_control = [&]() -> std::shared_ptr<SolverControl> {
+    if(solver_prms.control_variant == SolverParameter::ControlVariant::relative)
+    {
+      auto control = std::make_shared<ReductionControl>();
+      control->set_reduction(solver_prms.rel_tolerance);
+      return control;
+    }
+    else if(solver_prms.control_variant == SolverParameter::ControlVariant::absolute)
+      return std::make_shared<SolverControl>();
+    else
+      AssertThrow(false, ExcMessage("ControlVariant isn't supported."));
+    return nullptr;
+  }();
+  AssertThrow(solver_control, ExcMessage("ControlVariant isn't supported."));
+  solver_control->set_max_steps(solver_prms.n_iterations_max);
+  solver_control->set_tolerance(solver_prms.abs_tolerance);
+  solver_control->log_history(true);
+  solver_control->log_result(true);
+  solver_control->enable_history_data();
+
+  /// DEBUG
+  // IterationNumberControl solver_control;
+  // solver_control.set_max_steps(solver_prms.n_iterations_max);
+  // solver_control.set_tolerance(solver_prms.abs_tolerance);
+  // solver_control.log_history(true);
+  // solver_control.log_result(true);
+  // solver_control.enable_history_data();
+
+  return solver_control;
+}
 
 
 

@@ -65,7 +65,8 @@ compute_fractional_steps(const ReductionControl & solver_control)
   /// if the reduction of the last step n is above average it might happen that
   /// n_frac is smaller than (n-1). the subsequent assert should warn us if
   /// n_frac is even smaller than (n-2).
-  AssertThrow((double)(n - 2) <= n_frac, ExcLowerRangeType(n_frac, (double)(n - 2)));
+  if(n_frac < 50.)
+    AssertThrow((double)(n - 2) <= n_frac, ExcLowerRangeType(n_frac, (double)(n - 2)));
 
   return std::make_pair(n_frac, rho);
 }

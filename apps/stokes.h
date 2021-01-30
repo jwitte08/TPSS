@@ -62,7 +62,7 @@ struct StokesFlow
       SolverParameter::PreconditionVariant::GMG,
       SolverParameter::PreconditionVariant::None};
     prms.solver.variant              = str_solver_variant[test_index];
-    prms.solver.rel_tolerance        = 1.e-10; // !!!
+    prms.solver.rel_tolerance        = 1.e-8; // !!!
     prms.solver.precondition_variant = precondition_variant[test_index];
     prms.solver.n_iterations_max     = 200;
 

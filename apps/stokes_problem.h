@@ -1493,6 +1493,9 @@ public:
   void
   print_informations() const;
 
+  std::shared_ptr<SolverControl>
+  get_solver_control() const;
+
   const FiniteElement<dim> &
   get_fe_velocity() const;
 
@@ -2277,7 +2280,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     /// ... or mean value filter
     else
     {
-      AssertThrow(false, ExcMessage("TODO MPI"));
+      AssertThrow(is_first_proc, ExcMessage("TODO MPI"));
       constant_pressure_mode.reinit(n_dofs_pressure);
       const bool is_dgq_legendre =
         dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
@@ -2970,190 +2973,233 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system()
 
 
 
-// template<int dim, int fe_degree_p, Method method>
-// template<typename PreconditionerType>
-// void
-// ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
-//   const PreconditionerType & preconditioner,
-//   const std::string          solver_variant)
-// {
-//   ReductionControl solver_control;
-//   solver_control.set_max_steps(rt_parameters.solver.n_iterations_max);
-//   solver_control.set_reduction(rt_parameters.solver.rel_tolerance);
-//   solver_control.set_tolerance(rt_parameters.solver.abs_tolerance);
-//   solver_control.log_history(true);
-//   solver_control.log_result(true);
-//   solver_control.enable_history_data();
-
-//   SolverSelector<BlockVector<double>> iterative_solver;
-//   iterative_solver.set_control(solver_control);
-//   iterative_solver.select(solver_variant);
-//   if(solver_variant == "gmres")
-//   {
-//     SolverGMRES<BlockVector<double>>::AdditionalData additional_data;
-//     additional_data.right_preconditioning = rt_parameters.solver.use_right_preconditioning;
-//     // additional_data.use_default_residual = false;
-//     additional_data.max_n_tmp_vectors = 100; // rt_parameters.solver.n_iterations_max;
-//     iterative_solver.set_data(additional_data);
-//   }
-//   iterative_solver.solve(system_matrix, system_delta_x, system_rhs, preconditioner);
-//   /// distribute() is needed to apply the mean value constraint (Dirichlet
-//   /// conditions of velocity have already been applied to system_solution)
-//   if(equation_data.force_mean_value_constraint)
-//     mean_value_constraints.distribute(system_delta_x);
-//   // zero_constraints.distribute(system_delta_x); // !!!
-//   system_solution += system_delta_x;
-
-//   const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
-//   pp_data.average_reduction_system.push_back(reduction_rate);
-//   pp_data.n_iterations_system.push_back(n_frac);
-//   print_parameter("Average reduction (solver):", reduction_rate);
-//   print_parameter("Number of iterations (solver):", n_frac);
-// }
+template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<SolverControl>
+ModelProblem<dim, fe_degree_p, method>::get_solver_control() const
+{
+  return get_solver_control_impl(rt_parameters.solver);
+}
 
 
+template<int dim, int fe_degree_p, Method method>
+template<typename PreconditionerType>
+void
+ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
+  const PreconditionerType & preconditioner,
+  const std::string          solver_variant)
+{
+  auto solver_control = get_solver_control();
 
-// template<int dim, int fe_degree_p, Method method>
-// void
-// ModelProblem<dim, fe_degree_p, method>::solve()
-// {
-//   if(rt_parameters.solver.variant == "direct")
-//   {
-//     SparseDirectUMFPACK A_direct;
-//     A_direct.template initialize<BlockSparseMatrix<double>>(system_matrix);
-//     A_direct.vmult(system_delta_x, system_rhs);
-//     /// distribute() is needed to apply the mean value constraint (Dirichlet
-//     /// conditions of velocity have already been applied to system_solution)
-//     Assert(equation_data.force_mean_value_constraint, ExcMessage("Use mean value constraint."));
-//     zero_constraints.distribute(system_delta_x); // !!! no-normal flux + mean value
-//     mean_value_constraints.distribute(system_delta_x);
-//     system_solution += system_delta_x;
+  SolverSelector<vector_type> iterative_solver;
+  iterative_solver.set_control(*solver_control);
+  iterative_solver.select(solver_variant);
+  if(solver_variant == "gmres")
+  {
+    AssertThrow(false, ExcMessage("TODO MPI..."));
+    // SolverGMRES<BlockVector<double>>::AdditionalData additional_data;
+    // additional_data.right_preconditioning = rt_parameters.solver.use_right_preconditioning;
+    // // additional_data.use_default_residual = false;
+    // additional_data.max_n_tmp_vectors = 100; // rt_parameters.solver.n_iterations_max;
+    // iterative_solver.set_data(additional_data);
+  }
+  iterative_solver.solve(system_matrix, system_delta_x, system_rhs, preconditioner);
+  /// distribute() is needed to apply the mean value constraint (Dirichlet
+  /// conditions of velocity have already been applied to system_solution)
+  if(equation_data.force_mean_value_constraint)
+    mean_value_constraints.distribute(system_delta_x);
+  system_solution += system_delta_x;
 
-//     pp_data.average_reduction_system.push_back(0.);
-//     pp_data.n_iterations_system.push_back(0.);
-//     print_parameter("Average reduction (solver):", "direct solver");
-//     print_parameter("Number of iterations (solver):", "---");
-//     return;
-//   }
+  auto reduction_control = dynamic_cast<ReductionControl *>(solver_control.get());
+  if(reduction_control)
+  {
+    const auto [n_frac, reduction_rate] = compute_fractional_steps(*reduction_control);
+    pp_data.average_reduction_system.push_back(reduction_rate);
+    pp_data.n_iterations_system.push_back(n_frac);
+    print_parameter("Average reduction (solver):", reduction_rate);
+    print_parameter("Number of iterations (solver):", n_frac);
+  }
+  else
+  {
+    pp_data.average_reduction_system.push_back(solver_control->average_reduction());
+    pp_data.n_iterations_system.push_back(solver_control->last_step());
+    print_parameter("Average reduction (solver):", solver_control->average_reduction());
+    print_parameter("Number of iterations (solver):", solver_control->last_step());
+  }
 
-//   // This is used to pass whether or not we want to solve for A inside
-//   // the preconditioner.  One could change this to false to see if
-//   // there is still convergence and if so does the program then run
-//   // faster or slower
-//   const bool use_expensive = true;
 
-//   if(rt_parameters.solver.variant == "FGMRES_ILU")
-//   {
-//     SparseILU<double> A_preconditioner;
-//     A_preconditioner.initialize(system_matrix.block(0, 0));
+  // ReductionControl solver_control;
+  // solver_control.set_max_steps(rt_parameters.solver.n_iterations_max);
+  // solver_control.set_reduction(rt_parameters.solver.rel_tolerance);
+  // solver_control.set_tolerance(rt_parameters.solver.abs_tolerance);
+  // solver_control.log_history(true);
+  // solver_control.log_result(true);
+  // solver_control.enable_history_data();
 
-//     SparseILU<double> S_preconditioner;
-//     S_preconditioner.initialize(pressure_mass_matrix);
+  // SolverSelector<BlockVector<double>> iterative_solver;
+  // iterative_solver.set_control(solver_control);
+  // iterative_solver.select(solver_variant);
+  // if(solver_variant == "gmres")
+  // {
+  //   SolverGMRES<BlockVector<double>>::AdditionalData additional_data;
+  //   additional_data.right_preconditioning = rt_parameters.solver.use_right_preconditioning;
+  //   // additional_data.use_default_residual = false;
+  //   additional_data.max_n_tmp_vectors = 100; // rt_parameters.solver.n_iterations_max;
+  //   iterative_solver.set_data(additional_data);
+  // }
+  // iterative_solver.solve(system_matrix, system_delta_x, system_rhs, preconditioner);
+  // /// distribute() is needed to apply the mean value constraint (Dirichlet
+  // /// conditions of velocity have already been applied to system_solution)
+  // if(equation_data.force_mean_value_constraint)
+  //   mean_value_constraints.distribute(system_delta_x);
+  // // zero_constraints.distribute(system_delta_x); // !!!
+  // system_solution += system_delta_x;
 
-//     const BlockSchurPreconditioner<typename std::decay<decltype(A_preconditioner)>::type,
-//                                    typename std::decay<decltype(S_preconditioner)>::type>
-//       preconditioner(
-//         system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner, use_expensive);
+  // const auto [n_frac, reduction_rate] = compute_fractional_steps(solver_control);
+  // pp_data.average_reduction_system.push_back(reduction_rate);
+  // pp_data.n_iterations_system.push_back(n_frac);
+  // print_parameter("Average reduction (solver):", reduction_rate);
+  // print_parameter("Number of iterations (solver):", n_frac);
+}
 
-//     iterative_solve_impl(preconditioner, "fgmres");
-//     *pcout << preconditioner.get_summary() << std::endl;
-//   }
 
-//   else if(rt_parameters.solver.variant == "FGMRES_GMGvelocity")
-//   {
-//     prepare_multigrid_velocity();
-//     auto & A_preconditioner = mgc_velocity.get_preconditioner();
 
-//     SparseILU<double> S_preconditioner;
-//     S_preconditioner.initialize(pressure_mass_matrix, SparseILU<double>::AdditionalData());
+template<int dim, int fe_degree_p, Method method>
+void
+ModelProblem<dim, fe_degree_p, method>::solve()
+{
+  // // This is used to pass whether or not we want to solve for A inside
+  // // the preconditioner.  One could change this to false to see if
+  // // there is still convergence and if so does the program then run
+  // // faster or slower
+  // const bool use_expensive = true;
 
-//     const BlockSchurPreconditioner<typename std::decay<decltype(A_preconditioner)>::type,
-//                                    SparseILU<double>>
-//       preconditioner(
-//         system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner, use_expensive);
+  if(rt_parameters.solver.variant == "direct")
+  {
+    AssertThrow(false, ExcMessage("trilinoswrappers don't support block-vectors/matrices"));
 
-//     iterative_solve_impl(preconditioner, "fgmres");
-//     *pcout << preconditioner.get_summary();
-//   }
+    // auto solver_control = get_solver_control();
 
-//   else if(rt_parameters.solver.variant == "GMRES_GMG")
-//   {
-//     prepare_multigrid_velocity_pressure();
-//     auto & preconditioner = mgc_velocity_pressure.get_preconditioner();
+    // TrilinosWrappers::SolverDirect::AdditionalData features;
+    // features.output_solver_details = true;
 
-//     iterative_solve_impl(preconditioner, "gmres");
-//   }
+    // TrilinosWrappers::SolverDirect solver(*solver_control, features);
+    // solver.solve(system_matrix, system_delta_x, system_rhs);
 
-//   else if(rt_parameters.solver.variant == "CG_GMG")
-//   {
-//     prepare_multigrid_velocity_pressure();
-//     auto & preconditioner = mgc_velocity_pressure.get_preconditioner();
+    // mean_value_constraints.distribute(system_delta_x);
+    // system_solution += system_delta_x;
 
-//     iterative_solve_impl(preconditioner, "cg");
-//   }
+    // pp_data.average_reduction_system.push_back(0.);
+    // pp_data.n_iterations_system.push_back(0.);
 
-//   else if(rt_parameters.solver.variant == "CG")
-//   {
-//     PreconditionIdentity preconditioner;
-//     rt_parameters.solver.n_iterations_max *= 100.;
+    // print_parameter("Average reduction (solver):", "direct (trilinos)");
+    // print_parameter("Number of iterations (solver):", "direct (trilinos)");
 
-//     iterative_solve_impl(preconditioner, "cg");
 
-//     //   auto preconditioner_amg = std::make_shared<TrilinosWrappers::PreconditionAMG>();
-//     //   std::vector<std::vector<bool>> constant_modes;
-//     //   FEValuesExtractors::Vector     velocity_components(0);
-//     //   DoFTools::extract_constant_modes(dof_handler,
-//     // 				     dof_handler.get_fe().component_mask(
-//     //                                    velocity_components),
-//     //                                  constant_modes);
 
-//     //   TrilinosWrappers::PreconditionAMG::AdditionalData amg_data;
-//     // amg_data.constant_modes = constant_modes;
-//     // amg_data.elliptic              = true;
-//     // amg_data.higher_order_elements = true;
-//     // amg_data.smoother_sweeps       = 2;
-//     // amg_data.aggregation_threshold = 0.02;
-//     // preconditioner_amg->initialize(system_matrix.block(0, 0),
-//     //                                amg_data);
+    // SparseDirectUMFPACK A_direct;
+    // A_direct.template initialize<BlockSparseMatrix<double>>(system_matrix);
+    // A_direct.vmult(system_delta_x, system_rhs);
+    // /// distribute() is needed to apply the mean value constraint (Dirichlet
+    // /// conditions of velocity have already been applied to system_solution)
+    // Assert(equation_data.force_mean_value_constraint, ExcMessage("Use mean value constraint."));
+    // zero_constraints.distribute(system_delta_x); // !!! no-normal flux + mean value
+    // mean_value_constraints.distribute(system_delta_x);
+    // system_solution += system_delta_x;
 
-//     // SparseILU<double> S_preconditioner;
-//     // S_preconditioner.initialize(pressure_mass_matrix);
+    // pp_data.average_reduction_system.push_back(0.);
+    // pp_data.n_iterations_system.push_back(0.);
+    // print_parameter("Average reduction (solver):", "direct solver");
+    // print_parameter("Number of iterations (solver):", "---");
+    // return;
+  }
 
-//     // const BlockSchurPreconditioner<SparseILU<double>, SparseILU<double>> preconditioner(
-//     //   system_matrix, pressure_mass_matrix, *preconditioner_amg, S_preconditioner,
-//     use_expensive);
+  //   if(rt_parameters.solver.variant == "FGMRES_ILU")
+  //   {
+  //     SparseILU<double> A_preconditioner;
+  //     A_preconditioner.initialize(system_matrix.block(0, 0));
 
-//     // iterative_solve_impl(preconditioner, "fgmres");
-//     // *pcout << preconditioner.get_summary();
-//   }
+  //     SparseILU<double> S_preconditioner;
+  //     S_preconditioner.initialize(pressure_mass_matrix);
 
-//   else
-//     AssertThrow(false, ExcMessage("Please, choose a valid solver variant."));
+  //     const BlockSchurPreconditioner<typename std::decay<decltype(A_preconditioner)>::type,
+  //                                    typename std::decay<decltype(S_preconditioner)>::type>
+  //       preconditioner(
+  //         system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner,
+  //         use_expensive);
 
-//   /// Post processing of discrete solution
-//   const double mean_pressure =
-//     VectorTools::compute_mean_value(dof_handler, QGauss<dim>(n_q_points_1d), system_solution,
-//     dim);
-//   const bool is_dgq_legendre =
-//     dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
-//   const bool is_legendre_type = is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP;
-//   if(is_legendre_type)
-//   {
-//     const auto n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
-//     const auto n_dofs_pressure = system_solution.block(1).size();
-//     AssertDimension(n_dofs_pressure % n_dofs_per_cell, 0);
-//     Vector<double> & dof_values_pressure = system_solution.block(1);
-//     for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
-//       dof_values_pressure[i] -= mean_pressure;
-//   }
-//   else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
-//     system_solution.block(1).add(-mean_pressure);
-//   else
-//     AssertThrow(false, ExcMessage("This dof layout is not supported."));
+  //     iterative_solve_impl(preconditioner, "fgmres");
+  //     *pcout << preconditioner.get_summary() << std::endl;
+  //   }
 
-//   print_parameter("Mean of pressure corrected by:", -mean_pressure);
-//   *pcout << std::endl;
-// }
+  //   else if(rt_parameters.solver.variant == "FGMRES_GMGvelocity")
+  //   {
+  //     prepare_multigrid_velocity();
+  //     auto & A_preconditioner = mgc_velocity.get_preconditioner();
+
+  //     SparseILU<double> S_preconditioner;
+  //     S_preconditioner.initialize(pressure_mass_matrix, SparseILU<double>::AdditionalData());
+
+  //     const BlockSchurPreconditioner<typename std::decay<decltype(A_preconditioner)>::type,
+  //                                    SparseILU<double>>
+  //       preconditioner(
+  //         system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner,
+  //         use_expensive);
+
+  //     iterative_solve_impl(preconditioner, "fgmres");
+  //     *pcout << preconditioner.get_summary();
+  //   }
+
+  //   else if(rt_parameters.solver.variant == "GMRES_GMG")
+  //   {
+  //     prepare_multigrid_velocity_pressure();
+  //     auto & preconditioner = mgc_velocity_pressure.get_preconditioner();
+
+  //     iterative_solve_impl(preconditioner, "gmres");
+  //   }
+
+  //   else if(rt_parameters.solver.variant == "CG_GMG")
+  //   {
+  //     prepare_multigrid_velocity_pressure();
+  //     auto & preconditioner = mgc_velocity_pressure.get_preconditioner();
+
+  //     iterative_solve_impl(preconditioner, "cg");
+  //   }
+
+  else if(rt_parameters.solver.variant == "CG")
+  {
+    PreconditionIdentity preconditioner;
+    rt_parameters.solver.n_iterations_max *= 100.;
+
+    iterative_solve_impl(preconditioner, "cg");
+  }
+
+  else
+    AssertThrow(false, ExcMessage("Please, choose a valid solver variant."));
+
+  /// Post processing of discrete solution
+  const double mean_pressure =
+    VectorTools::compute_mean_value(dof_handler, QGauss<dim>(n_q_points_1d), system_solution, dim);
+  const bool is_dgq_legendre =
+    dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
+  const bool is_legendre_type = is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP;
+  if(is_legendre_type)
+  {
+    AssertThrow(is_first_proc, ExcMessage("TODO MPI..."));
+    const auto n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
+    const auto n_dofs_pressure = system_solution.block(1).size();
+    AssertDimension(n_dofs_pressure % n_dofs_per_cell, 0);
+    auto & dof_values_pressure = system_solution.block(1);
+    for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
+      dof_values_pressure[i] -= mean_pressure;
+  }
+  else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
+    system_solution.block(1).add(-mean_pressure);
+  else
+    AssertThrow(false, ExcMessage("This dof layout is not supported."));
+
+  print_parameter("Mean of pressure corrected by:", -mean_pressure);
+  *pcout << std::endl;
+}
 
 
 
@@ -3186,140 +3232,135 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system()
 // }
 
 
-// template<int dim, int fe_degree_p, Method method>
-// std::shared_ptr<Vector<double>>
-// ModelProblem<dim, fe_degree_p, method>::compute_L2_error_velocity() const
-// {
-//   const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
-//   const auto difference_per_cell =
-//   std::make_shared<Vector<double>>(triangulation.n_active_cells());
-//   VectorTools::integrate_difference(dof_handler,
-//                                     system_solution,
-//                                     *analytical_solution,
-//                                     *difference_per_cell,
-//                                     QGauss<dim>(n_q_points_1d + 2),
-//                                     VectorTools::L2_norm,
-//                                     &velocity_mask);
-//   return difference_per_cell;
-// }
+template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<Vector<double>>
+ModelProblem<dim, fe_degree_p, method>::compute_L2_error_velocity() const
+{
+  const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
+  const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  VectorTools::integrate_difference(dof_handler,
+                                    system_solution,
+                                    *analytical_solution,
+                                    *difference_per_cell,
+                                    QGauss<dim>(n_q_points_1d + 2),
+                                    VectorTools::L2_norm,
+                                    &velocity_mask);
+  return difference_per_cell;
+}
 
 
 
-// template<int dim, int fe_degree_p, Method method>
-// std::shared_ptr<Vector<double>>
-// ModelProblem<dim, fe_degree_p, method>::compute_L2_error_pressure() const
-// {
-//   const ComponentSelectFunction<dim> pressure_mask(dim, dim + 1);
-//   const auto difference_per_cell =
-//   std::make_shared<Vector<double>>(triangulation.n_active_cells());
-//   VectorTools::integrate_difference(dof_handler,
-//                                     system_solution,
-//                                     *analytical_solution,
-//                                     *difference_per_cell,
-//                                     QGauss<dim>(n_q_points_1d + 2),
-//                                     VectorTools::L2_norm,
-//                                     &pressure_mask);
-//   return difference_per_cell;
-// }
+template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<Vector<double>>
+ModelProblem<dim, fe_degree_p, method>::compute_L2_error_pressure() const
+{
+  const ComponentSelectFunction<dim> pressure_mask(dim, dim + 1);
+  const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  VectorTools::integrate_difference(dof_handler,
+                                    system_solution,
+                                    *analytical_solution,
+                                    *difference_per_cell,
+                                    QGauss<dim>(n_q_points_1d + 2),
+                                    VectorTools::L2_norm,
+                                    &pressure_mask);
+  return difference_per_cell;
+}
 
 
 
-// template<int dim, int fe_degree_p, Method method>
-// std::shared_ptr<Vector<double>>
-// ModelProblem<dim, fe_degree_p, method>::compute_H1semi_error_velocity() const
-// {
-//   const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
-//   const auto difference_per_cell =
-//   std::make_shared<Vector<double>>(triangulation.n_active_cells());
-//   VectorTools::integrate_difference(dof_handler,
-//                                     system_solution,
-//                                     *analytical_solution,
-//                                     *difference_per_cell,
-//                                     QGauss<dim>(n_q_points_1d + 2),
-//                                     VectorTools::H1_norm,
-//                                     &velocity_mask);
-//   return difference_per_cell;
-// }
+template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<Vector<double>>
+ModelProblem<dim, fe_degree_p, method>::compute_H1semi_error_velocity() const
+{
+  const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
+  const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  VectorTools::integrate_difference(dof_handler,
+                                    system_solution,
+                                    *analytical_solution,
+                                    *difference_per_cell,
+                                    QGauss<dim>(n_q_points_1d + 2),
+                                    VectorTools::H1_norm,
+                                    &velocity_mask);
+  return difference_per_cell;
+}
 
 
 
-// template<int dim, int fe_degree_p, Method method>
-// void
-// ModelProblem<dim, fe_degree_p, method>::compute_errors()
-// {
-//   {
-//     const auto   difference_per_cell = compute_L2_error_velocity();
-//     const double Velocity_L2_error =
-//       VectorTools::compute_global_error(triangulation, *difference_per_cell,
-//       VectorTools::L2_norm);
-//     print_parameter("Velocity error in the L2 norm:", Velocity_L2_error);
-//     pp_data.L2_error.push_back(Velocity_L2_error);
-//   }
+template<int dim, int fe_degree_p, Method method>
+void
+ModelProblem<dim, fe_degree_p, method>::compute_errors()
+{
+  {
+    const auto   difference_per_cell = compute_L2_error_velocity();
+    const double Velocity_L2_error =
+      VectorTools::compute_global_error(triangulation, *difference_per_cell, VectorTools::L2_norm);
+    print_parameter("Velocity error in the L2 norm:", Velocity_L2_error);
+    pp_data.L2_error.push_back(Velocity_L2_error);
+  }
 
-//   {
-//     const auto   difference_per_cell = compute_L2_error_pressure();
-//     const double Pressure_L2_error =
-//       VectorTools::compute_global_error(triangulation, *difference_per_cell,
-//       VectorTools::L2_norm);
-//     print_parameter("Pressure error in the L2 norm:", Pressure_L2_error);
-//     pp_data_pressure.L2_error.push_back(Pressure_L2_error);
-//   }
+  {
+    const auto   difference_per_cell = compute_L2_error_pressure();
+    const double Pressure_L2_error =
+      VectorTools::compute_global_error(triangulation, *difference_per_cell, VectorTools::L2_norm);
+    print_parameter("Pressure error in the L2 norm:", Pressure_L2_error);
+    pp_data_pressure.L2_error.push_back(Pressure_L2_error);
+  }
 
-//   {
-//     const auto   difference_per_cell = compute_H1semi_error_velocity();
-//     const double Velocity_H1_error =
-//       VectorTools::compute_global_error(triangulation, *difference_per_cell,
-//       VectorTools::H1_norm);
-//     print_parameter("Velocity error in the H1 seminorm:", Velocity_H1_error);
-//     pp_data.H1semi_error.push_back(Velocity_H1_error);
-//   }
-// }
+  {
+    const auto   difference_per_cell = compute_H1semi_error_velocity();
+    const double Velocity_H1_error =
+      VectorTools::compute_global_error(triangulation, *difference_per_cell, VectorTools::H1_norm);
+    print_parameter("Velocity error in the H1 seminorm:", Velocity_H1_error);
+    pp_data.H1semi_error.push_back(Velocity_H1_error);
+  }
+}
 
 
 
-// template<int dim, int fe_degree_p, Method method>
-// void
-// ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refinement_cycle) const
-// {
-//   std::vector<DataComponentInterpretation::DataComponentInterpretation>
-//     data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
-//   data_component_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
+template<int dim, int fe_degree_p, Method method>
+void
+ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refinement_cycle) const
+{
+  AssertThrow(is_first_proc, ExcMessage("TODO MPI..."));
 
-//   DataOut<dim> data_out;
-//   data_out.attach_dof_handler(dof_handler);
+  std::vector<DataComponentInterpretation::DataComponentInterpretation>
+    data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
+  data_component_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
 
-//   /// discrete solution (velocity, pressure): (u, p)
-//   std::vector<std::string> solution_names(dim, "velocity");
-//   solution_names.emplace_back("pressure");
-//   data_out.add_data_vector(system_solution,
-//                            solution_names,
-//                            DataOut<dim>::type_dof_data,
-//                            data_component_interpretation);
+  DataOut<dim> data_out;
+  data_out.attach_dof_handler(dof_handler);
 
-//   /// discrete right hand side (velocity, pressure): (Fu, Fp)
-//   std::vector<std::string> rhs_names(dim, "rhs_velocity");
-//   rhs_names.emplace_back("rhs_pressure");
-//   data_out.add_data_vector(system_rhs,
-//                            rhs_names,
-//                            DataOut<dim>::type_dof_data,
-//                            data_component_interpretation);
+  /// discrete solution (velocity, pressure): (u, p)
+  std::vector<std::string> solution_names(dim, "velocity");
+  solution_names.emplace_back("pressure");
+  data_out.add_data_vector(system_solution,
+                           solution_names,
+                           DataOut<dim>::type_dof_data,
+                           data_component_interpretation);
 
-//   const auto L2_error_v = compute_L2_error_velocity();
-//   data_out.add_data_vector(*L2_error_v, "velocity_L2_error", DataOut<dim>::type_cell_data);
+  /// discrete right hand side (velocity, pressure): (Fu, Fp)
+  std::vector<std::string> rhs_names(dim, "rhs_velocity");
+  rhs_names.emplace_back("rhs_pressure");
+  data_out.add_data_vector(system_rhs,
+                           rhs_names,
+                           DataOut<dim>::type_dof_data,
+                           data_component_interpretation);
 
-//   const auto L2_error_p = compute_L2_error_pressure();
-//   data_out.add_data_vector(*L2_error_p, "pressure_L2_error", DataOut<dim>::type_cell_data);
+  const auto L2_error_v = compute_L2_error_velocity();
+  data_out.add_data_vector(*L2_error_v, "velocity_L2_error", DataOut<dim>::type_cell_data);
 
-//   const auto H1semi_error_v = compute_H1semi_error_velocity();
-//   data_out.add_data_vector(*H1semi_error_v, "velocity_H1semi_error",
-//   DataOut<dim>::type_cell_data);
+  const auto L2_error_p = compute_L2_error_pressure();
+  data_out.add_data_vector(*L2_error_p, "pressure_L2_error", DataOut<dim>::type_cell_data);
 
-//   data_out.build_patches();
+  const auto H1semi_error_v = compute_H1semi_error_velocity();
+  data_out.add_data_vector(*H1semi_error_v, "velocity_H1semi_error", DataOut<dim>::type_cell_data);
 
-//   std::ofstream output("stokes_" + equation_data.sstr_equation_variant() + "_" +
-//                        Utilities::int_to_string(refinement_cycle, 3) + ".vtk");
-//   data_out.write_vtk(output);
-// }
+  data_out.build_patches();
+
+  std::ofstream output("stokes_" + equation_data.sstr_equation_variant() + "_" +
+                       Utilities::int_to_string(refinement_cycle, 3) + ".vtk");
+  data_out.write_vtk(output);
+}
 
 
 
@@ -3349,18 +3390,12 @@ ModelProblem<dim, fe_degree_p, method>::run()
     setup_system();
 
     assemble_system();
-    /// DEBUG
-    // if (pcout->is_active())
-    //   {
-    // 	table_to_fullmatrix(Tensors::matrix_to_table(system_matrix)).print_formatted(std::cout);
-    // 	*pcout << std::endl << std::endl;
-    //   }
 
-    // solve();
+    solve();
 
-    // compute_errors();
+    compute_errors();
 
-    // output_results(cycle);
+    output_results(cycle);
 
     Utilities::System::MemoryStats mem;
     Utilities::System::get_memory_stats(mem);
