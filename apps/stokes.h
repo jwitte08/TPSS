@@ -13,6 +13,7 @@
 
 #include "ct_parameter.h"
 #include "stokes_problem.h"
+#include "stokes_problem_noblocks.h"
 #include "utilities.h"
 
 
@@ -26,7 +27,7 @@ struct StokesFlow
   static constexpr auto fe_degree_p = fe_degree_p_;
 
   // static constexpr char const * skipper     = "o";
-  // 0 : direct solver (UMFPACK)
+  // 0 : direct solver (direct)
   // 1 : flexible GMRES prec. by ILU (FGMRES_ILU)
   //     flexible GMRES prec. by Schur complement approximation ...
   // 2 : ... with GMG based on Gauss-Seidel smoothers for velocity (FGMRES_GMGvelocity)

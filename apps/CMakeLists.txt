@@ -26,6 +26,7 @@ set(sourcefiles
   stokes_Qkplus2_DGPk.cc
   stokes_DGQkplus2_DGPk.cc
   stokes_raviartthomas.cc
+  stokes_noblocks.cc
   streamfunction_compute_pressure.cc
   )
 
