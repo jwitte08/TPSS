@@ -83,8 +83,8 @@ main(int argc, char * argv[])
       for(types::boundary_id id = 0; id < GeometryInfo<dim>::faces_per_cell; ++id)
         equation_data.dirichlet_boundary_ids_velocity.insert(id);
 
-    typename NoBlocks::ModelProblem<dim, fe_degree_p, Method::RaviartThomas> stokes_problem(options.prms,
-                                                                         equation_data);
+    typename NoBlocks::ModelProblem<dim, fe_degree_p, Method::RaviartThomas> stokes_problem(
+      options.prms, equation_data);
 
     std::cout << std::endl;
     stokes_problem.run();
