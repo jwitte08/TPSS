@@ -614,116 +614,117 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_schwarz_smoothers(
   }
 }
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
-void
-MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid()
-{
-  AssertDimension(mg_matrices.min_level(), parameters.coarse_level);
-  Assert(mg_constrained_dofs, ExcMessage("mg_constrained_dofs is uninitialized."));
+// template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+// void
+// MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid()
+// {
+//   AssertDimension(mg_matrices.min_level(), parameters.coarse_level);
+//   Assert(mg_constrained_dofs, ExcMessage("mg_constrained_dofs is uninitialized."));
 
-  /// TODO discard terms for Hdiv conforming SIPG?
-  constexpr bool use_sipg_method =
-    dof_layout == TPSS::DoFLayout::DGQ || dof_layout == TPSS::DoFLayout::RT;
-  constexpr bool use_conf_method = dof_layout == TPSS::DoFLayout::Q;
+//   /// TODO discard terms for Hdiv conforming SIPG?
+//   constexpr bool use_sipg_method =
+//     dof_layout == TPSS::DoFLayout::DGQ || dof_layout == TPSS::DoFLayout::RT;
+//   constexpr bool use_conf_method = dof_layout == TPSS::DoFLayout::Q;
 
-  using Velocity::SIPG::MW::CopyData;
-  using Velocity::SIPG::MW::ScratchData;
-  using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
-  using LevelCellIterator = typename MatrixIntegrator::IteratorType;
-  MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+//   using Velocity::SIPG::MW::CopyData;
+//   using Velocity::SIPG::MW::ScratchData;
+//   using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
+//   using LevelCellIterator = typename MatrixIntegrator::IteratorType;
+//   MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
 
-  for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
-  {
-    AffineConstraints<double> level_constraints;
-    if(dof_layout == TPSS::DoFLayout::Q || dof_layout == TPSS::DoFLayout::RT) // !!!
-      level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
-    level_constraints.close();
+//   for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
+//   {
+//     AffineConstraints<double> level_constraints;
+//     if(dof_layout == TPSS::DoFLayout::Q || dof_layout == TPSS::DoFLayout::RT) // !!!
+//       level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
+//     level_constraints.close();
 
-    {
-      //: initialize matrix-free storage (dummy, required to setup TPSS)
-      typename MatrixFree<dim, double>::AdditionalData additional_data;
-      additional_data.mg_level = level;
-      QGauss<1>  quadrature(n_q_points_1d);
-      const auto mf_storage = std::make_shared<MatrixFree<dim, double>>();
-      mf_storage->reinit(*mapping, *dof_handler, level_constraints, quadrature, additional_data);
+//     {
+//       //: initialize matrix-free storage (dummy, required to setup TPSS)
+//       typename MatrixFree<dim, double>::AdditionalData additional_data;
+//       additional_data.mg_level = level;
+//       QGauss<1>  quadrature(n_q_points_1d);
+//       const auto mf_storage = std::make_shared<MatrixFree<dim, double>>();
+//       mf_storage->reinit(*mapping, *dof_handler, level_constraints, quadrature, additional_data);
 
-      //: initialize FD::MatrixIntegrator (see SparseMatrixAugmented)
-      mg_matrices[level].initialize(mf_storage, equation_data);
-    }
+//       //: initialize FD::MatrixIntegrator (see SparseMatrixAugmented)
+//       mg_matrices[level].initialize(mf_storage, equation_data);
+//     }
 
-    auto cell_worker =
-      [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-      };
+//     auto cell_worker =
+//       [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data)
+//       {
+//         matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+//       };
 
-    auto face_worker = [&](const auto &         cell,
-                           const unsigned int & f,
-                           const unsigned int & sf,
-                           const auto &         ncell,
-                           const unsigned int & nf,
-                           const unsigned int & nsf,
-                           ScratchData<dim> &   scratch_data,
-                           CopyData &           copy_data) {
-      matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-    };
+//     auto face_worker = [&](const auto &         cell,
+//                            const unsigned int & f,
+//                            const unsigned int & sf,
+//                            const auto &         ncell,
+//                            const unsigned int & nf,
+//                            const unsigned int & nsf,
+//                            ScratchData<dim> &   scratch_data,
+//                            CopyData &           copy_data) {
+//       matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+//     };
 
-    auto boundary_worker = [&](const auto &         cell,
-                               const unsigned int & face_no,
-                               ScratchData<dim> &   scratch_data,
-                               CopyData &           copy_data) {
-      matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-    };
+//     auto boundary_worker = [&](const auto &         cell,
+//                                const unsigned int & face_no,
+//                                ScratchData<dim> &   scratch_data,
+//                                CopyData &           copy_data) {
+//       matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+//     };
 
-    const auto copier = [&](const CopyData & copy_data) {
-      level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-        copy_data.cell_matrix, copy_data.local_dof_indices_test, mg_matrices[level]);
+//     const auto copier = [&](const CopyData & copy_data) {
+//       level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+//         copy_data.cell_matrix, copy_data.local_dof_indices_test, mg_matrices[level]);
 
-      for(auto & cdf : copy_data.face_data)
-      {
-        level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-          cdf.cell_matrix, cdf.joint_dof_indices_test, mg_matrices[level]);
-      }
-    };
+//       for(auto & cdf : copy_data.face_data)
+//       {
+//         level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+//           cdf.cell_matrix, cdf.joint_dof_indices_test, mg_matrices[level]);
+//       }
+//     };
 
-    const UpdateFlags update_flags =
-      update_values | update_gradients | update_quadrature_points | update_JxW_values;
-    const UpdateFlags interface_update_flags = update_values | update_gradients |
-                                               update_quadrature_points | update_JxW_values |
-                                               update_normal_vectors;
-    ScratchData<dim> scratch_data(*mapping,
-                                  dof_handler->get_fe(),
-                                  dof_handler->get_fe(),
-                                  n_q_points_1d,
-                                  update_flags,
-                                  update_flags,
-                                  interface_update_flags,
-                                  interface_update_flags);
+//     const UpdateFlags update_flags =
+//       update_values | update_gradients | update_quadrature_points | update_JxW_values;
+//     const UpdateFlags interface_update_flags = update_values | update_gradients |
+//                                                update_quadrature_points | update_JxW_values |
+//                                                update_normal_vectors;
+//     ScratchData<dim> scratch_data(*mapping,
+//                                   dof_handler->get_fe(),
+//                                   dof_handler->get_fe(),
+//                                   n_q_points_1d,
+//                                   update_flags,
+//                                   update_flags,
+//                                   interface_update_flags,
+//                                   interface_update_flags);
 
-    CopyData copy_data(dof_handler->get_fe().dofs_per_cell);
+//     CopyData copy_data(dof_handler->get_fe().dofs_per_cell);
 
-    if(use_conf_method)
-      MeshWorker::mesh_loop(dof_handler->begin_mg(level),
-                            dof_handler->end_mg(level),
-                            cell_worker,
-                            copier,
-                            scratch_data,
-                            copy_data,
-                            MeshWorker::assemble_own_cells);
-    else if(use_sipg_method)
-      MeshWorker::mesh_loop(dof_handler->begin_mg(level),
-                            dof_handler->end_mg(level),
-                            cell_worker,
-                            copier,
-                            scratch_data,
-                            copy_data,
-                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                              MeshWorker::assemble_own_interior_faces_once,
-                            boundary_worker,
-                            face_worker);
-    else
-      AssertThrow(false, ExcMessage("This FEM is not implemented"));
-  }
-}
+//     if(use_conf_method)
+//       MeshWorker::mesh_loop(dof_handler->begin_mg(level),
+//                             dof_handler->end_mg(level),
+//                             cell_worker,
+//                             copier,
+//                             scratch_data,
+//                             copy_data,
+//                             MeshWorker::assemble_own_cells);
+//     else if(use_sipg_method)
+//       MeshWorker::mesh_loop(dof_handler->begin_mg(level),
+//                             dof_handler->end_mg(level),
+//                             cell_worker,
+//                             copier,
+//                             scratch_data,
+//                             copy_data,
+//                             MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+//                               MeshWorker::assemble_own_interior_faces_once,
+//                             boundary_worker,
+//                             face_worker);
+//     else
+//       AssertThrow(false, ExcMessage("This FEM is not implemented"));
+//   }
+// }
 
 template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
 const PreconditionMG<dim,
@@ -854,323 +855,328 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
 
 
-template<int             dim,
-         int             fe_degree_p,
-         TPSS::DoFLayout dof_layout_v,
-         int             fe_degree_v,
-         LocalAssembly   local_assembly>
-void
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-  assemble_multigrid(const MGLevelObject<AffineConstraints<double>> & mg_constraints_pressure)
-{
-  AssertDimension(mg_matrices.min_level(), parameters.coarse_level);
-  Assert(mg_constrained_dofs, ExcMessage("mg_constrained_dofs is uninitialized."));
-  Assert(dof_handler_velocity, ExcMessage("Did you set dof_handler_velocity?"));
-  AssertThrow(TPSS::get_dof_layout(dof_handler->get_fe().base_element(0)) == dof_layout_v,
-              ExcMessage("Velocity block of dof_handler and dof_layout_v are incompatible."));
-  AssertThrow(TPSS::get_dof_layout(dof_handler_velocity->get_fe().base_element(0)) == dof_layout_v,
-              ExcMessage("dof_handler_velocity and dof_layout_v are incompatible."));
-  Assert(dof_handler_pressure, ExcMessage("Did you set dof_handler_pressure?"));
+// template<int             dim,
+//          int             fe_degree_p,
+//          TPSS::DoFLayout dof_layout_v,
+//          int             fe_degree_v,
+//          LocalAssembly   local_assembly>
+// void
+// MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
+//   assemble_multigrid(const MGLevelObject<AffineConstraints<double>> & mg_constraints_pressure)
+// {
+//   AssertDimension(mg_matrices.min_level(), parameters.coarse_level);
+//   Assert(mg_constrained_dofs, ExcMessage("mg_constrained_dofs is uninitialized."));
+//   Assert(dof_handler_velocity, ExcMessage("Did you set dof_handler_velocity?"));
+//   AssertThrow(TPSS::get_dof_layout(dof_handler->get_fe().base_element(0)) == dof_layout_v,
+//               ExcMessage("Velocity block of dof_handler and dof_layout_v are incompatible."));
+//   AssertThrow(TPSS::get_dof_layout(dof_handler_velocity->get_fe().base_element(0)) ==
+//   dof_layout_v,
+//               ExcMessage("dof_handler_velocity and dof_layout_v are incompatible."));
+//   Assert(dof_handler_pressure, ExcMessage("Did you set dof_handler_pressure?"));
 
-  constexpr bool use_sipg_method =
-    dof_layout_v == TPSS::DoFLayout::DGQ || dof_layout_v == TPSS::DoFLayout::RT;
-  constexpr bool use_conf_method = dof_layout_v == TPSS::DoFLayout::Q;
+//   constexpr bool use_sipg_method =
+//     dof_layout_v == TPSS::DoFLayout::DGQ || dof_layout_v == TPSS::DoFLayout::RT;
+//   constexpr bool use_conf_method = dof_layout_v == TPSS::DoFLayout::Q;
 
-  for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
-  {
-    /// As long as the DoF numbering of dof_handler_velocity and the velocity
-    /// block of dof_handler is aligned, we might use the complete set of
-    /// level_constraints as constraints for the velocity block.q
-    AffineConstraints<double> level_constraints;
-    if(mg_constrained_dofs->have_boundary_indices())
-      level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
-    level_constraints.close();
+//   for(unsigned int level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
+//   {
+//     /// As long as the DoF numbering of dof_handler_velocity and the velocity
+//     /// block of dof_handler is aligned, we might use the complete set of
+//     /// level_constraints as constraints for the velocity block.q
+//     AffineConstraints<double> level_constraints;
+//     if(mg_constrained_dofs->have_boundary_indices())
+//       level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
+//     level_constraints.close();
 
-    const auto & level_constraints_pressure = mg_constraints_pressure[level];
-    // // DEBUG
-    // const auto   entries = *(level_constraints_pressure.get_constraint_entries(0U));
-    // for(const auto & [column, value] : entries)
-    //   std::cout << " column: " << column << " value: " << value << std::endl;
+//     const auto & level_constraints_pressure = mg_constraints_pressure[level];
+//     // // DEBUG
+//     // const auto   entries = *(level_constraints_pressure.get_constraint_entries(0U));
+//     // for(const auto & [column, value] : entries)
+//     //   std::cout << " column: " << column << " value: " << value << std::endl;
 
-    /// Initialize a (dummy) matrix-free storage for each level. This is
-    /// required to initialize SubdomainHandlers for each level.
-    {
-      typename MatrixFree<dim, double>::AdditionalData additional_data;
-      additional_data.mg_level = level;
-      std::vector<const DoFHandler<dim> *>           dof_handler_per_block{dof_handler_velocity,
-                                                                 dof_handler_pressure};
-      std::vector<const AffineConstraints<double> *> constraints_per_block{
-        &level_constraints, &level_constraints_pressure};
-      QGauss<1>  quadrature(n_q_points_1d);
-      const auto mf_storage = std::make_shared<MatrixFree<dim, double>>();
-      mf_storage->reinit(
-        *mapping, dof_handler_per_block, constraints_per_block, quadrature, additional_data);
+//     /// Initialize a (dummy) matrix-free storage for each level. This is
+//     /// required to initialize SubdomainHandlers for each level.
+//     {
+//       typename MatrixFree<dim, double>::AdditionalData additional_data;
+//       additional_data.mg_level = level;
+//       std::vector<const DoFHandler<dim> *>           dof_handler_per_block{dof_handler_velocity,
+//                                                                  dof_handler_pressure};
+//       std::vector<const AffineConstraints<double> *> constraints_per_block{
+//         &level_constraints, &level_constraints_pressure};
+//       QGauss<1>  quadrature(n_q_points_1d);
+//       const auto mf_storage = std::make_shared<MatrixFree<dim, double>>();
+//       mf_storage->reinit(
+//         *mapping, dof_handler_per_block, constraints_per_block, quadrature, additional_data);
 
-      //: initialize FD::MatrixIntegrator (see SparseMatrixAugmented)
-      mg_matrices[level].initialize(mf_storage, equation_data);
-    }
+//       //: initialize FD::MatrixIntegrator (see SparseMatrixAugmented)
+//       mg_matrices[level].initialize(mf_storage, equation_data);
+//     }
 
-    /// Assemble velocity-velocity block first.
-    {
-      using Velocity::SIPG::MW::CopyData;
-      using Velocity::SIPG::MW::ScratchData;
-      using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
-      using LevelCellIterator = typename MatrixIntegrator::IteratorType;
+//     /// Assemble velocity-velocity block first.
+//     {
+//       using Velocity::SIPG::MW::CopyData;
+//       using Velocity::SIPG::MW::ScratchData;
+//       using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
+//       using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
-      MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+//       MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
 
-      auto cell_worker =
-        [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-          matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-        };
+//       auto cell_worker =
+//         [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData &
+//         copy_data) {
+//           matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+//         };
 
-      auto face_worker = [&](const auto &         cell,
-                             const unsigned int & f,
-                             const unsigned int & sf,
-                             const auto &         ncell,
-                             const unsigned int & nf,
-                             const unsigned int & nsf,
-                             ScratchData<dim> &   scratch_data,
-                             CopyData &           copy_data) {
-        matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-      };
+//       auto face_worker = [&](const auto &         cell,
+//                              const unsigned int & f,
+//                              const unsigned int & sf,
+//                              const auto &         ncell,
+//                              const unsigned int & nf,
+//                              const unsigned int & nsf,
+//                              ScratchData<dim> &   scratch_data,
+//                              CopyData &           copy_data) {
+//         matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+//       };
 
-      auto boundary_worker = [&](const auto &         cell,
-                                 const unsigned int & face_no,
-                                 ScratchData<dim> &   scratch_data,
-                                 CopyData &           copy_data) {
-        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-      };
+//       auto boundary_worker = [&](const auto &         cell,
+//                                  const unsigned int & face_no,
+//                                  ScratchData<dim> &   scratch_data,
+//                                  CopyData &           copy_data) {
+//         matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+//       };
 
-      const auto copier = [&](const CopyData & copy_data) {
-        level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-          copy_data.cell_matrix, copy_data.local_dof_indices_test, mg_matrices[level].block(0, 0));
+//       const auto copier = [&](const CopyData & copy_data) {
+//         level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+//           copy_data.cell_matrix, copy_data.local_dof_indices_test, mg_matrices[level].block(0,
+//           0));
 
-        for(auto & cdf : copy_data.face_data)
-        {
-          level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-            cdf.cell_matrix, cdf.joint_dof_indices_test, mg_matrices[level].block(0, 0));
-        }
-      };
+//         for(auto & cdf : copy_data.face_data)
+//         {
+//           level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+//             cdf.cell_matrix, cdf.joint_dof_indices_test, mg_matrices[level].block(0, 0));
+//         }
+//       };
 
-      const UpdateFlags update_flags =
-        update_values | update_gradients | update_quadrature_points | update_JxW_values;
-      const UpdateFlags interface_update_flags = update_values | update_gradients |
-                                                 update_quadrature_points | update_JxW_values |
-                                                 update_normal_vectors;
-      ScratchData<dim> scratch_data(*mapping,
-                                    dof_handler_velocity->get_fe(),
-                                    dof_handler_velocity->get_fe(),
-                                    n_q_points_1d,
-                                    update_flags,
-                                    update_flags,
-                                    interface_update_flags,
-                                    interface_update_flags);
+//       const UpdateFlags update_flags =
+//         update_values | update_gradients | update_quadrature_points | update_JxW_values;
+//       const UpdateFlags interface_update_flags = update_values | update_gradients |
+//                                                  update_quadrature_points | update_JxW_values |
+//                                                  update_normal_vectors;
+//       ScratchData<dim> scratch_data(*mapping,
+//                                     dof_handler_velocity->get_fe(),
+//                                     dof_handler_velocity->get_fe(),
+//                                     n_q_points_1d,
+//                                     update_flags,
+//                                     update_flags,
+//                                     interface_update_flags,
+//                                     interface_update_flags);
 
-      CopyData copy_data(dof_handler_velocity->get_fe().dofs_per_cell);
+//       CopyData copy_data(dof_handler_velocity->get_fe().dofs_per_cell);
 
-      if(use_conf_method)
-        MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
-                              dof_handler_velocity->end_mg(level),
-                              cell_worker,
-                              copier,
-                              scratch_data,
-                              copy_data,
-                              MeshWorker::assemble_own_cells);
-      else if(use_sipg_method)
-        MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
-                              dof_handler_velocity->end_mg(level),
-                              cell_worker,
-                              copier,
-                              scratch_data,
-                              copy_data,
-                              MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                                MeshWorker::assemble_own_interior_faces_once,
-                              boundary_worker,
-                              face_worker);
-      else
-        AssertThrow(false, ExcMessage("This FEM is not supported"));
-    }
+//       if(use_conf_method)
+//         MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
+//                               dof_handler_velocity->end_mg(level),
+//                               cell_worker,
+//                               copier,
+//                               scratch_data,
+//                               copy_data,
+//                               MeshWorker::assemble_own_cells);
+//       else if(use_sipg_method)
+//         MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
+//                               dof_handler_velocity->end_mg(level),
+//                               cell_worker,
+//                               copier,
+//                               scratch_data,
+//                               copy_data,
+//                               MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+//                                 MeshWorker::assemble_own_interior_faces_once,
+//                               boundary_worker,
+//                               face_worker);
+//       else
+//         AssertThrow(false, ExcMessage("This FEM is not supported"));
+//     }
 
-    /// Assemble pressure-pressure block.
-    {
-      /// This block is zero!
-    }
+//     /// Assemble pressure-pressure block.
+//     {
+//       /// This block is zero!
+//     }
 
-    /// Assemble velocity-pressure and pressure-velocity blocks
-    {
-      using VelocityPressure::MW::Mixed::CopyData;
-      using VelocityPressure::MW::Mixed::ScratchData;
-      using MatrixIntegrator  = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, true>;
-      using LevelCellIterator = typename MatrixIntegrator::IteratorType;
+//     /// Assemble velocity-pressure and pressure-velocity blocks
+//     {
+//       using VelocityPressure::MW::Mixed::CopyData;
+//       using VelocityPressure::MW::Mixed::ScratchData;
+//       using MatrixIntegrator  = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, true>;
+//       using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
-      MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, nullptr, equation_data);
-      const auto &     triangulation = dof_handler_pressure->get_triangulation();
-      auto             cell_worker =
-        [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-          LevelCellIterator cell_ansatz(&triangulation,
-                                        cell->level(),
-                                        cell->index(),
-                                        dof_handler_pressure);
-          matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
-        };
+//       MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, nullptr, equation_data);
+//       const auto &     triangulation = dof_handler_pressure->get_triangulation();
+//       auto             cell_worker =
+//         [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData &
+//         copy_data) {
+//           LevelCellIterator cell_ansatz(&triangulation,
+//                                         cell->level(),
+//                                         cell->index(),
+//                                         dof_handler_pressure);
+//           matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
+//         };
 
-      auto face_worker = [&](const LevelCellIterator & cell,
-                             const unsigned int &      f,
-                             const unsigned int &      sf,
-                             const LevelCellIterator & ncell,
-                             const unsigned int &      nf,
-                             const unsigned int &      nsf,
-                             ScratchData<dim> &        scratch_data,
-                             CopyData &                copy_data) {
-        LevelCellIterator cell_ansatz(&dof_handler_pressure->get_triangulation(),
-                                      cell->level(),
-                                      cell->index(),
-                                      dof_handler_pressure);
-        LevelCellIterator ncell_ansatz(&dof_handler_pressure->get_triangulation(),
-                                       ncell->level(),
-                                       ncell->index(),
-                                       dof_handler_pressure);
-        matrix_integrator.face_worker(
-          cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
-      };
+//       auto face_worker = [&](const LevelCellIterator & cell,
+//                              const unsigned int &      f,
+//                              const unsigned int &      sf,
+//                              const LevelCellIterator & ncell,
+//                              const unsigned int &      nf,
+//                              const unsigned int &      nsf,
+//                              ScratchData<dim> &        scratch_data,
+//                              CopyData &                copy_data) {
+//         LevelCellIterator cell_ansatz(&dof_handler_pressure->get_triangulation(),
+//                                       cell->level(),
+//                                       cell->index(),
+//                                       dof_handler_pressure);
+//         LevelCellIterator ncell_ansatz(&dof_handler_pressure->get_triangulation(),
+//                                        ncell->level(),
+//                                        ncell->index(),
+//                                        dof_handler_pressure);
+//         matrix_integrator.face_worker(
+//           cell, cell_ansatz, f, sf, ncell, ncell_ansatz, nf, nsf, scratch_data, copy_data);
+//       };
 
-      auto boundary_worker = [&](const LevelCellIterator & cell,
-                                 const unsigned int &      face_no,
-                                 ScratchData<dim> &        scratch_data,
-                                 CopyData &                copy_data) {
-        LevelCellIterator cell_ansatz(&dof_handler_pressure->get_triangulation(),
-                                      cell->level(),
-                                      cell->index(),
-                                      dof_handler_pressure);
-        matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
-      };
+//       auto boundary_worker = [&](const LevelCellIterator & cell,
+//                                  const unsigned int &      face_no,
+//                                  ScratchData<dim> &        scratch_data,
+//                                  CopyData &                copy_data) {
+//         LevelCellIterator cell_ansatz(&dof_handler_pressure->get_triangulation(),
+//                                       cell->level(),
+//                                       cell->index(),
+//                                       dof_handler_pressure);
+//         matrix_integrator.boundary_worker(cell, cell_ansatz, face_no, scratch_data, copy_data);
+//       };
 
-      const auto copier = [&](const CopyData & copy_data) {
-        level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-          copy_data.cell_matrix,
-          copy_data.local_dof_indices_test,
-          level_constraints_pressure,
-          copy_data.local_dof_indices_ansatz,
-          mg_matrices[level].block(0, 1));
-        level_constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
-          copy_data.cell_matrix_flipped,
-          copy_data.local_dof_indices_ansatz,
-          level_constraints,
-          copy_data.local_dof_indices_test,
-          mg_matrices[level].block(1, 0));
+//       const auto copier = [&](const CopyData & copy_data) {
+//         level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+//           copy_data.cell_matrix,
+//           copy_data.local_dof_indices_test,
+//           level_constraints_pressure,
+//           copy_data.local_dof_indices_ansatz,
+//           mg_matrices[level].block(0, 1));
+//         level_constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
+//           copy_data.cell_matrix_flipped,
+//           copy_data.local_dof_indices_ansatz,
+//           level_constraints,
+//           copy_data.local_dof_indices_test,
+//           mg_matrices[level].block(1, 0));
 
-        for(auto & cdf : copy_data.face_data)
-        {
-          AssertDimension(cdf.cell_rhs_test.size(), 0);
-          AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
-          level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
-            cdf.cell_matrix,
-            cdf.joint_dof_indices_test,
-            level_constraints_pressure,
-            cdf.joint_dof_indices_ansatz,
-            mg_matrices[level].block(0, 1));
-          level_constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
-            cdf.cell_matrix_flipped,
-            cdf.joint_dof_indices_ansatz,
-            level_constraints,
-            cdf.joint_dof_indices_test,
-            mg_matrices[level].block(1, 0));
-        }
-      };
+//         for(auto & cdf : copy_data.face_data)
+//         {
+//           AssertDimension(cdf.cell_rhs_test.size(), 0);
+//           AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
+//           level_constraints.template distribute_local_to_global<SparseMatrix<double>>(
+//             cdf.cell_matrix,
+//             cdf.joint_dof_indices_test,
+//             level_constraints_pressure,
+//             cdf.joint_dof_indices_ansatz,
+//             mg_matrices[level].block(0, 1));
+//           level_constraints_pressure.template distribute_local_to_global<SparseMatrix<double>>(
+//             cdf.cell_matrix_flipped,
+//             cdf.joint_dof_indices_ansatz,
+//             level_constraints,
+//             cdf.joint_dof_indices_test,
+//             mg_matrices[level].block(1, 0));
+//         }
+//       };
 
-      const UpdateFlags update_flags_velocity =
-        update_values | update_gradients | update_quadrature_points | update_JxW_values;
-      const UpdateFlags update_flags_pressure =
-        update_values | update_gradients | update_quadrature_points | update_JxW_values;
-      const UpdateFlags interface_update_flags_velocity =
-        update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
-      const UpdateFlags interface_update_flags_pressure =
-        update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+//       const UpdateFlags update_flags_velocity =
+//         update_values | update_gradients | update_quadrature_points | update_JxW_values;
+//       const UpdateFlags update_flags_pressure =
+//         update_values | update_gradients | update_quadrature_points | update_JxW_values;
+//       const UpdateFlags interface_update_flags_velocity =
+//         update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+//       const UpdateFlags interface_update_flags_pressure =
+//         update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
 
-      ScratchData<dim> scratch_data(*mapping,
-                                    dof_handler_velocity->get_fe(),
-                                    dof_handler_pressure->get_fe(),
-                                    n_q_points_1d,
-                                    update_flags_velocity,
-                                    update_flags_pressure,
-                                    interface_update_flags_velocity,
-                                    interface_update_flags_pressure);
+//       ScratchData<dim> scratch_data(*mapping,
+//                                     dof_handler_velocity->get_fe(),
+//                                     dof_handler_pressure->get_fe(),
+//                                     n_q_points_1d,
+//                                     update_flags_velocity,
+//                                     update_flags_pressure,
+//                                     interface_update_flags_velocity,
+//                                     interface_update_flags_pressure);
 
-      CopyData copy_data(dof_handler_velocity->get_fe().dofs_per_cell,
-                         dof_handler_pressure->get_fe().dofs_per_cell);
+//       CopyData copy_data(dof_handler_velocity->get_fe().dofs_per_cell,
+//                          dof_handler_pressure->get_fe().dofs_per_cell);
 
-      if(use_conf_method)
-        MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
-                              dof_handler_velocity->end_mg(level),
-                              cell_worker,
-                              copier,
-                              scratch_data,
-                              copy_data,
-                              MeshWorker::assemble_own_cells);
-      else if(use_sipg_method)
-        MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
-                              dof_handler_velocity->end_mg(level),
-                              cell_worker,
-                              copier,
-                              scratch_data,
-                              copy_data,
-                              MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                                MeshWorker::assemble_own_interior_faces_once,
-                              boundary_worker,
-                              face_worker);
-      else
-        AssertThrow(false, ExcMessage("This FEM is not implemented."));
-    }
-  }
-}
+//       if(use_conf_method)
+//         MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
+//                               dof_handler_velocity->end_mg(level),
+//                               cell_worker,
+//                               copier,
+//                               scratch_data,
+//                               copy_data,
+//                               MeshWorker::assemble_own_cells);
+//       else if(use_sipg_method)
+//         MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
+//                               dof_handler_velocity->end_mg(level),
+//                               cell_worker,
+//                               copier,
+//                               scratch_data,
+//                               copy_data,
+//                               MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+//                                 MeshWorker::assemble_own_interior_faces_once,
+//                               boundary_worker,
+//                               face_worker);
+//       else
+//         AssertThrow(false, ExcMessage("This FEM is not implemented."));
+//     }
+//   }
+// }
 
-template<int             dim,
-         int             fe_degree_p,
-         TPSS::DoFLayout dof_layout_v,
-         int             fe_degree_v,
-         LocalAssembly   local_assembly>
-void
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-  prepare_schwarz_smoothers(const std::shared_ptr<ColoringBase<dim>> user_coloring)
-{
-  Assert(parameters.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz,
-         ExcMessage("Invalid smoothing variant."));
-  for(auto level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
-    AssertThrow(mg_matrices[level].mf_storage, ExcMessage("mf_storage is not initialized."));
+// template<int             dim,
+//          int             fe_degree_p,
+//          TPSS::DoFLayout dof_layout_v,
+//          int             fe_degree_v,
+//          LocalAssembly   local_assembly>
+// void
+// MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
+//   prepare_schwarz_smoothers(const std::shared_ptr<ColoringBase<dim>> user_coloring)
+// {
+//   Assert(parameters.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz,
+//          ExcMessage("Invalid smoothing variant."));
+//   for(auto level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
+//     AssertThrow(mg_matrices[level].mf_storage, ExcMessage("mf_storage is not initialized."));
 
-  //: pre-smoother
-  {
-    const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
-    typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
-    if(parameters.pre_smoother.schwarz.userdefined_coloring)
-    {
-      Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
-      additional_data.coloring_func = std::ref(*user_coloring);
-    }
-    additional_data.parameters = parameters.pre_smoother;
-    additional_data.foreach_dofh.resize(2);
-    additional_data.foreach_dofh[0].dirichlet_ids = equation_data.dirichlet_boundary_ids_velocity;
-    additional_data.foreach_dofh[1].dirichlet_ids = equation_data.dirichlet_boundary_ids_pressure;
-    // additional_data.foreach_dofh[1].force_no_boundary_condition = true;
-    mgss->initialize(mg_matrices, additional_data);
-    mg_schwarz_smoother_pre = mgss;
-  }
+//   //: pre-smoother
+//   {
+//     const auto                                   mgss = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+//     typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
+//     if(parameters.pre_smoother.schwarz.userdefined_coloring)
+//     {
+//       Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
+//       additional_data.coloring_func = std::ref(*user_coloring);
+//     }
+//     additional_data.parameters = parameters.pre_smoother;
+//     additional_data.foreach_dofh.resize(2);
+//     additional_data.foreach_dofh[0].dirichlet_ids =
+//     equation_data.dirichlet_boundary_ids_velocity; additional_data.foreach_dofh[1].dirichlet_ids
+//     = equation_data.dirichlet_boundary_ids_pressure;
+//     // additional_data.foreach_dofh[1].force_no_boundary_condition = true;
+//     mgss->initialize(mg_matrices, additional_data);
+//     mg_schwarz_smoother_pre = mgss;
+//   }
 
-  //: post-smoother (so far only shallow copy!)
-  {
-    const auto mgss_post = std::make_shared<MG_SMOOTHER_SCHWARZ>();
-    typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
-    if(parameters.pre_smoother.schwarz.userdefined_coloring)
-    {
-      Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
-      additional_data.coloring_func = std::ref(*user_coloring);
-    }
-    additional_data.parameters = parameters.post_smoother;
-    mgss_post->initialize(*mg_schwarz_smoother_pre, additional_data);
-    mg_schwarz_smoother_post = mgss_post;
-  }
-}
+//   //: post-smoother (so far only shallow copy!)
+//   {
+//     const auto mgss_post = std::make_shared<MG_SMOOTHER_SCHWARZ>();
+//     typename MG_SMOOTHER_SCHWARZ::AdditionalData additional_data;
+//     if(parameters.pre_smoother.schwarz.userdefined_coloring)
+//     {
+//       Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
+//       additional_data.coloring_func = std::ref(*user_coloring);
+//     }
+//     additional_data.parameters = parameters.post_smoother;
+//     mgss_post->initialize(*mg_schwarz_smoother_pre, additional_data);
+//     mg_schwarz_smoother_post = mgss_post;
+//   }
+// }
 
 template<int             dim,
          int             fe_degree_p,
@@ -2519,7 +2525,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
   /// Assemble the velocity block, here block(0,0).
   {
     using Velocity::SIPG::MW::CopyData;
+
     using Velocity::SIPG::MW::ScratchData;
+
     using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, false>;
 
     const auto             component_range = std::make_pair<unsigned int>(0, dim);
@@ -2567,38 +2575,27 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
       else if(use_hdivsipg_method)
         // matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
         matrix_integrator.boundary_worker_tangential(cell, face_no, scratch_data, copy_data);
-      // matrix_integrator.boundary_worker_tangential_old(cell, face_no, scratch_data,  copy_data);
       else
         AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
     };
 
     const auto copier = [&](const CopyData & copy_data) {
-      zero_constraints_velocity.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
-        copy_data.cell_matrix,
-        copy_data.cell_rhs_test,
-        copy_data.local_dof_indices_test,
-        system_matrix.block(0, 0),
-        system_rhs.block(0));
+      for(const auto & cell_data : copy_data.cell_data)
+      {
+        AssertDimension(copy_data.cell_data.size(), 1U);
+        zero_constraints_velocity
+          .template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+            cell_data.matrix,
+            cell_data.rhs,
+            cell_data.dof_indices,
+            system_matrix.block(0, 0),
+            system_rhs.block(0));
+      }
 
       for(auto & cdf : copy_data.face_data)
       {
-        if(!use_hdivsipg_method)
-          AssertDimension(cdf.cell_rhs_test.size(), 0);
-
-        if(cdf.cell_rhs_test.size() == 0)
-          zero_constraints_velocity
-            .template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
-              cdf.cell_matrix, cdf.joint_dof_indices_test, system_matrix.block(0, 0));
-        else
-        {
-          zero_constraints_velocity
-            .template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
-              cdf.cell_matrix,
-              cdf.cell_rhs_test,
-              cdf.joint_dof_indices_test,
-              system_matrix.block(0, 0),
-              system_rhs.block(0));
-        }
+        zero_constraints.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+          cdf.matrix, cdf.rhs, cdf.dof_indices, system_matrix.block(0, 0), system_rhs.block(0));
       }
     };
 
@@ -2617,7 +2614,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                                   interface_update_flags,
                                   interface_update_flags);
 
-    CopyData copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
+    CopyData copy_data;
 
     if(use_conf_method)
       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
@@ -3087,7 +3084,7 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
   if(equation_data.force_mean_value_constraint)
   {
     Assert(constant_mode_pressure.get_partitioner()->is_compatible(
-								   *(system_delta_x.block(1).get_partitioner())),
+             *(system_delta_x.block(1).get_partitioner())),
            ExcMessage("The vector partitioning is incompatible."));
     BlockSparseMatrixFiltered system_matrix_with_filter(system_matrix, constant_mode_pressure);
     iterative_solver.solve(system_matrix_with_filter, system_delta_x, system_rhs, preconditioner);
