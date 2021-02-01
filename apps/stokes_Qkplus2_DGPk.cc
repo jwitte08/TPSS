@@ -17,21 +17,31 @@ main(int argc, char * argv[])
     };
 
     //: default
-    unsigned int test_index                  = 0;
+    unsigned int test_index                  = 6; // unprec. CG
     unsigned int debug_depth                 = 0;
     double       damping                     = 0.;
-    unsigned int force_mean_value_constraint = 0;
+    unsigned int force_mean_value_constraint = false;
     unsigned int n_cycles                    = 3;
+    unsigned int local_solver_variant        = 0;
+    unsigned int pde_index                   = 4; // NoSlip
+    int          n_threads_max               = 1;
 
     //: parse arguments
     atoi_if(test_index, 1);
-    atoi_if(n_cycles, 2);
-    atoi_if(force_mean_value_constraint, 3);
+    atoi_if(pde_index, 2);
+    atoi_if(n_cycles, 3);
     atoi_if(debug_depth, 4);
     atof_if(damping, 5);
+    atoi_if(force_mean_value_constraint, 6);
+    atoi_if(local_solver_variant, 7);
+    atoi_if(n_threads_max, 8);
 
     deallog.depth_console(debug_depth);
-    Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
+    Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
+                                                        argv,
+                                                        n_threads_max == -1 ?
+                                                          numbers::invalid_unsigned_int :
+                                                          static_cast<unsigned int>(n_threads_max));
 
     StokesFlow     options;
     constexpr auto dim              = CT::DIMENSION_;
@@ -43,34 +53,29 @@ main(int argc, char * argv[])
       damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
 
     options.setup(test_index, damping);
-    options.prms.n_cycles = n_cycles;
+    options.prms.n_cycles                = n_cycles;
+    options.prms.solver.rel_tolerance    = 1.e-8; // !!!
+    options.prms.solver.n_iterations_max = 5000;  // !!!
 
     EquationData equation_data;
-    equation_data.variant           = EquationData::Variant::DivFreeBell;
+    AssertThrow(pde_index < EquationData::n_variants,
+                ExcMessage("This equation is not implemented."));
+    equation_data.variant           = static_cast<EquationData::Variant>(pde_index);
     equation_data.use_cuthill_mckee = false;
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
-    equation_data.force_mean_value_constraint = false; // !!!
     AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
                 ExcMessage("Invalid."));
-    equation_data.force_mean_value_constraint =
-      options.prms.solver.variant == "direct" ?
-        true :
-        static_cast<bool>(force_mean_value_constraint); // !!!
+    equation_data.force_mean_value_constraint = force_mean_value_constraint;
+    if(options.prms.solver.variant == "direct")
+      equation_data.force_mean_value_constraint = true;
+    equation_data.local_solver = static_cast<LocalSolver>(local_solver_variant);
 
     ModelProblem<dim, fe_degree_p, Method::Qkplus2_DGPk> stokes_problem(options.prms,
                                                                         equation_data);
 
     std::cout << std::endl;
-    // const auto sol = std::make_shared<DivergenceFree::NoSlip::Solution<dim>>();
-    // Point<dim> p({0.25, 0.5});
-    // for(auto c = 0U; c < dim + 1; ++c)
-    //   std::cout << sol->value(p, c) << std::endl;
-    // for(auto c = 0U; c < dim; ++c)
-    //   std::cout << sol->gradient(p, c) << std::endl;
-    // for(auto c = 0U; c < dim; ++c)
-    //   std::cout << sol->hessian(p, c) << std::endl;
-    stokes_problem.run(); // !!!
+    stokes_problem.run();
 
     std::cout << std::endl
               << std::endl
