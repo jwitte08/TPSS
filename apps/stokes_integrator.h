@@ -1885,9 +1885,9 @@ struct MatrixIntegrator
   }
 
   void
-  cell_worker(const IteratorType & cell,
-              ScratchData<dim> &   scratch_data,
-              CopyData &           copy_data) const;
+  cell_worker(const IteratorType &  cell,
+              ScratchData<dim> &    scratch_data,
+              ::MW::DoF::CopyData & copy_data) const;
 
   void
   cell_mass_worker(const IteratorType & cell,
@@ -1902,18 +1902,20 @@ struct MatrixIntegrator
 
 template<int dim, bool is_multigrid>
 void
-MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
-                                                 ScratchData<dim> &   scratch_data,
-                                                 CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType &  cell,
+                                                 ScratchData<dim> &    scratch_data,
+                                                 ::MW::DoF::CopyData & copy_data) const
 {
-  copy_data.cell_matrix = 0.;
-  copy_data.cell_rhs    = 0.;
+  AssertDimension(copy_data.cell_data.size(), 0U);
 
   FEValues<dim> & phi = scratch_data.fe_values;
   phi.reinit(cell);
-  cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
 
   const unsigned int dofs_per_cell = phi.get_fe().dofs_per_cell;
+
+  auto & cell_data = copy_data.cell_data.emplace_back(dofs_per_cell);
+
+  cell->get_active_or_mg_dof_indices(cell_data.dof_indices);
 
   AssertDimension(load_function->n_components, 1U);
 
@@ -1926,7 +1928,7 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
       if(!is_multigrid)
       {
         const auto load_value = load_function->value(x_q);
-        copy_data.cell_rhs(i) += phi.shape_value(i, q) * load_value * phi.JxW(q);
+        cell_data.rhs(i) += phi.shape_value(i, q) * load_value * phi.JxW(q);
       }
     }
   }
@@ -2072,7 +2074,7 @@ using ::MW::compute_divergence;
 
 using ::MW::Mixed::ScratchData;
 
-using ::MW::Mixed::CopyData;
+using CopyData = std::array<::MW::DoF::CopyData, 2>;
 
 template<int dim, bool is_multigrid = false>
 struct MatrixIntegrator
@@ -2108,9 +2110,9 @@ struct MatrixIntegrator
 
   template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
   void
-  cell_worker_impl(const TestEvaluatorType &   phi_test,
-                   const AnsatzEvaluatorType & phi_ansatz,
-                   CopyData &                  copy_data) const;
+  cell_worker_impl(const TestEvaluatorType &       phi_test,
+                   const AnsatzEvaluatorType &     phi_ansatz,
+                   ::MW::DoF::CopyData::CellData & cell_data) const;
 
   void
   face_worker(const IteratorType & cellU,
@@ -2142,26 +2144,23 @@ struct MatrixIntegrator
 template<int dim, bool is_multigrid>
 template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
-MatrixIntegrator<dim, is_multigrid>::cell_worker_impl(const TestEvaluatorType &   phiU,
-                                                      const AnsatzEvaluatorType & phiP,
-                                                      CopyData &                  copy_data) const
+MatrixIntegrator<dim, is_multigrid>::cell_worker_impl(
+  const TestEvaluatorType &       phiU,
+  const AnsatzEvaluatorType &     phiP,
+  ::MW::DoF::CopyData::CellData & cell_data) const
 {
-  const auto n_dofs_per_cellU = copy_data.local_dof_indices_test.size();
-  const auto n_dofs_per_cellP = copy_data.local_dof_indices_ansatz.size();
+  AssertDimension(phiU.n_quadrature_points, phiP.n_quadrature_points);
 
-  const unsigned int n_q_points = phiU.n_quadrature_points;
-  AssertDimension(n_q_points, phiP.n_quadrature_points);
-
-  for(unsigned int q = 0; q < n_q_points; ++q)
+  for(unsigned int q = 0; q < phiU.n_quadrature_points; ++q)
   {
-    for(unsigned int i = 0; i < n_dofs_per_cellU; ++i) // test
+    for(unsigned int i = 0; i < cell_data.dof_indices.size(); ++i) // test
     {
       const auto div_phiU_i = compute_divergence(phiU, i, q);
-      for(unsigned int j = 0; j < n_dofs_per_cellP; ++j) // ansatz
+      for(unsigned int j = 0; j < cell_data.dof_indices_column.size(); ++j) // ansatz
       {
         const auto phiP_j = phiP.shape_value(j, q);
 
-        copy_data.cell_matrix(i, j) += -div_phiU_i * phiP_j * phiU.JxW(q);
+        cell_data.matrix(i, j) += -div_phiU_i * phiP_j * phiU.JxW(q);
       }
     }
   }
@@ -2173,52 +2172,55 @@ void
 MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cellU,
                                                  const IteratorType & cellP,
                                                  ScratchData<dim> &   scratch_data,
-                                                 CopyData &           copy_data) const
+                                                 CopyData &           copy_data_pair) const
 {
-  AssertDimension(cellU->index(), cellP->index());
+  auto & [copy_data, copy_data_flipped] = copy_data_pair;
 
-  copy_data.cell_matrix         = 0.;
-  copy_data.cell_matrix_flipped = 0.;
-  copy_data.cell_rhs_test       = 0.;
-  copy_data.cell_rhs_ansatz     = 0.;
+  AssertDimension(copy_data.cell_data.size(), 0U);
+  AssertDimension(copy_data_flipped.cell_data.size(), 0U);
+  AssertDimension(cellU->index(), cellP->index());
 
   /// Velocity "U" takes test function role (in flipped mode ansatz function)
   auto & phiU = scratch_data.fe_values_test;
   phiU.reinit(cellU);
-  cellU->get_active_or_mg_dof_indices(copy_data.local_dof_indices_test);
   const auto n_dofs_per_cellU = phiU.dofs_per_cell;
-  AssertDimension(n_dofs_per_cellU, copy_data.local_dof_indices_test.size());
 
   /// Pressure "P" takes ansatz function role (in flipped mode test function)
   auto & phiP = scratch_data.fe_values_ansatz;
   phiP.reinit(cellP);
-  cellP->get_active_or_mg_dof_indices(copy_data.local_dof_indices_ansatz);
   const auto n_dofs_per_cellP = phiP.dofs_per_cell;
-  AssertDimension(n_dofs_per_cellP, copy_data.local_dof_indices_ansatz.size());
 
-  cell_worker_impl(phiU, phiP, copy_data);
+  auto & cell_data = copy_data.cell_data.emplace_back(n_dofs_per_cellU, n_dofs_per_cellP);
+  auto & cell_data_flipped =
+    copy_data_flipped.cell_data.emplace_back(n_dofs_per_cellP, n_dofs_per_cellU);
+
+  cellU->get_active_or_mg_dof_indices(cell_data.dof_indices);
+  cellP->get_active_or_mg_dof_indices(cell_data.dof_indices_column);
+
+  cell_worker_impl(phiU, phiP, cell_data);
 
   /// pressure-velocity block ("flipped") is the transpose of the
   /// velocity-pressure block
   for(unsigned int i = 0; i < n_dofs_per_cellU; ++i)
     for(unsigned int j = 0; j < n_dofs_per_cellP; ++j)
-      copy_data.cell_matrix_flipped(j, i) = copy_data.cell_matrix(i, j);
+      cell_data_flipped.matrix(j, i) = cell_data.matrix(i, j);
 
   /// Lifting of inhomogeneous boundary condition
   if(!is_multigrid)
     if(discrete_solutionU && cellU->at_boundary())
     {
-      AssertDimension(n_dofs_per_cellU, copy_data.local_dof_indices_test.size());
-      AssertDimension(n_dofs_per_cellP, copy_data.local_dof_indices_ansatz.size());
+      AssertDimension(n_dofs_per_cellU, cell_data.dof_indices.size());
+      AssertDimension(n_dofs_per_cellP, cell_data.dof_indices_column.size());
       Vector<double> u0(n_dofs_per_cellU);
       for(auto i = 0U; i < u0.size(); ++i)
-        u0(i) = (*discrete_solutionU)(copy_data.local_dof_indices_test[i]);
+        u0(i) = (*discrete_solutionU)(cell_data.dof_indices[i]);
       Vector<double> w0(n_dofs_per_cellP);
-      copy_data.cell_matrix_flipped.vmult(w0, u0);
-      AssertDimension(n_dofs_per_cellP, copy_data.cell_rhs_ansatz.size());
-      copy_data.cell_rhs_ansatz -= w0;
+      cell_data_flipped.matrix.vmult(w0, u0);
+      AssertDimension(n_dofs_per_cellP, cell_data_flipped.rhs.size());
+      cell_data_flipped.rhs -= w0;
     }
 }
+
 
 
 template<int dim, bool is_multigrid>
@@ -2232,8 +2234,10 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cellU,
                                                  const unsigned int & nf,
                                                  const unsigned int & nsf,
                                                  ScratchData<dim> &   scratch_data,
-                                                 CopyData &           copy_data) const
+                                                 CopyData &           copy_data_pair) const
 {
+  auto & [copy_data, copy_data_flipped] = copy_data_pair;
+
   /// Velocity "U" takes test function role (in flipped mode ansatz function)
   auto & phiU = scratch_data.fe_interface_values_test;
   phiU.reinit(cellU, f, sf, ncellU, nf, nsf);
@@ -2246,15 +2250,14 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cellU,
 
   AssertDimension(phiU.n_quadrature_points, phiP.n_quadrature_points);
 
-  copy_data.face_data.emplace_back();
-  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
+  auto & face_data         = copy_data.face_data.emplace_back(n_dofsU, n_dofsP);
+  auto & face_data_flipped = copy_data_flipped.face_data.emplace_back(n_dofsP, n_dofsU);
 
-  copy_data_face.joint_dof_indices_test   = phiU.get_interface_dof_indices();
-  copy_data_face.joint_dof_indices_ansatz = phiP.get_interface_dof_indices();
+  face_data.dof_indices        = phiU.get_interface_dof_indices();
+  face_data.dof_indices_column = phiP.get_interface_dof_indices();
 
-  AssertDimension(n_dofsU, copy_data_face.joint_dof_indices_test.size());
-  AssertDimension(n_dofsP, copy_data_face.joint_dof_indices_ansatz.size());
-  copy_data_face.cell_matrix.reinit(n_dofsU, n_dofsP);
+  AssertDimension(n_dofsU, face_data.dof_indices.size());
+  AssertDimension(n_dofsP, face_data.dof_indices_column.size());
 
   double integral_ijq = 0.;
   for(unsigned int q = 0; q < phiU.n_quadrature_points; ++q)
@@ -2269,17 +2272,17 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cellU,
 
         integral_ijq = av_phiP_j * jump_phiU_i_dot_n * phiU.JxW(q);
 
-        copy_data_face.cell_matrix(i, j) += integral_ijq;
+        face_data.matrix(i, j) += integral_ijq;
       }
     }
   }
 
   /// pressure-velocity block ("flipped") is the transpose of the
   /// velocity-pressure block
-  copy_data_face.cell_matrix_flipped.reinit(n_dofsP, n_dofsU);
+  face_data_flipped.matrix.reinit(n_dofsP, n_dofsU);
   for(unsigned int i = 0; i < n_dofsU; ++i)
     for(unsigned int j = 0; j < n_dofsP; ++j)
-      copy_data_face.cell_matrix_flipped(j, i) = copy_data_face.cell_matrix(i, j);
+      face_data_flipped.matrix(j, i) = face_data.matrix(i, j);
 }
 
 template<int dim, bool is_multigrid>
@@ -2288,19 +2291,25 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
                                                      const IteratorType & cellP,
                                                      const unsigned int & f,
                                                      ScratchData<dim> &   scratch_data,
-                                                     CopyData &           copy_data) const
+                                                     CopyData &           copy_data_pair) const
 {
+  auto & [copy_data, copy_data_flipped] = copy_data_pair;
+
   /// Velocity "U" takes test function role (in flipped mode ansatz function)
   auto & phiU = scratch_data.fe_interface_values_test;
   phiU.reinit(cellU, f);
   const auto n_dofsU = phiU.n_current_interface_dofs();
-  AssertDimension(n_dofsU, copy_data.local_dof_indices_test.size());
 
   /// Pressure "P" takes ansatz function role (in flipped mode test function)
   auto & phiP = scratch_data.fe_interface_values_ansatz;
   phiP.reinit(cellP, f);
   const auto n_dofsP = phiP.n_current_interface_dofs();
-  AssertDimension(n_dofsP, copy_data.local_dof_indices_ansatz.size());
+
+  auto & face_data         = copy_data.face_data.emplace_back(n_dofsU, n_dofsP);
+  auto & face_data_flipped = copy_data_flipped.face_data.emplace_back(n_dofsP, n_dofsU);
+
+  face_data.dof_indices        = phiU.get_interface_dof_indices();
+  face_data.dof_indices_column = phiP.get_interface_dof_indices();
 
   AssertDimension(phiU.n_quadrature_points, phiP.n_quadrature_points);
   std::vector<double> velocity_solution_dot_normals;
@@ -2322,18 +2331,6 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
                    });
   }
 
-  AssertDimension(n_dofsP, copy_data.cell_rhs_ansatz.size());
-  AssertDimension(n_dofsU, copy_data.cell_matrix.m());
-  AssertDimension(n_dofsP, copy_data.cell_matrix.n());
-  Assert(
-    copy_data.local_dof_indices_ansatz == phiP.get_interface_dof_indices(),
-    ExcMessage(
-      "the local dof indices in copy_data are incompatible with the interface dof indices of phiP."));
-  Assert(
-    copy_data.local_dof_indices_test == phiU.get_interface_dof_indices(),
-    ExcMessage(
-      "the local dof indices in copy_data are incompatible with the interface dof indices of phiU."));
-
   double integral_ijq = 0.;
   double integral_jq  = 0.;
   for(unsigned int q = 0; q < phiP.n_quadrature_points; ++q)
@@ -2350,7 +2347,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
 
         integral_jq = u_dot_n * av_phiP_j * phiP.JxW(q);
 
-        copy_data.cell_rhs_ansatz(j) += integral_jq;
+        face_data.rhs(j) += integral_jq;
       }
 
       for(unsigned int i = 0; i < n_dofsU; ++i)
@@ -2360,18 +2357,16 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
 
         integral_ijq = av_phiP_j * jump_phiU_i_dot_n * phiU.JxW(q);
 
-        copy_data.cell_matrix(i, j) += integral_ijq;
+        face_data.matrix(i, j) += integral_ijq;
       }
     }
   }
 
   /// The pressure-velocity block ("flipped") is the transpose of the
   /// velocity-pressure block.
-  AssertDimension(n_dofsP, copy_data.cell_matrix_flipped.m());
-  AssertDimension(n_dofsU, copy_data.cell_matrix_flipped.n());
   for(unsigned int i = 0; i < n_dofsU; ++i)
     for(unsigned int j = 0; j < n_dofsP; ++j)
-      copy_data.cell_matrix_flipped(j, i) = copy_data.cell_matrix(i, j);
+      face_data_flipped.matrix(j, i) = face_data.matrix(i, j);
 }
 
 } // namespace Mixed
