@@ -34,6 +34,7 @@ main(int argc, char * argv[])
     unsigned int n_cycles                    = 3;
     unsigned int local_solver_variant        = 0;
     unsigned int pde_index                   = 4; // NoSlip
+    int          n_threads_max               = 1;
 
     //: parse arguments
     atoi_if(test_index, 1);
@@ -44,9 +45,14 @@ main(int argc, char * argv[])
     atof_if(damping, 6);
     atoi_if(force_mean_value_constraint, 7);
     atoi_if(local_solver_variant, 8);
+    atoi_if(n_threads_max, 9);
 
     deallog.depth_console(debug_depth);
-    Utilities::MPI::MPI_InitFinalize mpi_initialization(argc, argv, 1);
+    Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
+                                                        argv,
+                                                        n_threads_max == -1 ?
+                                                          numbers::invalid_unsigned_int :
+                                                          static_cast<unsigned int>(n_threads_max));
 
     StokesFlow     options;
     constexpr auto dim              = CT::DIMENSION_;
@@ -83,7 +89,7 @@ main(int argc, char * argv[])
       for(types::boundary_id id = 0; id < GeometryInfo<dim>::faces_per_cell; ++id)
         equation_data.dirichlet_boundary_ids_velocity.insert(id);
 
-    typename NoBlocks::ModelProblem<dim, fe_degree_p, Method::RaviartThomas> stokes_problem(
+    typename NoBlocks::ModelProblem<dim, fe_degree_p, Method::Qkplus2_DGPk> stokes_problem(
       options.prms, equation_data);
 
     std::cout << std::endl;

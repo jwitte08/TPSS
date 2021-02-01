@@ -378,12 +378,12 @@ public:
   mutable PostProcessData             pp_data;
   mutable PostProcessData             pp_data_pressure;
 
-  Triangulation<dim>                  triangulation;
-  MappingQ<dim>                       mapping;
-  std::shared_ptr<FiniteElement<dim>> fe;
-  DoFHandler<dim>                     dof_handler;
-  DoFHandler<dim>                     dof_handler_velocity;
-  DoFHandler<dim>                     dof_handler_pressure;
+  parallel::distributed::Triangulation<dim> triangulation;
+  MappingQ<dim>                             mapping;
+  std::shared_ptr<FiniteElement<dim>>       fe;
+  DoFHandler<dim>                           dof_handler;
+  DoFHandler<dim>                           dof_handler_velocity;
+  DoFHandler<dim>                           dof_handler_pressure;
 
   AffineConstraints<double> zero_constraints;
   AffineConstraints<double> zero_constraints_velocity;
@@ -606,7 +606,10 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
     }()),
-    triangulation(Triangulation<dim>::maximum_smoothing),
+    triangulation(MPI_COMM_WORLD,
+                  Triangulation<dim>::limit_level_difference_at_vertices,
+                  parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
+    // triangulation(Triangulation<dim>::maximum_smoothing),
     mapping(1),
     // Finite element for the whole system:
     fe(generate_fe()),
@@ -997,12 +1000,14 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
     const bool cuthill_mckee_is_compatible = dof_layout_v == dof_layout_p;
     AssertThrow(
       cuthill_mckee_is_compatible,
-      ExcMessage("In general, reordering velocity as well as pressure dofs by a Cuthill-McKee algorithm does not provide the same order as a Cuthill-McKee reordering on the combined velocity-pressure dofs. If the same dof layout is used for the velocity and pressure the reorderings might coincide."));
+      ExcMessage(
+        "In general, reordering velocity as well as pressure dofs by a Cuthill-McKee algorithm does not provide the same order as a Cuthill-McKee reordering on the combined velocity-pressure dofs. If the same dof layout is used for the velocity and pressure the reorderings might coincide."));
     DoFRenumbering::Cuthill_McKee(dof_handler_pressure);
   }
 
   /// mpi-relevant dof indices
-  IndexSet locally_relevant_dof_indices;
+  const auto & locally_owned_dof_indices = dof_handler_pressure.locally_owned_dofs();
+  IndexSet     locally_relevant_dof_indices;
   DoFTools::extract_locally_relevant_dofs(dof_handler_pressure, locally_relevant_dof_indices);
 
   /// mean-value constraints: Use the space of mean-value free L^2 functions as
@@ -1016,24 +1021,27 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
   if(equation_data.force_mean_value_constraint)
   {
     print_parameter("Computing mean-value constraints (press)", "...");
+    const types::global_dof_index first_pressure_dof = 0U;
+    if(locally_owned_dof_indices.is_element(first_pressure_dof))
+      constraints_pressure.add_line(first_pressure_dof);
 
-    const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof();
-    const auto & mass_foreach_dof     = *mass_foreach_dof_ptr;
+    // const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof();
+    // const auto & mass_foreach_dof     = *mass_foreach_dof_ptr;
 
-    const bool is_dgq_legendre =
-      dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
-    const bool is_legendre_type = is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP;
-    const auto n_dofs_pressure  = dof_handler_pressure.n_dofs();
-    {
-      /// !!! TODO communication missing for more than one proc...
-      const double mass_of_first_dof = mass_foreach_dof(0);
-      constraints_pressure.add_line(0U);
-      const auto         n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
-      const unsigned int stride          = is_legendre_type ? n_dofs_per_cell : 1U;
-      const unsigned int start           = is_legendre_type ? stride : 1U;
-      for(auto i = start; i < n_dofs_pressure; i += stride)
-        constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
-    }
+    // const bool is_dgq_legendre =
+    //   dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
+    // const bool is_legendre_type = is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP;
+    // const auto n_dofs_pressure  = dof_handler_pressure.n_dofs();
+    // {
+    //   /// !!! TODO communication missing for more than one proc...
+    //   const double mass_of_first_dof = mass_foreach_dof(0);
+    //   constraints_pressure.add_line(0U);
+    //   const auto         n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
+    //   const unsigned int stride          = is_legendre_type ? n_dofs_per_cell : 1U;
+    //   const unsigned int start           = is_legendre_type ? stride : 1U;
+    //   for(auto i = start; i < n_dofs_pressure; i += stride)
+    //     constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
+    // }
   }
   constraints_pressure.close();
 }
@@ -1116,16 +1124,47 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     if(equation_data.force_mean_value_constraint)
     {
       print_parameter("Computing mean-value constraints", "...");
-      const types::global_dof_index first_dof_index = n_dofs_velocity;
-      AssertDimension(constraints_pressure.n_constraints(), 1U);
-      AssertThrow(constraints_pressure.is_constrained(0U),
-                  ExcMessage("Did you set a mean value free constraint?"));
-      const auto mean_value_free_entries = *(constraints_pressure.get_constraint_entries(0U));
+      const types::global_dof_index offset_pressure_dofs = n_dofs_velocity;
+      if(constraints_pressure.n_constraints() > 0U)
+      {
+        for(const auto line : constraints_pressure.get_lines())
+        {
+          /// NOTE AffineConstraint::shift() did not work due to issues with
+          /// locally relevant index sets.
+          const auto row = line.index + offset_pressure_dofs;
+          std::vector<std::pair<types::global_dof_index, double>> entries;
+          std::transform(line.entries.cbegin(),
+                         line.entries.cend(),
+                         std::back_inserter(entries),
+                         [&](auto entry) {
+                           entry.first += offset_pressure_dofs;
+                           return entry;
+                         });
+          mean_value_constraints.add_line(row);
+          mean_value_constraints.add_entries(row, entries);
+          mean_value_constraints.set_inhomogeneity(row, line.inhomogeneity);
+        }
+      }
+      // else
+      // 	{
+      // 	  mean_value_constraints.reinit(constraints_pressure.get_local_lines());
+      // 	  mean_value_constraints.shift(offset_pressure_dofs);
+      // 	}
 
-      /// shift dofs of the pressure block by n_dofs_velocity
-      mean_value_constraints.add_line(first_dof_index);
-      for(const auto & [column, value] : mean_value_free_entries)
-        mean_value_constraints.add_entry(first_dof_index, first_dof_index + column, value);
+      // for(const auto line : constraints_pressure.get_lines())
+      // 	{
+      // 	  std::cout << "[" << mpi_rank << "]line " << line.index << std::endl;
+      // 	  for (const auto & [column, value] : line.entries)
+      // 	    std::cout << "[" << mpi_rank << "]entries " << column << " " << value << std::endl;
+      // 	  std::cout << "[" << mpi_rank << "]inhom " << line.inhomogeneity << std::endl;
+      // 	}
+      // AssertThrow(false, ExcMessage(""));
+
+      // /// shift dofs of the pressure block by n_dofs_velocity
+      // mean_value_constraints.add_line(shift_pressure_dofs);
+      // for(const auto & [column, value] : mean_value_free_entries)
+      //   mean_value_constraints.add_entry(shift_pressure_dofs, shift_pressure_dofs + column,
+      //   value);
     }
     /// ... or mean value filter
     else
@@ -1149,6 +1188,15 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
         AssertThrow(false, ExcMessage("This pressure dof layout is not supported."));
     }
 
+    Assert(mean_value_constraints.is_consistent_in_parallel(
+             Utilities::MPI::all_gather(MPI_COMM_WORLD, locally_owned_dof_indices),
+             [&]() {
+               IndexSet locally_active_dof_indices;
+               DoFTools::extract_locally_active_dofs(dof_handler, locally_active_dof_indices);
+               return locally_active_dof_indices;
+             }(),
+             MPI_COMM_WORLD),
+           ExcMessage("mean_value_constraints are not consistent in parallel."));
     mean_value_constraints.close();
   }
 
