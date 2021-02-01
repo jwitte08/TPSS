@@ -998,6 +998,12 @@ struct Values
     fe_values.reinit(cell);
   }
 
+  unsigned int
+  n_dofs_per_cell() const
+  {
+    return get_fe().dofs_per_cell;
+  }
+
   const FiniteElement<dim> &
   get_fe() const
   {
@@ -1408,7 +1414,7 @@ struct Values
   }
 
   unsigned int
-  n_dofs_on_cell() const
+  n_dofs_per_cell() const
   {
     return local_dof_indices.size();
   }
@@ -1836,6 +1842,11 @@ struct CopyData
 {
   struct CellData
   {
+    CellData(const unsigned int n_rows, const unsigned int n_columns)
+      : matrix(n_rows, n_columns), rhs(n_rows), dof_indices(n_rows), dof_indices_column(n_columns)
+    {
+    }
+
     CellData(const unsigned int n_local_dofs)
       : matrix(n_local_dofs, n_local_dofs), rhs(n_local_dofs), dof_indices(n_local_dofs)
     {
@@ -1858,10 +1869,16 @@ struct CopyData
     FullMatrix<double>                   matrix;
     Vector<double>                       rhs;
     std::vector<types::global_dof_index> dof_indices;
+    std::vector<types::global_dof_index> dof_indices_column;
   };
 
   struct FaceData
   {
+    FaceData(const unsigned int n_rows, const unsigned int n_columns)
+      : matrix(n_rows, n_columns), rhs(n_rows), dof_indices(n_rows), dof_indices_column(n_columns)
+    {
+    }
+
     FaceData(const unsigned int n_local_dofs)
       : matrix(n_local_dofs, n_local_dofs), rhs(n_local_dofs), dof_indices(n_local_dofs)
     {
@@ -1884,6 +1901,7 @@ struct CopyData
     FullMatrix<double>                   matrix;
     Vector<double>                       rhs;
     std::vector<types::global_dof_index> dof_indices;
+    std::vector<types::global_dof_index> dof_indices_column;
   };
 
   std::vector<CellData> cell_data;
@@ -1897,7 +1915,7 @@ struct CopyData
 namespace Cell
 {
 /**
- * This struct stores local contributions for each cells and/or
+ * This struct stores local contributions for each cell and/or
  * (inter)face. It is designed to be used in MeshWorker routines.
  */
 struct CopyData
