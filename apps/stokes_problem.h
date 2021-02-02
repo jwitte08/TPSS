@@ -166,20 +166,17 @@ public:
   operator const FullMatrix<Number> &() const;
 
   std::shared_ptr<const MatrixFree<dim, Number>>                  mf_storage;
-  std::shared_ptr<const std::vector<IndexSet>>                    locally_owned_dof_indices;
-  std::shared_ptr<const std::vector<IndexSet>>                    ghosted_dof_indices;
-  std::shared_ptr<const MPI_Comm>                                 mpi_communicator;
   std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners;
   mutable std::shared_ptr<FullMatrix<Number>>                     fullmatrix;
 };
 
 
 
-  /**
-   * A wrapper class around a sparse matrix of type BlockSparseMatrix which
-   * subtracts a given mode after each matrix-vector multiplication with the
-   * sparse matrix (@p vmult()).
-   */
+/**
+ * A wrapper class around a sparse matrix of type BlockSparseMatrix which
+ * subtracts a given mode after each matrix-vector multiplication with the
+ * sparse matrix (@p vmult()).
+ */
 class BlockSparseMatrixFiltered
 {
 public:
@@ -1667,15 +1664,13 @@ BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, 
              const std::vector<IndexSet> &                  ghosted_dof_indices_in,
              const MPI_Comm &                               mpi_communicator_in)
 {
+  AssertDimension(locally_owned_dof_indices_in.size(), ghosted_dof_indices_in.size());
+  AssertDimension(locally_owned_dof_indices_in.size(), 2U);
+
   matrix_type::reinit(dsp);
 
   AssertDimension(matrix_type::n_block_rows(), matrix_type::n_block_cols());
   AssertDimension(matrix_type::n_block_rows(), 2U);
-
-  locally_owned_dof_indices =
-    std::make_shared<const std::vector<IndexSet>>(locally_owned_dof_indices_in);
-  ghosted_dof_indices = std::make_shared<const std::vector<IndexSet>>(ghosted_dof_indices_in);
-  mpi_communicator    = std::make_shared<const MPI_Comm>(mpi_communicator_in);
 
   partitioners.clear();
   std::transform(locally_owned_dof_indices_in.cbegin(),
@@ -1706,9 +1701,6 @@ BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, 
   partitioners.clear();
   fullmatrix.reset();
   mf_storage.reset();
-  locally_owned_dof_indices.reset();
-  ghosted_dof_indices.reset();
-  mpi_communicator.reset();
   matrix_type::clear();
 }
 
@@ -1740,10 +1732,11 @@ void
 BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
   initialize_dof_vector(LinearAlgebra::distributed::BlockVector<Number> & vec) const
 {
-  /// TODO use partitioners instead ???
-  vec = LinearAlgebra::distributed::BlockVector<Number>(*locally_owned_dof_indices,
-                                                        *ghosted_dof_indices,
-                                                        *mpi_communicator);
+  AssertDimension(this->n_block_rows(), this->n_block_cols());
+  vec.reinit(this->n_block_rows());
+  for(auto b = 0U; b < vec.n_blocks(); ++b)
+    vec.block(b).reinit(partitioners.at(b));
+  vec.collect_sizes();
 }
 
 
@@ -1833,6 +1826,7 @@ BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, 
 operator const FullMatrix<Number> &() const
 {
   AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1, ExcMessage("No MPI support"));
+
   if(!fullmatrix)
   {
     const auto & tmp = Tensors::matrix_to_table(*this);
@@ -2366,11 +2360,15 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     mean_value_constraints.clear();
     mean_value_constraints.reinit(locally_relevant_dof_indices);
 
-    /// Mean value condition (pressure) ...
+    /// Enforce zero mean-value for discrete pressure functions
     if(equation_data.force_mean_value_constraint)
     {
       print_parameter("Computing mean-value constraints", "...");
       const types::global_dof_index offset_pressure_dofs = n_dofs_velocity;
+
+      /// Set the first pressure dof to zero (parallel code) or fix the first
+      /// pressure dof to be computed from all remaining dofs such that the
+      /// mean-value is zero (serial code).
       if(constraints_pressure.n_constraints() > 0U)
       {
         for(const auto line : constraints_pressure.get_lines())
@@ -2392,27 +2390,12 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
         }
       }
     }
-    /// ... or mean value filter
+
+    /// Compute the constant pressure mode which is later used to filter
+    /// matrix-vector products with the system matrix.
     else
     {
       constant_mode_pressure = std::move(compute_constant_pressure_mode());
-      // AssertThrow(is_first_proc, ExcMessage("TODO MPI"));
-      // constant_mode_pressure.reinit(n_dofs_pressure);
-      // const bool is_dgq_legendre =
-      //   dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
-      // if(is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP)
-      // {
-      //   const auto n_dofs_per_cell = dof_handler_pressure.get_fe().dofs_per_cell;
-      //   AssertDimension(n_dofs_pressure % n_dofs_per_cell, 0);
-      //   for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
-      //     constant_mode_pressure[i] = 1.;
-      // }
-      // else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
-      // {
-      //   constant_mode_pressure = 1.;
-      // }
-      // else
-      //   AssertThrow(false, ExcMessage("This pressure dof layout is not supported."));
     }
 
     Assert(mean_value_constraints.is_consistent_in_parallel(
@@ -2457,11 +2440,25 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   lrdof_indices_foreach_block.emplace_back(
     locally_relevant_dof_indices.get_view(n_dofs_velocity, n_dofs_velocity + n_dofs_pressure));
 
+  {
+    const auto & get_locally_relevant_dof_indices = [](const auto & dofh) {
+      IndexSet locally_relevant_dof_indices;
+      DoFTools::extract_locally_relevant_dofs(dofh, locally_relevant_dof_indices);
+      return locally_relevant_dof_indices;
+    };
+    (void)get_locally_relevant_dof_indices;
+    Assert(get_locally_relevant_dof_indices(dof_handler_velocity) ==
+             lrdof_indices_foreach_block.at(0),
+           ExcMessage("The dof partitioning is incompatible."));
+    Assert(get_locally_relevant_dof_indices(dof_handler_pressure) ==
+             lrdof_indices_foreach_block.at(1),
+           ExcMessage("The dof partitioning is incompatible."));
+  }
+
   TrilinosWrappers::BlockSparsityPattern dsp(lodof_indices_foreach_block,
                                              lodof_indices_foreach_block,
                                              lrdof_indices_foreach_block,
                                              MPI_COMM_WORLD);
-  // BlockDynamicSparsityPattern dsp(dofs_per_block, dofs_per_block);
   DoFTools::make_flux_sparsity_pattern(dof_handler,
                                        dsp,
                                        zero_constraints,
@@ -2469,11 +2466,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
                                        cell_integrals_mask,
                                        face_integrals_mask,
                                        mpi_rank);
-  // zero_constraints.condense(dsp);
   dsp.compress();
-  // sparsity_pattern.copy_from(dsp);
-  // if(constant_mode_pressure.size() != 0U)
-  //   system_matrix.constant_mode_pressure = &constant_mode_pressure; // !!!
 
   system_matrix.initialize(dsp,
                            lodof_indices_foreach_block,
@@ -2489,10 +2482,6 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   zero_constraints_velocity.distribute(system_delta_x.block(0)); // hom. velocity solution
 
   system_matrix.initialize_dof_vector(system_rhs);
-
-  // system_solution.reinit(dofs_per_block);
-  // system_delta_x.reinit(dofs_per_block);
-  // system_rhs.reinit(dofs_per_block);
 
   print_parameter("Number of degrees of freedom (velocity):", n_dofs_velocity);
   print_parameter("Number of degrees of freedom (pressure):", n_dofs_pressure);
@@ -2666,19 +2655,17 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                             copy_data,
                             MeshWorker::assemble_own_cells);
     else if(use_sipg_method || use_hdivsipg_method)
-      MeshWorker::mesh_loop(
-        dof_handler_velocity.begin_active(),
-        dof_handler_velocity.end(),
-        cell_worker,
-        copier,
-        scratch_data,
-        copy_data,
-        MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-          MeshWorker::assemble_own_interior_faces_once | MeshWorker::assemble_ghost_faces_once,
-        // MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-        //   MeshWorker::assemble_own_interior_faces_once,
-        boundary_worker,
-        face_worker);
+      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+                            dof_handler_velocity.end(),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                              MeshWorker::assemble_own_interior_faces_once |
+                              MeshWorker::assemble_ghost_faces_once,
+                            boundary_worker,
+                            face_worker);
     else
       AssertThrow(false, ExcMessage("This FEM is not implemented."));
   }
@@ -2830,38 +2817,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
       for(auto cdf = copy_data.face_data.cbegin(); cdf != copy_data.face_data.cend();
           ++cdf, ++cdf_flipped)
         distribute_local_to_global_impl(*cdf, *cdf_flipped);
-
-      // for(auto & cdf : copy_data.face_data)
-      // {
-      //   zero_constraints_velocity
-      //     .template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
-      //       cdf.cell_matrix,
-      //       cdf.joint_dof_indices_test,
-      //       constraints_pressure,
-      //       cdf.joint_dof_indices_ansatz,
-      //       system_matrix.block(0, 1));
-      //   constraints_pressure.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
-      //     cdf.cell_matrix_flipped,
-      //     cdf.joint_dof_indices_ansatz,
-      //     zero_constraints_velocity,
-      //     cdf.joint_dof_indices_test,
-      //     system_matrix.block(1, 0));
-
-      //   /// For Hdiv-IP there might be liftings from the velocity written to the
-      //   /// pressure RHS.
-      //   AssertDimension(cdf.cell_rhs_test.size(), 0);
-      //   if(dof_layout_v != TPSS::DoFLayout::RT)
-      //     AssertDimension(cdf.cell_rhs_ansatz.size(), 0);
-
-      //   if(cdf.cell_rhs_test.size() != 0)
-      //     zero_constraints_velocity.distribute_local_to_global(cdf.cell_rhs_test,
-      //                                                          cdf.joint_dof_indices_test,
-      //                                                          system_rhs.block(0));
-      //   if(cdf.cell_rhs_ansatz.size() != 0)
-      //     constraints_pressure.distribute_local_to_global(cdf.cell_rhs_ansatz,
-      //                                                     cdf.joint_dof_indices_ansatz,
-      //                                                     system_rhs.block(1));
-      // }
     };
 
     const UpdateFlags update_flags_velocity =
@@ -2893,19 +2848,17 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
                             copy_data,
                             MeshWorker::assemble_own_cells);
     else if(use_sipg_method)
-      MeshWorker::mesh_loop(
-        dof_handler_velocity.begin_active(),
-        dof_handler_velocity.end(),
-        cell_worker,
-        copier,
-        scratch_data,
-        copy_data,
-        MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-          MeshWorker::assemble_own_interior_faces_once | MeshWorker::assemble_ghost_faces_once,
-        // MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-        //   MeshWorker::assemble_own_interior_faces_once,
-        boundary_worker,
-        face_worker);
+      MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+                            dof_handler_velocity.end(),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                              MeshWorker::assemble_own_interior_faces_once |
+                              MeshWorker::assemble_ghost_faces_once,
+                            boundary_worker,
+                            face_worker);
     else
       AssertThrow(false, ExcMessage("This FEM is not supported."));
   }
@@ -3120,6 +3073,7 @@ ModelProblem<dim, fe_degree_p, method>::get_solver_control() const
 }
 
 
+
 template<int dim, int fe_degree_p, Method method>
 template<typename PreconditionerType>
 void
@@ -3132,33 +3086,40 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
   SolverSelector<vector_type> iterative_solver;
   iterative_solver.set_control(*solver_control);
   iterative_solver.select(solver_variant);
+
   if(solver_variant == "gmres")
   {
-    AssertThrow(false, ExcMessage("TODO MPI..."));
-    // SolverGMRES<BlockVector<double>>::AdditionalData additional_data;
-    // additional_data.right_preconditioning = rt_parameters.solver.use_right_preconditioning;
-    // // additional_data.use_default_residual = false;
-    // additional_data.max_n_tmp_vectors = 100; // rt_parameters.solver.n_iterations_max;
-    // iterative_solver.set_data(additional_data);
+    AssertThrow(false, ExcMessage("not tested after changes..."));
+    SolverGMRES<vector_type>::AdditionalData additional_data;
+    additional_data.right_preconditioning = rt_parameters.solver.use_right_preconditioning;
+    // additional_data.use_default_residual = false;
+    additional_data.max_n_tmp_vectors = 100;
+    iterative_solver.set_data(additional_data);
   }
 
-  /// We "filter" the constant pressure mode after each matrix-vector
-  /// multiplication with the system matrix.
   if(!equation_data.force_mean_value_constraint)
   {
     Assert(constant_mode_pressure.get_partitioner()->is_compatible(
              *(system_delta_x.block(1).get_partitioner())),
            ExcMessage("The vector partitioning is incompatible."));
+
+    /// We "filter" the constant pressure mode after each matrix-vector
+    /// multiplication with the system matrix.
     BlockSparseMatrixFiltered system_matrix_with_filter(system_matrix, constant_mode_pressure);
+
     iterative_solver.solve(system_matrix_with_filter, system_delta_x, system_rhs, preconditioner);
   }
   else
+  {
     iterative_solver.solve(system_matrix, system_delta_x, system_rhs, preconditioner);
 
-  /// distribute() is needed to apply the mean value constraint (Dirichlet
-  /// conditions of velocity have already been applied to system_solution)
-  if(equation_data.force_mean_value_constraint)
+    /// Apply mean value constraints for the pressure component (Dirichlet
+    /// conditions for the velocity component have already been applied to
+    /// system_solution).
     mean_value_constraints.distribute(system_delta_x);
+  }
+
+  /// Add the homogeneous solution to the particular solution.
   system_solution += system_delta_x;
 
   auto reduction_control = dynamic_cast<ReductionControl *>(solver_control.get());
@@ -3195,6 +3156,7 @@ ModelProblem<dim, fe_degree_p, method>::solve()
   {
     AssertThrow(false, ExcMessage("trilinoswrappers don't support block-vectors/matrices"));
 
+    /// NEW parallel setup
     // auto solver_control = get_solver_control();
 
     // TrilinosWrappers::SolverDirect::AdditionalData features;
@@ -3212,8 +3174,7 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     // print_parameter("Average reduction (solver):", "direct (trilinos)");
     // print_parameter("Number of iterations (solver):", "direct (trilinos)");
 
-
-
+    /// OLD obsolete serial setup
     // SparseDirectUMFPACK A_direct;
     // A_direct.template initialize<BlockSparseMatrix<double>>(system_matrix);
     // A_direct.vmult(system_delta_x, system_rhs);
@@ -3294,7 +3255,7 @@ ModelProblem<dim, fe_degree_p, method>::solve()
   else
     AssertThrow(false, ExcMessage("Please, choose a valid solver variant."));
 
-  /// Post processing of discrete solution
+  /// Post processing the discrete solution.
   post_process_solution_vector();
 }
 
@@ -3486,7 +3447,7 @@ ModelProblem<dim, fe_degree_p, method>::run()
 
     Utilities::System::MemoryStats mem;
     Utilities::System::get_memory_stats(mem);
-    print_parameter("Memory used (VM Peak):", mem.VmPeak);
+    print_parameter("Memory used (VM Peak):", Util::si_metric_prefix(mem.VmPeak * 1000) + "B");
 
     *pcout << std::endl;
   }
