@@ -301,44 +301,45 @@ template<class PreconditionerAType, class PreconditionerSType>
 class BlockSchurPreconditioner : public Subscriptor
 {
 public:
-  BlockSchurPreconditioner(const BlockSparseMatrix<double> & system_matrix,
-                           const SparseMatrix<double> &      schur_complement_matrix,
-                           const PreconditionerAType &       preconditioner_A,
-                           const PreconditionerSType &       preconditioner_S,
-                           const bool                        do_solve_A);
+  BlockSchurPreconditioner(const TrilinosWrappers::BlockSparseMatrix & system_matrix,
+                           const TrilinosWrappers::SparseMatrix &      schur_complement_matrix,
+                           const PreconditionerAType &                 preconditioner_A,
+                           const PreconditionerSType &                 preconditioner_S,
+                           const bool                                  do_solve_A);
 
   std::string
   get_summary() const
   {
     std::ostringstream oss;
     oss << Util::parameter_to_fstring("Summary of BlockSchurPreconditioner:", "//////////");
-    oss << Util::parameter_to_fstring("Accum. number of iterations (~ A^-1):", n_iterations_A);
-    oss << Util::parameter_to_fstring("Accum. number of iterations (~ S^-1):", n_iterations_S);
+    oss << Util::parameter_to_fstring("Accum. number of iterations (~A^-1):", n_iterations_A);
+    oss << Util::parameter_to_fstring("Accum. number of iterations (~S^-1):", n_iterations_S);
     return oss.str();
   }
 
   void
-  vmult(BlockVector<double> & dst, const BlockVector<double> & src) const;
+  vmult(LinearAlgebra::distributed::BlockVector<double> &       dst,
+        const LinearAlgebra::distributed::BlockVector<double> & src) const;
 
   mutable unsigned int n_iterations_A;
   mutable unsigned int n_iterations_S;
 
 private:
-  const BlockSparseMatrix<double> & system_matrix;
-  const SparseMatrix<double> &      schur_complement_matrix;
-  const PreconditionerAType &       preconditioner_A;
-  const PreconditionerSType &       preconditioner_S;
+  const TrilinosWrappers::BlockSparseMatrix & system_matrix;
+  const TrilinosWrappers::SparseMatrix &      schur_complement_matrix;
+  const PreconditionerAType &                 preconditioner_A;
+  const PreconditionerSType &                 preconditioner_S;
 
   const bool do_solve_A;
 };
 
 template<class PreconditionerAType, class PreconditionerSType>
 BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::BlockSchurPreconditioner(
-  const BlockSparseMatrix<double> & system_matrix,
-  const SparseMatrix<double> &      schur_complement_matrix,
-  const PreconditionerAType &       preconditioner_A,
-  const PreconditionerSType &       preconditioner_S,
-  const bool                        do_solve_A)
+  const TrilinosWrappers::BlockSparseMatrix & system_matrix,
+  const TrilinosWrappers::SparseMatrix &      schur_complement_matrix,
+  const PreconditionerAType &                 preconditioner_A,
+  const PreconditionerSType &                 preconditioner_S,
+  const bool                                  do_solve_A)
   : n_iterations_A(0),
     n_iterations_S(0),
     system_matrix(system_matrix),
@@ -352,14 +353,14 @@ BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::BlockSchurPr
 template<class PreconditionerAType, class PreconditionerSType>
 void
 BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
-  BlockVector<double> &       dst,
-  const BlockVector<double> & src) const
+  LinearAlgebra::distributed::BlockVector<double> &       dst,
+  const LinearAlgebra::distributed::BlockVector<double> & src) const
 {
-  Vector<double> utmp(src.block(0));
+  LinearAlgebra::distributed::Vector<double> utmp(src.block(0).get_partitioner());
 
   // First solve with the approximation for S
   {
-    SolverControl            solver_control(1000, 1e-6 * src.block(1).l2_norm());
+    SolverControl            solver_control(998, 1e-6 * src.block(1).l2_norm());
     SolverCG<Vector<double>> cg(solver_control);
 
     dst.block(1) = 0.0;
@@ -1522,7 +1523,8 @@ public:
   void
   assemble_system_velocity();
 
-  void
+  /// TODO could be const method ???
+  std::shared_ptr<const MGCollectionVelocity<dim, fe_degree_v, dof_layout_v>>
   prepare_multigrid_velocity();
 
   void
@@ -1552,9 +1554,6 @@ public:
   unsigned int
   max_level() const;
 
-  unsigned int
-  n_colors_system();
-
   template<typename T>
   void
   print_parameter(const std::string & description, const T & value) const;
@@ -1571,15 +1570,19 @@ public:
   const FiniteElement<dim> &
   get_fe_pressure() const;
 
-  const unsigned int                  mpi_rank;
-  const bool                          is_first_proc;
+  const unsigned int mpi_rank;
+  const bool         is_first_proc;
+
   std::shared_ptr<ConditionalOStream> pcout;
   RT::Parameter                       rt_parameters;
   EquationData                        equation_data;
   std::shared_ptr<Function<dim>>      analytical_solution;
   std::shared_ptr<Function<dim>>      load_function;
-  mutable PostProcessData             pp_data;
-  mutable PostProcessData             pp_data_pressure;
+
+  unsigned int            n_colors_system;
+  unsigned int            n_mg_levels;
+  mutable PostProcessData pp_data;
+  mutable PostProcessData pp_data_pressure;
 
   parallel::distributed::Triangulation<dim> triangulation;
   MappingQ<dim>                             mapping;
@@ -1608,10 +1611,10 @@ public:
   LinearAlgebra::distributed::Vector<double> constant_mode_pressure;
 
   //: multigrid
-  mutable std::shared_ptr<ColoringBase<dim>>           user_coloring;
-  MGCollectionVelocity<dim, fe_degree_v, dof_layout_v> mgc_velocity;
-  MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>
-    mgc_velocity_pressure;
+  mutable std::shared_ptr<ColoringBase<dim>> user_coloring;
+  // MGCollectionVelocity<dim, fe_degree_v, dof_layout_v> mgc_velocity;
+  // MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>
+  //   mgc_velocity_pressure;
 
 private:
   std::shared_ptr<FiniteElement<dim>>
@@ -1880,6 +1883,8 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
     }()),
+    n_colors_system(0U),
+    n_mg_levels(0U),
     triangulation(MPI_COMM_WORLD,
                   Triangulation<dim>::limit_level_difference_at_vertices,
                   parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
@@ -1895,9 +1900,10 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
       else if(dof_layout_v == TPSS::DoFLayout::DGQ)
         return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
       return std::shared_ptr<ColoringBase<dim>>();
-    }()),
-    mgc_velocity(rt_parameters_in.multigrid, equation_data_in),
-    mgc_velocity_pressure(rt_parameters_in.multigrid, equation_data_in)
+    }()) /*,
+     mgc_velocity(rt_parameters_in.multigrid, equation_data_in),
+     mgc_velocity_pressure(rt_parameters_in.multigrid, equation_data_in)
+   */
 {
   Assert(check_finite_elements(), ExcMessage("Check default finite elements and dof_layout."));
 }
@@ -1909,18 +1915,6 @@ unsigned int
 ModelProblem<dim, fe_degree_p, method>::max_level() const
 {
   return triangulation.n_global_levels() - 1;
-}
-
-
-
-template<int dim, int fe_degree_p, Method method>
-unsigned int
-ModelProblem<dim, fe_degree_p, method>::n_colors_system()
-{
-  auto & mgc = mgc_velocity;
-  if(mgc.mg_schwarz_smoother_pre)
-    return mgc.mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
-  return numbers::invalid_unsigned_int;
 }
 
 
@@ -2204,22 +2198,6 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
     /// !!! use VectorTools above?
   }
   constraints_velocity.close();
-
-  /// setup system matrix (DEBUG)
-  // if(do_system_matrix)
-  // {
-  //   Assert(constraints_velocity.n_constraints() != 0,
-  //          ExcMessage("Did you initialize the velocity constraints?"));
-  //   mgc_velocity.system_matrix.clear();
-  //   DynamicSparsityPattern dsp(dof_handler_velocity.n_dofs());
-  //   DoFTools::make_flux_sparsity_pattern(dof_handler_velocity,
-  //                                        dsp,
-  //                                        constraints_velocity,
-  //                                        rt_parameters.solver.variant == "direct" ? true :
-  //                                        false);
-  //   mgc_velocity.sparsity_pattern.copy_from(dsp);
-  //   mgc_velocity.system_matrix.reinit(mgc_velocity.sparsity_pattern);
-  // }
 }
 
 
@@ -2916,99 +2894,38 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system()
 
 
 
-/// TODO
-// template<int dim, int fe_degree_p, Method method>
-// void
-// ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity()
-// {
-//   AssertThrow(mgc_velocity.system_matrix.m() != 0,
-//               ExcMessage("The velocity system matrix does not seem to be initialized."));
+template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<const MGCollectionVelocity<dim,
+                                           ModelProblem<dim, fe_degree_p, method>::fe_degree_v,
+                                           ModelProblem<dim, fe_degree_p, method>::dof_layout_v>>
+ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity()
+{
+  // std::shared_ptr < MGCollectionVelocity < dim,
+  //   ModelProblem<dim, fe_degree_p, method> mgc_velocity(rt_parameters.multigrid, equation_data);
 
-//   using Velocity::SIPG::MW::CopyData;
-//   using Velocity::SIPG::MW::ScratchData;
-//   using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, false>;
-//   MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+  // dof_handler_velocity.distribute_mg_dofs();
 
-//   auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData &
-//   copy_data) {
-//     matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-//   };
+  // mgc_velocity->dof_handler = &dof_handler_velocity;
+  // mgc_velocity->mapping     = &mapping;
+  // mgc_velocity->cell_integrals_mask.reinit(dim, dim);
+  // mgc_velocity->face_integrals_mask.reinit(dim, dim);
+  // for(auto i = 0U; i < dim; ++i)
+  //   for(auto j = 0U; j < dim; ++j)
+  //   {
+  //     mgc_velocity->cell_integrals_mask(i, j) = cell_integrals_mask(i, j);
+  //     mgc_velocity->face_integrals_mask(i, j) = face_integrals_mask(i, j);
+  //   }
 
-//   auto face_worker = [&](const auto &         cell,
-//                          const unsigned int & f,
-//                          const unsigned int & sf,
-//                          const auto &         ncell,
-//                          const unsigned int & nf,
-//                          const unsigned int & nsf,
-//                          ScratchData<dim> &   scratch_data,
-//                          CopyData &           copy_data) {
-//     matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
-//   };
+  // mgc_velocity->prepare_multigrid(max_level(), user_coloring);
 
-//   auto boundary_worker = [&](const auto &         cell,
-//                              const unsigned int & face_no,
-//                              ScratchData<dim> &   scratch_data,
-//                              CopyData &           copy_data) {
-//     matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-//   };
+  // const unsigned int mg_level_max = max_level();
+  // const unsigned int mg_level_min = rt_parameters.multigrid.coarse_level;
+  // this->n_mg_levels               = mg_level_max - mg_level_min + 1;
+  // this->n_colors_system =
+  //   mgc_velocity->mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
 
-//   const auto copier = [&](const CopyData & copy_data) {
-//     constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-//       copy_data.cell_matrix, copy_data.local_dof_indices_test, mgc_velocity.system_matrix);
-
-//     for(auto & cdf : copy_data.face_data)
-//     {
-//       constraints_velocity.template distribute_local_to_global<SparseMatrix<double>>(
-//         cdf.cell_matrix, cdf.joint_dof_indices_test, mgc_velocity.system_matrix);
-//     }
-//   };
-
-//   ScratchData<dim> scratch_data(mapping,
-//                                 get_fe_velocity(),
-//                                 n_q_points_1d,
-//                                 update_values | update_gradients | update_quadrature_points |
-//                                   update_JxW_values,
-//                                 update_values | update_gradients | update_quadrature_points |
-//                                   update_JxW_values | update_normal_vectors);
-//   CopyData         copy_data(dof_handler_velocity.get_fe().dofs_per_cell);
-//   MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
-//                         dof_handler_velocity.end(),
-//                         cell_worker,
-//                         copier,
-//                         scratch_data,
-//                         copy_data,
-//                         MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-//                           MeshWorker::assemble_own_interior_faces_once,
-//                         boundary_worker,
-//                         face_worker);
-// }
-
-
-
-// template<int dim, int fe_degree_p, Method method>
-// void
-// ModelProblem<dim, fe_degree_p, method>::prepare_multigrid_velocity()
-// {
-//   dof_handler_velocity.distribute_mg_dofs();
-
-//   mgc_velocity.dof_handler = &dof_handler_velocity;
-//   mgc_velocity.mapping     = &mapping;
-//   mgc_velocity.cell_integrals_mask.reinit(dim, dim);
-//   mgc_velocity.face_integrals_mask.reinit(dim, dim);
-//   for(auto i = 0U; i < dim; ++i)
-//     for(auto j = 0U; j < dim; ++j)
-//     {
-//       mgc_velocity.cell_integrals_mask(i, j) = cell_integrals_mask(i, j);
-//       mgc_velocity.face_integrals_mask(i, j) = face_integrals_mask(i, j);
-//     }
-
-//   mgc_velocity.prepare_multigrid(max_level(), user_coloring);
-
-//   const unsigned int mg_level_max = max_level();
-//   const unsigned int mg_level_min = rt_parameters.multigrid.coarse_level;
-//   pp_data.n_mg_levels.push_back(mg_level_max - mg_level_min + 1);
-//   pp_data.n_colors_system.push_back(n_colors_system());
-// }
+  // return mgc_velocity;
+}
 
 
 
@@ -3210,23 +3127,24 @@ ModelProblem<dim, fe_degree_p, method>::solve()
   //     *pcout << preconditioner.get_summary() << std::endl;
   //   }
 
-  //   else if(rt_parameters.solver.variant == "FGMRES_GMGvelocity")
-  //   {
-  //     prepare_multigrid_velocity();
-  //     auto & A_preconditioner = mgc_velocity.get_preconditioner();
+  // else if(rt_parameters.solver.variant == "FGMRES_GMGvelocity")
+  // {
+  //   const auto mgc_velocity = prepare_multigrid_velocity();
 
-  //     SparseILU<double> S_preconditioner;
-  //     S_preconditioner.initialize(pressure_mass_matrix, SparseILU<double>::AdditionalData());
+  //   auto & A_preconditioner = mgc_velocity->get_preconditioner();
 
-  //     const BlockSchurPreconditioner<typename std::decay<decltype(A_preconditioner)>::type,
-  //                                    SparseILU<double>>
-  //       preconditioner(
-  //         system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner,
-  //         use_expensive);
+  //   TrilinosWrappers::PreconditionILU S_preconditioner;
+  //   S_preconditioner.initialize(pressure_mass_matrix);
 
-  //     iterative_solve_impl(preconditioner, "fgmres");
-  //     *pcout << preconditioner.get_summary();
-  //   }
+  //   const BlockSchurPreconditioner<typename std::decay<decltype(A_preconditioner)>::type,
+  //                                  typename std::decay<decltype(S_preconditioner)>::type>
+  //     preconditioner(
+  //       system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner, use_expensive);
+
+  //   iterative_solve_impl(preconditioner, "fgmres");
+
+  //   *pcout << preconditioner.get_summary();
+  // }
 
   //   else if(rt_parameters.solver.variant == "GMRES_GMG")
   //   {
@@ -3257,6 +3175,9 @@ ModelProblem<dim, fe_degree_p, method>::solve()
 
   /// Post processing the discrete solution.
   post_process_solution_vector();
+
+  pp_data.n_mg_levels.push_back(this->n_mg_levels);
+  pp_data.n_colors_system.push_back(this->n_colors_system);
 }
 
 
