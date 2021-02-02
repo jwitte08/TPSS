@@ -169,7 +169,7 @@ public:
 
 
 
-class BlockSparseMatrixFiltered : public TrilinosWrappers::BlockSparseMatrix
+class BlockSparseMatrixFiltered /*: public TrilinosWrappers::BlockSparseMatrix*/
 {
 public:
   using matrix_type = TrilinosWrappers::BlockSparseMatrix;
@@ -189,7 +189,7 @@ public:
   vmult(LinearAlgebra::distributed::BlockVector<value_type> &       dst,
         const LinearAlgebra::distributed::BlockVector<value_type> & src) const
   {
-    matrix_type::vmult(dst, src);
+    matrix.vmult(dst, src);
 
     if(mode)
     {
@@ -200,6 +200,14 @@ public:
       const value_type inner_product_value = (*mode) * dst_pressure;
       dst_pressure.add(-inner_product_value, *mode);
     }
+  }
+
+  void
+  Tvmult(LinearAlgebra::distributed::BlockVector<value_type> &       dst,
+         const LinearAlgebra::distributed::BlockVector<value_type> & src) const
+  {
+    (void)dst, src;
+    AssertThrow(false, ExcMessage("TODO..."));
   }
 
   const matrix_type &                                    matrix;
@@ -1470,12 +1478,12 @@ public:
 
     const bool is_dgq_legendre =
       dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
-    const auto n_dofs_per_cell = dof_handler_pressure.get_fe().dofs_per_cell;
 
     const auto locally_owned_cells_range =
       filter_iterators(dof_handler_pressure.active_cell_iterators(),
                        IteratorFilters::LocallyOwnedCell());
-    std::vector<types::global_dof_index> & dof_indices_on_cell;
+    std::vector<types::global_dof_index> dof_indices_on_cell(
+      dof_handler_pressure.get_fe().dofs_per_cell);
     for(const auto & cell : locally_owned_cells_range)
     {
       cell->get_active_or_mg_dof_indices(dof_indices_on_cell);
@@ -1520,7 +1528,7 @@ public:
   solve();
 
   void
-  correct_mean_value_pressure();
+  post_process_solution_vector();
 
   std::shared_ptr<Vector<double>>
   compute_L2_error_velocity() const;
@@ -2356,6 +2364,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     /// ... or mean value filter
     else
     {
+      constant_mode_pressure = std::move(compute_constant_pressure_mode());
       // AssertThrow(is_first_proc, ExcMessage("TODO MPI"));
       // constant_mode_pressure.reinit(n_dofs_pressure);
       // const bool is_dgq_legendre =
@@ -2384,6 +2393,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
              }(),
              MPI_COMM_WORLD),
            ExcMessage("mean_value_constraints are not consistent in parallel."));
+
     mean_value_constraints.close();
   }
 
@@ -3103,7 +3113,7 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
 
   /// We "filter" the constant pressure mode after each matrix-vector
   /// multiplication with the system matrix.
-  if(equation_data.force_mean_value_constraint)
+  if(!equation_data.force_mean_value_constraint)
   {
     Assert(constant_mode_pressure.get_partitioner()->is_compatible(
              *(system_delta_x.block(1).get_partitioner())),
@@ -3254,59 +3264,39 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     AssertThrow(false, ExcMessage("Please, choose a valid solver variant."));
 
   /// Post processing of discrete solution
-  const double mean_pressure =
-    VectorTools::compute_mean_value(dof_handler, QGauss<dim>(n_q_points_1d), system_solution, dim);
-  const bool is_dgq_legendre =
-    dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
-  const bool is_legendre_type = is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP;
-  if(is_legendre_type)
-  {
-    AssertThrow(is_first_proc, ExcMessage("TODO MPI..."));
-    const auto n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
-    const auto n_dofs_pressure = system_solution.block(1).size();
-    AssertDimension(n_dofs_pressure % n_dofs_per_cell, 0);
-    auto & dof_values_pressure = system_solution.block(1);
-    for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
-      dof_values_pressure[i] -= mean_pressure;
-  }
-  else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
-    system_solution.block(1).add(-mean_pressure);
-  else
-    AssertThrow(false, ExcMessage("This dof layout is not supported."));
-
-  print_parameter("Mean of pressure corrected by:", -mean_pressure);
-  *pcout << std::endl;
+  post_process_solution_vector();
 }
 
 
 
-// template<int dim, int fe_degree_p, Method method>
-// void
-// ModelProblem<dim, fe_degree_p, method>::correct_mean_value_pressure()
-// {
-//   const double mean_pressure =
-//     VectorTools::compute_mean_value(dof_handler, QGauss<dim>(n_q_points_1d), system_solution,
-//     dim);
-//   const bool is_dgq_legendre =
-//     dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
-//   const bool is_legendre_type = is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP;
-//   if(is_legendre_type)
-//   {
-//     const auto n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
-//     const auto n_dofs_pressure = system_solution.block(1).size();
-//     AssertDimension(n_dofs_pressure % n_dofs_per_cell, 0);
-//     Vector<double> & dof_values_pressure = system_solution.block(1);
-//     for(auto i = 0U; i < n_dofs_pressure; i += n_dofs_per_cell)
-//       dof_values_pressure[i] -= mean_pressure;
-//   }
-//   else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
-//     system_solution.block(1).add(-mean_pressure);
-//   else
-//     AssertThrow(false, ExcMessage("This dof layout is not supported."));
+template<int dim, int fe_degree_p, Method method>
+void
+ModelProblem<dim, fe_degree_p, method>::post_process_solution_vector()
+{
+  /// TODO get mpi-relevant dof distribution from BlockSparseMatrixAugmented...
+  const auto & locally_owned_dof_indices = dof_handler_pressure.locally_owned_dofs();
+  IndexSet     locally_relevant_dof_indices;
+  DoFTools::extract_locally_relevant_dofs(dof_handler_pressure, locally_relevant_dof_indices);
+  const auto & partitioner =
+    std::make_shared<const Utilities::MPI::Partitioner>(locally_owned_dof_indices,
+                                                        locally_relevant_dof_indices,
+                                                        MPI_COMM_WORLD);
 
-//   print_parameter("Mean of pressure corrected by:", -mean_pressure);
-//   *pcout << std::endl;
-// }
+  const double mean_pressure =
+    VectorTools::compute_mean_value(dof_handler, QGauss<dim>(n_q_points_1d), system_solution, dim);
+
+  if(!constant_mode_pressure.get_partitioner()->is_globally_compatible(*partitioner))
+    constant_mode_pressure = std::move(compute_constant_pressure_mode());
+
+  Assert(constant_mode_pressure.get_partitioner()->is_compatible(
+           *(system_solution.block(1).get_partitioner())),
+         ExcMessage("The vector partitioning is incompatible."));
+
+  system_solution.block(1).add(-mean_pressure, constant_mode_pressure);
+
+  print_parameter("Mean of pressure solution adjusted by:", -mean_pressure);
+  *pcout << std::endl;
+}
 
 
 template<int dim, int fe_degree_p, Method method>
@@ -3472,7 +3462,7 @@ ModelProblem<dim, fe_degree_p, method>::run()
 
     compute_errors();
 
-    output_results(cycle);
+    // output_results(cycle);
 
     Utilities::System::MemoryStats mem;
     Utilities::System::get_memory_stats(mem);
