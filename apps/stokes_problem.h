@@ -103,20 +103,26 @@ using namespace dealii;
 
 
 /**
- * TODO...
+ * A wrapper class around a (sparse) system/level matrix of type
+ * TrilinosWrappers::BlockSparseMatrix and a matrix integrator for local
+ * solvers.
+ *
+ * Convenience functions are added to deal with vectors and MPI-relevant dof
+ * partitioning.
  */
 template<int dim,
          int fe_degree_p,
-         typename Number                = double,
-         TPSS::DoFLayout dof_layout_v   = TPSS::DoFLayout::Q,
-         int             fe_degree_v    = fe_degree_p + 1,
-         LocalAssembly   local_assembly = LocalAssembly::Tensor>
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         LocalAssembly   local_assembly>
 class BlockSparseMatrixAugmented
   : public TrilinosWrappers::BlockSparseMatrix,
     public VelocityPressure::FD::
       MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>
 {
-  static_assert(std::is_same<Number, double>::value, "Trilinos supports double-precision.");
+  static_assert(std::is_same<Number, double>::value,
+                "TrilinosWrappers support only double-precision.");
 
 public:
   using value_type            = Number;
@@ -138,38 +144,43 @@ public:
   clear();
 
   void
-  initialize_dof_vector(LinearAlgebra::distributed::BlockVector<Number> & vec) const
-  {
-    vec = LinearAlgebra::distributed::BlockVector<Number>(*locally_owned_dof_indices,
-                                                          *ghosted_dof_indices,
-                                                          *mpi_communicator);
-  }
+  initialize_dof_vector(LinearAlgebra::distributed::BlockVector<Number> & vec) const;
+
+  void
+  initialize_dof_vector(LinearAlgebra::distributed::Vector<Number> & vec,
+                        const unsigned int                           block_index) const;
+
+  std::shared_ptr<const Utilities::MPI::Partitioner>
+  get_partitioner(const unsigned int block_index) const;
 
   std::shared_ptr<const MatrixFree<dim, Number>>
   get_matrix_free() const;
 
   template<typename VectorType>
   void
-  vmult(VectorType & dst, const VectorType & src) const
-  {
-    matrix_type::vmult(dst, src);
-  }
+  vmult(VectorType & dst, const VectorType & src) const;
 
   void
   vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const;
 
   operator const FullMatrix<Number> &() const;
 
-  std::shared_ptr<const MatrixFree<dim, Number>> mf_storage;
-  std::shared_ptr<const std::vector<IndexSet>>   locally_owned_dof_indices;
-  std::shared_ptr<const std::vector<IndexSet>>   ghosted_dof_indices;
-  std::shared_ptr<const MPI_Comm>                mpi_communicator;
-  mutable std::shared_ptr<FullMatrix<Number>>    fullmatrix;
+  std::shared_ptr<const MatrixFree<dim, Number>>                  mf_storage;
+  std::shared_ptr<const std::vector<IndexSet>>                    locally_owned_dof_indices;
+  std::shared_ptr<const std::vector<IndexSet>>                    ghosted_dof_indices;
+  std::shared_ptr<const MPI_Comm>                                 mpi_communicator;
+  std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners;
+  mutable std::shared_ptr<FullMatrix<Number>>                     fullmatrix;
 };
 
 
 
-class BlockSparseMatrixFiltered /*: public TrilinosWrappers::BlockSparseMatrix*/
+  /**
+   * A wrapper class around a sparse matrix of type BlockSparseMatrix which
+   * subtracts a given mode after each matrix-vector multiplication with the
+   * sparse matrix (@p vmult()).
+   */
+class BlockSparseMatrixFiltered
 {
 public:
   using matrix_type = TrilinosWrappers::BlockSparseMatrix;
@@ -206,7 +217,7 @@ public:
   Tvmult(LinearAlgebra::distributed::BlockVector<value_type> &       dst,
          const LinearAlgebra::distributed::BlockVector<value_type> & src) const
   {
-    (void)dst, src;
+    (void)dst, (void)src;
     AssertThrow(false, ExcMessage("TODO..."));
   }
 
@@ -1458,16 +1469,12 @@ public:
   void
   setup_system();
 
-  std::shared_ptr<LinearAlgebra::distributed::Vector<double>>
+  LinearAlgebra::distributed::Vector<double>
   compute_mass_foreach_pressure_dof() const;
-
-  std::shared_ptr<LinearAlgebra::distributed::Vector<double>>
-  compute_mass_foreach_pressure_dof(const unsigned int level) const;
 
   LinearAlgebra::distributed::Vector<double>
   compute_constant_pressure_mode() const
   {
-    /// TODO get mpi-relevant dof distribution from BlockSparseMatrixAugmented...
     const auto & locally_owned_dof_indices = dof_handler_pressure.locally_owned_dofs();
     IndexSet     locally_relevant_dof_indices;
     DoFTools::extract_locally_relevant_dofs(dof_handler_pressure, locally_relevant_dof_indices);
@@ -1593,9 +1600,8 @@ public:
   Table<2, DoFTools::Coupling> cell_integrals_mask;
   Table<2, DoFTools::Coupling> face_integrals_mask;
   BlockSparsityPattern         sparsity_pattern;
-  // BlockSparseMatrixFiltered<double> system_matrix; // !!!
   BlockSparseMatrixAugmented<dim, fe_degree_p, double, dof_layout_v, fe_degree_v, local_assembly>
-                       system_matrix; // !!!
+                       system_matrix;
   SparsityPattern      sparsity_pattern_pressure;
   SparseMatrix<double> pressure_mass_matrix;
 
@@ -1623,11 +1629,6 @@ private:
 
   void
   make_grid_impl(const MeshParameter & mesh_prms);
-
-  template<bool is_multigrid = false>
-  std::shared_ptr<LinearAlgebra::distributed::Vector<double>>
-  compute_mass_foreach_pressure_dof_impl(
-    const unsigned int level = numbers::invalid_unsigned_int) const;
 };
 
 
@@ -1667,10 +1668,27 @@ BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, 
              const MPI_Comm &                               mpi_communicator_in)
 {
   matrix_type::reinit(dsp);
+
+  AssertDimension(matrix_type::n_block_rows(), matrix_type::n_block_cols());
+  AssertDimension(matrix_type::n_block_rows(), 2U);
+
   locally_owned_dof_indices =
     std::make_shared<const std::vector<IndexSet>>(locally_owned_dof_indices_in);
   ghosted_dof_indices = std::make_shared<const std::vector<IndexSet>>(ghosted_dof_indices_in);
   mpi_communicator    = std::make_shared<const MPI_Comm>(mpi_communicator_in);
+
+  partitioners.clear();
+  std::transform(locally_owned_dof_indices_in.cbegin(),
+                 locally_owned_dof_indices_in.cend(),
+                 ghosted_dof_indices_in.cbegin(),
+                 std::back_inserter(partitioners),
+                 [&](const auto & lodofs, const auto & gdofs) {
+                   return std::make_shared<Utilities::MPI::Partitioner>(lodofs,
+                                                                        gdofs,
+                                                                        mpi_communicator_in);
+                 });
+
+  AssertDimension(matrix_type::n_block_rows(), partitioners.size());
 }
 
 
@@ -1685,6 +1703,7 @@ void
 BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
   clear()
 {
+  partitioners.clear();
   fullmatrix.reset();
   mf_storage.reset();
   locally_owned_dof_indices.reset();
@@ -1707,6 +1726,73 @@ BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, 
 {
   AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
   return mf_storage;
+}
+
+
+
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         LocalAssembly   local_assembly>
+void
+BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
+  initialize_dof_vector(LinearAlgebra::distributed::BlockVector<Number> & vec) const
+{
+  /// TODO use partitioners instead ???
+  vec = LinearAlgebra::distributed::BlockVector<Number>(*locally_owned_dof_indices,
+                                                        *ghosted_dof_indices,
+                                                        *mpi_communicator);
+}
+
+
+
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         LocalAssembly   local_assembly>
+void
+BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
+  initialize_dof_vector(LinearAlgebra::distributed::Vector<Number> & vec,
+                        const unsigned int                           block_index) const
+{
+  AssertIndexRange(block_index, partitioners.size());
+  vec.reinit(partitioners.at(block_index));
+}
+
+
+
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         LocalAssembly   local_assembly>
+std::shared_ptr<const Utilities::MPI::Partitioner>
+BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
+  get_partitioner(const unsigned int block_index) const
+{
+  AssertIndexRange(block_index, partitioners.size());
+  return partitioners.at(block_index);
+}
+
+
+
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         LocalAssembly   local_assembly>
+template<typename VectorType>
+void
+BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
+  vmult(VectorType & dst, const VectorType & src) const
+{
+  matrix_type::vmult(dst, src);
 }
 
 
@@ -1982,66 +2068,45 @@ ModelProblem<dim, fe_degree_p, method>::make_grid_impl(const MeshParameter & mes
 
 
 template<int dim, int fe_degree_p, Method method>
-template<bool is_multigrid>
-std::shared_ptr<LinearAlgebra::distributed::Vector<double>>
-ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof_impl(
-  const unsigned int level) const
+LinearAlgebra::distributed::Vector<double>
+ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof() const
 {
-  const auto n_dofs_pressure = [this, level]() {
-    if(is_multigrid)
-      return dof_handler_pressure.n_dofs(level);
-    else
-      return dof_handler_pressure.n_dofs();
-  }();
-
-  AssertThrow(!is_multigrid, ExcMessage("TODO MPI..."));
-
   const auto & locally_owned_dof_indices = dof_handler_pressure.locally_owned_dofs();
   IndexSet     locally_relevant_dof_indices;
   DoFTools::extract_locally_relevant_dofs(dof_handler_pressure, locally_relevant_dof_indices);
 
-  std::shared_ptr<LinearAlgebra::distributed::Vector<double>> mass_foreach_dof_ptr; // book-keeping
-  mass_foreach_dof_ptr =
-    std::make_shared<LinearAlgebra::distributed::Vector<double>>(locally_owned_dof_indices,
-                                                                 locally_relevant_dof_indices,
-                                                                 MPI_COMM_WORLD);
+  LinearAlgebra::distributed::Vector<double> mass_foreach_dof(locally_owned_dof_indices,
+                                                              locally_relevant_dof_indices,
+                                                              MPI_COMM_WORLD);
 
-  AffineConstraints<double> constraints_pressure;
-  constraints_pressure.clear();
-  constraints_pressure.reinit(locally_relevant_dof_indices);
-  constraints_pressure.close();
+  AffineConstraints<double> constraints_dummy;
+  constraints_dummy.clear();
+  constraints_dummy.reinit(locally_relevant_dof_indices);
+  constraints_dummy.close();
 
-  TrilinosWrappers::SparsityPattern dsp(locally_owned_dof_indices,
-                                        locally_owned_dof_indices,
-                                        locally_relevant_dof_indices,
-                                        MPI_COMM_WORLD);
-  // DynamicSparsityPattern dsp(n_dofs_pressure);
-  if(is_multigrid)
-    MGTools::make_sparsity_pattern(dof_handler_pressure, dsp, level);
-  else
-    DoFTools::make_sparsity_pattern(dof_handler_pressure, dsp, constraints_pressure);
-  dsp.compress();
-
-  // SparsityPattern sparsity_pattern;
-  // sparsity_pattern.copy_from(dsp);
-  TrilinosWrappers::SparseMatrix pressure_mass_matrix;
-  pressure_mass_matrix.reinit(dsp);
-  // SparseMatrix<double> pressure_mass_matrix;
-  // pressure_mass_matrix.reinit(sparsity_pattern);
-
-  using Pressure::MW::CopyData;
-  using Pressure::MW::ScratchData;
-  using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, is_multigrid>;
-
-  MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+  using ::MW::ScratchData;
+  using ::MW::DoF::CopyData;
 
   auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-    matrix_integrator.cell_mass_worker(cell, scratch_data, copy_data);
+    FEValues<dim> & phi = scratch_data.fe_values;
+    phi.reinit(cell);
+
+    const unsigned int dofs_per_cell = phi.get_fe().dofs_per_cell;
+
+    auto & cell_data = copy_data.cell_data.emplace_back(dofs_per_cell);
+
+    cell->get_active_or_mg_dof_indices(cell_data.dof_indices);
+
+    for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
+      for(unsigned int i = 0; i < dofs_per_cell; ++i)
+        cell_data.rhs(i) += phi.shape_value(i, q) * phi.JxW(q);
   };
 
   const auto copier = [&](const CopyData & copy_data) {
-    constraints_pressure.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
-      copy_data.cell_matrix, copy_data.local_dof_indices, pressure_mass_matrix);
+    for(const auto & cd : copy_data.cell_data)
+      constraints_dummy.template distribute_local_to_global(cd.rhs,
+                                                            cd.dof_indices,
+                                                            mass_foreach_dof);
   };
 
   const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
@@ -2049,53 +2114,18 @@ ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof_impl(
 
   ScratchData<dim> scratch_data(
     mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
-  CopyData copy_data(dof_handler_pressure.get_fe().dofs_per_cell);
-  if(is_multigrid)
-    MeshWorker::mesh_loop(dof_handler_pressure.begin_mg(level),
-                          dof_handler_pressure.end_mg(level),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells);
-  else
-    MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
-                          dof_handler_pressure.end(),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells);
 
-  pressure_mass_matrix.compress(VectorOperation::add);
+  CopyData copy_data;
 
-  LinearAlgebra::distributed::Vector<double> constant_one_vector(
-    mass_foreach_dof_ptr->get_partitioner());
-  std::fill(constant_one_vector.begin(), constant_one_vector.end(), 1.);
-  pressure_mass_matrix.vmult(*mass_foreach_dof_ptr, constant_one_vector);
+  MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
+                        dof_handler_pressure.end(),
+                        cell_worker,
+                        copier,
+                        scratch_data,
+                        copy_data,
+                        MeshWorker::assemble_own_cells);
 
-  if(is_first_proc)
-    AssertThrow((*mass_foreach_dof_ptr)(0) > 0., ExcMessage("First DoF has no positive mass."));
-  return mass_foreach_dof_ptr;
-}
-
-
-
-template<int dim, int fe_degree_p, Method method>
-std::shared_ptr<LinearAlgebra::distributed::Vector<double>>
-ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof() const
-{
-  return compute_mass_foreach_pressure_dof_impl<false>();
-}
-
-
-
-template<int dim, int fe_degree_p, Method method>
-std::shared_ptr<LinearAlgebra::distributed::Vector<double>>
-ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof(
-  const unsigned int level) const
-{
-  return compute_mass_foreach_pressure_dof_impl<true>(level);
+  return mass_foreach_dof;
 }
 
 
@@ -2236,27 +2266,28 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_pressure(const bool do_cuth
   if(equation_data.force_mean_value_constraint)
   {
     print_parameter("Computing mean-value constraints (press)", "...");
-    const types::global_dof_index first_pressure_dof = 0U;
-    if(locally_owned_dof_indices.is_element(first_pressure_dof))
+
+    if(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1U)
+    {
+      /// If AffineConstraints is initialized only for all relevant indices not all
+      /// procs should have communication to the first dof. Thus, constraining all
+      /// dofs to fix the first dof does not apply in distributed codes.
+      AssertThrow(is_first_proc, ExcMessage("Supported only in serial runs."));
+
+      const auto &                  mass_foreach_dof   = compute_mass_foreach_pressure_dof();
+      const types::global_dof_index first_pressure_dof = 0U;
+      AssertThrow(mass_foreach_dof(0U) > 0., ExcMessage("First dof has no mass!"));
       constraints_pressure.add_line(first_pressure_dof);
+      for(types::global_dof_index i = 1; i < mass_foreach_dof.size(); ++i)
+        constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_foreach_dof(0));
+    }
 
-    // const auto   mass_foreach_dof_ptr = compute_mass_foreach_pressure_dof();
-    // const auto & mass_foreach_dof     = *mass_foreach_dof_ptr;
-
-    // const bool is_dgq_legendre =
-    //   dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
-    // const bool is_legendre_type = is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP;
-    // const auto n_dofs_pressure  = dof_handler_pressure.n_dofs();
-    // {
-    //   /// !!! TODO communication missing for more than one proc...
-    //   const double mass_of_first_dof = mass_foreach_dof(0);
-    //   constraints_pressure.add_line(0U);
-    //   const auto         n_dofs_per_cell = get_fe_pressure().dofs_per_cell;
-    //   const unsigned int stride          = is_legendre_type ? n_dofs_per_cell : 1U;
-    //   const unsigned int start           = is_legendre_type ? stride : 1U;
-    //   for(auto i = start; i < n_dofs_pressure; i += stride)
-    //     constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_of_first_dof);
-    // }
+    else
+    {
+      const types::global_dof_index first_pressure_dof = 0U;
+      if(locally_owned_dof_indices.is_element(first_pressure_dof))
+        constraints_pressure.add_line(first_pressure_dof);
+    }
   }
   constraints_pressure.close();
 }
@@ -3273,30 +3304,19 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::post_process_solution_vector()
 {
-  /// TODO get mpi-relevant dof distribution from BlockSparseMatrixAugmented...
-  const auto & locally_owned_dof_indices = dof_handler_pressure.locally_owned_dofs();
-  IndexSet     locally_relevant_dof_indices;
-  DoFTools::extract_locally_relevant_dofs(dof_handler_pressure, locally_relevant_dof_indices);
-  const auto & partitioner =
-    std::make_shared<const Utilities::MPI::Partitioner>(locally_owned_dof_indices,
-                                                        locally_relevant_dof_indices,
-                                                        MPI_COMM_WORLD);
-
   const double mean_pressure =
     VectorTools::compute_mean_value(dof_handler, QGauss<dim>(n_q_points_1d), system_solution, dim);
 
-  if(!constant_mode_pressure.get_partitioner()->is_globally_compatible(*partitioner))
+  if(!constant_mode_pressure.get_partitioner()->is_globally_compatible(
+       *(system_solution.block(1).get_partitioner())))
     constant_mode_pressure = std::move(compute_constant_pressure_mode());
-
-  Assert(constant_mode_pressure.get_partitioner()->is_compatible(
-           *(system_solution.block(1).get_partitioner())),
-         ExcMessage("The vector partitioning is incompatible."));
 
   system_solution.block(1).add(-mean_pressure, constant_mode_pressure);
 
   print_parameter("Mean of pressure solution adjusted by:", -mean_pressure);
   *pcout << std::endl;
 }
+
 
 
 template<int dim, int fe_degree_p, Method method>

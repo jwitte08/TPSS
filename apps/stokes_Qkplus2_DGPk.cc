@@ -43,6 +43,8 @@ main(int argc, char * argv[])
                                                           numbers::invalid_unsigned_int :
                                                           static_cast<unsigned int>(n_threads_max));
 
+    const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0U;
+
     StokesFlow     options;
     constexpr auto dim              = CT::DIMENSION_;
     constexpr auto fe_degree_p      = CT::FE_DEGREE_;
@@ -71,15 +73,18 @@ main(int argc, char * argv[])
       equation_data.force_mean_value_constraint = true;
     equation_data.local_solver = static_cast<LocalSolver>(local_solver_variant);
 
-    ModelProblem<dim, fe_degree_p, Method::Qkplus2_DGPk> stokes_problem(options.prms,
-                                                                        equation_data);
+    const auto pcout = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);
 
-    std::cout << std::endl;
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::Qkplus2_DGPk>;
+    StokesProblem stokes_problem(options.prms, equation_data);
+    stokes_problem.pcout = pcout;
+
+    *pcout << std::endl;
     stokes_problem.run();
 
-    std::cout << std::endl
-              << std::endl
-              << write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
+    *pcout << std::endl
+           << std::endl
+           << write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
   }
 
   catch(std::exception & exc)
