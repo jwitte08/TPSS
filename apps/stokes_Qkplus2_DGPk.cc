@@ -44,6 +44,7 @@ main(int argc, char * argv[])
                                                           static_cast<unsigned int>(n_threads_max));
 
     const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0U;
+    const auto n_mpi_procs   = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
 
     StokesFlow     options;
     constexpr auto dim              = CT::DIMENSION_;
@@ -52,7 +53,12 @@ main(int argc, char * argv[])
     constexpr auto smoother_variant = CT::SMOOTHER_VARIANT_;
 
     if(damping == 0.)
-      damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
+    {
+      if(test_index == 2U) // Gauss Seidel
+        damping = n_mpi_procs == 1 ? 1. : 0.7;
+      else
+        damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
+    }
 
     options.setup(test_index, damping);
     options.prms.n_cycles                = n_cycles;

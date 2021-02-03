@@ -212,7 +212,7 @@ public:
 
   /**
    * Initializes the sparsity pattern of the underlying sparse matrix and caches
-   * the mpi-relevant dof partitioning.
+   * the mpi communication pattern for dofs.
    */
   void
   initialize(const TrilinosWrappers::SparsityPattern & dsp,
@@ -221,23 +221,20 @@ public:
              const MPI_Comm &                          mpi_communicator);
 
   /**
-   * Initializes the underyling local integrator by means of a MatrixFree object
-   * @p mf_storage_in (dummy), used to initialize a SubdomainHandler internally,
-   * and @p equation_data_in, which passes PDE-related parameters.
+   * Initializes the underyling local integrator.
    */
   void
   initialize(std::shared_ptr<const MatrixFree<dim, value_type>> mf_storage_in,
              const EquationData                                 equation_data_in);
 
   /**
-   * Initializes a vector @p vec by means of the underlying mpi-relevant dof partitioning.
+   * Initializes vector @p vec by means of the cached mpi communication pattern.
    */
   void
   initialize_dof_vector(vector_type & vec) const;
 
   /**
-   * Uses the underlying MatrixFree object (if initialized) to initialize the
-   * mpi-relevant dof partitioning of vector @vec.
+   * Initializes vector @p vec by means of the underlying MatrixFree object.
    */
   void
   initialize_dof_vector_mf(vector_type & vec) const;
@@ -248,8 +245,8 @@ public:
   using matrix_type::vmult;
 
   /**
-   * In serial code this class provides a matrix-vector multplication based on
-   * ArrayViews which enables using some TPSS-specific interfaces.
+   * In serial code this performs a matrix-vector multplication based on
+   * ArrayViews which enables using TPSS-specific interfaces.
    */
   void
   vmult(const ArrayView<value_type> dst, const ArrayView<const value_type> src) const;
@@ -271,7 +268,8 @@ private:
 
 
 /**
- * TODO...
+ * A block Schur preconditioner for the pressure-velocity block matrix. For more
+ * details see step-56...
  */
 template<class PreconditionerAType, class PreconditionerSType>
 class BlockSchurPreconditioner : public Subscriptor
@@ -283,19 +281,12 @@ public:
                            const PreconditionerSType &                 preconditioner_S,
                            const bool                                  do_solve_A);
 
-  std::string
-  get_summary() const
-  {
-    std::ostringstream oss;
-    oss << Util::parameter_to_fstring("Summary of BlockSchurPreconditioner:", "//////////");
-    oss << Util::parameter_to_fstring("Accum. number of iterations (~A^-1):", n_iterations_A);
-    oss << Util::parameter_to_fstring("Accum. number of iterations (~S^-1):", n_iterations_S);
-    return oss.str();
-  }
-
   void
   vmult(LinearAlgebra::distributed::BlockVector<double> &       dst,
         const LinearAlgebra::distributed::BlockVector<double> & src) const;
+
+  std::string
+  get_summary() const;
 
   mutable unsigned int n_iterations_A;
   mutable unsigned int n_iterations_S;
@@ -308,69 +299,6 @@ private:
 
   const bool do_solve_A;
 };
-
-template<class PreconditionerAType, class PreconditionerSType>
-BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::BlockSchurPreconditioner(
-  const TrilinosWrappers::BlockSparseMatrix & system_matrix,
-  const TrilinosWrappers::SparseMatrix &      schur_complement_matrix,
-  const PreconditionerAType &                 preconditioner_A,
-  const PreconditionerSType &                 preconditioner_S,
-  const bool                                  do_solve_A)
-  : n_iterations_A(0),
-    n_iterations_S(0),
-    system_matrix(system_matrix),
-    schur_complement_matrix(schur_complement_matrix),
-    preconditioner_A(preconditioner_A),
-    preconditioner_S(preconditioner_S),
-    do_solve_A(do_solve_A)
-{
-}
-
-template<class PreconditionerAType, class PreconditionerSType>
-void
-BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
-  LinearAlgebra::distributed::BlockVector<double> &       dst,
-  const LinearAlgebra::distributed::BlockVector<double> & src) const
-{
-  LinearAlgebra::distributed::Vector<double> utmp(src.block(0).get_partitioner());
-
-  // First solve with the approximation for S
-  {
-    SolverControl solver_control(998, 1e-6 * src.block(1).l2_norm());
-    SolverCG<LinearAlgebra::distributed::Vector<double>> cg(solver_control);
-
-    dst.block(1) = 0.0;
-    cg.solve(schur_complement_matrix, dst.block(1), src.block(1), preconditioner_S);
-
-    n_iterations_S += solver_control.last_step();
-    dst.block(1) *= -1.0;
-  }
-
-  // Second, apply the top right block (B^T)
-  {
-    system_matrix.block(0, 1).vmult(utmp, dst.block(1));
-    utmp *= -1.0;
-    utmp += src.block(0);
-  }
-
-  // Finally, either solve with the top left block
-  // or just apply one preconditioner sweep
-  if(do_solve_A == true)
-  {
-    SolverControl solver_control(9999, utmp.l2_norm() * 1e-4); // !!!
-    SolverCG<LinearAlgebra::distributed::Vector<double>> cg(solver_control);
-
-    dst.block(0) = 0.0;
-    cg.solve(system_matrix.block(0, 0), dst.block(0), utmp, preconditioner_A);
-
-    n_iterations_A += solver_control.last_step();
-  }
-  else
-  {
-    preconditioner_A.vmult(dst.block(0), utmp);
-    n_iterations_A += 1;
-  }
-}
 
 
 
@@ -396,11 +324,14 @@ public:
   using local_matrix_type = typename matrix_type::local_integrator_type::matrix_type;
   using mg_smoother_schwarz_type =
     MGSmootherSchwarz<dim, matrix_type, local_matrix_type, vector_type>;
+  using mg_smoother_gauss_seidel_type = MGSmootherPrecondition<TrilinosWrappers::SparseMatrix,
+                                                               TrilinosWrappers::PreconditionSSOR,
+                                                               vector_type>;
 
   /**
-   * The constructor only sets algorithm- and PDE-related parameters. The
+   * The constructor passes algorithm- and PDE-related parameters. The actual
    * initialization of the multigrid method is performed when calling @p
-   * prepare_multigrid.
+   * prepare_multigrid().
    */
   MGCollectionVelocity(const RT::Parameter & rt_parameters_in,
                        const EquationData &  equation_data_in);
@@ -456,14 +387,13 @@ private:
   std::shared_ptr<const mg_smoother_schwarz_type>        mg_schwarz_smoother_pre;
   std::shared_ptr<const mg_smoother_schwarz_type>        mg_schwarz_smoother_post;
   std::shared_ptr<const MGSmootherIdentity<vector_type>> mg_smoother_identity;
-  std::shared_ptr<const mg::SmootherRelaxation<PreconditionSOR<matrix_type>, vector_type>>
-                                             mg_smoother_gauss_seidel;
-  const MGSmootherBase<vector_type> *        mg_smoother_pre;
-  const MGSmootherBase<vector_type> *        mg_smoother_post;
-  CoarseGridSolver<matrix_type, vector_type> coarse_grid_solver;
-  const MGCoarseGridBase<vector_type> *      mg_coarse_grid;
-  mg::Matrix<vector_type>                    mg_matrix_wrapper;
-  std::shared_ptr<Multigrid<vector_type>>    multigrid;
+  std::shared_ptr<const mg_smoother_gauss_seidel_type>   mg_smoother_gauss_seidel;
+  const MGSmootherBase<vector_type> *                    mg_smoother_pre;
+  const MGSmootherBase<vector_type> *                    mg_smoother_post;
+  CoarseGridSolver<matrix_type, vector_type>             coarse_grid_solver;
+  const MGCoarseGridBase<vector_type> *                  mg_coarse_grid;
+  mg::Matrix<vector_type>                                mg_matrix_wrapper;
+  std::shared_ptr<Multigrid<vector_type>>                multigrid;
 
   mutable std::shared_ptr<const PreconditionMG<dim, vector_type, mg_transfer_type>>
     preconditioner_mg;
@@ -1150,9 +1080,10 @@ struct ModelProblemBase<Method::RaviartThomas, dim, fe_degree_p>
 };
 
 
+
 /**
- * This is the main class which combines the typical building blocks of a
- * (deal.II) finite element method.
+ * The main class which combines the typical building blocks of a (deal.II)
+ * finite element method.
  *
  * TODO Description...
  */
@@ -1193,39 +1124,7 @@ public:
   compute_mass_foreach_pressure_dof() const;
 
   LinearAlgebra::distributed::Vector<double>
-  compute_constant_pressure_mode() const
-  {
-    const auto & locally_owned_dof_indices = dof_handler_pressure.locally_owned_dofs();
-    IndexSet     locally_relevant_dof_indices;
-    DoFTools::extract_locally_relevant_dofs(dof_handler_pressure, locally_relevant_dof_indices);
-
-    LinearAlgebra::distributed::Vector<double> mode(locally_owned_dof_indices,
-                                                    locally_relevant_dof_indices,
-                                                    MPI_COMM_WORLD);
-
-    const bool is_dgq_legendre =
-      dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
-
-    const auto locally_owned_cells_range =
-      filter_iterators(dof_handler_pressure.active_cell_iterators(),
-                       IteratorFilters::LocallyOwnedCell());
-    std::vector<types::global_dof_index> dof_indices_on_cell(
-      dof_handler_pressure.get_fe().dofs_per_cell);
-    for(const auto & cell : locally_owned_cells_range)
-    {
-      cell->get_active_or_mg_dof_indices(dof_indices_on_cell);
-
-      if(is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP)
-        mode[dof_indices_on_cell.front()] = 1.;
-      else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
-        for(const auto dof_index : dof_indices_on_cell)
-          mode[dof_index] = 1.;
-      else
-        AssertThrow(false, ExcMessage("Dof layout is not supported."));
-    }
-
-    return mode;
-  }
+  compute_constant_pressure_mode() const;
 
   void
   setup_system_velocity(const bool do_cuthill_mckee);
@@ -1626,6 +1525,44 @@ ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof() cons
                         MeshWorker::assemble_own_cells);
 
   return mass_foreach_dof;
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+LinearAlgebra::distributed::Vector<double>
+ModelProblem<dim, fe_degree_p, method>::compute_constant_pressure_mode() const
+{
+  const auto & locally_owned_dof_indices = dof_handler_pressure.locally_owned_dofs();
+  IndexSet     locally_relevant_dof_indices;
+  DoFTools::extract_locally_relevant_dofs(dof_handler_pressure, locally_relevant_dof_indices);
+
+  LinearAlgebra::distributed::Vector<double> mode(locally_owned_dof_indices,
+                                                  locally_relevant_dof_indices,
+                                                  MPI_COMM_WORLD);
+
+  const bool is_dgq_legendre =
+    dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
+
+  const auto locally_owned_cells_range =
+    filter_iterators(dof_handler_pressure.active_cell_iterators(),
+                     IteratorFilters::LocallyOwnedCell());
+  std::vector<types::global_dof_index> dof_indices_on_cell(
+    dof_handler_pressure.get_fe().dofs_per_cell);
+  for(const auto & cell : locally_owned_cells_range)
+  {
+    cell->get_active_or_mg_dof_indices(dof_indices_on_cell);
+
+    if(is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP)
+      mode[dof_indices_on_cell.front()] = 1.;
+    else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
+      for(const auto dof_index : dof_indices_on_cell)
+        mode[dof_index] = 1.;
+    else
+      AssertThrow(false, ExcMessage("Dof layout is not supported."));
+  }
+
+  return mode;
 }
 
 
@@ -3182,14 +3119,94 @@ SparseMatrixAugmented<dim, fe_degree, dof_layout>::operator const FullMatrix<val
 
 
 
+template<class PreconditionerAType, class PreconditionerSType>
+BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::BlockSchurPreconditioner(
+  const TrilinosWrappers::BlockSparseMatrix & system_matrix,
+  const TrilinosWrappers::SparseMatrix &      schur_complement_matrix,
+  const PreconditionerAType &                 preconditioner_A,
+  const PreconditionerSType &                 preconditioner_S,
+  const bool                                  do_solve_A)
+  : n_iterations_A(0),
+    n_iterations_S(0),
+    system_matrix(system_matrix),
+    schur_complement_matrix(schur_complement_matrix),
+    preconditioner_A(preconditioner_A),
+    preconditioner_S(preconditioner_S),
+    do_solve_A(do_solve_A)
+{
+}
+
+
+
+template<class PreconditionerAType, class PreconditionerSType>
+void
+BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
+  LinearAlgebra::distributed::BlockVector<double> &       dst,
+  const LinearAlgebra::distributed::BlockVector<double> & src) const
+{
+  LinearAlgebra::distributed::Vector<double> utmp(src.block(0).get_partitioner());
+
+  // First solve with the approximation for S
+  {
+    SolverControl solver_control(998, 1e-6 * src.block(1).l2_norm());
+    SolverCG<LinearAlgebra::distributed::Vector<double>> cg(solver_control);
+
+    dst.block(1) = 0.0;
+    cg.solve(schur_complement_matrix, dst.block(1), src.block(1), preconditioner_S);
+
+    n_iterations_S += solver_control.last_step();
+    dst.block(1) *= -1.0;
+  }
+
+  // Second, apply the top right block (B^T)
+  {
+    system_matrix.block(0, 1).vmult(utmp, dst.block(1));
+    utmp *= -1.0;
+    utmp += src.block(0);
+  }
+
+  // Finally, either solve with the top left block
+  // or just apply one preconditioner sweep
+  if(do_solve_A == true)
+  {
+    SolverControl solver_control(9999, utmp.l2_norm() * 1e-4); // !!!
+    SolverCG<LinearAlgebra::distributed::Vector<double>> cg(solver_control);
+
+    dst.block(0) = 0.0;
+    cg.solve(system_matrix.block(0, 0), dst.block(0), utmp, preconditioner_A);
+
+    n_iterations_A += solver_control.last_step();
+  }
+  else
+  {
+    preconditioner_A.vmult(dst.block(0), utmp);
+    n_iterations_A += 1;
+  }
+}
+
+
+
+template<class PreconditionerAType, class PreconditionerSType>
+std::string
+BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::get_summary() const
+{
+  std::ostringstream oss;
+  oss << Util::parameter_to_fstring("Summary of BlockSchurPreconditioner:", "//////////");
+  oss << Util::parameter_to_fstring("Accum. number of iterations (~A^-1):", n_iterations_A);
+  oss << Util::parameter_to_fstring("Accum. number of iterations (~S^-1):", n_iterations_S);
+  return oss.str();
+}
+
+
+
 template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
 MGCollectionVelocity<dim, fe_degree, dof_layout>::MGCollectionVelocity(
   const RT::Parameter & rt_parameters_in,
   const EquationData &  equation_data_in)
-  : parameters(rt_parameters_in.multigrid),
-    equation_data(equation_data_in),
-    dof_handler(nullptr),
+  : dof_handler(nullptr),
     mapping(nullptr),
+    parameters(rt_parameters_in.multigrid),
+    equation_data(equation_data_in),
     use_tbb(rt_parameters_in.use_tbb),
     mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD))
 {
@@ -3308,14 +3325,13 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_multigrid(
     }
     case SmootherParameter::SmootherVariant::GaussSeidel:
     {
-      AssertThrow(false, ExcMessage("TODO MPI..."));
-      // auto tmp =
-      //   std::make_shared<mg::SmootherRelaxation<PreconditionSOR<matrix_type>, vector_type>>();
-      // tmp->initialize(mg_matrices);
-      // tmp->set_steps(parameters.pre_smoother.n_smoothing_steps);
-      // tmp->set_symmetric(true);
-      // mg_smoother_gauss_seidel = tmp;
-      // mg_smoother_pre          = mg_smoother_gauss_seidel.get();
+      typename TrilinosWrappers::PreconditionSSOR::AdditionalData ssor_features;
+      ssor_features.omega = parameters.pre_smoother.damping_factor;
+      auto tmp            = std::make_shared<mg_smoother_gauss_seidel_type>();
+      tmp->set_steps(parameters.pre_smoother.n_smoothing_steps);
+      tmp->initialize(mg_matrices, ssor_features);
+      mg_smoother_gauss_seidel = tmp;
+      mg_smoother_pre          = mg_smoother_gauss_seidel.get();
       break;
     }
     case SmootherParameter::SmootherVariant::Schwarz:
@@ -3335,7 +3351,6 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::prepare_multigrid(
       mg_smoother_post = mg_smoother_identity.get();
       break;
     case SmootherParameter::SmootherVariant::GaussSeidel:
-      AssertThrow(false, ExcMessage("TODO MPI..."));
       AssertThrow(mg_smoother_gauss_seidel, ExcMessage("Not initialized."));
       mg_smoother_post = mg_smoother_gauss_seidel.get();
       break;
