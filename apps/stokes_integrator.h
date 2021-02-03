@@ -1866,7 +1866,7 @@ namespace MW
 {
 using ::MW::ScratchData;
 
-using ::MW::CopyData;
+using ::MW::DoF::CopyData;
 
 template<int dim, bool is_multigrid = false>
 struct MatrixIntegrator
@@ -1885,9 +1885,9 @@ struct MatrixIntegrator
   }
 
   void
-  cell_worker(const IteratorType &  cell,
-              ScratchData<dim> &    scratch_data,
-              ::MW::DoF::CopyData & copy_data) const;
+  cell_worker(const IteratorType & cell,
+              ScratchData<dim> &   scratch_data,
+              CopyData &           copy_data) const;
 
   void
   cell_mass_worker(const IteratorType & cell,
@@ -1902,9 +1902,9 @@ struct MatrixIntegrator
 
 template<int dim, bool is_multigrid>
 void
-MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType &  cell,
-                                                 ScratchData<dim> &    scratch_data,
-                                                 ::MW::DoF::CopyData & copy_data) const
+MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
+                                                 ScratchData<dim> &   scratch_data,
+                                                 CopyData &           copy_data) const
 {
   AssertDimension(copy_data.cell_data.size(), 0U);
 
@@ -1940,19 +1940,21 @@ MatrixIntegrator<dim, is_multigrid>::cell_mass_worker(const IteratorType & cell,
                                                       ScratchData<dim> &   scratch_data,
                                                       CopyData &           copy_data) const
 {
-  copy_data.cell_matrix = 0.;
-  copy_data.cell_rhs    = 0.;
+  AssertDimension(copy_data.cell_data.size(), 0U);
 
   FEValues<dim> & phi = scratch_data.fe_values;
   phi.reinit(cell);
-  cell->get_active_or_mg_dof_indices(copy_data.local_dof_indices);
 
   const unsigned int dofs_per_cell = phi.get_fe().dofs_per_cell;
+
+  auto & cell_data = copy_data.cell_data.emplace_back(dofs_per_cell);
+
+  cell->get_active_or_mg_dof_indices(cell_data.dof_indices);
 
   for(unsigned int q = 0; q < phi.n_quadrature_points; ++q)
     for(unsigned int i = 0; i < dofs_per_cell; ++i)
       for(unsigned int j = 0; j < dofs_per_cell; ++j)
-        copy_data.cell_matrix(i, j) += phi.shape_value(i, q) * phi.shape_value(j, q) * phi.JxW(q);
+        cell_data.matrix(i, j) += phi.shape_value(i, q) * phi.shape_value(j, q) * phi.JxW(q);
 }
 
 } // namespace MW
