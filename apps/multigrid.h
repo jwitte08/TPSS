@@ -239,8 +239,10 @@ public:
                     const CoarseGridParameter &            prms)
   {
     AssertDimension(coarse_matrix.m(), coarse_matrix.n());
+    AssertThrow(prms.threshold_svd == 0.,
+                ExcMessage("A threshold isn't supported by TrilinosWrappers::SolverDirect."));
+
     const auto solver_control = Base::set_solver_control(prms);
-    // solver_control->set_max_steps(coarse_matrix.m());
 
     const auto solver_direct = std::make_shared<TrilinosWrappers::SolverDirect>(*solver_control);
     solver_direct->initialize(coarse_matrix);
@@ -254,8 +256,6 @@ public:
   void
   initialize_direct(const FullMatrix<value_type> & coarse_matrix, const CoarseGridParameter & prms)
   {
-    // const auto & coarse_table       = Tensors::matrix_to_table(coarse_matrix);
-    // const auto & coarse_full_matrix = table_to_fullmatrix(coarse_table);
     using coarse_grid_solver_type = MGCoarseGridSVDSerial<value_type, VectorType>;
     const auto solver             = std::make_shared<coarse_grid_solver_type>();
     solver->initialize(coarse_matrix, prms.threshold_svd);
