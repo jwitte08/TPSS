@@ -71,8 +71,9 @@ struct StokesFlow
     prms.multigrid.coarse_level               = 0;
     prms.multigrid.coarse_grid.solver_variant = CoarseGridParameter::SolverVariant::DirectSVD;
     /// The threshold is crucial, if we do not impose any mean value
-    /// constraint on the coarse problem!
-    prms.multigrid.coarse_grid.threshold_svd = 1.e-8;
+    /// constraint for the coarse problem!
+    if(prms.solver.variant != "FGMRES_GMGvelocity")
+      prms.multigrid.coarse_grid.threshold_svd = 1.e-8;
     // prms.multigrid.coarse_grid.iterative_solver                                   = "cg";
     // prms.multigrid.coarse_grid.accuracy                                           = 1.e-12;
 
@@ -120,14 +121,14 @@ write_ppdata_to_string(const PostProcessData & pp_data, const PostProcessData & 
   AssertDimension(pp_data.n_dofs_global.size(), pp_data_pressure.n_dofs_global.size());
   for(unsigned run = 0; run < pp_data.n_cells_global.size(); ++run)
   {
-    // info_table.add_value("n_levels", pp_data.n_mg_levels.at(run));
+    info_table.add_value("n_levels", pp_data.n_mg_levels.at(run));
     info_table.add_value("n_cells", pp_data.n_cells_global.at(run));
     const auto n_dofs_total =
       pp_data.n_dofs_global.at(run) + pp_data_pressure.n_dofs_global.at(run);
     info_table.add_value("n_dofs", n_dofs_total);
     info_table.add_value("n_dofs_u", pp_data.n_dofs_global.at(run));
     info_table.add_value("n_dofs_p", pp_data_pressure.n_dofs_global.at(run));
-    // info_table.add_value("n_colors", pp_data.n_colors_system.at(run));
+    info_table.add_value("n_colors", pp_data.n_colors_system.at(run));
     info_table.add_value("n_iter", pp_data.n_iterations_system.at(run));
     info_table.add_value("reduction", pp_data.average_reduction_system.at(run));
     info_table.add_value("L2_error_u", pp_data.L2_error.at(run));

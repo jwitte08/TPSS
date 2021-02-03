@@ -1519,6 +1519,7 @@ public:
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
     /// TODO tangential components only for RT !!!
+
     constexpr bool is_sipg =
       TPSS::DoFLayout::DGQ == dof_layout || TPSS::DoFLayout::RT == dof_layout;
 
@@ -2600,8 +2601,7 @@ public:
  * extract the local matrices/solvers from the (global) level matrix. The level
  * matrix is passed as argument to assemble_subspace_inverses().
  *
- * Therefore, all local matrices are stored and inverted in a classical
- * fashion.
+ * Therefore, all local matrices are stored and inverted in a standard way.
  */
 template<int dim,
          int fe_degree_p,
@@ -2795,7 +2795,7 @@ struct MatrixIntegratorSelector<LocalAssembly::Cut,
 
 
 /**
- * Aliasing MatrixIntegrator w.r.t. the choice for LocalAssembly.
+ * Aliasing MatrixIntegrator w.r.t. the choice of LocalAssembly.
  */
 template<int dim,
          int fe_degree_p,
