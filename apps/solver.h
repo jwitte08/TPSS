@@ -57,7 +57,7 @@ struct SolverParameter
 
 
 std::shared_ptr<SolverControl>
-get_solver_control_impl(const SolverParameter & solver_prms)
+make_solver_control_impl(const SolverParameter & solver_prms)
 {
   auto solver_control = [&]() -> std::shared_ptr<SolverControl> {
     if(solver_prms.control_variant == SolverParameter::ControlVariant::relative)

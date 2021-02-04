@@ -2618,7 +2618,7 @@ public:
   using value_type    = Number;
   using transfer_type = typename TPSS::PatchTransferBlock<dim, Number>;
   using matrix_type   = Tensors::BlockMatrixBasic2x2<MatrixAsTable<VectorizedArray<Number>>>;
-  using operator_type = BlockSparseMatrix<Number>;
+  using operator_type = TrilinosWrappers::BlockSparseMatrix;
 
   void
   initialize(const EquationData & equation_data_in)

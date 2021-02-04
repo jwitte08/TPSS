@@ -290,7 +290,7 @@ private:
   iterative_solve_impl(const PreconditionerType & preconditioner);
 
   std::shared_ptr<SolverControl>
-  get_solver_control() const;
+  make_solver_control() const;
 
   template<typename T>
   void
@@ -1230,7 +1230,7 @@ ModelProblem<dim, fe_degree>::print_informations() const
 
 template<int dim, int fe_degree>
 std::shared_ptr<SolverControl>
-ModelProblem<dim, fe_degree>::get_solver_control() const
+ModelProblem<dim, fe_degree>::make_solver_control() const
 {
   auto solver_control = [&]() -> std::shared_ptr<SolverControl> {
     if(rt_parameters.solver.control_variant == SolverParameter::ControlVariant::relative)
@@ -1270,7 +1270,7 @@ template<typename PreconditionerType>
 void
 ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & preconditioner)
 {
-  auto solver_control = get_solver_control();
+  auto solver_control = make_solver_control();
 
   SolverSelector<VECTOR> iterative_solver;
   iterative_solver.set_control(*solver_control);
@@ -1306,7 +1306,7 @@ ModelProblem<dim, fe_degree>::solve()
 
   if(rt_parameters.solver.variant == "direct")
   {
-    auto solver_control = get_solver_control();
+    auto solver_control = make_solver_control();
 
     TrilinosWrappers::SolverDirect::AdditionalData features;
     features.output_solver_details = true;
@@ -1329,7 +1329,7 @@ ModelProblem<dim, fe_degree>::solve()
     //   pp_data.n_iterations_system.push_back(0.);
     //   print_parameter("Average reduction (solver):", "trilinos pCG");
     //   print_parameter("Number of iterations (solver):", "---");
-    //   auto                                       solver_control = get_solver_control();
+    //   auto                                       solver_control = make_solver_control();
     //   TrilinosWrappers::SolverCG::AdditionalData cg_features(true);
     //   TrilinosWrappers::SolverCG                 solver(*solver_control, cg_features);
     //   solver.solve(system_matrix, system_delta_u, system_rhs, prec);

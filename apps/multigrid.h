@@ -586,7 +586,7 @@ private:
 std::string
 CoarseGridParameter::str_solver_variant(const CoarseGridParameter::SolverVariant variant)
 {
-  const std::string str_variant[] = {"None", "Accurate Iterative Solver", "Full Inverse (SVD)"};
+  const std::string str_variant[] = {"None", "Accurate Iterative Solver", "Direct Solver"};
   return str_variant[(int)variant];
 }
 
