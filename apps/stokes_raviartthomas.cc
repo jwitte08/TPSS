@@ -61,9 +61,8 @@ main(int argc, char * argv[])
     options.prms.n_cycles = n_cycles;
     /// each side of the rectangular domain needs its own boundary_id (otherwise
     /// MGConstrainedDoFs::make_no_normal_zero_flux() is not supported)
-    options.prms.mesh.do_colorization    = true;  // !!!
-    options.prms.solver.rel_tolerance    = 1.e-8; // !!!
-    options.prms.solver.n_iterations_max = 5000;  // !!!
+    options.prms.mesh.do_colorization = true;  // !!!
+    options.prms.solver.rel_tolerance = 1.e-8; // !!!
 
     EquationData equation_data;
     AssertThrow(pde_index < EquationData::n_variants,

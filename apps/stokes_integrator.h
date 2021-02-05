@@ -1284,10 +1284,10 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential_impl(
   const auto n_interface_dofs_test   = phi_test.n_current_interface_dofs();
   const auto n_interface_dofs_ansatz = phi_ansatz.n_current_interface_dofs();
 
-  AssertDimension(n_interface_dofs_test, face_data.matrix.m());                  // ???
-  AssertDimension(n_interface_dofs_ansatz, face_data.matrix.n());                // ???
-  AssertDimension(n_interface_dofs_test, face_data.dof_indices.size());          // ???
-  AssertDimension(n_interface_dofs_ansatz, face_data.dof_indices_column.size()); // ???
+  AssertDimension(n_interface_dofs_test, face_data.matrix.m());         // ???
+  AssertDimension(n_interface_dofs_ansatz, face_data.matrix.n());       // ???
+  AssertDimension(n_interface_dofs_test, face_data.dof_indices.size()); // ???
+  // AssertDimension(n_interface_dofs_ansatz, face_data.dof_indices_column.size()); // ???
 
   std::vector<Tensor<1, dim>>         solution_values;
   std::vector<Tensor<1, dim>>         tangential_solution_values;

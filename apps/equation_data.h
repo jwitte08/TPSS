@@ -1507,8 +1507,12 @@ struct EquationData
 std::string
 EquationData::sstr_equation_variant(const Variant variant)
 {
-  std::string str[] = {
-    "tba", "noslipnormal", "bell", "noslip_poiseuille", "noslip", "inhom_poiseuille"};
+  std::string str[] = {"inhom",
+                       "noslipnormal_stream",
+                       "bell",
+                       "noslip_poiseuille",
+                       "noslip_stream",
+                       "inhom_poiseuille"};
   return str[static_cast<int>(variant)];
 }
 
@@ -1731,6 +1735,12 @@ public:
 
 namespace DivergenceFree
 {
+/**
+ * Inhomogeneous, div-free velocity solution on the unit square:
+ *
+ *    u_1(x,y) = sin(PI*x)
+ *    u_2(x,y) = -PI * y * cos(PI*x)
+ */
 template<int dim>
 class SolutionVelocity : public Function<dim>
 {
@@ -1855,6 +1865,9 @@ SolutionVelocity<dim>::hessian(const Point<dim> &, const unsigned int) const
 
 
 
+/**
+ *    p(x,y) = sin(PI*x) * cos(PI*y)
+ */
 template<int dim>
 class SolutionPressure : public Function<dim>
 {
@@ -2101,6 +2114,9 @@ SolutionVelocity<2>::hessian(const Point<2> & p, const unsigned int component) c
 
 
 
+/**
+ *    p(x,y) = cos(2*PI*x) * cos(2*PI*x)
+ */
 template<int dim>
 class SolutionPressure : public Function<dim>
 {
@@ -2619,11 +2635,11 @@ namespace NoSlip
 /**
  * Given the univariate polynomial (@p poly)
  *
- *    p(x) = (x-1)^2 * x^2
+ *    q(x) = (x-1)^2 * x^2
  *
  * this class represents the vector curl of
  *
- *    PHI(x,y) = p(x) * p(y)
+ *    PHI(x,y) = q(x) * q(y)
  *
  * in two dimensions. The roots of p(x) lead to no-slip boundary conditions on
  * the unit cube [0,1]^2. This is the reference solution for the stream function
@@ -2746,7 +2762,7 @@ private:
 
 
 // /**
-//  * Choosing a zero pressure results in a divergence-free manufactured load.
+//  * Choosing a zero pressure function results in a divergence-free manufactured load.
 //  */
 // template<int dim>
 // using SolutionPressure = Functions::ZeroFunction<dim>;

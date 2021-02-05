@@ -461,6 +461,7 @@ private:
   EquationData equation_data;
 
   std::shared_ptr<MGConstrainedDoFs>                     mg_constrained_dofs;
+  std::vector<MGConstrainedDoFs>                         mgconstraineddofs;
   std::shared_ptr<const mg_transfer_type>                mg_transfer;
   MGLevelObject<matrix_type>                             mg_matrices;
   std::shared_ptr<const mg_smother_schwarz_type>         mg_schwarz_smoother_pre;
@@ -477,6 +478,7 @@ private:
     preconditioner_mg;
 
   const bool use_tbb;
+  const bool use_transfer_prebuilt;
 };
 
 
@@ -520,7 +522,7 @@ struct ModelProblemBase<Method::Qkplus2_DGPk, dim, fe_degree_p>
   static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::DGP;
   using fe_type_v                               = FE_Q<dim>;
   using fe_type_p                               = FE_DGP<dim>;
-  static constexpr int           fe_degree_v = fe_degree_p == 1 ? fe_degree_p + 2 : fe_degree_p + 1;
+  static constexpr int           fe_degree_v = fe_degree_p == 0 ? fe_degree_p + 2 : fe_degree_p + 1;
   static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
 };
 
@@ -693,13 +695,13 @@ private:
   void
   iterative_solve_impl(const PreconditionerType & preconditioner, const std::string solver_variant);
 
-  std::shared_ptr<Vector<double>>
+  double
   compute_L2_error_velocity() const;
 
-  std::shared_ptr<Vector<double>>
+  double
   compute_L2_error_pressure() const;
 
-  std::shared_ptr<Vector<double>>
+  double
   compute_H1semi_error_velocity() const;
 
   /**
@@ -756,8 +758,8 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
       else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuilleNoSlip)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlip)
-        return std::make_shared<ManufacturedLoad<dim>>(analytical_solution); // !!!
-      // return std::make_shared<DivergenceFree::NoSlip::Load<dim>>(); // !!!
+        return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
+      // return std::make_shared<DivergenceFree::NoSlip::Load<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuilleInhom)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else
@@ -786,6 +788,15 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
                                      rt_parameters.solver.variant == "FGMRES_GMGvelocity")
 {
   Assert(check_finite_element(), ExcMessage("Check default finite elements and dof_layout."));
+  if(is_first_proc)
+  {
+    std::ostringstream oss;
+    oss << "For this variant most solver variants do not converge."
+        << "The mean value constraint seems to be problematic, "
+        << "in particular the mean-value filter...";
+    AssertThrow(equation_data_in.variant != EquationData::Variant::DivFreeBell,
+                ExcMessage(oss.str()));
+  }
 }
 
 
@@ -1468,7 +1479,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
         cd.matrix, cd.rhs, cd.dof_indices, system_matrix.block(0, 0), system_rhs.block(0));
     };
 
-    const auto copier = [&](const CopyData & copy_data) { // !!!
+    const auto copier = [&](const CopyData & copy_data) {
       AssertIndexRange(copy_data.cell_data.size(), 2U);
 
       for(const auto & cd : copy_data.cell_data)
@@ -1864,9 +1875,10 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
 
   if(solver_variant == "gmres")
   {
-    AssertThrow(false, ExcMessage("not tested after changes..."));
     SolverGMRES<vector_type>::AdditionalData additional_data;
     additional_data.right_preconditioning = rt_parameters.solver.use_right_preconditioning;
+    if(additional_data.right_preconditioning)
+      AssertThrow(false, ExcMessage("not tested after changes..."));
     // additional_data.use_default_residual = false;
     additional_data.max_n_tmp_vectors = 100;
     iterative_solver.set_data(additional_data);
@@ -1956,8 +1968,8 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     // /// distribute() is needed to apply the mean value constraint (Dirichlet
     // /// conditions of velocity have already been applied to system_solution)
     // Assert(equation_data.force_mean_value_constraint, ExcMessage("Use mean value
-    // constraint.")); zero_constraints.distribute(system_delta_x); // !!! no-normal flux + mean
-    // value mean_value_constraints.distribute(system_delta_x); system_solution += system_delta_x;
+    // constraint.")); zero_constraints.distribute(system_delta_x);
+    // mean_value_constraints.distribute(system_delta_x); system_solution += system_delta_x;
 
     // pp_data.average_reduction_system.push_back(0.);
     // pp_data.n_iterations_system.push_back(0.);
@@ -2024,9 +2036,17 @@ ModelProblem<dim, fe_degree_p, method>::solve()
   else if(rt_parameters.solver.variant == "CG")
   {
     PreconditionIdentity preconditioner;
-    rt_parameters.solver.n_iterations_max *= 100.;
+    rt_parameters.solver.n_iterations_max *= 10;
 
     iterative_solve_impl(preconditioner, "cg");
+  }
+
+  else if(rt_parameters.solver.variant == "GMRES")
+  {
+    PreconditionIdentity preconditioner;
+    rt_parameters.solver.n_iterations_max *= 10;
+
+    iterative_solve_impl(preconditioner, "gmres");
   }
 
   else
@@ -2061,55 +2081,64 @@ ModelProblem<dim, fe_degree_p, method>::post_process_solution_vector()
 
 
 template<int dim, int fe_degree_p, Method method>
-std::shared_ptr<Vector<double>>
+double
 ModelProblem<dim, fe_degree_p, method>::compute_L2_error_velocity() const
 {
   const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
-  const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  Vector<double>                     difference_per_cell(triangulation.n_active_cells());
   VectorTools::integrate_difference(dof_handler,
                                     system_solution,
                                     *analytical_solution,
-                                    *difference_per_cell,
+                                    difference_per_cell,
                                     QGauss<dim>(n_q_points_1d + 2),
                                     VectorTools::L2_norm,
                                     &velocity_mask);
-  return difference_per_cell;
+  /// in case of a distributed triangulation a MPI reduction is used internally
+  const double error =
+    VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::L2_norm);
+  return error;
 }
 
 
 
 template<int dim, int fe_degree_p, Method method>
-std::shared_ptr<Vector<double>>
+double
 ModelProblem<dim, fe_degree_p, method>::compute_L2_error_pressure() const
 {
   const ComponentSelectFunction<dim> pressure_mask(dim, dim + 1);
-  const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  Vector<double>                     difference_per_cell(triangulation.n_active_cells());
   VectorTools::integrate_difference(dof_handler,
                                     system_solution,
                                     *analytical_solution,
-                                    *difference_per_cell,
+                                    difference_per_cell,
                                     QGauss<dim>(n_q_points_1d + 2),
                                     VectorTools::L2_norm,
                                     &pressure_mask);
-  return difference_per_cell;
+  /// in case of a distributed triangulation a MPI reduction is used internally
+  const double error =
+    VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::L2_norm);
+  return error;
 }
 
 
 
 template<int dim, int fe_degree_p, Method method>
-std::shared_ptr<Vector<double>>
+double
 ModelProblem<dim, fe_degree_p, method>::compute_H1semi_error_velocity() const
 {
   const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim + 1);
-  const auto difference_per_cell = std::make_shared<Vector<double>>(triangulation.n_active_cells());
+  Vector<double>                     difference_per_cell(triangulation.n_active_cells());
   VectorTools::integrate_difference(dof_handler,
                                     system_solution,
                                     *analytical_solution,
-                                    *difference_per_cell,
+                                    difference_per_cell,
                                     QGauss<dim>(n_q_points_1d + 2),
                                     VectorTools::H1_norm,
                                     &velocity_mask);
-  return difference_per_cell;
+  /// in case of a distributed triangulation a MPI reduction is used internally
+  const double error =
+    VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::H1_norm);
+  return error;
 }
 
 
@@ -2119,27 +2148,21 @@ void
 ModelProblem<dim, fe_degree_p, method>::compute_discretization_errors()
 {
   {
-    const auto   difference_per_cell = compute_L2_error_velocity();
-    const double Velocity_L2_error =
-      VectorTools::compute_global_error(triangulation, *difference_per_cell, VectorTools::L2_norm);
-    print_parameter("Velocity error in the L2 norm:", Velocity_L2_error);
-    pp_data.L2_error.push_back(Velocity_L2_error);
+    const auto l2_error = compute_L2_error_velocity();
+    print_parameter("Velocity error in the L2 norm:", l2_error);
+    pp_data.L2_error.push_back(l2_error);
   }
 
   {
-    const auto   difference_per_cell = compute_L2_error_pressure();
-    const double Pressure_L2_error =
-      VectorTools::compute_global_error(triangulation, *difference_per_cell, VectorTools::L2_norm);
-    print_parameter("Pressure error in the L2 norm:", Pressure_L2_error);
-    pp_data_pressure.L2_error.push_back(Pressure_L2_error);
+    const auto l2_error = compute_L2_error_pressure();
+    print_parameter("Pressure error in the L2 norm:", l2_error);
+    pp_data_pressure.L2_error.push_back(l2_error);
   }
 
   {
-    const auto   difference_per_cell = compute_H1semi_error_velocity();
-    const double Velocity_H1_error =
-      VectorTools::compute_global_error(triangulation, *difference_per_cell, VectorTools::H1_norm);
-    print_parameter("Velocity error in the H1 seminorm:", Velocity_H1_error);
-    pp_data.H1semi_error.push_back(Velocity_H1_error);
+    const auto h1semi_error = compute_H1semi_error_velocity();
+    print_parameter("Velocity error in the H1 seminorm:", h1semi_error);
+    pp_data.H1semi_error.push_back(h1semi_error);
   }
 }
 
@@ -2149,45 +2172,55 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refinement_cycle) const
 {
-  AssertThrow(is_first_proc, ExcMessage("TODO MPI..."));
-
   std::vector<DataComponentInterpretation::DataComponentInterpretation>
-    data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
-  data_component_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
+    velocity_pressure_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
+  velocity_pressure_interpretation.push_back(DataComponentInterpretation::component_is_scalar);
 
   DataOut<dim> data_out;
   data_out.attach_dof_handler(dof_handler);
 
   /// discrete solution (velocity, pressure): (u, p)
-  std::vector<std::string> solution_names(dim, "velocity");
-  solution_names.emplace_back("pressure");
-  data_out.add_data_vector(system_solution,
-                           solution_names,
-                           DataOut<dim>::type_dof_data,
-                           data_component_interpretation);
+  {
+    system_solution.update_ghost_values();
+    std::vector<std::string> solution_names(dim, "velocity");
+    solution_names.emplace_back("pressure");
+    data_out.add_data_vector(system_solution,
+                             solution_names,
+                             DataOut<dim>::type_dof_data,
+                             velocity_pressure_interpretation);
+  }
 
   /// discrete right hand side (velocity, pressure): (Fu, Fp)
-  std::vector<std::string> rhs_names(dim, "rhs_velocity");
-  rhs_names.emplace_back("rhs_pressure");
-  data_out.add_data_vector(system_rhs,
-                           rhs_names,
-                           DataOut<dim>::type_dof_data,
-                           data_component_interpretation);
+  {
+    system_rhs.update_ghost_values();
+    std::vector<std::string> rhs_names(dim, "rhs_velocity");
+    rhs_names.emplace_back("rhs_pressure");
+    data_out.add_data_vector(system_rhs,
+                             rhs_names,
+                             DataOut<dim>::type_dof_data,
+                             velocity_pressure_interpretation);
+  }
 
-  const auto L2_error_v = compute_L2_error_velocity();
-  data_out.add_data_vector(*L2_error_v, "velocity_L2_error", DataOut<dim>::type_cell_data);
-
-  const auto L2_error_p = compute_L2_error_pressure();
-  data_out.add_data_vector(*L2_error_p, "pressure_L2_error", DataOut<dim>::type_cell_data);
-
-  const auto H1semi_error_v = compute_H1semi_error_velocity();
-  data_out.add_data_vector(*H1semi_error_v, "velocity_H1semi_error", DataOut<dim>::type_cell_data);
+  /// mpi partitioning of locally owned cells
+  Vector<float> mpi_rank_foreach_cell(triangulation.n_active_cells());
+  {
+    for(unsigned int i = 0; i < mpi_rank_foreach_cell.size(); ++i)
+      mpi_rank_foreach_cell(i) = triangulation.locally_owned_subdomain();
+    data_out.add_data_vector(mpi_rank_foreach_cell, "mpi_ranks");
+  }
 
   data_out.build_patches();
 
-  std::ofstream output("stokes_" + equation_data.sstr_equation_variant() + "_" +
-                       Utilities::int_to_string(refinement_cycle, 3) + ".vtk");
-  data_out.write_vtk(output);
+  std::ostringstream oss;
+  oss << "stokes";
+  oss << "_" << equation_data.sstr_equation_variant();
+  oss << "_" << dim << "D";
+  oss << "_" << fe_degree_p << "pdeg";
+  data_out.write_vtu_with_pvtu_record("./",
+                                      static_cast<std::string>(oss.str()),
+                                      /*counter*/ refinement_cycle,
+                                      MPI_COMM_WORLD,
+                                      /*digits_for_counter*/ 2);
 }
 
 
@@ -2223,7 +2256,7 @@ ModelProblem<dim, fe_degree_p, method>::run()
 
     compute_discretization_errors();
 
-    // output_results(cycle);
+    output_results(cycle);
 
     Utilities::System::MemoryStats mem;
     Utilities::System::get_memory_stats(mem);
@@ -2622,7 +2655,7 @@ BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
   // or just apply one preconditioner sweep
   if(do_solve_A == true)
   {
-    SolverControl solver_control(9999, utmp.l2_norm() * 1e-4); // !!!
+    SolverControl solver_control(9999, utmp.l2_norm() * 1e-4);
     SolverCG<LinearAlgebra::distributed::Vector<double>> cg(solver_control);
 
     dst.block(0) = 0.0;
@@ -3010,7 +3043,8 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     mapping(nullptr),
     parameters(rt_parameters_in.multigrid),
     equation_data(equation_data_in),
-    use_tbb(rt_parameters_in.use_tbb)
+    use_tbb(rt_parameters_in.use_tbb),
+    use_transfer_prebuilt(true) // !!!
 {
 }
 
@@ -3038,6 +3072,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   mg_matrices.clear_elements();
   mg_transfer.reset();
   mg_constrained_dofs.reset();
+  mgconstraineddofs.clear();
 }
 
 
@@ -3124,7 +3159,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
           cd.matrix, cd.dof_indices, mg_matrices[level].block(0, 0));
     };
 
-    const auto copier = [&](const CopyData & copy_data) { // !!!
+    const auto copier = [&](const CopyData & copy_data) {
       AssertDimension(copy_data.cell_data.size(), 1U);
 
       for(const auto & cd : copy_data.cell_data)
@@ -3158,17 +3193,17 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                             copy_data,
                             MeshWorker::assemble_own_cells);
     else if(use_sipg_method)
-      MeshWorker::mesh_loop(
-        dof_handler_velocity->begin_mg(level),
-        dof_handler_velocity->end_mg(level),
-        cell_worker,
-        copier,
-        scratch_data,
-        copy_data,
-        MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-          MeshWorker::assemble_own_interior_faces_once | MeshWorker::assemble_ghost_faces_once,
-        boundary_worker,
-        face_worker);
+      MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
+                            dof_handler_velocity->end_mg(level),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                              MeshWorker::assemble_own_interior_faces_once |
+                              MeshWorker::assemble_ghost_faces_once,
+                            boundary_worker,
+                            face_worker);
     else
       AssertThrow(false, ExcMessage("This FEM is not supported"));
   }
@@ -3290,17 +3325,17 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                             copy_data,
                             MeshWorker::assemble_own_cells);
     else if(use_sipg_method)
-      MeshWorker::mesh_loop(
-        dof_handler_velocity->begin_mg(level),
-        dof_handler_velocity->end_mg(level),
-        cell_worker,
-        copier,
-        scratch_data,
-        copy_data,
-        MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-          MeshWorker::assemble_own_interior_faces_once | MeshWorker::assemble_ghost_faces_once,
-        boundary_worker,
-        face_worker);
+      MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
+                            dof_handler_velocity->end_mg(level),
+                            cell_worker,
+                            copier,
+                            scratch_data,
+                            copy_data,
+                            MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
+                              MeshWorker::assemble_own_interior_faces_once |
+                              MeshWorker::assemble_ghost_faces_once,
+                            boundary_worker,
+                            face_worker);
     else
       AssertThrow(false, ExcMessage("This FEM is not implemented."));
   }
@@ -3381,18 +3416,34 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   const unsigned mg_level_min = parameters.coarse_level;
 
   //: initialize multigrid constraints (velocity constraints only)
-  mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
-  mg_constrained_dofs->initialize(*dof_handler);
+  // mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
+  // mg_constrained_dofs->initialize(*dof_handler);
+  // const FEValuesExtractors::Vector velocities(0);
+  // if(dof_layout_v == TPSS::DoFLayout::Q)
+  //   mg_constrained_dofs->make_zero_boundary_constraints(
+  //     *dof_handler,
+  //     equation_data.dirichlet_boundary_ids_velocity,
+  //     dof_handler->get_fe().component_mask(velocities));
+  // else if(dof_layout_v == TPSS::DoFLayout::RT)
+  //   AssertThrow(false, ExcMessage("no_flux_constraints?"));
+
+  mgconstraineddofs.clear();
+  mgconstraineddofs.reserve(2U);
+  // mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
+  auto & mg_constrained_dofs = mgconstraineddofs.emplace_back();
+  mg_constrained_dofs.initialize(*dof_handler_velocity);
   /// TODO !!! is MGConstrainedDoFs aware of the mpi communication pattern coz
   /// no index sets have to be passed explicitly?
   const FEValuesExtractors::Vector velocities(0);
   if(dof_layout_v == TPSS::DoFLayout::Q)
-    mg_constrained_dofs->make_zero_boundary_constraints(
-      *dof_handler,
-      equation_data.dirichlet_boundary_ids_velocity,
-      dof_handler->get_fe().component_mask(velocities));
+    mg_constrained_dofs.make_zero_boundary_constraints(
+      *dof_handler_velocity, equation_data.dirichlet_boundary_ids_velocity);
+  // dof_handler->get_fe().component_mask(velocities));
   else if(dof_layout_v == TPSS::DoFLayout::RT)
     AssertThrow(false, ExcMessage("no_flux_constraints?"));
+
+  auto & mg_constrained_dofs_pressure = mgconstraineddofs.emplace_back();
+  mg_constrained_dofs_pressure.initialize(*dof_handler_pressure);
 
   //: initialize level matrices A_l
   std::vector<std::vector<types::global_dof_index>> level_to_dofs_per_block(
@@ -3441,17 +3492,18 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     }
 
     AffineConstraints<double> level_constraints;
-    level_constraints.reinit(locally_relevant_dof_indices);
+    // level_constraints.reinit(locally_relevant_dof_indices);
+    level_constraints.reinit(lrdof_indices_foreach_block[0]);
     if(dof_layout_v == TPSS::DoFLayout::Q || dof_layout_v == TPSS::DoFLayout::RT) // !!!
-      level_constraints.add_lines(mg_constrained_dofs->get_boundary_indices(level));
+      level_constraints.add_lines(mg_constrained_dofs.get_boundary_indices(level));
     level_constraints.close();
 
-    /// TODO !!! mean value constraints for pressure
+    /// TODO mean value constraints for pressure
     AffineConstraints<double> level_constraints_pressure;
     level_constraints_pressure.reinit(lrdof_indices_foreach_block[1]);
     level_constraints_pressure.close();
 
-    /// TODO !!! merge shifted mean value constraints
+    /// TODO merge shifted mean value constraints
 
     TrilinosWrappers::BlockSparsityPattern dsp(lodof_indices_foreach_block,
                                                lodof_indices_foreach_block,
@@ -3474,9 +3526,10 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                   lrdof_indices_foreach_block,
                                   MPI_COMM_WORLD);
 
-    /// NOTE that instead of using level constraints only for the velocity
-    /// component we use the constraints for the complete block system exploiting
-    /// the fact all velocity dofs come first
+    // ... not true anymore
+    // /// NOTE that instead of using level constraints only for the velocity
+    // /// component we use the constraints for the complete block system exploiting
+    // /// the fact all velocity dofs come first
 
     //: assemble the velocity system A_l on current level l.
     assemble_multigrid(level, level_constraints, level_constraints_pressure);
@@ -3484,8 +3537,10 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
   //: initialize multigrid transfer R_l
   {
-    const auto tmp = std::make_shared<mg_transfer_type>(*mg_constrained_dofs);
-    tmp->build(*dof_handler);
+    AssertDimension(mgconstraineddofs.size(), 2U);
+    const auto tmp = std::make_shared<mg_transfer_type>(mgconstraineddofs);
+    std::vector<const DoFHandler<dim> *> dofhandlers{dof_handler_velocity, dof_handler_pressure};
+    tmp->build(dofhandlers);
     mg_transfer = tmp;
   }
 
@@ -3561,11 +3616,10 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   get_preconditioner() const
 {
   AssertThrow(multigrid, ExcMessage("multigrid is uninitialized."));
+  std::vector<const DoFHandler<dim> *> dofhandlers{dof_handler_velocity, dof_handler_pressure};
   if(!preconditioner_mg)
-    preconditioner_mg =
-      std::make_shared<PreconditionMG<dim, vector_type, mg_transfer_type>>(*dof_handler,
-                                                                           *multigrid,
-                                                                           *mg_transfer);
+    preconditioner_mg = std::make_shared<PreconditionMG<dim, vector_type, mg_transfer_type>>(
+      dofhandlers /**dof_handler*/, *multigrid, *mg_transfer);
   return *preconditioner_mg;
 }
 

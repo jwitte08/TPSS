@@ -35,7 +35,8 @@ struct StokesFlow
   // 4 : ...based on Gauss-Seidel smoothers for velocity-pressure (GMRES_GMG)
   // 5 : ...based on Gauss-Seidel smoothers for velocity-pressure (GMRES_CG)
   // 6 : unpreconditioned CG (CG)
-  static constexpr unsigned int test_index_max = 6;
+  // 7 : unpreconditioned GMRES (GMRES)
+  static constexpr unsigned int test_index_max = 7;
 
   const std::string str_solver_variant[test_index_max + 1] = {"direct",
                                                               "FGMRES_ILU",
@@ -43,7 +44,8 @@ struct StokesFlow
                                                               "FGMRES_GMGvelocity",
                                                               "GMRES_GMG",
                                                               "CG_GMG",
-                                                              "CG"};
+                                                              "CG",
+                                                              "GMRES"};
 
   const SolverParameter::PreconditionVariant precondition_variant[test_index_max + 1] = {
     SolverParameter::PreconditionVariant::None,
@@ -52,6 +54,7 @@ struct StokesFlow
     SolverParameter::PreconditionVariant::GMG,
     SolverParameter::PreconditionVariant::GMG,
     SolverParameter::PreconditionVariant::GMG,
+    SolverParameter::PreconditionVariant::None,
     SolverParameter::PreconditionVariant::None};
 
   const SmootherParameter::SmootherVariant smoother_scheme[test_index_max + 1] = {
@@ -61,6 +64,7 @@ struct StokesFlow
     SmootherParameter::SmootherVariant::Schwarz,
     SmootherParameter::SmootherVariant::Schwarz,
     SmootherParameter::SmootherVariant::Schwarz,
+    SmootherParameter::SmootherVariant::None,
     SmootherParameter::SmootherVariant::None};
 
   void
@@ -92,8 +96,6 @@ struct StokesFlow
     /// constraint for the coarse problem!
     if(prms.solver.variant != "FGMRES_GMGvelocity")
       prms.multigrid.coarse_grid.threshold_svd = 1.e-8;
-    // prms.multigrid.coarse_grid.iterative_solver                                   = "cg";
-    // prms.multigrid.coarse_grid.accuracy                                           = 1.e-12;
 
     //:: pre-smoother
     prms.multigrid.pre_smoother.variant                      = smoother_scheme[test_index];
