@@ -302,6 +302,183 @@ private:
 
 
 
+struct MGTransferBlockPrebuilt
+  : public MGTransferBase<LinearAlgebra::distributed::BlockVector<double>>
+{
+  using value_type  = double;
+  using vector_type = LinearAlgebra::distributed::BlockVector<value_type>;
+
+  static const bool supports_dof_handler_vector = true;
+
+  void
+  initialize_constraints(const std::vector<const MGConstrainedDoFs *> & mg_constrained_dofs)
+  {
+    initialize_constraints_impl<true>(mg_constrained_dofs);
+  }
+
+  void
+  clear()
+  {
+    clear_impl<true>();
+  }
+
+  template<int dim>
+  void
+  build(const std::vector<const DoFHandler<dim> *> dof_handlers)
+  {
+    /// if there exist no transfers for each block we assume an unconstrained
+    /// multigrid transfer such that we initialize a transfer by means of empty
+    /// MGConstrainedDoFs objects for each block
+    if(transfer_foreach_block.empty())
+    {
+      mg_constrained_dofs_dummy.clear();
+      mg_constrained_dofs_dummy.resize(dof_handlers.size());
+      for(auto b = 0U; b < transfer_foreach_block.size(); ++b)
+        mg_constrained_dofs_dummy[b].initialize(*(dof_handlers[b]));
+
+      std::vector<const MGConstrainedDoFs *> mg_constrained_dofs_ptr;
+      std::transform(mg_constrained_dofs_dummy.cbegin(),
+                     mg_constrained_dofs_dummy.cend(),
+                     std::back_inserter(mg_constrained_dofs_ptr),
+                     [](const auto & mgcdofs) { return &mgcdofs; });
+
+      initialize_constraints_impl<false>(mg_constrained_dofs_ptr);
+    }
+
+    AssertDimension(dof_handlers.size(), transfer_foreach_block.size());
+    for(auto b = 0U; b < transfer_foreach_block.size(); ++b)
+      transfer_foreach_block[b].build(*(dof_handlers[b]));
+  }
+
+  virtual void
+  prolongate(const unsigned int                                      to_level,
+             LinearAlgebra::distributed::BlockVector<double> &       dst,
+             const LinearAlgebra::distributed::BlockVector<double> & src) const override
+  {
+    AssertThrow(false, ExcMessage("TODO..."));
+  }
+
+  virtual void
+  restrict_and_add(const unsigned int                                      to_level,
+                   LinearAlgebra::distributed::BlockVector<double> &       dst,
+                   const LinearAlgebra::distributed::BlockVector<double> & src) const override
+  {
+    AssertThrow(false, ExcMessage("TODO..."));
+  }
+
+  template<int dim>
+  void
+  copy_to_mg(const DoFHandler<dim> &                                          dof_handler,
+             MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & dst,
+             const LinearAlgebra::distributed::BlockVector<double> &          src) const
+  {
+    AssertThrow(false, ExcMessage("TODO..."));
+  }
+
+  template<int dim>
+  void
+  copy_from_mg(const DoFHandler<dim> &                                                dof_handler,
+               LinearAlgebra::distributed::BlockVector<double> &                      dst,
+               const MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & src) const
+  {
+    AssertThrow(false, ExcMessage("TODO..."));
+  }
+
+  template<int dim>
+  void
+  copy_from_mg_add(const DoFHandler<dim> &                           dof_handler,
+                   LinearAlgebra::distributed::BlockVector<double> & dst,
+                   const MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & src) const
+  {
+    AssertThrow(false, ExcMessage("TODO..."));
+  }
+
+  template<int dim>
+  void
+  copy_to_mg(const std::vector<const DoFHandler<dim> *> &                     dof_handlers,
+             MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & dst,
+             const LinearAlgebra::distributed::BlockVector<double> &          src) const
+  {
+    AssertThrow(false, ExcMessage("TODO..."));
+  }
+
+  template<int dim>
+  void
+  copy_from_mg(const std::vector<const DoFHandler<dim> *> &                           dof_handlers,
+               LinearAlgebra::distributed::BlockVector<double> &                      dst,
+               const MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & src) const
+  {
+    AssertThrow(false, ExcMessage("TODO..."));
+  }
+
+  template<int dim>
+  void
+  copy_from_mg_add(const std::vector<const DoFHandler<dim> *> &      dof_handlers,
+                   LinearAlgebra::distributed::BlockVector<double> & dst,
+                   const MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & src) const
+  {
+    AssertThrow(false, ExcMessage("TODO..."));
+  }
+
+  std::size_t
+  memory_consumption() const
+  {
+    AssertThrow(false, ExcMessage("TODO..."));
+    return 0;
+  }
+
+  void
+  set_component_to_block_map(const std::vector<unsigned int> & map_in)
+  {
+    (void)map_in;
+    AssertThrow(
+      false,
+      ExcMessage(
+        "The block structure of this class is imposed by a set of DoFHandlers and not by a single DoFHandler with block structure."));
+  }
+
+  void
+  print_indices(std::ostream & os) const
+  {
+    AssertThrow(false, ExcMessage("TODO..."));
+  }
+
+  // template<typename OperationType, typename VectorTypeDst, typename VectorTypeSrc>
+  // void
+  // blockwise_transfer_operation(const unsigned int block, const OperationType & op, VectorTypeDst
+  // & dst, const VectorTypeSrc & src);
+  // {
+  //   AssertIndexRange(block, transfer_foreach_block.size());
+  //   op(transfer[block], dst, src);
+  // }
+
+  template<bool do_clear_mg_constrained_dofs_dummy>
+  void
+  initialize_constraints_impl(const std::vector<const MGConstrainedDoFs *> & mg_constrained_dofs)
+  {
+    clear_impl<do_clear_mg_constrained_dofs_dummy>();
+    transfer_foreach_block.resize(mg_constrained_dofs.size());
+    for(auto b = 0U; b < transfer_foreach_block.size(); ++b)
+      transfer_foreach_block[b].initialize_constraints(*(mg_constrained_dofs[b]));
+  }
+
+  template<bool do_clear_mg_constrained_dofs_dummy>
+  void
+  clear_impl()
+  {
+    if(do_clear_mg_constrained_dofs_dummy)
+      mg_constrained_dofs_dummy.clear();
+    transfer_foreach_block.clear();
+  }
+
+  std::vector<MGTransferPrebuilt<LinearAlgebra::distributed::Vector<double>>>
+    transfer_foreach_block;
+
+  std::vector<MGConstrainedDoFs> mg_constrained_dofs_dummy;
+};
+
+
+
 /**
  * A helper class which provides the infrastructure for a geometric multigrid
  * method with respect to the velocity component. In this way ModelProblem is
@@ -419,7 +596,8 @@ struct MGCollectionVelocityPressure
   using vector_type = LinearAlgebra::distributed::BlockVector<double>;
   using matrix_type =
     BlockSparseMatrixAugmented<dim, fe_degree_p, double, dof_layout_v, fe_degree_v, local_assembly>;
-  using mg_transfer_type  = MGTransferBlockMatrixFree<dim, double>;
+  // using mg_transfer_type  = MGTransferBlockMatrixFree<dim, double>;
+  using mg_transfer_type  = MGTransferBlockPrebuilt;
   using local_matrix_type = typename matrix_type::local_integrator_type::matrix_type;
   using mg_smother_schwarz_type =
     MGSmootherSchwarz<dim, matrix_type, local_matrix_type, vector_type>;
@@ -461,6 +639,8 @@ private:
   EquationData equation_data;
 
   std::shared_ptr<MGConstrainedDoFs>                     mg_constrained_dofs;
+  std::shared_ptr<MGConstrainedDoFs>                     mg_constrained_dofs_velocity;
+  std::shared_ptr<MGConstrainedDoFs>                     mg_constrained_dofs_pressure;
   std::vector<MGConstrainedDoFs>                         mgconstraineddofs;
   std::shared_ptr<const mg_transfer_type>                mg_transfer;
   MGLevelObject<matrix_type>                             mg_matrices;
@@ -3073,6 +3253,8 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   mg_transfer.reset();
   mg_constrained_dofs.reset();
   mgconstraineddofs.clear();
+  mg_constrained_dofs_velocity.reset();
+  mg_constrained_dofs_pressure.reset();
 }
 
 
@@ -3427,23 +3609,37 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   // else if(dof_layout_v == TPSS::DoFLayout::RT)
   //   AssertThrow(false, ExcMessage("no_flux_constraints?"));
 
-  mgconstraineddofs.clear();
-  mgconstraineddofs.reserve(2U);
-  // mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
-  auto & mg_constrained_dofs = mgconstraineddofs.emplace_back();
-  mg_constrained_dofs.initialize(*dof_handler_velocity);
-  /// TODO !!! is MGConstrainedDoFs aware of the mpi communication pattern coz
-  /// no index sets have to be passed explicitly?
-  const FEValuesExtractors::Vector velocities(0);
+  mg_constrained_dofs_velocity = std::make_shared<MGConstrainedDoFs>();
+  mg_constrained_dofs_velocity->initialize(*dof_handler_velocity);
   if(dof_layout_v == TPSS::DoFLayout::Q)
-    mg_constrained_dofs.make_zero_boundary_constraints(
+    mg_constrained_dofs_velocity->make_zero_boundary_constraints(
       *dof_handler_velocity, equation_data.dirichlet_boundary_ids_velocity);
-  // dof_handler->get_fe().component_mask(velocities));
-  else if(dof_layout_v == TPSS::DoFLayout::RT)
-    AssertThrow(false, ExcMessage("no_flux_constraints?"));
+  else if(dof_layout_v == TPSS::DoFLayout::RT) // !!!
+    for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+      mg_constrained_dofs_velocity->make_no_normal_flux_constraints(*dof_handler_velocity,
+                                                                    boundary_id,
+                                                                    0U);
 
-  auto & mg_constrained_dofs_pressure = mgconstraineddofs.emplace_back();
-  mg_constrained_dofs_pressure.initialize(*dof_handler_pressure);
+  mg_constrained_dofs_pressure = std::make_shared<MGConstrainedDoFs>();
+  mg_constrained_dofs_pressure->initialize(*dof_handler_pressure);
+
+  // mgconstraineddofs.clear();
+  // mgconstraineddofs.reserve(2U);
+  // // mg_constrained_dofs = std::make_shared<MGConstrainedDoFs>();
+  // auto & mg_constrained_dofs = mgconstraineddofs.emplace_back();
+  // mg_constrained_dofs.initialize(*dof_handler_velocity);
+  // /// TODO !!! is MGConstrainedDoFs aware of the mpi communication pattern coz
+  // /// no index sets have to be passed explicitly?
+  // const FEValuesExtractors::Vector velocities(0);
+  // if(dof_layout_v == TPSS::DoFLayout::Q)
+  //   mg_constrained_dofs.make_zero_boundary_constraints(
+  //     *dof_handler_velocity, equation_data.dirichlet_boundary_ids_velocity);
+  // // dof_handler->get_fe().component_mask(velocities));
+  // else if(dof_layout_v == TPSS::DoFLayout::RT)
+  //   AssertThrow(false, ExcMessage("no_flux_constraints?"));
+
+  // auto & mg_constrained_dofs_pressure = mgconstraineddofs.emplace_back();
+  // mg_constrained_dofs_pressure.initialize(*dof_handler_pressure);
 
   //: initialize level matrices A_l
   std::vector<std::vector<types::global_dof_index>> level_to_dofs_per_block(
@@ -3491,16 +3687,31 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
              ExcMessage("The dof partitioning is incompatible."));
     }
 
+
+    const IndexSet & locally_owned_dof_indices_v =
+      dof_handler_velocity->locally_owned_mg_dofs(level);
+    IndexSet locally_relevant_dof_indices_v;
+    DoFTools::extract_locally_relevant_level_dofs(*dof_handler_velocity,
+                                                  level,
+                                                  locally_relevant_dof_indices_v);
+
+    const IndexSet & locally_owned_dof_indices_p =
+      dof_handler_pressure->locally_owned_mg_dofs(level);
+    IndexSet locally_relevant_dof_indices_p;
+    DoFTools::extract_locally_relevant_level_dofs(*dof_handler_pressure,
+                                                  level,
+                                                  locally_relevant_dof_indices_p);
+
+    /// TODO rename level_constraints -> level_constraints_velocity
     AffineConstraints<double> level_constraints;
-    // level_constraints.reinit(locally_relevant_dof_indices);
-    level_constraints.reinit(lrdof_indices_foreach_block[0]);
+    level_constraints.reinit(locally_relevant_dof_indices_v);
     if(dof_layout_v == TPSS::DoFLayout::Q || dof_layout_v == TPSS::DoFLayout::RT) // !!!
-      level_constraints.add_lines(mg_constrained_dofs.get_boundary_indices(level));
+      level_constraints.add_lines(mg_constrained_dofs_velocity->get_boundary_indices(level));
     level_constraints.close();
 
     /// TODO mean value constraints for pressure
     AffineConstraints<double> level_constraints_pressure;
-    level_constraints_pressure.reinit(lrdof_indices_foreach_block[1]);
+    level_constraints_pressure.reinit(locally_relevant_dof_indices_p);
     level_constraints_pressure.close();
 
     /// TODO merge shifted mean value constraints
@@ -3537,8 +3748,12 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
   //: initialize multigrid transfer R_l
   {
-    AssertDimension(mgconstraineddofs.size(), 2U);
-    const auto tmp = std::make_shared<mg_transfer_type>(mgconstraineddofs);
+    // AssertDimension(mgconstraineddofs.size(), 2U);
+    // const auto tmp = std::make_shared<mg_transfer_type>(mgconstraineddofs);
+    const auto                             tmp = std::make_shared<mg_transfer_type>();
+    std::vector<const MGConstrainedDoFs *> mgconstraineddofs{mg_constrained_dofs_velocity.get(),
+                                                             mg_constrained_dofs_pressure.get()};
+    tmp->initialize_constraints(mgconstraineddofs);
     std::vector<const DoFHandler<dim> *> dofhandlers{dof_handler_velocity, dof_handler_pressure};
     tmp->build(dofhandlers);
     mg_transfer = tmp;
@@ -3618,8 +3833,12 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   AssertThrow(multigrid, ExcMessage("multigrid is uninitialized."));
   std::vector<const DoFHandler<dim> *> dofhandlers{dof_handler_velocity, dof_handler_pressure};
   if(!preconditioner_mg)
-    preconditioner_mg = std::make_shared<PreconditionMG<dim, vector_type, mg_transfer_type>>(
-      dofhandlers /**dof_handler*/, *multigrid, *mg_transfer);
+    preconditioner_mg =
+      std::make_shared<PreconditionMG<dim, vector_type, mg_transfer_type>>(dofhandlers,
+                                                                           *multigrid,
+                                                                           *mg_transfer);
+  // preconditioner_mg = std::make_shared<PreconditionMG<dim, vector_type, mg_transfer_type>>(
+  //  *dof_handler, *multigrid, *mg_transfer);
   return *preconditioner_mg;
 }
 
