@@ -308,6 +308,11 @@ struct MGTransferBlockPrebuilt
   using value_type  = double;
   using vector_type = LinearAlgebra::distributed::BlockVector<value_type>;
 
+  /**
+   * Internal deal.II switch: enabling function overloads of copy_to_mg() and
+   * copy_from_mg() based on a set of DoFHandlers instead of a single DoFHandler
+   * as first argument.
+   */
   static const bool supports_dof_handler_vector = true;
 
   void
@@ -326,9 +331,11 @@ struct MGTransferBlockPrebuilt
   void
   build(const std::vector<const DoFHandler<dim> *> dof_handlers)
   {
-    /// if there exist no transfers for each block we assume an unconstrained
-    /// multigrid transfer such that we initialize a transfer by means of empty
-    /// MGConstrainedDoFs objects for each block
+    /// if there exist no transfers for each block we assume the user wants to
+    /// construct an unconstrained multigrid transfer: thus, we initialize
+    /// transfers by means of empty MGConstrainedDoFs objects cached in @þ
+    /// mg_constrained_dofs_dummy
+
     if(transfer_foreach_block.empty())
     {
       mg_constrained_dofs_dummy.clear();
@@ -355,15 +362,21 @@ struct MGTransferBlockPrebuilt
              LinearAlgebra::distributed::BlockVector<double> &       dst,
              const LinearAlgebra::distributed::BlockVector<double> & src) const override
   {
-    AssertThrow(false, ExcMessage("TODO..."));
+    AssertDimension(transfer_foreach_block.size(), src.n_blocks());
+    AssertDimension(dst.n_blocks(), src.n_blocks()); // ???
+    for(auto b = 0U; b < transfer_foreach_block.size(); ++b)
+      transfer_foreach_block[b].prolongate(to_level, dst.block(b), src.block(b));
   }
 
   virtual void
-  restrict_and_add(const unsigned int                                      to_level,
+  restrict_and_add(const unsigned int                                      from_level,
                    LinearAlgebra::distributed::BlockVector<double> &       dst,
                    const LinearAlgebra::distributed::BlockVector<double> & src) const override
   {
-    AssertThrow(false, ExcMessage("TODO..."));
+    AssertDimension(transfer_foreach_block.size(), src.n_blocks());
+    AssertDimension(dst.n_blocks(), src.n_blocks()); // ???
+    for(auto b = 0U; b < transfer_foreach_block.size(); ++b)
+      transfer_foreach_block[b].restrict_and_add(from_level, dst.block(b), src.block(b));
   }
 
   template<int dim>
@@ -372,7 +385,11 @@ struct MGTransferBlockPrebuilt
              MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & dst,
              const LinearAlgebra::distributed::BlockVector<double> &          src) const
   {
-    AssertThrow(false, ExcMessage("TODO..."));
+    AssertThrow(false,
+                ExcMessage("The block structure of this class is "
+                           "imposed by a set of DoFHandlers "
+                           "and not by a single DoFHandler "
+                           "with block structure."));
   }
 
   template<int dim>
@@ -381,7 +398,11 @@ struct MGTransferBlockPrebuilt
                LinearAlgebra::distributed::BlockVector<double> &                      dst,
                const MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & src) const
   {
-    AssertThrow(false, ExcMessage("TODO..."));
+    AssertThrow(false,
+                ExcMessage("The block structure of this class is "
+                           "imposed by a set of DoFHandlers "
+                           "and not by a single DoFHandler "
+                           "with block structure."));
   }
 
   template<int dim>
@@ -390,7 +411,11 @@ struct MGTransferBlockPrebuilt
                    LinearAlgebra::distributed::BlockVector<double> & dst,
                    const MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & src) const
   {
-    AssertThrow(false, ExcMessage("TODO..."));
+    AssertThrow(false,
+                ExcMessage("The block structure of this class is "
+                           "imposed by a set of DoFHandlers "
+                           "and not by a single DoFHandler "
+                           "with block structure."));
   }
 
   template<int dim>
@@ -399,7 +424,28 @@ struct MGTransferBlockPrebuilt
              MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & dst,
              const LinearAlgebra::distributed::BlockVector<double> &          src) const
   {
-    AssertThrow(false, ExcMessage("TODO..."));
+    AssertDimension(dof_handlers.size(), transfer_foreach_block.size());
+    AssertDimension(dof_handlers.size(), src.n_blocks());
+
+    for(auto l = dst.min_level(); l <= dst.max_level(); ++l)
+      if(dst[l].n_blocks() != src.n_blocks())
+        dst[l].reinit(src.n_blocks());
+
+    for(auto b = 0U; b < transfer_foreach_block.size(); ++b)
+    {
+      MGLevelObject<LinearAlgebra::distributed::Vector<double>> block_dst(dst.min_level(),
+                                                                          dst.max_level());
+      for(auto l = dst.min_level(); l <= dst.max_level(); ++l)
+        std::swap(block_dst[l], dst[l].block(b));
+
+      transfer_foreach_block[b].copy_to_mg(*(dof_handlers[b]), block_dst, src.block(b));
+
+      for(auto l = dst.min_level(); l <= dst.max_level(); ++l)
+        std::swap(block_dst[l], dst[l].block(b));
+    }
+
+    for(auto l = dst.min_level(); l <= dst.max_level(); ++l)
+      dst[l].collect_sizes();
   }
 
   template<int dim>
@@ -408,7 +454,19 @@ struct MGTransferBlockPrebuilt
                LinearAlgebra::distributed::BlockVector<double> &                      dst,
                const MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & src) const
   {
-    AssertThrow(false, ExcMessage("TODO..."));
+    AssertDimension(dof_handlers.size(), transfer_foreach_block.size());
+    AssertDimension(dof_handlers.size(), src[src.max_level()].n_blocks());
+    for(auto l = src.min_level(); l <= src.max_level(); ++l)
+      if(src[l].n_blocks() != 0U)
+        AssertDimension(dof_handlers.size(), src[l].n_blocks());
+
+    /// dst might not be initialized
+    if(dst.n_blocks() != src[src.max_level()].n_blocks())
+      dst.reinit(src[src.max_level()].n_blocks());
+
+    copy_from_mg_impl<dim, false>(dof_handlers, dst, src);
+
+    dst.collect_sizes();
   }
 
   template<int dim>
@@ -417,40 +475,81 @@ struct MGTransferBlockPrebuilt
                    LinearAlgebra::distributed::BlockVector<double> & dst,
                    const MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & src) const
   {
-    AssertThrow(false, ExcMessage("TODO..."));
+    AssertDimension(dof_handlers.size(), transfer_foreach_block.size());
+    AssertDimension(dof_handlers.size(), src[src.max_level()].n_blocks());
+    for(auto l = src.min_level(); l <= src.max_level(); ++l)
+      if(src[l].n_blocks() != 0U)
+        AssertDimension(dof_handlers.size(), src[l].n_blocks());
+
+    /// we expect dst to be initialized properly if we shall to add values
+    AssertDimension(dst.n_blocks(), src[src.max_level()].n_blocks());
+
+    copy_from_mg_impl<dim, true>(dof_handlers, dst, src);
+  }
+
+  template<int dim, bool do_add>
+  void
+  copy_from_mg_impl(
+    const std::vector<const DoFHandler<dim> *> &                           dof_handlers,
+    LinearAlgebra::distributed::BlockVector<double> &                      dst,
+    const MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & src) const
+  {
+    for(auto b = 0U; b < transfer_foreach_block.size(); ++b)
+    {
+      MGLevelObject<LinearAlgebra::distributed::Vector<double>> block_src(src.min_level(),
+                                                                          src.max_level());
+      /// TODO check that no communication is pending for src
+      for(auto l = src.min_level(); l <= src.max_level(); ++l)
+        if(src[l].n_blocks() != 0U)
+        {
+          /// TODO use reinit() + copy_locally_owned_data()...
+          block_src[l].reinit(src[l].block(b));
+          block_src[l].copy_locally_owned_data_from(src[l].block(b));
+          /// ...or operator=() which additionally sets ghost values?
+          // block_src[l] = src[l].block(b);
+        }
+
+      if(do_add)
+        transfer_foreach_block[b].copy_from_mg_add(*(dof_handlers[b]), dst.block(b), block_src);
+      else
+        transfer_foreach_block[b].copy_from_mg(*(dof_handlers[b]), dst.block(b), block_src);
+    }
   }
 
   std::size_t
   memory_consumption() const
   {
-    AssertThrow(false, ExcMessage("TODO..."));
-    return 0;
+    const std::size_t sum = std::accumulate(transfer_foreach_block.cbegin(),
+                                            transfer_foreach_block.cend(),
+                                            static_cast<std::size_t>(0),
+                                            [](const auto & mem, const auto & transfer) {
+                                              return mem + transfer.memory_consumption();
+                                            });
+    return sum;
   }
 
   void
   set_component_to_block_map(const std::vector<unsigned int> & map_in)
   {
     (void)map_in;
-    AssertThrow(
-      false,
-      ExcMessage(
-        "The block structure of this class is imposed by a set of DoFHandlers and not by a single DoFHandler with block structure."));
+    AssertThrow(false,
+                ExcMessage("The block structure of this class is "
+                           "imposed by a set of DoFHandlers "
+                           "and not by a single DoFHandler "
+                           "with block structure."));
   }
 
   void
   print_indices(std::ostream & os) const
   {
-    AssertThrow(false, ExcMessage("TODO..."));
+    auto b = 0U;
+    for(const auto & transfer : transfer_foreach_block)
+    {
+      os << "block: " << b++ << std::endl;
+      transfer.print_indices(os);
+      os << std::endl;
+    }
   }
-
-  // template<typename OperationType, typename VectorTypeDst, typename VectorTypeSrc>
-  // void
-  // blockwise_transfer_operation(const unsigned int block, const OperationType & op, VectorTypeDst
-  // & dst, const VectorTypeSrc & src);
-  // {
-  //   AssertIndexRange(block, transfer_foreach_block.size());
-  //   op(transfer[block], dst, src);
-  // }
 
   template<bool do_clear_mg_constrained_dofs_dummy>
   void
