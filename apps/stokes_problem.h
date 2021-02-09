@@ -688,6 +688,10 @@ public:
   static constexpr int n_q_points_1d =
     fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
 
+  static constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
+  static constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
+  static constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
+
   ModelProblem(const RT::Parameter & rt_parameters_in, const EquationData & equation_data_in);
 
   void
@@ -1473,18 +1477,89 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
            ExcMessage("The dof partitioning is incompatible."));
   }
 
-  TrilinosWrappers::BlockSparsityPattern dsp(lodof_indices_foreach_block,
-                                             lodof_indices_foreach_block,
-                                             lrdof_indices_foreach_block,
-                                             MPI_COMM_WORLD);
-  DoFTools::make_flux_sparsity_pattern(dof_handler,
-                                       dsp,
-                                       zero_constraints,
-                                       false /*???*/,
-                                       cell_integrals_mask,
-                                       face_integrals_mask,
-                                       mpi_rank);
-  dsp.compress();
+  TrilinosWrappers::BlockSparsityPattern dsp(2U,2U);
+  // TrilinosWrappers::BlockSparsityPattern dsp(lodof_indices_foreach_block,
+  //                                            lodof_indices_foreach_block,
+  //                                            lrdof_indices_foreach_block,
+  //                                            MPI_COMM_WORLD);
+  // DoFTools::make_flux_sparsity_pattern(dof_handler,
+  //                                      dsp,
+  //                                      zero_constraints,
+  //                                      false /*???*/,
+  //                                      cell_integrals_mask,
+  //                                      face_integrals_mask,
+  //                                      mpi_rank);
+  // dsp.compress();
+
+  {
+    /// velocity - velocity
+    {
+      auto & this_dsp = dsp.block(0, 0);
+
+      this_dsp.reinit(lodof_indices_foreach_block[0],
+                      lodof_indices_foreach_block[0],
+                      lrdof_indices_foreach_block[0],
+                      MPI_COMM_WORLD);
+
+      Table<2, DoFTools::Coupling> cell_integrals_mask_velocity;
+      Table<2, DoFTools::Coupling> face_integrals_mask_velocity;
+      cell_integrals_mask_velocity.reinit(dim, dim);
+      face_integrals_mask_velocity.reinit(dim, dim);
+      for(auto i = 0U; i < dim; ++i)
+        for(auto j = 0U; j < dim; ++j)
+        {
+          cell_integrals_mask_velocity(i, j) = cell_integrals_mask(i, j);
+          face_integrals_mask_velocity(i, j) = face_integrals_mask(i, j);
+        }
+
+      DoFTools::make_flux_sparsity_pattern(dof_handler_velocity,
+                                           this_dsp,
+                                           zero_constraints_velocity,
+                                           false,
+                                           cell_integrals_mask_velocity,
+                                           face_integrals_mask_velocity,
+                                           mpi_rank);
+    }
+
+    /// pressure - pressure
+    {
+      auto & this_dsp = dsp.block(1, 1);
+
+      this_dsp.reinit(lodof_indices_foreach_block[1],
+                      lodof_indices_foreach_block[1],
+                      lrdof_indices_foreach_block[1],
+                      MPI_COMM_WORLD);
+
+      if(do_assemble_pressure_mass_matrix)
+        DoFTools::make_sparsity_pattern(dof_handler_pressure, this_dsp, constraints_pressure, true);
+    }
+
+    /// velocity - pressure
+    {
+      AssertThrow(!use_sipg_method && !use_hdivsipg_method, ExcMessage("TODO..."));
+      auto & this_dsp = dsp.block(0, 1);
+      this_dsp.reinit(lodof_indices_foreach_block[0],
+                      lodof_indices_foreach_block[1],
+                      lrdof_indices_foreach_block[0],
+                      MPI_COMM_WORLD);
+      Tools::make_sparsity_pattern(dof_handler_velocity, dof_handler_pressure, this_dsp);
+    }
+
+    /// pressure - velocity
+    {
+      AssertThrow(!use_sipg_method && !use_hdivsipg_method, ExcMessage("TODO..."));
+      auto & this_dsp = dsp.block(1, 0);
+      this_dsp.reinit(lodof_indices_foreach_block[1],
+                      lodof_indices_foreach_block[0],
+                      lrdof_indices_foreach_block[1],
+                      MPI_COMM_WORLD);
+
+      Tools::make_sparsity_pattern(dof_handler_pressure, dof_handler_velocity, this_dsp);
+    }
+
+    dsp.collect_sizes();
+    dsp.compress();
+  }
 
   system_matrix.clear();
   system_matrix.initialize(dsp,
@@ -1523,10 +1598,6 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 {
-  constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
-  constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
-  constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
-
   system_rhs.zero_out_ghosts();
 
   /// Assemble the velocity block, here block(0,0).
@@ -2412,6 +2483,11 @@ BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, 
 {
   AssertDimension(locally_owned_dof_indices_in.size(), ghosted_dof_indices_in.size());
   AssertDimension(locally_owned_dof_indices_in.size(), 2U);
+  AssertDimension(dsp.n_block_rows(), dsp.n_block_cols());
+  AssertDimension(dsp.n_block_rows(), 2U);
+  for(auto br = 0U; br < 2U; ++br)
+    for(auto bc = 0U; bc < 2U; ++bc)
+      Assert(dsp.block(br, bc).is_compressed(), ExcMessage("dsp block is not compressed."));
 
   matrix_type::reinit(dsp);
 
