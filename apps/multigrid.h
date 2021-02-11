@@ -88,7 +88,8 @@ struct CoarseGridParameter
 
   enum class PreconditionVariant
   {
-    None
+    None,
+    User
   };
 
   static std::string
@@ -127,8 +128,8 @@ struct MGParameter
  * A wrapper class extending MGCoarseGridSVD to more vector types than 'Vector'
  * (the vector type that is internally used by LAPACKFullMatrix). In particular,
  * we have MPI-capable vector types in mind like
- * 'LinearAlgebra::distributed::Vector'. However, vector types are only compatible
- * when the program runs with one MPI process.
+ * 'LinearAlgebra::distributed::Vector'. Of course, parallel vector types are
+ * only compatible when the program runs with one MPI process.
  */
 template<typename Number, typename VectorType>
 class MGCoarseGridSVDSerial : public MGCoarseGridBase<VectorType>
@@ -262,9 +263,14 @@ public:
     Base::coarse_grid_solver = solver;
   }
 
+  template<typename PreconditionerType = PreconditionIdentity>
   void
-  initialize_iterative(const MatrixType & coarse_matrix, const CoarseGridParameter & prms)
+  initialize_iterative(const MatrixType &          coarse_matrix,
+                       const CoarseGridParameter & prms,
+                       const PreconditionerType &  preconditioner = PreconditionIdentity{})
   {
+    constexpr bool is_prec_id = std::is_same<PreconditionerType, PreconditionIdentity>::value;
+
     const auto solver_control = Base::set_solver_control(prms);
     solver_control->set_max_steps(coarse_matrix.m());
 
@@ -274,23 +280,31 @@ public:
     switch(prms.precondition_variant)
     {
       case CoarseGridParameter::PreconditionVariant::None:
+        AssertThrow(
+          is_prec_id,
+          ExcMessage(
+            "If you want to make use of the preconditioner passed set precondition_variant to PreconditionVariant::User. If you want to apply the iterative solver without preconditioner do not pass a preconditioner to this function."));
+      case CoarseGridParameter::PreconditionVariant::User:
       {
         using coarse_grid_solver_type = MGCoarseGridIterativeSolver<VectorType,
                                                                     SolverSelector<VectorType>,
                                                                     MatrixType,
-                                                                    PreconditionIdentity>;
+                                                                    PreconditionerType>;
         Base::coarse_grid_solver      = std::make_shared<coarse_grid_solver_type>(iterative_solver,
                                                                              coarse_matrix,
-                                                                             preconditioner_id);
-        return;
+                                                                             preconditioner);
+        break;
       }
       default:
         AssertThrow(false, ExcMessage("PreconditionVariant isn't supported."));
     }
   }
 
+  template<typename PreconditionerType = PreconditionIdentity>
   void
-  initialize(const MatrixType & coarse_matrix, const CoarseGridParameter & prms)
+  initialize(const MatrixType &          coarse_matrix,
+             const CoarseGridParameter & prms,
+             const PreconditionerType &  preconditioner = PreconditionIdentity{})
   {
     AssertDimension(coarse_matrix.m(), coarse_matrix.n());
     const auto solver_control = Base::set_solver_control(prms);
@@ -299,7 +313,7 @@ public:
     switch(prms.solver_variant)
     {
       case CoarseGridParameter::SolverVariant::Iterative:
-        initialize_iterative(coarse_matrix, prms);
+        initialize_iterative(coarse_matrix, prms, preconditioner);
         return;
       case CoarseGridParameter::SolverVariant::DirectSVD:
         initialize_direct(coarse_matrix, prms);
