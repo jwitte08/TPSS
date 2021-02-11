@@ -96,6 +96,7 @@
 #include "equation_data.h"
 #include "multigrid.h"
 #include "postprocess.h"
+#include "preconditioner.h"
 #include "rt_parameter.h"
 #include "sparsity.h"
 #include "stokes_integrator.h"
@@ -273,18 +274,23 @@ private:
 
 
 /**
- * A block Schur preconditioner for the pressure-velocity block matrix. For more
- * details see step-56...
+ * A block Schur preconditioner (right preconditioner as demanded by FGMRES) for
+ * the Stokes block system. For more details see step-56...
  */
 template<class PreconditionerAType, class PreconditionerSType>
-class BlockSchurPreconditioner : public Subscriptor
+class BlockSchurPreconditionerStep56 : public Subscriptor
 {
 public:
-  BlockSchurPreconditioner(const TrilinosWrappers::BlockSparseMatrix & system_matrix,
-                           const TrilinosWrappers::SparseMatrix &      schur_complement_matrix,
-                           const PreconditionerAType &                 preconditioner_A,
-                           const PreconditionerSType &                 preconditioner_S,
-                           const bool                                  do_solve_A);
+  using preconditioner_A_type = PreconditionerAType;
+  using preconditioner_S_type = PreconditionerSType;
+  using solver_A_type         = IterativeInverse<PreconditionerAType>;
+  using solver_S_type         = IterativeInverse<PreconditionerSType>;
+
+  BlockSchurPreconditionerStep56(const TrilinosWrappers::BlockSparseMatrix & system_matrix_in,
+                                 const TrilinosWrappers::SparseMatrix &      S_in,
+                                 const PreconditionerAType &                 preconditioner_A_in,
+                                 const PreconditionerSType &                 preconditioner_S_in,
+                                 const bool                                  do_solve_A_in);
 
   void
   vmult(LinearAlgebra::distributed::BlockVector<double> &       dst,
@@ -293,16 +299,16 @@ public:
   std::string
   get_summary() const;
 
+private:
+  const preconditioner_A_type &                                                 preconditioner_A;
+  std::shared_ptr<solver_A_type>                                                solver_A;
+  std::shared_ptr<solver_S_type>                                                solver_S;
+  std::shared_ptr<PreconditionBlockSchur<preconditioner_A_type, solver_S_type>> block_schur_cheap;
+  std::shared_ptr<PreconditionBlockSchur<solver_A_type, solver_S_type>> block_schur_expensive;
+
+  const bool           do_solve_A;
   mutable unsigned int n_iterations_A;
   mutable unsigned int n_iterations_S;
-
-private:
-  const TrilinosWrappers::BlockSparseMatrix & system_matrix;
-  const TrilinosWrappers::SparseMatrix &      schur_complement_matrix;
-  const PreconditionerAType &                 preconditioner_A;
-  const PreconditionerSType &                 preconditioner_S;
-
-  const bool do_solve_A;
 };
 
 
@@ -522,9 +528,6 @@ template<int             dim,
          LocalAssembly   local_assembly = LocalAssembly::Tensor>
 struct MGCollectionVelocityPressure
 {
-  static constexpr int n_q_points_1d =
-    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
-
   using vector_type = LinearAlgebra::distributed::BlockVector<double>;
   using matrix_type =
     BlockSparseMatrixAugmented<dim, fe_degree_p, double, dof_layout_v, fe_degree_v, local_assembly>;
@@ -533,6 +536,13 @@ struct MGCollectionVelocityPressure
   using local_matrix_type = typename matrix_type::local_integrator_type::matrix_type;
   using mg_smother_schwarz_type =
     MGSmootherSchwarz<dim, matrix_type, local_matrix_type, vector_type>;
+
+  static constexpr int n_q_points_1d =
+    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
+
+  static constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
+  static constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
+  static constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
 
   MGCollectionVelocityPressure(const RT::Parameter & rt_parameters_in,
                                const EquationData &  equation_data_in);
@@ -1477,7 +1487,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
            ExcMessage("The dof partitioning is incompatible."));
   }
 
-  TrilinosWrappers::BlockSparsityPattern dsp(2U,2U);
+  TrilinosWrappers::BlockSparsityPattern dsp(2U, 2U);
   // TrilinosWrappers::BlockSparsityPattern dsp(lodof_indices_foreach_block,
   //                                            lodof_indices_foreach_block,
   //                                            lrdof_indices_foreach_block,
@@ -2011,9 +2021,9 @@ ModelProblem<dim, fe_degree_p, method>::make_multigrid_velocity_pressure()
   std::vector<unsigned int> component_mask(dim + 1, 0U);
   component_mask[dim] = 1U; // pressure
 
-  dof_handler.distribute_mg_dofs();
-  for(auto level = 0U; level <= max_level(); ++level)
-    DoFRenumbering::component_wise(dof_handler, level, component_mask);
+  // dof_handler.distribute_mg_dofs();
+  // for(auto level = 0U; level <= max_level(); ++level)
+  //   DoFRenumbering::component_wise(dof_handler, level, component_mask);
   dof_handler_velocity.distribute_mg_dofs();
   dof_handler_pressure.distribute_mg_dofs();
 
@@ -2170,7 +2180,8 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     //     SparseILU<double> S_preconditioner;
     //     S_preconditioner.initialize(pressure_mass_matrix);
 
-    //     const BlockSchurPreconditioner<typename std::decay<decltype(A_preconditioner)>::type,
+    //     const BlockSchurPreconditionerStep56<typename
+    //     std::decay<decltype(A_preconditioner)>::type,
     //                                    typename std::decay<decltype(S_preconditioner)>::type>
     //       preconditioner(
     //         system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner,
@@ -2189,23 +2200,28 @@ ModelProblem<dim, fe_degree_p, method>::solve()
     TrilinosWrappers::PreconditionILU S_preconditioner;
     S_preconditioner.initialize(pressure_mass_matrix);
 
-    const BlockSchurPreconditioner<typename std::decay<decltype(A_preconditioner)>::type,
-                                   typename std::decay<decltype(S_preconditioner)>::type>
+    const BlockSchurPreconditionerStep56<typename std::decay<decltype(A_preconditioner)>::type,
+                                         typename std::decay<decltype(S_preconditioner)>::type>
       preconditioner(
         system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner, use_expensive);
 
+    /// BlockSchurPreconditionerStep56 is designed as right preconditioner since
+    /// SolverFGMRES applies preconditioners always "from the right-hand". If
+    /// changing the outer solver keep that in mind. An analogue left
+    /// preconditioner is suggested in the extension section of step-22...
     iterative_solve_impl(preconditioner, "fgmres");
 
     *pcout << preconditioner.get_summary();
   }
 
-  //   else if(rt_parameters.solver.variant == "GMRES_GMG")
-  //   {
-  //     make_multigrid_velocity_pressure();
-  //     auto & preconditioner = mgc_velocity_pressure.get_preconditioner();
+  else if(rt_parameters.solver.variant == "GMRES_GMG")
+  {
+    const auto mgc_velocity_pressure = make_multigrid_velocity_pressure();
 
-  //     iterative_solve_impl(preconditioner, "gmres");
-  //   }
+    auto & preconditioner = mgc_velocity_pressure->get_preconditioner();
+
+    iterative_solve_impl(preconditioner, "gmres");
+  }
 
   else if(rt_parameters.solver.variant == "CG_GMG")
   {
@@ -2780,6 +2796,7 @@ SparseMatrixAugmented<dim, fe_degree, dof_layout>::clear()
 }
 
 
+
 template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
 SparseMatrixAugmented<dim, fe_degree, dof_layout>::operator const FullMatrix<value_type> &() const
 {
@@ -2794,67 +2811,60 @@ SparseMatrixAugmented<dim, fe_degree, dof_layout>::operator const FullMatrix<val
 
 
 template<class PreconditionerAType, class PreconditionerSType>
-BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::BlockSchurPreconditioner(
-  const TrilinosWrappers::BlockSparseMatrix & system_matrix,
-  const TrilinosWrappers::SparseMatrix &      schur_complement_matrix,
-  const PreconditionerAType &                 preconditioner_A,
-  const PreconditionerSType &                 preconditioner_S,
-  const bool                                  do_solve_A)
-  : n_iterations_A(0),
-    n_iterations_S(0),
-    system_matrix(system_matrix),
-    schur_complement_matrix(schur_complement_matrix),
-    preconditioner_A(preconditioner_A),
-    preconditioner_S(preconditioner_S),
-    do_solve_A(do_solve_A)
+BlockSchurPreconditionerStep56<PreconditionerAType, PreconditionerSType>::
+  BlockSchurPreconditionerStep56(const TrilinosWrappers::BlockSparseMatrix & system_matrix_in,
+                                 const TrilinosWrappers::SparseMatrix &      S_in,
+                                 const PreconditionerAType &                 preconditioner_A_in,
+                                 const PreconditionerSType &                 preconditioner_S_in,
+                                 const bool                                  do_solve_A_in)
+  : preconditioner_A(preconditioner_A_in),
+    do_solve_A(do_solve_A_in),
+    n_iterations_A(0),
+    n_iterations_S(0)
 {
+  solver_S                   = std::make_shared<solver_S_type>(S_in, preconditioner_S_in);
+  solver_S->solver_variant   = "cg";
+  solver_S->n_iterations_max = 999;
+  solver_S->rel_accuracy     = 1.e-6;
+
+  if(do_solve_A)
+  {
+    solver_A = std::make_shared<solver_A_type>(system_matrix_in.block(0, 0), preconditioner_A);
+    solver_A->solver_variant   = "cg";
+    solver_A->n_iterations_max = 9999;
+    solver_A->rel_accuracy     = 1.e-4;
+    block_schur_expensive =
+      std::make_shared<PreconditionBlockSchur<solver_A_type, solver_S_type>>(system_matrix_in,
+                                                                             *solver_A,
+                                                                             *solver_S);
+  }
+  else
+  {
+    block_schur_cheap =
+      std::make_shared<PreconditionBlockSchur<preconditioner_A_type, solver_S_type>>(
+        system_matrix_in, preconditioner_A, *solver_S);
+  }
 }
 
 
 
 template<class PreconditionerAType, class PreconditionerSType>
 void
-BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
+BlockSchurPreconditionerStep56<PreconditionerAType, PreconditionerSType>::vmult(
   LinearAlgebra::distributed::BlockVector<double> &       dst,
   const LinearAlgebra::distributed::BlockVector<double> & src) const
 {
-  LinearAlgebra::distributed::Vector<double> utmp(src.block(0).get_partitioner());
-
-  // First solve with the approximation for S
+  if(do_solve_A)
   {
-    SolverControl solver_control(998, 1e-6 * src.block(1).l2_norm());
-    SolverCG<LinearAlgebra::distributed::Vector<double>> cg(solver_control);
-
-    dst.block(1) = 0.0;
-    cg.solve(schur_complement_matrix, dst.block(1), src.block(1), preconditioner_S);
-
-    n_iterations_S += solver_control.last_step();
-    dst.block(1) *= -1.0;
-  }
-
-  // Second, apply the top right block (B^T)
-  {
-    system_matrix.block(0, 1).vmult(utmp, dst.block(1));
-    utmp *= -1.0;
-    utmp += src.block(0);
-  }
-
-  // Finally, either solve with the top left block
-  // or just apply one preconditioner sweep
-  if(do_solve_A == true)
-  {
-    SolverControl solver_control(9999, utmp.l2_norm() * 1e-4);
-    SolverCG<LinearAlgebra::distributed::Vector<double>> cg(solver_control);
-
-    dst.block(0) = 0.0;
-    cg.solve(system_matrix.block(0, 0), dst.block(0), utmp, preconditioner_A);
-
-    n_iterations_A += solver_control.last_step();
+    block_schur_expensive->vmult(dst, src);
+    n_iterations_A += block_schur_expensive->preconditioner_A.n_solver_iterations;
+    n_iterations_S += block_schur_expensive->preconditioner_S.n_solver_iterations;
   }
   else
   {
-    preconditioner_A.vmult(dst.block(0), utmp);
+    block_schur_cheap->vmult(dst, src);
     n_iterations_A += 1;
+    n_iterations_S += block_schur_cheap->preconditioner_S.n_solver_iterations;
   }
 }
 
@@ -2862,10 +2872,10 @@ BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::vmult(
 
 template<class PreconditionerAType, class PreconditionerSType>
 std::string
-BlockSchurPreconditioner<PreconditionerAType, PreconditionerSType>::get_summary() const
+BlockSchurPreconditionerStep56<PreconditionerAType, PreconditionerSType>::get_summary() const
 {
   std::ostringstream oss;
-  oss << Util::parameter_to_fstring("Summary of BlockSchurPreconditioner:", "//////////");
+  oss << Util::parameter_to_fstring("Summary of BlockSchurPreconditionerStep56:", "//////////");
   oss << Util::parameter_to_fstring("Accum. number of iterations (~A^-1):", n_iterations_A);
   oss << Util::parameter_to_fstring("Accum. number of iterations (~S^-1):", n_iterations_S);
   return oss.str();
@@ -2880,11 +2890,15 @@ MGTransferBlockPrebuilt::initialize_constraints(
   initialize_constraints_impl<true>(mg_constrained_dofs);
 }
 
+
+
 void
 MGTransferBlockPrebuilt::clear()
 {
   clear_impl<true>();
 }
+
+
 
 template<int dim>
 void
@@ -2916,6 +2930,8 @@ MGTransferBlockPrebuilt::build(const std::vector<const DoFHandler<dim> *> dof_ha
     transfer_foreach_block[b].build(*(dof_handlers[b]));
 }
 
+
+
 void
 MGTransferBlockPrebuilt::prolongate(
   const unsigned int                                      to_level,
@@ -2928,6 +2944,8 @@ MGTransferBlockPrebuilt::prolongate(
     transfer_foreach_block[b].prolongate(to_level, dst.block(b), src.block(b));
 }
 
+
+
 void
 MGTransferBlockPrebuilt::restrict_and_add(
   const unsigned int                                      from_level,
@@ -2939,6 +2957,8 @@ MGTransferBlockPrebuilt::restrict_and_add(
   for(auto b = 0U; b < transfer_foreach_block.size(); ++b)
     transfer_foreach_block[b].restrict_and_add(from_level, dst.block(b), src.block(b));
 }
+
+
 
 template<int dim>
 void
@@ -2955,6 +2975,8 @@ MGTransferBlockPrebuilt::copy_to_mg(
                          "with block structure."));
 }
 
+
+
 template<int dim>
 void
 MGTransferBlockPrebuilt::copy_from_mg(
@@ -2970,6 +2992,8 @@ MGTransferBlockPrebuilt::copy_from_mg(
                          "with block structure."));
 }
 
+
+
 template<int dim>
 void
 MGTransferBlockPrebuilt::copy_from_mg_add(
@@ -2984,6 +3008,8 @@ MGTransferBlockPrebuilt::copy_from_mg_add(
                          "and not by a single DoFHandler "
                          "with block structure."));
 }
+
+
 
 template<int dim>
 void
@@ -3016,6 +3042,8 @@ MGTransferBlockPrebuilt::copy_to_mg(
     dst[l].collect_sizes();
 }
 
+
+
 template<int dim>
 void
 MGTransferBlockPrebuilt::copy_from_mg(
@@ -3038,6 +3066,8 @@ MGTransferBlockPrebuilt::copy_from_mg(
   dst.collect_sizes();
 }
 
+
+
 template<int dim>
 void
 MGTransferBlockPrebuilt::copy_from_mg_add(
@@ -3056,6 +3086,8 @@ MGTransferBlockPrebuilt::copy_from_mg_add(
 
   copy_from_mg_impl<dim, true>(dof_handlers, dst, src);
 }
+
+
 
 template<int dim, bool do_add>
 void
@@ -3086,6 +3118,8 @@ MGTransferBlockPrebuilt::copy_from_mg_impl(
   }
 }
 
+
+
 std::size_t
 MGTransferBlockPrebuilt::memory_consumption() const
 {
@@ -3098,6 +3132,8 @@ MGTransferBlockPrebuilt::memory_consumption() const
   return sum;
 }
 
+
+
 void
 MGTransferBlockPrebuilt::set_component_to_block_map(const std::vector<unsigned int> & map_in)
 {
@@ -3108,6 +3144,8 @@ MGTransferBlockPrebuilt::set_component_to_block_map(const std::vector<unsigned i
                          "and not by a single DoFHandler "
                          "with block structure."));
 }
+
+
 
 void
 MGTransferBlockPrebuilt::print_indices(std::ostream & os) const
@@ -3121,6 +3159,8 @@ MGTransferBlockPrebuilt::print_indices(std::ostream & os) const
   }
 }
 
+
+
 template<bool do_clear_mg_constrained_dofs_dummy>
 void
 MGTransferBlockPrebuilt::initialize_constraints_impl(
@@ -3131,6 +3171,8 @@ MGTransferBlockPrebuilt::initialize_constraints_impl(
   for(auto b = 0U; b < transfer_foreach_block.size(); ++b)
     transfer_foreach_block[b].initialize_constraints(*(mg_constrained_dofs[b]));
 }
+
+
 
 template<bool do_clear_mg_constrained_dofs_dummy>
 void
@@ -3223,7 +3265,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::initialize(
                                           locally_relevant_dof_indices,
                                           MPI_COMM_WORLD);
     /// TODO 1.) this method does not receive the mpi_rank: is it compatible in
-    /// parallel? 2.) there is no variant which receives constraints: is it
+    /// parallel? YES! 2.) there is no variant which receives constraints: is it
     /// applicable in the Hdiv case?
     MGTools::make_flux_sparsity_pattern(
       *dof_handler, dsp, level, cell_integrals_mask, face_integrals_mask);
@@ -3556,17 +3598,16 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   AssertThrow(TPSS::get_dof_layout(dof_handler_velocity->get_fe().base_element(0)) == dof_layout_v,
               ExcMessage("dof_handler_velocity and dof_layout_v are incompatible."));
 
-  constexpr bool use_sipg_method =
-    dof_layout_v == TPSS::DoFLayout::DGQ || dof_layout_v == TPSS::DoFLayout::RT;
-  constexpr bool use_conf_method = dof_layout_v == TPSS::DoFLayout::Q;
+  // constexpr bool use_sipg_method =
+  //   dof_layout_v == TPSS::DoFLayout::DGQ || dof_layout_v == TPSS::DoFLayout::RT;
+  // constexpr bool use_conf_method = dof_layout_v == TPSS::DoFLayout::Q;
 
   /// Initialize matrix-free storage on current level
   {
     typename MatrixFree<dim, double>::AdditionalData mf_features;
     mf_features.mg_level = level;
 
-    std::vector<const DoFHandler<dim> *> dof_handler_foreach_block{dof_handler_velocity,
-                                                                   dof_handler_pressure};
+    std::vector<const DoFHandler<dim> *> dofhandlers{dof_handler_velocity, dof_handler_pressure};
 
     std::vector<const AffineConstraints<double> *> constraints_foreach_block{
       &level_constraints_velocity, &level_constraints_pressure};
@@ -3574,8 +3615,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     QGauss<1> quadrature(n_q_points_1d);
 
     const auto mf_storage = std::make_shared<MatrixFree<dim, double>>();
-    mf_storage->reinit(
-      *mapping, dof_handler_foreach_block, constraints_foreach_block, quadrature, mf_features);
+    mf_storage->reinit(*mapping, dofhandlers, constraints_foreach_block, quadrature, mf_features);
 
     /// initializes the local matrix integrator within BlockSparseMatrixAugmented
     mg_matrices[level].initialize(mf_storage, equation_data);
@@ -3620,7 +3660,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     };
 
     const auto copier = [&](const CopyData & copy_data) {
-      AssertDimension(copy_data.cell_data.size(), 1U);
+      AssertIndexRange(copy_data.cell_data.size(), 2U);
 
       for(const auto & cd : copy_data.cell_data)
         distribute_local_to_global_impl(cd);
@@ -3652,7 +3692,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                             scratch_data,
                             copy_data,
                             MeshWorker::assemble_own_cells);
-    else if(use_sipg_method)
+    else if(use_sipg_method || use_hdivsipg_method)
       MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
                             dof_handler_velocity->end_mg(level),
                             cell_worker,
@@ -3784,7 +3824,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                             scratch_data,
                             copy_data,
                             MeshWorker::assemble_own_cells);
-    else if(use_sipg_method)
+    else if(use_sipg_method || use_hdivsipg_method)
       MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
                             dof_handler_velocity->end_mg(level),
                             cell_worker,
@@ -3920,108 +3960,159 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   // mg_constrained_dofs_pressure.initialize(*dof_handler_pressure);
 
   //: initialize level matrices A_l
-  std::vector<std::vector<types::global_dof_index>> level_to_dofs_per_block(
-    mg_level_max + 1, std::vector<types::global_dof_index>(2, numbers::invalid_dof_index));
-  MGTools::count_dofs_per_block(*dof_handler, level_to_dofs_per_block);
+  // std::vector<std::vector<types::global_dof_index>> level_to_dofs_per_block(
+  //   mg_level_max + 1, std::vector<types::global_dof_index>(2, numbers::invalid_dof_index));
+  // MGTools::count_dofs_per_block(*dof_handler, level_to_dofs_per_block);
   mg_matrices.resize(mg_level_min, mg_level_max);
   for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
   {
-    const auto & locally_owned_dof_indices = dof_handler->locally_owned_mg_dofs(level);
-    IndexSet     locally_relevant_dof_indices;
-    DoFTools::extract_locally_relevant_level_dofs(*dof_handler,
-                                                  level,
-                                                  locally_relevant_dof_indices);
+    // const auto & locally_owned_dof_indices = dof_handler->locally_owned_mg_dofs(level);
+    // IndexSet     locally_relevant_dof_indices;
+    // DoFTools::extract_locally_relevant_level_dofs(*dof_handler,
+    //                                               level,
+    //                                               locally_relevant_dof_indices);
 
-    const auto &                  dofs_per_block  = level_to_dofs_per_block[level];
-    const types::global_dof_index n_dofs_velocity = dofs_per_block[0];
-    const types::global_dof_index n_dofs_pressure = dofs_per_block[1];
+    // const auto &                  dofs_per_block  = level_to_dofs_per_block[level];
+    // const types::global_dof_index n_dofs_velocity = dofs_per_block[0];
+    // const types::global_dof_index n_dofs_pressure = dofs_per_block[1];
 
+    // std::vector<IndexSet> lodof_indices_foreach_block;
+    // lodof_indices_foreach_block.emplace_back(
+    //   locally_owned_dof_indices.get_view(0U, n_dofs_velocity));
+    // lodof_indices_foreach_block.emplace_back(
+    //   locally_owned_dof_indices.get_view(n_dofs_velocity, n_dofs_velocity + n_dofs_pressure));
+    // std::vector<IndexSet> lrdof_indices_foreach_block;
+    // lrdof_indices_foreach_block.emplace_back(
+    //   locally_relevant_dof_indices.get_view(0U, n_dofs_velocity));
+    // lrdof_indices_foreach_block.emplace_back(
+    //   locally_relevant_dof_indices.get_view(n_dofs_velocity, n_dofs_velocity + n_dofs_pressure));
+
+    // {
+    //   const auto & get_locally_relevant_dof_indices = [&](const auto & dofh) {
+    //     IndexSet locally_relevant_dof_indices;
+    //     DoFTools::extract_locally_relevant_level_dofs(dofh, level, locally_relevant_dof_indices);
+    //     return locally_relevant_dof_indices;
+    //   };
+    //   (void)get_locally_relevant_dof_indices;
+    //   /// if these assertions fail you might have not renumbered the dofs in
+    //   /// dof_handler enforcing a block-structure: velocity dofs first and
+    //   /// pressure dofs second
+    //   Assert(get_locally_relevant_dof_indices(*dof_handler_velocity) ==
+    //            lrdof_indices_foreach_block.at(0),
+    //          ExcMessage("The dof partitioning is incompatible."));
+    //   Assert(get_locally_relevant_dof_indices(*dof_handler_pressure) ==
+    //            lrdof_indices_foreach_block.at(1),
+    //          ExcMessage("The dof partitioning is incompatible."));
+    // }
+
+
+
+    // const IndexSet & locally_owned_dof_indices_v =
+    //   dof_handler_velocity->locally_owned_mg_dofs(level);
+    // IndexSet locally_relevant_dof_indices_v;
+    // DoFTools::extract_locally_relevant_level_dofs(*dof_handler_velocity,
+    //                                               level,
+    //                                               locally_relevant_dof_indices_v);
+
+    // const IndexSet & locally_owned_dof_indices_p =
+    //   dof_handler_pressure->locally_owned_mg_dofs(level);
+    // IndexSet locally_relevant_dof_indices_p;
+    // DoFTools::extract_locally_relevant_level_dofs(*dof_handler_pressure,
+    //                                               level,
+    //                                               locally_relevant_dof_indices_p);
+
+    /// TODO remove duplicates above...
     std::vector<IndexSet> lodof_indices_foreach_block;
-    lodof_indices_foreach_block.emplace_back(
-      locally_owned_dof_indices.get_view(0U, n_dofs_velocity));
-    lodof_indices_foreach_block.emplace_back(
-      locally_owned_dof_indices.get_view(n_dofs_velocity, n_dofs_velocity + n_dofs_pressure));
+    lodof_indices_foreach_block.emplace_back(dof_handler_velocity->locally_owned_mg_dofs(level));
+    lodof_indices_foreach_block.emplace_back(dof_handler_pressure->locally_owned_mg_dofs(level));
     std::vector<IndexSet> lrdof_indices_foreach_block;
-    lrdof_indices_foreach_block.emplace_back(
-      locally_relevant_dof_indices.get_view(0U, n_dofs_velocity));
-    lrdof_indices_foreach_block.emplace_back(
-      locally_relevant_dof_indices.get_view(n_dofs_velocity, n_dofs_velocity + n_dofs_pressure));
-
-    {
-      const auto & get_locally_relevant_dof_indices = [&](const auto & dofh) {
-        IndexSet locally_relevant_dof_indices;
-        DoFTools::extract_locally_relevant_level_dofs(dofh, level, locally_relevant_dof_indices);
-        return locally_relevant_dof_indices;
-      };
-      (void)get_locally_relevant_dof_indices;
-      /// if these assertions fail you might have not renumbered the dofs in
-      /// dof_handler enforcing a block-structure: velocity dofs first and
-      /// pressure dofs second
-      Assert(get_locally_relevant_dof_indices(*dof_handler_velocity) ==
-               lrdof_indices_foreach_block.at(0),
-             ExcMessage("The dof partitioning is incompatible."));
-      Assert(get_locally_relevant_dof_indices(*dof_handler_pressure) ==
-               lrdof_indices_foreach_block.at(1),
-             ExcMessage("The dof partitioning is incompatible."));
-    }
-
-
-    const IndexSet & locally_owned_dof_indices_v =
-      dof_handler_velocity->locally_owned_mg_dofs(level);
-    IndexSet locally_relevant_dof_indices_v;
     DoFTools::extract_locally_relevant_level_dofs(*dof_handler_velocity,
                                                   level,
-                                                  locally_relevant_dof_indices_v);
-
-    const IndexSet & locally_owned_dof_indices_p =
-      dof_handler_pressure->locally_owned_mg_dofs(level);
-    IndexSet locally_relevant_dof_indices_p;
+                                                  lrdof_indices_foreach_block.emplace_back());
     DoFTools::extract_locally_relevant_level_dofs(*dof_handler_pressure,
                                                   level,
-                                                  locally_relevant_dof_indices_p);
+                                                  lrdof_indices_foreach_block.emplace_back());
 
-    /// TODO rename level_constraints -> level_constraints_velocity
-    AffineConstraints<double> level_constraints;
-    level_constraints.reinit(locally_relevant_dof_indices_v);
+    AffineConstraints<double> level_constraints_velocity;
+    level_constraints_velocity.reinit(lrdof_indices_foreach_block[0]);
     if(dof_layout_v == TPSS::DoFLayout::Q || dof_layout_v == TPSS::DoFLayout::RT) // !!!
-      level_constraints.add_lines(mg_constrained_dofs_velocity->get_boundary_indices(level));
-    level_constraints.close();
+      level_constraints_velocity.add_lines(
+        mg_constrained_dofs_velocity->get_boundary_indices(level));
+    level_constraints_velocity.close();
 
-    /// TODO mean value constraints for pressure
+    /// TODO mean value constraints for pressure?
     AffineConstraints<double> level_constraints_pressure;
-    level_constraints_pressure.reinit(locally_relevant_dof_indices_p);
+    level_constraints_pressure.reinit(lrdof_indices_foreach_block[1]);
     level_constraints_pressure.close();
 
-    /// TODO merge shifted mean value constraints
+    TrilinosWrappers::BlockSparsityPattern dsp(2U, 2U);
+    {
+      /// velocity - velocity
+      {
+        auto & this_dsp = dsp.block(0, 0);
+        this_dsp.reinit(lodof_indices_foreach_block[0],
+                        lodof_indices_foreach_block[0],
+                        lrdof_indices_foreach_block[0],
+                        MPI_COMM_WORLD);
+        Table<2, DoFTools::Coupling> cell_integrals_mask_velocity;
+        Table<2, DoFTools::Coupling> face_integrals_mask_velocity;
+        cell_integrals_mask_velocity.reinit(dim, dim);
+        face_integrals_mask_velocity.reinit(dim, dim);
+        for(auto i = 0U; i < dim; ++i)
+          for(auto j = 0U; j < dim; ++j)
+          {
+            cell_integrals_mask_velocity(i, j) = cell_integrals_mask(i, j);
+            face_integrals_mask_velocity(i, j) = face_integrals_mask(i, j);
+          }
+        MGTools::make_flux_sparsity_pattern(*dof_handler_velocity,
+                                            this_dsp,
+                                            level,
+                                            cell_integrals_mask_velocity,
+                                            face_integrals_mask_velocity);
+      }
 
-    TrilinosWrappers::BlockSparsityPattern dsp(lodof_indices_foreach_block,
-                                               lodof_indices_foreach_block,
-                                               lrdof_indices_foreach_block,
-                                               MPI_COMM_WORLD);
-    /// TODO 1.) this method does not receive the mpi rank: is it compatible in
-    /// parallel? 2.) there is no variant which receives constraints: is it
-    /// applicable in the Hdiv case?
-    MGTools::make_flux_sparsity_pattern(*dof_handler,
-                                        dsp,
-                                        level,
-                                        // level_constraints,
-                                        // false /*???*/,
-                                        cell_integrals_mask,
-                                        face_integrals_mask);
-    dsp.compress();
+      /// pressure - pressure (empty but setup sizes)
+      {
+        auto & this_dsp = dsp.block(1, 1);
+        this_dsp.reinit(lodof_indices_foreach_block[1],
+                        lodof_indices_foreach_block[1],
+                        lrdof_indices_foreach_block[1],
+                        MPI_COMM_WORLD);
+      }
+
+      /// velocity - pressure
+      {
+        AssertThrow(!use_sipg_method && !use_hdivsipg_method, ExcMessage("TODO..."));
+        auto & this_dsp = dsp.block(0, 1);
+        this_dsp.reinit(lodof_indices_foreach_block[0],
+                        lodof_indices_foreach_block[1],
+                        lrdof_indices_foreach_block[0],
+                        MPI_COMM_WORLD);
+        Tools::make_sparsity_pattern(*dof_handler_velocity, *dof_handler_pressure, this_dsp, level);
+      }
+
+      /// pressure - velocity
+      {
+        AssertThrow(!use_sipg_method && !use_hdivsipg_method, ExcMessage("TODO..."));
+        auto & this_dsp = dsp.block(1, 0);
+        this_dsp.reinit(lodof_indices_foreach_block[1],
+                        lodof_indices_foreach_block[0],
+                        lrdof_indices_foreach_block[1],
+                        MPI_COMM_WORLD);
+        Tools::make_sparsity_pattern(*dof_handler_pressure, *dof_handler_velocity, this_dsp, level);
+      }
+
+      dsp.collect_sizes();
+      dsp.compress();
+    }
 
     mg_matrices[level].initialize(dsp,
                                   lodof_indices_foreach_block,
                                   lrdof_indices_foreach_block,
                                   MPI_COMM_WORLD);
 
-    // ... not true anymore
-    // /// NOTE that instead of using level constraints only for the velocity
-    // /// component we use the constraints for the complete block system exploiting
-    // /// the fact all velocity dofs come first
-
     //: assemble the velocity system A_l on current level l.
-    assemble_multigrid(level, level_constraints, level_constraints_pressure);
+    assemble_multigrid(level, level_constraints_velocity, level_constraints_pressure);
   }
 
   //: initialize multigrid transfer R_l
