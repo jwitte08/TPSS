@@ -80,10 +80,9 @@ protected:
     new_problem->pcout = pcout_owned;
     new_problem->make_grid();
     new_problem->setup_system();
-    new_problem->prepare_multigrid_velocity();
-    stokes_problem = new_problem;
+    const auto & mgc = *(new_problem->make_multigrid_velocity());
+    stokes_problem   = new_problem;
     stokes_problem->print_informations();
-    const auto & mgc = stokes_problem->mgc_velocity;
 
     *pcout_owned << "//////////   LINEAR ELASTICITY PROBLEM" << std::endl;
     LinElasticity::EquationData equation_data_elasticity;
@@ -133,7 +132,8 @@ protected:
     stokes_problem->pcout = pcout_owned;
     stokes_problem->make_grid();
     stokes_problem->setup_system();
-    stokes_problem->assemble_system_velocity_pressure();
+    // stokes_problem->assemble_system_velocity_pressure();
+    stokes_problem->assemble_system();
     stokes_problem->print_informations();
 
     /// compare (only!) the right hand side
@@ -169,18 +169,24 @@ protected:
   }
 
 
-  template<Stokes::Method method = Method::TaylorHood>
+  template<Stokes::Method method = Method::Qkplus2_DGPk>
   void
   check_local_solvers_velocity(const bool only_diagonal = false)
   {
+    const auto patch_variant    = TPSS::PatchVariant::vertex;
+    const auto smoother_variant = TPSS::SmootherVariant::additive;
+    const auto damping          = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
+    options.setup(/*FGMRES_GMGvelocity*/ 3, damping, patch_variant, smoother_variant);
+
     EquationData equation_data;
+
     using StokesProblem = ModelProblem<dim, fe_degree_p, method>;
     std::shared_ptr<const StokesProblem> stokes_problem;
     auto new_problem   = std::make_shared<StokesProblem>(options.prms, equation_data);
     new_problem->pcout = pcout_owned;
     new_problem->make_grid();
     new_problem->setup_system();
-    new_problem->prepare_multigrid_velocity();
+    const auto mgc = new_problem->make_multigrid_velocity();
     stokes_problem = new_problem;
     stokes_problem->print_informations();
     const auto max_level = stokes_problem->max_level();
@@ -190,8 +196,7 @@ protected:
     using LocalMatrix   = typename MatrixIntegrator::matrix_type;
     using PatchTransfer = TPSS::PatchTransfer<dim, double>;
 
-    const auto & mgc         = stokes_problem->mgc_velocity;
-    const auto   mg_smoother = mgc.mg_schwarz_smoother_pre;
+    const auto mg_smoother = mgc->mg_schwarz_smoother_pre;
     ASSERT_TRUE(mg_smoother) << "mg_smoother is not initialized.";
     const auto    subdomain_handler = mg_smoother->get_subdomain_handler();
     PatchTransfer patch_transfer(*subdomain_handler);
@@ -207,8 +212,8 @@ protected:
       /*dummy*/ false,
       patch_worker.get_partition_data().get_patch_range());
 
-    const SparseMatrix<double> * system_matrix;
-    system_matrix = &(mgc.mg_matrices[max_level]);
+    const TrilinosWrappers::SparseMatrix * system_matrix = &(mgc->mg_matrices[max_level]);
+    // AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1, ExcMessage("TODO..."));
 
     /// compare local matrices
     for(auto patch = 0U; patch < n_subdomains; ++patch)
@@ -265,8 +270,6 @@ protected:
     if(fe_degree_p == 0)
       return;
 
-    constexpr auto method = Method::TaylorHood;
-
     {
       const auto patch_variant    = TPSS::PatchVariant::vertex;
       const auto smoother_variant = TPSS::SmootherVariant::additive;
@@ -276,7 +279,8 @@ protected:
 
     EquationData equation_data;
 
-    using StokesProblem = ModelProblem<dim, fe_degree_p, method>;
+    /// TODO tensor product smoothers...
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::DGQkplus2_DGPk>;
 
     *pcout_owned << "TEST. check_local_solvers_block(check_diagonal = " << std::boolalpha
                  << check_diagonal << ", check_level_matrix = " << check_level_matrix << ")"
@@ -287,13 +291,13 @@ protected:
     stokes_problem->make_grid();
     stokes_problem->setup_system();
     stokes_problem->assemble_system();
-    stokes_problem->prepare_multigrid_velocity_pressure();
+    const auto & mgc = *(stokes_problem->make_multigrid_velocity_pressure());
     stokes_problem->print_informations();
     const auto max_level = stokes_problem->max_level();
 
     if(check_level_matrix)
     {
-      const auto & level_matrix = stokes_problem->mgc_velocity_pressure.mg_matrices[max_level];
+      const auto &       level_matrix = mgc.mg_matrices[max_level];
       FullMatrix<double> A(level_matrix.m());
       A.copy_from(level_matrix);
       const auto &       system_matrix = stokes_problem->system_matrix;
@@ -309,8 +313,7 @@ protected:
 
     MatrixIntegrator integrator;
     integrator.initialize(equation_data);
-    const auto & mgc         = stokes_problem->mgc_velocity_pressure;
-    const auto   mg_smoother = mgc.mg_schwarz_smoother_pre;
+    const auto mg_smoother = mgc.mg_schwarz_smoother_pre;
     ASSERT_TRUE(mg_smoother) << "mg_smoother is not initialized.";
     const auto   subdomain_handler     = mg_smoother->get_subdomain_handler();
     const auto   patch_transfer        = integrator.get_patch_transfer(*subdomain_handler);
@@ -455,6 +458,14 @@ protected:
 
 
   void
+  compare_vector(const LinearAlgebra::distributed::Vector<double> & vector,
+                 const LinearAlgebra::distributed::Vector<double> & other) const
+  {
+    Util::compare_vector(vector, other, *pcout_owned);
+  }
+
+
+  void
   compare_inverse_matrix(const FullMatrix<double> & inverse_patch_matrix,
                          const FullMatrix<double> & other) const
   {
@@ -477,7 +488,8 @@ TYPED_TEST_SUITE_P(TestStokesIntegrator);
 
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrixVelocity)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  ASSERT_TRUE(false) << "TODO...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -486,7 +498,7 @@ TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrixVelocity)
   Fixture::check_system_matrix_velocity();
 }
 
-TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocity)
+TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityMPI)
 {
   using Fixture                               = TestStokesIntegrator<TypeParam>;
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
@@ -501,7 +513,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocity)
 
 TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversDGVelocity)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  ASSERT_TRUE(false) << "TODO...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -514,7 +527,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversDGVelocity)
 
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrix)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  ASSERT_TRUE(false) << "TODO...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -527,7 +541,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrix)
 
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemRHS)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  ASSERT_TRUE(false) << "TODO...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -538,7 +553,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckSystemRHS)
 
 TYPED_TEST_P(TestStokesIntegrator, CheckLevelMatrixVelocityPressure)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  ASSERT_TRUE(false) << "TODO...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -549,7 +565,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLevelMatrixVelocityPressure)
 
 TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  ASSERT_TRUE(false) << "TODO...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -562,7 +579,7 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
 
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckSystemMatrixVelocity,
-                            CheckLocalSolversVelocity,
+                            CheckLocalSolversVelocityMPI,
                             CheckLocalSolversDGVelocity,
                             CheckSystemMatrix,
                             CheckSystemRHS,

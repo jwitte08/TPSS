@@ -371,7 +371,8 @@ public:
   Table<2, DoFTools::Coupling> cell_integrals_mask;
   Table<2, DoFTools::Coupling> face_integrals_mask;
 
-private:
+  /// should be private but tests require public access
+  // private:
   void
   clear_data();
 
@@ -461,7 +462,8 @@ struct MGCollectionVelocityPressure
   Table<2, DoFTools::Coupling> cell_integrals_mask;
   Table<2, DoFTools::Coupling> face_integrals_mask;
 
-private:
+  /// should be private but tests require public access
+  // private:
   void
   clear_data();
 
@@ -631,6 +633,9 @@ public:
 
   void
   assemble_system();
+
+  void
+  assemble_system_step56();
 
   std::shared_ptr<const MGCollectionVelocity<dim, fe_degree_v, dof_layout_v>>
   make_multigrid_velocity();
@@ -1897,6 +1902,18 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system()
     assemble_pressure_mass_matrix_impl<false>(
       pressure_mass_matrix, dof_handler_pressure, mapping, constraints_pressure, equation_data);
   }
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+void
+ModelProblem<dim, fe_degree_p, method>::assemble_system_step56()
+{
+  AssertThrow(
+    false,
+    ExcMessage(
+      "This method was available in a previous version when Stokes programs were still running in serial. Visit the git commit tree to find the actual implementation."));
 }
 
 
