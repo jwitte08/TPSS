@@ -487,16 +487,27 @@ private:
   std::shared_ptr<const MGSmootherIdentity<vector_type>> mg_smoother_identity;
   const MGSmootherBase<vector_type> *                    mg_smoother_pre;
   const MGSmootherBase<vector_type> *                    mg_smoother_post;
-  CoarseGridSolver<matrix_type, vector_type>             coarse_grid_solver;
-  const MGCoarseGridBase<vector_type> *                  mg_coarse_grid;
-  mg::Matrix<vector_type>                                mg_matrix_wrapper;
-  std::shared_ptr<Multigrid<vector_type>>                multigrid;
+
+  using coarse_solver_A_type = SolverDirectInverse;
+  using coarse_solver_S_type = IterativeInverse<TrilinosWrappers::PreconditionILU>;
+  std::shared_ptr<coarse_solver_A_type> coarse_preconditioner_A;
+  TrilinosWrappers::SparseMatrix        coarse_mass_matrix_pressure;
+  TrilinosWrappers::PreconditionILU     coarse_mass_precondition_ilu_pressure;
+  std::shared_ptr<coarse_solver_S_type> coarse_preconditioner_S;
+  std::shared_ptr<PreconditionBlockSchur<coarse_solver_A_type, coarse_solver_S_type>>
+    coarse_preconditioner;
+
+  CoarseGridSolver<matrix_type, vector_type> coarse_grid_solver;
+  const MGCoarseGridBase<vector_type> *      mg_coarse_grid;
+  mg::Matrix<vector_type>                    mg_matrix_wrapper;
+  std::shared_ptr<Multigrid<vector_type>>    multigrid;
 
   mutable std::shared_ptr<const PreconditionMG<dim, vector_type, mg_transfer_type>>
     preconditioner_mg;
 
-  const bool use_tbb;
-  const bool use_transfer_prebuilt;
+  const bool         use_tbb;
+  const unsigned int n_mpi_procs;
+  const bool         use_coarse_preconditioner;
 };
 
 
@@ -738,6 +749,63 @@ private:
 
   const bool do_assemble_pressure_mass_matrix;
 };
+
+
+
+template<bool is_multigrid, int dim>
+void
+assemble_pressure_mass_matrix_impl(TrilinosWrappers::SparseMatrix &  matrix,
+                                   const DoFHandler<dim> &           dof_handler_pressure,
+                                   const Mapping<dim> &              mapping,
+                                   const AffineConstraints<double> & constraints_pressure,
+                                   const EquationData &              equation_data,
+                                   const unsigned int level = numbers::invalid_unsigned_int)
+{
+  using Pressure::MW::CopyData;
+  using Pressure::MW::ScratchData;
+  using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, is_multigrid>;
+
+  MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+
+  auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+    matrix_integrator.cell_mass_worker(cell, scratch_data, copy_data);
+  };
+
+  const auto copier = [&](const CopyData & copy_data) {
+    for(const auto & cd : copy_data.cell_data)
+      constraints_pressure.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
+        cd.matrix, cd.dof_indices, matrix);
+  };
+
+  const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
+  const UpdateFlags interface_update_flags = update_default;
+
+  const unsigned int n_q_points_1d = dof_handler_pressure.get_fe().tensor_degree() + 1;
+
+  ScratchData<dim> scratch_data(
+    mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
+
+  CopyData copy_data;
+
+  if(is_multigrid)
+    MeshWorker::mesh_loop(dof_handler_pressure.begin_mg(level),
+                          dof_handler_pressure.end_mg(level),
+                          cell_worker,
+                          copier,
+                          scratch_data,
+                          copy_data,
+                          MeshWorker::assemble_own_cells);
+  else
+    MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
+                          dof_handler_pressure.end(),
+                          cell_worker,
+                          copier,
+                          scratch_data,
+                          copy_data,
+                          MeshWorker::assemble_own_cells);
+
+  matrix.compress(VectorOperation::add);
+}
 
 
 
@@ -1826,38 +1894,8 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system()
 
   if(do_assemble_pressure_mass_matrix)
   {
-    using Pressure::MW::CopyData;
-    using Pressure::MW::ScratchData;
-    using MatrixIntegrator = Pressure::MW::MatrixIntegrator<dim, false>;
-
-    MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
-
-    auto cell_worker =
-      [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        matrix_integrator.cell_mass_worker(cell, scratch_data, copy_data);
-      };
-
-    const auto copier = [&](const CopyData & copy_data) {
-      for(const auto & cd : copy_data.cell_data)
-        constraints_pressure.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
-          cd.matrix, cd.dof_indices, pressure_mass_matrix);
-    };
-
-    const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
-    const UpdateFlags interface_update_flags = update_default;
-
-    ScratchData<dim> scratch_data(
-      mapping, dof_handler_pressure.get_fe(), n_q_points_1d, update_flags, interface_update_flags);
-
-    CopyData copy_data;
-
-    MeshWorker::mesh_loop(dof_handler_pressure.begin_active(),
-                          dof_handler_pressure.end(),
-                          cell_worker,
-                          copier,
-                          scratch_data,
-                          copy_data,
-                          MeshWorker::assemble_own_cells);
+    assemble_pressure_mass_matrix_impl<false>(
+      pressure_mass_matrix, dof_handler_pressure, mapping, constraints_pressure, equation_data);
   }
 }
 
@@ -3138,7 +3176,12 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     parameters(rt_parameters_in.multigrid),
     equation_data(equation_data_in),
     use_tbb(rt_parameters_in.use_tbb),
-    use_transfer_prebuilt(true) // !!!
+    n_mpi_procs(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)),
+    use_coarse_preconditioner(parameters.coarse_grid.solver_variant ==
+                              CoarseGridParameter::SolverVariant::
+                                Iterative /*&&
+n_mpi_procs > 1*/)                        // !!!
+
 {
 }
 
@@ -3672,6 +3715,16 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                         lodof_indices_foreach_block[1],
                         lrdof_indices_foreach_block[1],
                         MPI_COMM_WORLD);
+        if(use_coarse_preconditioner && level == mg_level_min)
+        {
+          AffineConstraints<double> empty_constraints_pressure;
+          empty_constraints_pressure.reinit(lrdof_indices_foreach_block[1]);
+          empty_constraints_pressure.close();
+          MGTools::make_sparsity_pattern(*dof_handler_pressure,
+                                         this_dsp,
+                                         level,
+                                         empty_constraints_pressure);
+        }
       }
 
       /// velocity - pressure
@@ -3707,6 +3760,20 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
     //: assemble the velocity system A_l on current level l.
     assemble_multigrid(level, level_constraints_velocity, level_constraints_pressure);
+
+    if(use_coarse_preconditioner && level == mg_level_min)
+    {
+      coarse_mass_matrix_pressure.reinit(dsp.block(1, 1));
+      AffineConstraints<double> empty_constraints_pressure;
+      empty_constraints_pressure.reinit(lrdof_indices_foreach_block[1]);
+      empty_constraints_pressure.close();
+      assemble_pressure_mass_matrix_impl<true>(coarse_mass_matrix_pressure,
+                                               *dof_handler_pressure,
+                                               *mapping,
+                                               empty_constraints_pressure,
+                                               equation_data,
+                                               level);
+    }
   }
 
   //: initialize multigrid transfer R_l
@@ -3758,8 +3825,33 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   /// component could lead to problems...
 
   //: initialize coarse grid solver
-  coarse_grid_solver.initialize(mg_matrices[mg_level_min], parameters.coarse_grid);
-  mg_coarse_grid = &coarse_grid_solver;
+  {
+    if(use_coarse_preconditioner)
+    {
+      coarse_preconditioner_A =
+        std::make_shared<coarse_solver_A_type>(mg_matrices[mg_level_min].block(0, 0));
+
+      /// assemble mass matrix...
+      coarse_mass_precondition_ilu_pressure.initialize(coarse_mass_matrix_pressure);
+      coarse_preconditioner_S =
+        std::make_shared<coarse_solver_S_type>(coarse_mass_matrix_pressure,
+                                               coarse_mass_precondition_ilu_pressure);
+      coarse_preconditioner_S->solver_variant   = "cg";
+      coarse_preconditioner_S->n_iterations_max = 999;
+      coarse_preconditioner_S->rel_accuracy     = 1.e-6;
+      coarse_preconditioner_S->abs_accuracy     = 1.e-12;
+
+      coarse_preconditioner =
+        std::make_shared<PreconditionBlockSchur<coarse_solver_A_type, coarse_solver_S_type>>(
+          mg_matrices[mg_level_min], *coarse_preconditioner_A, *coarse_preconditioner_S);
+      coarse_grid_solver.initialize(mg_matrices[mg_level_min],
+                                    parameters.coarse_grid,
+                                    *coarse_preconditioner);
+    }
+    else
+      coarse_grid_solver.initialize(mg_matrices[mg_level_min], parameters.coarse_grid);
+    mg_coarse_grid = &coarse_grid_solver;
+  }
 
   //: initialize geometric multigrid method
   mg_matrix_wrapper.initialize(mg_matrices);

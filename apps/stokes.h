@@ -96,6 +96,17 @@ struct StokesFlow
     /// constraint for the coarse problem!
     if(prms.solver.variant != "FGMRES_GMGvelocity")
       prms.multigrid.coarse_grid.threshold_svd = 1.e-8;
+    const bool use_block_system_gmg =
+      prms.solver.variant == "CG_GMG" || prms.solver.variant == "GMRES_GMG";
+    if(use_block_system_gmg /*&& n_mpi_procs > 1*/) // !!!
+    {
+      prms.multigrid.coarse_grid.threshold_svd    = 0.;
+      prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::Iterative;
+      prms.multigrid.coarse_grid.iterative_solver = "fgmres";
+      prms.multigrid.coarse_grid.precondition_variant =
+        CoarseGridParameter::PreconditionVariant::User;
+      prms.multigrid.coarse_grid.accuracy = 1.e-10;
+    }
 
     //:: pre-smoother
     prms.multigrid.pre_smoother.variant                      = smoother_scheme[test_index];
@@ -110,7 +121,8 @@ struct StokesFlow
     prms.multigrid.post_smoother.schwarz.reverse_smoothing = true;
   }
 
-  RT::Parameter prms;
+  RT::Parameter      prms;
+  const unsigned int n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
 };
 
 
