@@ -95,6 +95,9 @@ struct CoarseGridParameter
   static std::string
   str_solver_variant(const SolverVariant variant);
 
+  static std::string
+  str_precondition_variant(const PreconditionVariant variant);
+
   SolverVariant       solver_variant       = SolverVariant::Iterative;
   PreconditionVariant precondition_variant = PreconditionVariant::None;
   std::string         iterative_solver     = "none"; // see SolverSelector
@@ -121,6 +124,18 @@ struct MGParameter
   std::string
   to_string() const;
 };
+
+
+
+std::shared_ptr<SolverControl>
+make_coarse_solver_control_impl(const CoarseGridParameter & prms)
+{
+  const auto solver_control = std::make_shared<SolverControl>();
+  solver_control->set_tolerance(prms.accuracy);
+  solver_control->log_history(false);
+  solver_control->log_result(false);
+  return solver_control;
+}
 
 
 
@@ -214,10 +229,7 @@ public:
   std::shared_ptr<SolverControl>
   set_solver_control(const CoarseGridParameter & prms)
   {
-    solver_control = std::make_shared<SolverControl>();
-    solver_control->set_tolerance(prms.accuracy);
-    solver_control->log_history(false);
-    solver_control->log_result(false);
+    solver_control = make_coarse_solver_control_impl(prms);
     return solver_control;
   }
 
@@ -715,6 +727,16 @@ CoarseGridParameter::str_solver_variant(const CoarseGridParameter::SolverVariant
 
 
 std::string
+CoarseGridParameter::str_precondition_variant(
+  const CoarseGridParameter::PreconditionVariant variant)
+{
+  const std::string str_variant[] = {"None", "User-defined"};
+  return str_variant[(int)variant];
+}
+
+
+
+std::string
 CoarseGridParameter::to_string() const
 {
   std::ostringstream oss;
@@ -723,6 +745,8 @@ CoarseGridParameter::to_string() const
   {
     oss << Util::parameter_to_fstring("Iterative solver:", iterative_solver);
     oss << Util::parameter_to_fstring("Accuracy:", accuracy);
+    oss << Util::parameter_to_fstring("Coarse grid preconditioner:",
+                                      str_precondition_variant(precondition_variant));
   }
   return oss.str();
 }
