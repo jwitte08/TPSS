@@ -40,7 +40,8 @@ set (src_files
   tensor_product_matrix.cc
   kroneckersvd.cc
   block_matrix_base.cc
-  )
+  local_mesh_loop.cc
+)
 
 add_custom_target(setup_tests)
 
