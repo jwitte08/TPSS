@@ -23,6 +23,28 @@ using namespace dealii;
  * best practice but all members are public for convenience allowing easy
  * custumization.
  */
+struct SolverDirectInverse : public Subscriptor
+{
+  SolverDirectInverse(const TrilinosWrappers::SparseMatrix & matrix_in);
+
+  void
+  vmult(LinearAlgebra::distributed::Vector<double> &       dst,
+        const LinearAlgebra::distributed::Vector<double> & src) const;
+
+  const TrilinosWrappers::SparseMatrix & matrix;
+
+  const std::string  solver_variant      = "direct";
+  const double       abs_accuracy        = 1.e-12;
+  const unsigned int n_solver_iterations = 0;
+};
+
+
+
+/**
+ * Helper class computing an approximate inverse iteratively. Certainly, not a
+ * best practice but all members are public for convenience allowing easy
+ * custumization.
+ */
 template<typename PreconditionerType = PreconditionIdentity>
 struct IterativeInverse : public Subscriptor
 {
@@ -125,6 +147,24 @@ public:
 
 
 ////////////////////////////// Definitions
+
+
+
+SolverDirectInverse::SolverDirectInverse(const TrilinosWrappers::SparseMatrix & matrix_in)
+  : matrix(matrix_in)
+{
+}
+
+
+
+void
+SolverDirectInverse::vmult(LinearAlgebra::distributed::Vector<double> &       dst,
+                           const LinearAlgebra::distributed::Vector<double> & src) const
+{
+  SolverControl                  solver_control(1U, abs_accuracy, false, false);
+  TrilinosWrappers::SolverDirect direct_solver(solver_control);
+  direct_solver.solve(matrix, dst, src);
+}
 
 
 
@@ -233,6 +273,8 @@ PreconditionBlockSchur<PreconditionerAType, PreconditionerSType>::vmult(
   {
     preconditioner_A.vmult(u_dst, u_tmp);
   }
+
+  AssertIsFinite(dst.l2_norm());
 }
 
 
