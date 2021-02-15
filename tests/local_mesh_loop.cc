@@ -20,6 +20,218 @@ using TestParamsQuadratic2D = testing::Types<Util::NonTypeParams<2, 2>>;
 
 
 
+//   template<typename BaseIterator>
+//   const BaseIterator & get_base_at_position_impl(const std::vector<BaseIterator> * collection,
+//   const size_type position)
+//   {
+//     Assert(collection, ExcMessage("Collection of cell iterators is not initialized."));
+//     Assert(!collection->empty(), ExcMessage("collection of cells is empty!"));
+//     if(position == collection->size())
+//       return std::next(collection->back());
+//     AssertIndexRange(position, collection->size());
+//     return (*collection)[position];
+//   }
+
+
+
+// template<typename BaseIterator>
+// struct CellOnPatchIterator<BaseIterator> : public BaseIterator
+// {
+//   using value_type = BaseIterator;
+//   using size_type = typename std::vector<BaseIterator>::size_type;
+//   static const invalid_size = static_cast<size_type>(-1);
+
+//   CellOnPatchIterator(const std::vector<BaseIterator> & cells_on_patch, const size_type position)
+//     : BaseIterator(get_base_at_position_impl(&cells_on_patch, position)),
+//       collection(&cells_on_patch),
+//       pos(position)
+//   {
+//   }
+
+//   CellOnPatchIterator(const CellOnPatchIterator & other)
+
+//     CellOnPatchIterator &
+//     operator=(const CellOnPatchIterator & other)
+
+//     CellOnPatchIterator &
+//     operator=(const BaseIterator & other_base)
+
+//     const std::vector<BaseIterator> * collection = nullptr;
+//   size_type pos = invalid_size;
+// };
+
+
+
+//  template <typename BaseIterator>
+//  inline bool
+//  CellOnPatchIterator<BaseIterator>::operator==(const CellOnPatchIterator &fi) const
+//  {
+//    return (static_cast<const BaseIterator &>(*this) ==
+//            static_cast<const BaseIterator &>(fi));
+//  }
+
+
+
+//  template <typename BaseIterator>
+//  inline bool
+//  CellOnPatchIterator<BaseIterator>::operator!=(const CellOnPatchIterator &fi) const
+//  {
+//    return (static_cast<const BaseIterator &>(*this) !=
+//            static_cast<const BaseIterator &>(fi));
+//  }
+
+
+
+//  template <typename BaseIterator>
+//  inline bool
+//  CellOnPatchIterator<BaseIterator>::operator<(const CellOnPatchIterator &fi) const
+//  {
+//    return (static_cast<const BaseIterator &>(*this) <
+//            static_cast<const BaseIterator &>(fi));
+//  }
+
+
+
+//  template <typename BaseIterator>
+//  inline bool
+//  CellOnPatchIterator<BaseIterator>::operator==(const BaseIterator &bi) const
+//  {
+//    return (static_cast<const BaseIterator &>(*this) == bi);
+//  }
+
+
+
+//  template <typename BaseIterator>
+//  inline bool
+//  CellOnPatchIterator<BaseIterator>::operator!=(const BaseIterator &bi) const
+//  {
+//    return (static_cast<const BaseIterator &>(*this) != bi);
+//  }
+
+
+
+//  template <typename BaseIterator>
+//  inline bool
+//  CellOnPatchIterator<BaseIterator>::operator<(const BaseIterator &bi) const
+//  {
+//    return (static_cast<const BaseIterator &>(*this) < bi);
+//  }
+
+
+//  template <typename BaseIterator>
+//  inline CellOnPatchIterator<BaseIterator> &
+//  CellOnPatchIterator<BaseIterator>::operator++()
+//  {
+//    if (this->state() == IteratorState::valid)
+//      do
+//        BaseIterator::operator++();
+//      while ((this->state() == IteratorState::valid) && !(*predicate)(*this));
+//    return *this;
+//  }
+
+
+
+//  template <typename BaseIterator>
+//  inline CellOnPatchIterator<BaseIterator>
+//  CellOnPatchIterator<BaseIterator>::operator++(int)
+//  {
+//    const CellOnPatchIterator old_state = *this;
+
+//    if (this->state() == IteratorState::valid)
+//      do
+//        BaseIterator::operator++();
+//      while ((this->state() == IteratorState::valid) && !(*predicate)(*this));
+//    return old_state;
+//  }
+
+
+
+//  template <typename BaseIterator>
+//  inline CellOnPatchIterator<BaseIterator> &
+//  CellOnPatchIterator<BaseIterator>::operator--()
+//  {
+//    if (this->state() == IteratorState::valid)
+//      do
+//        BaseIterator::operator--();
+//      while ((this->state() == IteratorState::valid) && !(*predicate)(*this));
+//    return *this;
+//  }
+
+template<typename Iterator>
+struct IsLocalCell
+{
+  IsLocalCell(const std::vector<Iterator> & cell_collection_in)
+    : cell_collection(cell_collection_in)
+  {
+  }
+
+  bool
+  operator()(const Iterator & this_bi) const
+  {
+    return std::any_of(cell_collection.cbegin(),
+                       cell_collection.cend(),
+                       [&](const Iterator & other_bi) { return other_bi == this_bi; });
+  }
+
+  const std::vector<Iterator> & cell_collection;
+};
+
+template<typename BaseIterator>
+class LocalCellIterator : public FilteredIterator<BaseIterator>
+{
+  using Base = FilteredIterator<BaseIterator>;
+
+public:
+  LocalCellIterator(const std::vector<BaseIterator> & cell_collection_in,
+                    const BaseIterator &              bi_in)
+    : FilteredIterator<BaseIterator>(
+        // [&](const BaseIterator & this_bi) {
+        //   return std::any_of(cell_collection_in.cbegin(),
+        //                      cell_collection_in.cend(),
+        //                      [&](const BaseIterator & other_bi) { return other_bi == this_bi; });
+        // },
+        IsLocalCell<BaseIterator>(cell_collection_in),
+        bi_in)
+  {
+  }
+
+  /// TODO simply use copy constructor of FilteredIterator ?
+  // LocalCellIterator(const LocalCellIterator & other)
+
+  // LocalCellIterator & operator=(const LocalCellIterator & other)
+  // {
+  //   const FilteredIterator<BaseIterator> & other_fi = other;
+  //   this->                                 operator =(other_fi);
+  //   return *this;
+  // }
+};
+
+
+
+// template<typename BaseIterator>
+// LocalCellIterator<BaseIterator>
+// make_local_cell_iterator(const std::vector<BaseIterator> & cell_collection_in,
+//                          const BaseIterator &              bi_in)
+// {
+//   LocalCellIterator<BaseIterator> lci(cell_collection_in, bi_in);
+//   lci.set_to_next_positive(bi_in);
+//   return lci;
+// }
+
+
+
+template<typename BaseIterator>
+IteratorRange<FilteredIterator<BaseIterator>>
+make_local_cell_range(const std::vector<BaseIterator> & cell_collection_in)
+{
+  Assert(!cell_collection_in.empty(), ExcMessage("Collection is empty."));
+  LocalCellIterator<BaseIterator> lci_begin(cell_collection_in, cell_collection_in.front());
+  LocalCellIterator<BaseIterator> lci_end(cell_collection_in, cell_collection_in.back());
+  return IteratorRange<FilteredIterator<BaseIterator>>(lci_begin, lci_end);
+}
+
+
+
 ////////// TestLocalMeshLoopBase
 
 
@@ -89,8 +301,9 @@ protected:
   void
   test()
   {
-    using PoissonProblem = typename Poisson::ModelProblem<dim, fe_degree, dof_layout>;
-    using PatchTransfer  = typename TPSS::PatchTransfer<dim, double>;
+    using PoissonProblem     = typename Poisson::ModelProblem<dim, fe_degree, dof_layout>;
+    using PatchTransfer      = typename TPSS::PatchTransfer<dim, double>;
+    using cell_iterator_type = typename PatchTransfer::CellIterator;
 
     const auto poisson_problem = std::make_shared<PoissonProblem>(rt_parameters);
     poisson_problem->pcout     = pcout;
@@ -118,6 +331,21 @@ protected:
         *pcout << "lane: " << lane << std::endl;
         const auto & cell_collection = patch_dof_worker.get_cell_collection(patch_index, lane);
         for(const auto & cell : cell_collection)
+          *pcout << cell->index() << " ";
+        *pcout << std::endl;
+
+        /// iterator range
+        IteratorRange<cell_iterator_type> range(cell_collection.front(), cell_collection.back());
+        for(const auto & cell : range)
+          *pcout << cell->index() << " ";
+        *pcout << std::endl;
+
+        /// local cell iterator range
+        // const auto & local_cell_range = make_local_cell_range(cell_collection);
+        const auto & local_cell_range =
+          filter_iterators(dof_handler.mg_cell_iterators_on_level(global_level),
+                           IsLocalCell<cell_iterator_type>(cell_collection));
+        for(const auto & cell : local_cell_range)
           *pcout << cell->index() << " ";
         *pcout << std::endl;
       }
