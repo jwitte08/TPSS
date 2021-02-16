@@ -489,7 +489,7 @@ protected:
                                 copy_data,
                                 MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
 
-	  /// DEBUG
+          /// DEBUG
           // if(pcout->is_active())
           //   tmp.print_formatted(pcout->get_stream());
 
@@ -569,9 +569,28 @@ TYPED_TEST_P(TestLocalMeshLoop, VertexPatchDGQ_assembleovercells_MPI)
   Fixture::template test<TPSS::DoFLayout::DGQ>(TestVariant::assembleovercells);
 }
 
+TYPED_TEST_P(TestLocalMeshLoop, VertexPatchQ_assembleovercells_MPI)
+{
+  using Fixture     = TestLocalMeshLoop<TypeParam>;
+  using TestVariant = typename Fixture::Base::Variant;
+
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant = TPSS::PatchVariant::vertex;
+  Fixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+  Fixture::rt_parameters.multigrid.post_smoother.schwarz =
+    Fixture::rt_parameters.multigrid.pre_smoother.schwarz;
+
+  Fixture::rt_parameters.mesh.n_refinements = 1U;
+  Fixture::template test<TPSS::DoFLayout::Q>(TestVariant::assembleovercells);
+
+  Fixture::rt_parameters.mesh.n_refinements = 2U;
+  Fixture::template test<TPSS::DoFLayout::Q>(TestVariant::assembleovercells);
+}
+
 REGISTER_TYPED_TEST_SUITE_P(TestLocalMeshLoop,
                             VertexPatchDGQ_makelocalcellrange_MPI,
-                            VertexPatchDGQ_assembleovercells_MPI);
+                            VertexPatchDGQ_assembleovercells_MPI,
+                            VertexPatchQ_assembleovercells_MPI);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestLocalMeshLoop, TestParamsLinear2D);
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestLocalMeshLoop, TestParamsQuadratic2D);
