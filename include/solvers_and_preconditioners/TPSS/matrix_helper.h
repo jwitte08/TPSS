@@ -345,28 +345,65 @@ public:
                  const unsigned int            column_start,
                  const unsigned int            lane)
   {
+    fill_or_add_submatrix_impl<OtherNumber, fill_transpose, false>(other,
+                                                                   row_start,
+                                                                   column_start,
+                                                                   lane);
+  }
+
+  /**
+   * Same as above but adding the matrix block @p other to this matrix.
+   */
+  template<typename OtherNumber = Number, bool fill_transpose = false>
+  void
+  add_submatrix(const Table<2, OtherNumber> & other,
+                const unsigned int            row_start,
+                const unsigned int            column_start,
+                const unsigned int            lane)
+  {
+    fill_or_add_submatrix_impl<OtherNumber, fill_transpose, true>(other,
+                                                                  row_start,
+                                                                  column_start,
+                                                                  lane);
+  }
+
+private:
+  Table<2, Number>                      matrix;
+  std::shared_ptr<InverseTable<Number>> inverse_matrix;
+
+  template<typename OtherNumber = Number, bool fill_transpose, bool add>
+  void
+  fill_or_add_submatrix_impl(const Table<2, OtherNumber> & other,
+                             const unsigned int            row_start,
+                             const unsigned int            column_start,
+                             const unsigned int            lane)
+  {
     AssertIndexRange(row_start + (fill_transpose ? other.size(1) : other.size(0)) - 1, m());
     AssertIndexRange(column_start + (fill_transpose ? other.size(0) : other.size(1)) - 1, n());
     if constexpr(fill_transpose == false)
     {
       for(auto i = 0U; i < other.size(0); ++i)
         for(auto j = 0U; j < other.size(1); ++j)
-          scalar_value(matrix(row_start + i, column_start + j), lane) =
-            scalar_value(other(i, j), lane);
+          if constexpr(add)
+            scalar_value(matrix(row_start + i, column_start + j), lane) +=
+              scalar_value(other(i, j), lane);
+          else
+            scalar_value(matrix(row_start + i, column_start + j), lane) =
+              scalar_value(other(i, j), lane);
     }
     else
     {
       for(auto j = 0U; j < other.size(1); ++j)
         for(auto i = 0U; i < other.size(0); ++i)
-          scalar_value(matrix(row_start + j, column_start + i), lane) =
-            scalar_value(other(i, j), lane);
+          if constexpr(add)
+            scalar_value(matrix(row_start + j, column_start + i), lane) +=
+              scalar_value(other(i, j), lane);
+          else
+            scalar_value(matrix(row_start + j, column_start + i), lane) =
+              scalar_value(other(i, j), lane);
     }
     inverse_matrix.reset();
   }
-
-private:
-  Table<2, Number>                      matrix;
-  std::shared_ptr<InverseTable<Number>> inverse_matrix;
 };
 
 
