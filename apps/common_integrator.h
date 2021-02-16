@@ -13,6 +13,9 @@
 #include <deal.II/fe/fe_interface_values.h>
 #include <deal.II/fe/fe_values.h>
 
+#include <deal.II/meshworker/assemble_flags.h>
+#include <deal.II/meshworker/mesh_loop.h>
+
 #include "solvers_and_preconditioners/TPSS/block_matrix.h"
 #include "solvers_and_preconditioners/TPSS/fd_evaluation.h"
 
