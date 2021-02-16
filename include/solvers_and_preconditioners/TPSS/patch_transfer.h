@@ -79,6 +79,7 @@ local_element(LinearAlgebra::distributed::Vector<Number> & vec, const unsigned i
 /// get_global_dof_indices() instead which returns the actual global dof
 /// indices (i.e. with type types::global_dof_index) instead of the proc-local
 /// indices
+/// NEW: added get_global_dof_indices()...
 
 /**
  * Transfer class modeling the (mathematical) restriction operator from global
@@ -145,9 +146,10 @@ public:
   get_patch_dof_worker() const;
 
   /**
-   * Returns the set of degrees of freedom (as proc-local index) on the current
-   * patch with lexicographical ordering (if possible, e.g. DGP polynomials have
-   * no such ordering).
+   * Returns the set of degrees of freedom on the current patch in
+   * lexicographical order (if possible, finite elements without tensor
+   * structure, e.g. FE_DGP, have no such ordering). The indices returned here
+   * are unique on this mpi process but not among all processes.
    */
   ArrayView<const unsigned int>
   get_dof_indices(const unsigned int lane) const;
@@ -158,6 +160,30 @@ public:
    */
   ArrayView<const unsigned int>
   get_dof_indices(const unsigned int lane, const unsigned int component) const;
+
+  /**
+   * Returns the set of global degrees of freedom on this patch subject to
+   * lexicographical ordering. Note that as opposed to the previous method @p
+   * get_dof_indices() degrees of freedom are returned as type
+   * types::global_dof_index which provides a unique numbering among all
+   * processors.
+   */
+  std::vector<types::global_dof_index>
+  get_global_dof_indices(const unsigned int lane) const;
+
+  /**
+   * Same as above, but this time only a subset of global degrees of freedom for
+   * vector component @p component is returned.
+   */
+  std::vector<types::global_dof_index>
+  get_global_dof_indices(const unsigned int lane, const unsigned int component) const;
+
+  /**
+   * Each global dof index is mapped to its unique patch-local dof index which
+   * is subject to lexicographic ordering.
+   */
+  std::map<types::global_dof_index, unsigned int>
+  get_global_to_local_dof_indices(const unsigned int lane) const;
 
   /**
    * Extract from the global dof values @p src the patch relevant dof values.
@@ -352,6 +378,14 @@ public:
    */
   ArrayView<const unsigned int>
   get_dof_indices(const unsigned int block_index, const unsigned int lane) const;
+
+  /**
+   * Returns the set of global degrees of freedom (in its unique numbering among
+   * all processors as opposed to the previous method @p get_dof_indices()) on
+   * the current patch with lexicographical ordering for block @p block_index.
+   */
+  std::vector<types::global_dof_index>
+  get_global_dof_indices(const unsigned int block_index, const unsigned int lane) const;
 
   /**
    * Return the number of degrees of freedom per patch accumulated over all
@@ -645,20 +679,6 @@ PatchTransfer<dim, Number>::n_dofs_per_patch() const
 }
 
 
-template<int dim, typename Number>
-inline void
-PatchTransfer<dim, Number>::fill_global_dof_indices(const unsigned int patch_id)
-{
-  AssertIndexRange(patch_id, n_subdomains);
-  for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
-  {
-    auto && global_dof_indices_at_lane = patch_dof_worker.fill_dof_indices_on_patch(patch_id, lane);
-    AssertDimension(global_dof_indices_at_lane.size(), n_dofs_per_patch());
-    std::swap(this->global_dof_indices[lane], global_dof_indices_at_lane);
-  }
-}
-
-
 
 // -----------------------------   PatchTransferBlock   ----------------------------
 
@@ -790,6 +810,16 @@ PatchTransferBlock<dim, Number>::get_dof_indices(const unsigned int block_index,
 {
   AssertIndexRange(block_index, n_blocks);
   return transfers[block_index]->get_dof_indices(lane);
+}
+
+
+template<int dim, typename Number>
+inline std::vector<types::global_dof_index>
+PatchTransferBlock<dim, Number>::get_global_dof_indices(const unsigned int block_index,
+                                                        const unsigned int lane) const
+{
+  AssertIndexRange(block_index, n_blocks);
+  return transfers[block_index]->get_global_dof_indices(lane);
 }
 
 

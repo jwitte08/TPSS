@@ -73,6 +73,23 @@ public:
                            const unsigned int component) const;
 
   /**
+   * Returns global dof indices on patch @patch_id at vectorization lane @p lane
+   * in its unique numbering among all mpi processes.
+   */
+  std::vector<types::global_dof_index>
+  get_global_dof_indices_on_patch(const unsigned int patch_id, const unsigned int lane) const;
+
+  /**
+   * Returns global dof indices on patch @patch_id at vectorization lane @p lane
+   * of vector component @component in its unique numbering among all mpi
+   * processes.
+   */
+  std::vector<types::global_dof_index>
+  get_global_dof_indices_on_patch(const unsigned int patch_id,
+                                  const unsigned int lane,
+                                  const unsigned int component) const;
+
+  /**
    * Returns global dof indices on the fly on patch @patch_id at vectorization
    * lane @p lane. The returned array is subject to lexicographical ordering.
    */
@@ -129,12 +146,12 @@ public:
   std::vector<bool>
   get_restricted_dof_flags(const unsigned int patch_id, const unsigned int lane) const;
 
-  /**
-   * TODO ... this method is not tested
-   * the DoFInfo takes care of setting up a MPI::Partitioner during initialization
-   */
-  std::shared_ptr<const Utilities::MPI::Partitioner>
-  initialize_vector_partitioner() const;
+  // /**
+  //  * TODO ... this method is not tested
+  //  * the DoFInfo takes care of setting up a MPI::Partitioner during initialization
+  //  */
+  // std::shared_ptr<const Utilities::MPI::Partitioner>
+  // initialize_vector_partitioner() const;
 
   /**
    * The MPI::Partitioner in the underlying DoFInfo is used to initialize global
@@ -195,6 +212,10 @@ public:
   }
 
 private:
+  std::vector<types::global_dof_index>
+  proc_local_to_global_dof_indices_on_patch_impl(
+    const ArrayView<const unsigned int> & local_view) const;
+
   const DoFInfo<dim, Number> * const dof_info;
 
   const TPSS::DoFLayout dof_layout;
@@ -486,6 +507,45 @@ PatchDoFWorker<dim, Number>::get_dof_indices_on_patch(const unsigned int patch_i
   const auto [dof_start, n_dofs] = get_dof_start_and_quantity_on_patch(patch_id, lane, component);
   const auto begin               = dof_info->dof_indices_patchwise.data() + dof_start;
   return ArrayView<const unsigned int>(begin, n_dofs);
+}
+
+
+template<int dim, typename Number>
+std::vector<types::global_dof_index>
+PatchDoFWorker<dim, Number>::proc_local_to_global_dof_indices_on_patch_impl(
+  const ArrayView<const unsigned int> & local_view) const
+{
+  Assert(dof_info, ExcMessage("dof_info is not set."));
+  Assert(dof_info->vector_partitioner, ExcMessage("vector_partitioner is not set."));
+  std::vector<types::global_dof_index> global_dof_indices;
+  std::transform(local_view.begin(),
+                 local_view.end(),
+                 std::back_inserter(global_dof_indices),
+                 [&](const auto & local_index) {
+                   return dof_info->vector_partitioner->local_to_global(local_index);
+                 });
+  AssertDimension(global_dof_indices.size(), local_view.size());
+  return global_dof_indices;
+}
+
+
+template<int dim, typename Number>
+std::vector<types::global_dof_index>
+PatchDoFWorker<dim, Number>::get_global_dof_indices_on_patch(const unsigned int patch_id,
+                                                             const unsigned int lane) const
+{
+  return proc_local_to_global_dof_indices_on_patch_impl(get_dof_indices_on_patch(patch_id, lane));
+}
+
+
+template<int dim, typename Number>
+std::vector<types::global_dof_index>
+PatchDoFWorker<dim, Number>::get_global_dof_indices_on_patch(const unsigned int patch_id,
+                                                             const unsigned int lane,
+                                                             const unsigned int component) const
+{
+  return proc_local_to_global_dof_indices_on_patch_impl(
+    get_dof_indices_on_patch(patch_id, lane, component));
 }
 
 

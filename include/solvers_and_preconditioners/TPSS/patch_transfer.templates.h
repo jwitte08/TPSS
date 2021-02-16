@@ -162,6 +162,68 @@ PatchTransfer<dim, Number>::rscatter_add(VectorType &                           
 }
 
 
+template<int dim, typename Number>
+std::vector<types::global_dof_index>
+PatchTransfer<dim, Number>::get_global_dof_indices(const unsigned int lane) const
+{
+  Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
+  if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
+    return get_global_dof_indices(0U);
+
+  AssertThrow(caching_strategy == TPSS::CachingStrategy::Cached,
+              ExcMessage("Implemented for CachingStrategy::Cached."));
+
+  return patch_dof_worker.get_global_dof_indices_on_patch(patch_id, lane);
+}
+
+
+template<int dim, typename Number>
+std::vector<types::global_dof_index>
+PatchTransfer<dim, Number>::get_global_dof_indices(const unsigned int lane,
+                                                   const unsigned int component) const
+{
+  Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
+  if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
+    return get_global_dof_indices(0U, component);
+
+  AssertThrow(caching_strategy == TPSS::CachingStrategy::Cached,
+              ExcMessage("Implemented for CachingStrategy::Cached."));
+
+  return patch_dof_worker.get_global_dof_indices_on_patch(patch_id, lane, component);
+}
+
+
+template<int dim, typename Number>
+std::map<types::global_dof_index, unsigned int>
+PatchTransfer<dim, Number>::get_global_to_local_dof_indices(const unsigned int lane) const
+{
+  Assert(patch_id != numbers::invalid_unsigned_int, ExcNotInitialized());
+  if(lane >= patch_dof_worker.n_lanes_filled(patch_id))
+    return get_global_to_local_dof_indices(0U);
+
+  std::map<types::global_dof_index, unsigned int> index_map;
+  const auto &                                    global_dof_indices = get_global_dof_indices(lane);
+  for(auto i = 0U; i < global_dof_indices.size(); ++i)
+    index_map.try_emplace(global_dof_indices[i], i);
+  AssertDimension(index_map.size(), global_dof_indices.size());
+  return index_map;
+}
+
+
+template<int dim, typename Number>
+void
+PatchTransfer<dim, Number>::fill_global_dof_indices(const unsigned int patch_id)
+{
+  AssertIndexRange(patch_id, n_subdomains);
+  for(auto lane = 0U; lane < patch_dof_worker.n_lanes_filled(patch_id); ++lane)
+  {
+    auto && global_dof_indices_at_lane = patch_dof_worker.fill_dof_indices_on_patch(patch_id, lane);
+    AssertDimension(global_dof_indices_at_lane.size(), n_dofs_per_patch());
+    std::swap(this->global_dof_indices[lane], global_dof_indices_at_lane);
+  }
+}
+
+
 
 // -----------------------------   PatchTransferBlock   ----------------------------
 
