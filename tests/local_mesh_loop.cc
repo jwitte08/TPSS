@@ -108,6 +108,7 @@ get_filename(const MPI_Comm & mpi_communicator)
   else
     oss << ".np" << n_mpi_procs << ".log";
   return oss.str();
+  // return "debug.txt";
 }
 
 
@@ -124,6 +125,13 @@ extract_locally_relevant_matrix(
   LinearAlgebra::distributed::Vector<double> e_j(partitioner);
   LinearAlgebra::distributed::Vector<double> dst(partitioner);
 
+  /// DEBUG
+  // const bool mpi_rank = Utilities::MPI::this_mpi_process(partitioner->get_mpi_communicator());
+  // std::ostringstream oss;
+  // oss << get_filename(partitioner->get_mpi_communicator()) << "." << mpi_rank;
+  // std::ofstream                       ofs;
+  // ofs.open(oss.str(), std::ios_base::out);
+
   for(types::global_dof_index j = 0; j < e_j.size(); ++j)
   {
     e_j = 0.;
@@ -132,7 +140,7 @@ extract_locally_relevant_matrix(
     if(partitioner->in_local_range(j))
       e_j.local_element(partitioner->global_to_local(j)) = 1.;
 
-    e_j.update_ghost_values();
+    // e_j.update_ghost_values();
     dst.zero_out_ghosts();
 
     /// DEBUG
@@ -140,17 +148,20 @@ extract_locally_relevant_matrix(
     //   std::ostringstream oss;
     //   oss << "e_" << j << " : " << std::endl;
     //   e_j.print(oss);
-    //   std::cout << oss.str();
+    //   ofs << oss.str();
     // }
 
     matrix.vmult(dst, e_j);
 
     /// DEBUG
+    // const bool j_is_ghost = partitioner->is_ghost_entry(j) ? 1 : 0;
+    // const bool j_is_ghost_on_any_proc =
+    //   Utilities::MPI::max<int>(j_is_ghost, partitioner->get_mpi_communicator());
     // {
     //   std::ostringstream oss;
     //   oss << "dst = A e_" << j << " : " << std::endl;
     //   dst.print(oss);
-    //   std::cout << oss.str();
+    //   ofs << oss.str();
     // }
 
     dst.compress(VectorOperation::add);
@@ -161,7 +172,7 @@ extract_locally_relevant_matrix(
     //   std::ostringstream oss;
     //   oss << "dst = A e_" << j << " : " << std::endl;
     //   dst.print(oss);
-    //   std::cout << oss.str();
+    //   ofs << oss.str();
     // }
 
     if(partitioner->in_local_range(j) || partitioner->is_ghost_entry(j))
@@ -480,7 +491,7 @@ protected:
                           copy_data,
                           MeshWorker::assemble_boundary_faces |
                             MeshWorker::assemble_own_interior_faces_once |
-                            MeshWorker::assemble_ghost_faces_both,
+                            MeshWorker::assemble_ghost_faces_once,
                           boundary_worker,
                           face_worker);
 
@@ -609,8 +620,9 @@ protected:
 
             /// DEBUG
             // *pcout << "cd.dof_indices: " << vector_to_string(cd.dof_indices) << std::endl;
-            // *pcout << "local_dof_indices: " << vector_to_string(local_dof_indices) <<
-            // std::endl;
+            // *pcout << "local_dof_indices: " << vector_to_string(local_dof_indices) << std::endl;
+            // if(pcout->is_active())
+            //   cd.matrix.print_formatted(pcout->get_stream());
 
             ASSERT_EQ(local_dof_indices.size(), cd.matrix.m());
             ASSERT_EQ(local_dof_indices.size(), cd.matrix.n());
@@ -630,18 +642,19 @@ protected:
               distribute_local_to_patch_impl(cdf);
           };
 
-          /// TODO do we need to assemble_ghost_faces_both ???
           /// TODO what if we need to assemble boundary face on ghost ???
-          MeshWorker::mesh_loop(local_cell_range,
-                                nullptr,
-                                local_copier,
-                                scratch_data,
-                                copy_data,
-                                MeshWorker::assemble_boundary_faces |
-                                  MeshWorker::assemble_own_interior_faces_both |
-                                  MeshWorker::assemble_ghost_faces_both,
-                                local_boundary_worker,
-                                local_face_worker);
+          /// TODO what if we need to assemble faces between ghosts ???
+          MeshWorker::m2d2::mesh_loop(local_cell_range,
+                                      nullptr,
+                                      local_copier,
+                                      scratch_data,
+                                      copy_data,
+                                      MeshWorker::assemble_boundary_faces |
+                                        MeshWorker::assemble_own_interior_faces_both |
+                                        MeshWorker::assemble_ghost_faces_both,
+                                      true,
+                                      local_boundary_worker,
+                                      local_face_worker);
 
           /// DEBUG
           *pcout << std::endl;
