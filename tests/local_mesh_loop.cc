@@ -53,50 +53,6 @@ using TestParamsQuadratic2D = testing::Types<Util::NonTypeParams<2, 2>>;
 
 
 
-/**
- * A predicate returning true if the iterator passed belongs to the collection
- * passed at construction.
- */
-template<typename BaseIterator>
-struct BelongsToCollection
-{
-  BelongsToCollection(const std::vector<BaseIterator> & cell_collection_in)
-    : cell_collection(cell_collection_in)
-  {
-  }
-
-  bool
-  operator()(const BaseIterator & this_bi) const
-  {
-    return std::any_of(cell_collection.cbegin(),
-                       cell_collection.cend(),
-                       [&](const BaseIterator & other_bi) { return other_bi == this_bi; });
-  }
-
-  const std::vector<BaseIterator> & cell_collection;
-};
-
-
-
-/**
- * Generate a filtered iterator range which reflects the collection of cell
- * iterators passed.
- */
-template<typename BaseIterator>
-IteratorRange<FilteredIterator<BaseIterator>>
-make_local_cell_range(const std::vector<BaseIterator> & cell_collection_in)
-{
-  Assert(!cell_collection_in.empty(), ExcMessage("Collection is empty."));
-  const auto & cell_begin =
-    *(std::min_element(cell_collection_in.cbegin(), cell_collection_in.cend()));
-  const auto & cell_end =
-    std::next(*(std::max_element(cell_collection_in.cbegin(), cell_collection_in.cend())));
-  IteratorRange<BaseIterator> unfiltered_range(cell_begin, cell_end);
-  return filter_iterators(unfiltered_range, BelongsToCollection<BaseIterator>(cell_collection_in));
-}
-
-
-
 std::string
 get_filename(const MPI_Comm & mpi_communicator)
 {
@@ -109,81 +65,6 @@ get_filename(const MPI_Comm & mpi_communicator)
     oss << ".np" << n_mpi_procs << ".log";
   return oss.str();
   // return "debug.txt";
-}
-
-
-
-FullMatrix<double>
-extract_locally_relevant_matrix(
-  const TrilinosWrappers::SparseMatrix &                   matrix,
-  const std::shared_ptr<const Utilities::MPI::Partitioner> partitioner)
-{
-  const auto locally_relevant_size = partitioner->local_size() + partitioner->n_ghost_indices();
-
-  FullMatrix<double> submatrix(locally_relevant_size, locally_relevant_size);
-
-  LinearAlgebra::distributed::Vector<double> e_j(partitioner);
-  LinearAlgebra::distributed::Vector<double> dst(partitioner);
-
-  /// DEBUG
-  // const bool mpi_rank = Utilities::MPI::this_mpi_process(partitioner->get_mpi_communicator());
-  // std::ostringstream oss;
-  // oss << get_filename(partitioner->get_mpi_communicator()) << "." << mpi_rank;
-  // std::ofstream                       ofs;
-  // ofs.open(oss.str(), std::ios_base::out);
-
-  for(types::global_dof_index j = 0; j < e_j.size(); ++j)
-  {
-    e_j = 0.;
-    dst = 0.;
-
-    if(partitioner->in_local_range(j))
-      e_j.local_element(partitioner->global_to_local(j)) = 1.;
-
-    // e_j.update_ghost_values();
-    dst.zero_out_ghosts();
-
-    /// DEBUG
-    // {
-    //   std::ostringstream oss;
-    //   oss << "e_" << j << " : " << std::endl;
-    //   e_j.print(oss);
-    //   ofs << oss.str();
-    // }
-
-    matrix.vmult(dst, e_j);
-
-    /// DEBUG
-    // const bool j_is_ghost = partitioner->is_ghost_entry(j) ? 1 : 0;
-    // const bool j_is_ghost_on_any_proc =
-    //   Utilities::MPI::max<int>(j_is_ghost, partitioner->get_mpi_communicator());
-    // {
-    //   std::ostringstream oss;
-    //   oss << "dst = A e_" << j << " : " << std::endl;
-    //   dst.print(oss);
-    //   ofs << oss.str();
-    // }
-
-    dst.compress(VectorOperation::add);
-    dst.update_ghost_values();
-
-    /// DEBUG
-    // {
-    //   std::ostringstream oss;
-    //   oss << "dst = A e_" << j << " : " << std::endl;
-    //   dst.print(oss);
-    //   ofs << oss.str();
-    // }
-
-    if(partitioner->in_local_range(j) || partitioner->is_ghost_entry(j))
-    {
-      const auto jj = partitioner->global_to_local(j);
-      for(auto ii = 0U; ii < locally_relevant_size; ++ii)
-        submatrix(ii, jj) = dst.local_element(ii);
-    }
-  }
-
-  return submatrix;
 }
 
 
@@ -330,7 +211,8 @@ protected:
           *pcout << cell->index() << " ";
         *pcout << std::endl;
 
-        const auto & local_cell_range = make_local_cell_range<cell_iterator_type>(cell_collection);
+        const auto & local_cell_range =
+          TPSS::make_local_cell_range<cell_iterator_type>(cell_collection);
 
         /// DEBUG make local cell range
         for(const auto & cell : local_cell_range)
@@ -552,7 +434,7 @@ protected:
     level_matrix.compress(VectorOperation::add);
 
     const auto & locally_relevant_matrix =
-      extract_locally_relevant_matrix(level_matrix, vector_partitioner);
+      Util::extract_locally_relevant_matrix(level_matrix, vector_partitioner);
 
     /// DEBUG
     *pcout << std::endl;
@@ -611,7 +493,7 @@ protected:
 
           const auto & cell_collection = patch_dof_worker.get_cell_collection(patch_index, lane);
 
-          const auto & local_cell_range = make_local_cell_range(cell_collection);
+          const auto & local_cell_range = TPSS::make_local_cell_range(cell_collection);
 
           /// DEBUG make local cell range
           for(const auto & cell : local_cell_range)
@@ -662,7 +544,8 @@ protected:
 
           if(Base::Variant::assembleoverfaces == test_variant)
           {
-            const BelongsToCollection<cell_iterator_type> belongs_to_collection(cell_collection);
+            const TPSS::BelongsToCollection<cell_iterator_type> belongs_to_collection(
+              cell_collection);
 
             const auto local_face_worker = [&](const auto &         cell,
                                                const unsigned int & face_no,
@@ -753,7 +636,7 @@ protected:
         /// DEBUG make local cell range
         {
           const auto & cell_collection  = patch_dof_worker.get_cell_collection(patch_index, lane);
-          const auto & local_cell_range = make_local_cell_range(cell_collection);
+          const auto & local_cell_range = TPSS::make_local_cell_range(cell_collection);
           for(const auto & cell : local_cell_range)
             *pcout << cell->index() << " ";
           *pcout << std::endl;

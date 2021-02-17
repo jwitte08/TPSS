@@ -10,10 +10,13 @@
 #ifndef TEST_UTILITIES_H_
 #define TEST_UTILITIES_H_
 
+#include <deal.II/base/partitioner.h>
 #include <deal.II/base/utilities.h>
+
 #include <deal.II/lac/full_matrix.h>
 #include <deal.II/lac/la_parallel_vector.h>
 #include <deal.II/lac/lapack_full_matrix.h>
+#include <deal.II/lac/trilinos_sparse_matrix.h>
 
 #include <gtest/gtest.h>
 
@@ -25,6 +28,8 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+
+
 
 namespace Util
 {
@@ -356,6 +361,94 @@ make_identity_matrix(const unsigned int n_rows, const unsigned int n_cols)
 
 
 
+/**
+ * A square submatrix restricted to locally relevant dof indices of a parallel
+ * square matrix @p matrix is returned. Locally relevant indices are identified
+ * by the MPI partitioner @p partitioner. Indices are ordered: locally owned
+ * first, then all ghost indices. For each global dof index j the matrix is
+ * multiplied with canonical basis vector e_j, ghost values are communicated and
+ * the respective local column of the submatrix is filled. This process is cost
+ * intensive, in particular the submatrix returned is not compressed, thus this
+ * function is only recommended for small matrices @p matrix.
+ */
+FullMatrix<double>
+extract_locally_relevant_matrix(
+  const TrilinosWrappers::SparseMatrix &                   matrix,
+  const std::shared_ptr<const Utilities::MPI::Partitioner> partitioner)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  AssertIndexRange(matrix.m(), 1000); // small matrices!
+
+  const auto locally_relevant_size = partitioner->local_size() + partitioner->n_ghost_indices();
+
+  FullMatrix<double> submatrix(locally_relevant_size, locally_relevant_size);
+
+  LinearAlgebra::distributed::Vector<double> e_j(partitioner);
+  LinearAlgebra::distributed::Vector<double> dst(partitioner);
+
+  /// DEBUG
+  // const bool mpi_rank = Utilities::MPI::this_mpi_process(partitioner->get_mpi_communicator());
+  // std::ostringstream oss;
+  // oss << get_filename(partitioner->get_mpi_communicator()) << "." << mpi_rank;
+  // std::ofstream                       ofs;
+  // ofs.open(oss.str(), std::ios_base::out);
+
+  for(types::global_dof_index j = 0; j < e_j.size(); ++j)
+  {
+    e_j = 0.;
+    dst = 0.;
+
+    if(partitioner->in_local_range(j))
+      e_j.local_element(partitioner->global_to_local(j)) = 1.;
+
+    // e_j.update_ghost_values();
+    dst.zero_out_ghosts();
+
+    /// DEBUG
+    // {
+    //   std::ostringstream oss;
+    //   oss << "e_" << j << " : " << std::endl;
+    //   e_j.print(oss);
+    //   ofs << oss.str();
+    // }
+
+    matrix.vmult(dst, e_j);
+
+    /// DEBUG
+    // const bool j_is_ghost = partitioner->is_ghost_entry(j) ? 1 : 0;
+    // const bool j_is_ghost_on_any_proc =
+    //   Utilities::MPI::max<int>(j_is_ghost, partitioner->get_mpi_communicator());
+    // {
+    //   std::ostringstream oss;
+    //   oss << "dst = A e_" << j << " : " << std::endl;
+    //   dst.print(oss);
+    //   ofs << oss.str();
+    // }
+
+    dst.compress(VectorOperation::add);
+    dst.update_ghost_values();
+
+    /// DEBUG
+    // {
+    //   std::ostringstream oss;
+    //   oss << "dst = A e_" << j << " : " << std::endl;
+    //   dst.print(oss);
+    //   ofs << oss.str();
+    // }
+
+    if(partitioner->in_local_range(j) || partitioner->is_ghost_entry(j))
+    {
+      const auto jj = partitioner->global_to_local(j);
+      for(auto ii = 0U; ii < locally_relevant_size; ++ii)
+        submatrix(ii, jj) = dst.local_element(ii);
+    }
+  }
+
+  return submatrix;
+}
+
+
+
 /// Convert any array-type into a tuple
 template<typename Array, std::size_t... I>
 auto
@@ -364,6 +457,8 @@ a2t_impl(const Array & a, std::index_sequence<I...>)
   return std::make_tuple(a[I]...);
 }
 
+
+
 /// Convert std::array into a tuple
 template<typename T, std::size_t N, typename Indices = std::make_index_sequence<N>>
 auto
@@ -371,6 +466,8 @@ make_tuple(const std::array<T, N> & a)
 {
   return a2t_impl(a, Indices{});
 }
+
+
 
 template<typename Func, typename... Args>
 struct PackExpansionDelayed
@@ -391,6 +488,8 @@ struct PackExpansionDelayed
   }
 };
 
+
+
 template<typename T, typename... Ts>
 constexpr auto
 make_array(Ts... args)
@@ -400,6 +499,8 @@ make_array(Ts... args)
   std::array<T, sizeof...(Ts)> array = {args...};
   return array;
 }
+
+
 
 template<auto... args>
 struct NonTypeParams
@@ -421,6 +522,8 @@ struct NonTypeParams
     return std::get<T>(params);
   }
 };
+
+
 
 template<class... Types>
 struct TypeList

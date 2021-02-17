@@ -10,8 +10,34 @@
 
 #include "generic_functionalities.h"
 
+
+
 namespace TPSS
 {
+// *** ENUM: Patch Variant
+enum class PatchVariant
+{
+  invalid,
+  cell,
+  vertex
+};
+
+
+
+// *** ENUM: Smoother Variant
+enum class SmootherVariant
+{
+  invalid,
+  additive,
+  multiplicative
+};
+
+
+
+/**
+ * TPSS classes enable different caching strategies (or they should in
+ * future).
+ */
 enum class CachingStrategy
 {
   Cached,
@@ -26,6 +52,10 @@ str_caching_strategy(CachingStrategy caching_strategy)
 
 
 
+/**
+ * Identify different categories of finite elements to exploit their tensor
+ * structure.
+ */
 enum class DoFLayout
 {
   invalid,
@@ -70,13 +100,49 @@ str_dof_layout(const FiniteElement<dim> & finite_element)
 
 
 
-// *** ENUM: Patch Variant
-enum class PatchVariant
+/**
+ * A predicate returning true if the iterator passed belongs to the collection
+ * passed at construction.
+ */
+template<typename BaseIterator>
+struct BelongsToCollection
 {
-  invalid,
-  cell,
-  vertex
+  BelongsToCollection(const std::vector<BaseIterator> & cell_collection_in)
+    : cell_collection(cell_collection_in)
+  {
+  }
+
+  bool
+  operator()(const BaseIterator & this_bi) const
+  {
+    return std::any_of(cell_collection.cbegin(),
+                       cell_collection.cend(),
+                       [&](const BaseIterator & other_bi) { return other_bi == this_bi; });
+  }
+
+  const std::vector<BaseIterator> & cell_collection;
 };
+
+
+
+/**
+ * Generate a filtered iterator range which reflects the collection of cell
+ * iterators passed.
+ */
+template<typename BaseIterator>
+IteratorRange<FilteredIterator<BaseIterator>>
+make_local_cell_range(const std::vector<BaseIterator> & cell_collection_in)
+{
+  Assert(!cell_collection_in.empty(), ExcMessage("Collection is empty."));
+  const auto & cell_begin =
+    *(std::min_element(cell_collection_in.cbegin(), cell_collection_in.cend()));
+  const auto & cell_end =
+    std::next(*(std::max_element(cell_collection_in.cbegin(), cell_collection_in.cend())));
+  IteratorRange<BaseIterator> unfiltered_range(cell_begin, cell_end);
+  return filter_iterators(unfiltered_range, BelongsToCollection<BaseIterator>(cell_collection_in));
+}
+
+
 
 template<int dim>
 struct UniversalInfo
@@ -109,13 +175,7 @@ struct UniversalInfo
   }
 };
 
-// *** ENUM: Smoother Variant
-enum class SmootherVariant
-{
-  invalid,
-  additive,
-  multiplicative
-};
+
 
 double
 lookup_damping_factor(const TPSS::PatchVariant    patch_variant,
@@ -162,6 +222,8 @@ lookup_damping_factor(const TPSS::PatchVariant    patch_variant,
   return r;
 }
 
+
+
 std::string
 getstr_schwarz_variant(const TPSS::PatchVariant    patch_variant,
                        const TPSS::SmootherVariant smoother_variant,
@@ -189,6 +251,8 @@ getstr_schwarz_variant(const TPSS::PatchVariant    patch_variant,
     AssertThrow(false, dealii::ExcMessage("Invalid patch variant."));
   return "invalid";
 }
+
+
 
 /**
  * Internal assembler for 1D dof-related matrices exploiting the tensor product form
@@ -311,6 +375,8 @@ private:
   const Number * shape_gradients = nullptr;
   const Number * dx              = nullptr;
 };
+
+
 
 /*** CLASS: Matrix Assembler for 1D problems ***/
 /**
