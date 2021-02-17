@@ -49,12 +49,12 @@ mesh_loop(
 
   const bool assemble_relevant_faces = false,
 
-   const typename identity<std::function<
+  const typename identity<std::function<
     void(const CellIteratorBaseType &, const unsigned int, ScratchData &, CopyData &)>>::type &
     boundary_worker = std::function<
       void(const CellIteratorBaseType &, const unsigned int, ScratchData &, CopyData &)>(),
 
- const typename identity<std::function<void(const CellIteratorBaseType &,
+  const typename identity<std::function<void(const CellIteratorBaseType &,
                                              const unsigned int,
                                              const unsigned int,
                                              const CellIteratorBaseType &,
@@ -99,6 +99,12 @@ mesh_loop(
   Assert((!boundary_worker) == !(flags & assemble_boundary_faces),
          ExcMessage("If you specify a boundary_worker, assemble_boundary_faces needs to be set."));
 
+  /// DEBUG
+  // std::ofstream                       ofs;
+  // ofs.open("debug.txt", std::ios_base::app);
+  // const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
+  // const auto pcout                    = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
+
   auto cell_action =
     [&](const CellIteratorBaseType & cell, ScratchData & scratch, CopyData & copy) {
       // First reset the CopyData class to the empty copy_data given by the
@@ -131,7 +137,7 @@ mesh_loop(
           if(cell->at_boundary(face_no) && !cell->has_periodic_neighbor(face_no))
           {
             // only integrate boundary faces of own cells
-            if((flags & assemble_boundary_faces) && own_cell)
+            if((flags & assemble_boundary_faces) && (own_cell || assemble_relevant_faces))
               boundary_worker(cell, face_no, scratch, copy);
           }
           else
@@ -151,8 +157,22 @@ mesh_loop(
               ignore_subdomain ||
               (neighbor_subdomain_id == cell->get_triangulation().locally_owned_subdomain());
 
+            /// DEBUG
+            // if(!own_cell && !own_neighbor)
+            // {
+            //   const bool periodic_neighbor = cell->has_periodic_neighbor(face_no);
+            //   const unsigned int neighbor_face_no = periodic_neighbor ?
+            //                                           cell->periodic_neighbor_face_no(face_no) :
+            //                                           cell->neighbor_face_no(face_no);
+            //   *pcout << "A " << "l" << cell->level() << "c" << cell->index() << "f" << face_no <<
+            //   "l"
+            //             << neighbor->level() << "c" << neighbor->index() << "f" <<
+            //             neighbor_face_no
+            //             << std::endl;
+            // }
+
             // skip all faces between two ghost cells
-            if(!own_cell && !own_neighbor)
+            if((!own_cell && !own_neighbor) && !assemble_relevant_faces)
               continue;
 
             // skip if the user doesn't want faces between own cells
@@ -252,6 +272,20 @@ mesh_loop(
               // Now neighbor is on same level, double-check this:
               Assert(cell->level() == neighbor->level(), ExcInternalError());
 
+              /// DEBUG
+              // if(!own_cell && !own_neighbor)
+              // {
+              //   const bool periodic_neighbor = cell->has_periodic_neighbor(face_no);
+              //   const unsigned int neighbor_face_no = periodic_neighbor ?
+              //                                           cell->periodic_neighbor_face_no(face_no)
+              //                                           : cell->neighbor_face_no(face_no);
+              //   *pcout << "B " << "l" << cell->level() << "c" << cell->index() << "f" << face_no
+              //   << "l"
+              //             << neighbor->level() << "c" << neighbor->index() << "f" <<
+              //             neighbor_face_no
+              //             << std::endl;
+              // }
+
               // If we own both cells only do faces from one side (unless
               // AssembleFlags says otherwise). Here, we rely on cell
               // comparison that will look at cell->index().
@@ -259,10 +293,38 @@ mesh_loop(
                  (neighbor < cell))
                 continue;
 
+              /// DEBUG
+              // if(!own_cell && !own_neighbor)
+              // {
+              //   const bool periodic_neighbor = cell->has_periodic_neighbor(face_no);
+              //   const unsigned int neighbor_face_no = periodic_neighbor ?
+              //                                           cell->periodic_neighbor_face_no(face_no)
+              //                                           : cell->neighbor_face_no(face_no);
+              //   *pcout << "C " << "l" << cell->level() << "c" << cell->index() << "f" << face_no
+              //   << "l"
+              //             << neighbor->level() << "c" << neighbor->index() << "f" <<
+              //             neighbor_face_no
+              //             << std::endl;
+              // }
+
               // We only look at faces to ghost on the same level once
               // (only where own_cell=true and own_neighbor=false)
-              if(!own_cell)
+              if(!own_cell && !assemble_relevant_faces)
                 continue;
+
+              /// DEBUG
+              // if(!own_cell && !own_neighbor)
+              // {
+              //   const bool periodic_neighbor = cell->has_periodic_neighbor(face_no);
+              //   const unsigned int neighbor_face_no = periodic_neighbor ?
+              //                                           cell->periodic_neighbor_face_no(face_no)
+              //                                           : cell->neighbor_face_no(face_no);
+              //   *pcout << "D " << "l" << cell->level() << "c" << cell->index() << "f" << face_no
+              //   << "l"
+              //             << neighbor->level() << "c" << neighbor->index() << "f" <<
+              //             neighbor_face_no
+              //             << std::endl;
+              // }
 
               // now only one processor assembles faces_to_ghost. We let
               // the processor with the smaller (level-)subdomain id
@@ -270,6 +332,20 @@ mesh_loop(
               if(own_cell && !own_neighbor && (flags & assemble_ghost_faces_once) &&
                  (neighbor_subdomain_id < current_subdomain_id))
                 continue;
+
+              /// DEBUG
+              // if(!own_cell && !own_neighbor)
+              // {
+              //   const bool periodic_neighbor = cell->has_periodic_neighbor(face_no);
+              //   const unsigned int neighbor_face_no = periodic_neighbor ?
+              //                                           cell->periodic_neighbor_face_no(face_no)
+              //                                           : cell->neighbor_face_no(face_no);
+              //   *pcout << "E " << "l" << cell->level() << "c" << cell->index() << "f" << face_no
+              //   << "l"
+              //             << neighbor->level() << "c" << neighbor->index() << "f" <<
+              //             neighbor_face_no
+              //             << std::endl;
+              // }
 
               const unsigned int neighbor_face_no = periodic_neighbor ?
                                                       cell->periodic_neighbor_face_no(face_no) :
@@ -364,6 +440,7 @@ mesh_loop(
                                   sample_scratch_data,
                                   sample_copy_data,
                                   flags,
+                                  assemble_relevant_faces,
                                   boundary_worker,
                                   face_worker,
                                   queue_length,
