@@ -33,7 +33,11 @@ class PatchWorker
 {
 public:
   static constexpr unsigned int macro_size = dealii::VectorizedArray<number>::size();
-  using CellIterator                       = typename PatchInfo<dim>::CellIterator;
+
+  using cell_iterator_type = typename PatchInfo<dim>::cell_iterator_type;
+  /// TODO use as CellIterator the reduced type cell_iterator_type...
+  using CellIterator = typename PatchInfo<dim>::dof_cell_iterator_type; // DEPR
+
   enum class RangeVariant
   {
     all,
@@ -74,19 +78,24 @@ public:
   std::array<std::array<types::boundary_id, macro_size>, GeometryInfo<dim>::faces_per_cell>
   get_boundary_ids(const unsigned int patch) const;
 
+  cell_iterator_type
+  get_cell_iterator(const unsigned int patch_id,
+                    const unsigned int cell_no,
+                    const unsigned int lane) const;
+
   /**
    * Returns the collection of cell iterators describing the physical patch
    * identified by macro patch @p patch_id and vectorization lane @p lane. Cells
    * are lexicographically ordered.
    */
-  std::vector<CellIterator>
+  std::vector<cell_iterator_type>
   get_cell_collection(const unsigned int patch_id, const unsigned int lane) const;
 
   /**
    * Returns the collection of macro cells describing the (regular) macro patch
    * @p patch_id subject to a lexicographical ordering.
    */
-  std::vector<std::array<CellIterator, macro_size>>
+  std::vector<std::array<cell_iterator_type, macro_size>>
   get_cell_collection(const unsigned int patch_id) const;
 
   unsigned int
@@ -137,6 +146,17 @@ public:
   n_lanes_filled(const unsigned int patch_id) const;
 
 protected:
+  template<typename CellIteratorType, typename MakeCellIterator>
+  std::vector<CellIteratorType>
+  make_cell_collection_impl(const MakeCellIterator & make_cell_iterator,
+                            const unsigned int       patch_index,
+                            const unsigned int       lane) const;
+
+  template<typename CellIteratorType, typename MakeCellIterator>
+  std::vector<std::array<CellIteratorType, macro_size>>
+  make_cell_collection_impl(const MakeCellIterator & make_cell_iterator,
+                            const unsigned int       patch_index) const;
+
   /**
    * This method partitions the physical subdomains (that is not vectorized),
    * contained in PatchInfo, into interior/boundary, incomplete/complete groups,
@@ -158,8 +178,6 @@ protected:
   const PatchInfo<dim> * const patch_info;
 
   const TPSS::PatchVariant patch_variant;
-
-  mutable std::vector<CellIterator> cell_iterators_scratchpad;
 };
 
 
@@ -387,7 +405,8 @@ PatchWorker<dim, number>::get_at_boundary_masks(const unsigned int patch_id) con
       return bitset_mask;
     };
 
-  // TODO patch face contains interior cell face and cell face at physical boundary
+  /// TODO a facet of a vertex patch might consist of one interior cell facet
+  /// and one cell facet at the physical boundary
   std::array<std::bitset<macro_size>, GeometryInfo<dim>::faces_per_cell> at_bdry_masks;
   const auto & cell_collection = get_cell_collection(patch_id);
   for(unsigned int d = 0; d < dim; ++d)
@@ -443,54 +462,6 @@ PatchWorker<dim, number>::get_boundary_ids(const unsigned int patch) const
   fill_bdry_ids(last_macro_cell, 1);
 
   return bdry_ids;
-}
-
-
-template<int dim, typename number>
-inline std::vector<typename PatchWorker<dim, number>::CellIterator>
-PatchWorker<dim, number>::get_cell_collection(const unsigned int patch_id,
-                                              const unsigned int lane) const
-{
-  Assert(patch_info, ExcMessage("Patch info is not set."));
-  AssertIndexRange(lane, n_lanes_filled(patch_id));
-  AssertIndexRange(patch_id, get_partition_data().n_subdomains());
-
-  std::vector<PatchWorker<dim, number>::CellIterator> collection;
-  const auto                                          patch_size = n_cells_per_subdomain();
-  for(auto cell_no = 0U; cell_no < patch_size; ++cell_no)
-  {
-    const auto cell_position = get_cell_position(patch_id, cell_no, lane);
-    collection.emplace_back(patch_info->get_cell_iterator(cell_position));
-  }
-  return collection;
-}
-
-
-template<int dim, typename number>
-inline std::vector<
-  std::array<typename PatchWorker<dim, number>::CellIterator, PatchWorker<dim, number>::macro_size>>
-PatchWorker<dim, number>::get_cell_collection(const unsigned int patch_id) const
-{
-  Assert(patch_info, ExcMessage("Patch info not set."));
-  const auto n_lanes_filled = this->n_lanes_filled(patch_id);
-  /// fill the empty vectorization lanes by copying the first lane
-  const auto get_cell_position_filled = [&](const auto cell_no, const auto lane) {
-    AssertIndexRange(lane, this->macro_size);
-    if(lane < n_lanes_filled)
-      return this->get_cell_position(patch_id, cell_no, lane);
-    else
-      return this->get_cell_position(patch_id, cell_no, 0);
-  };
-
-  const auto                                        patch_size = n_cells_per_subdomain();
-  std::vector<std::array<CellIterator, macro_size>> cell_collect(patch_size);
-  for(auto cell_no = 0U; cell_no < cell_collect.size(); ++cell_no)
-    for(auto lane = 0U; lane < macro_size; ++lane)
-    {
-      const auto cell_position    = get_cell_position_filled(cell_no, lane);
-      cell_collect[cell_no][lane] = patch_info->get_cell_iterator(cell_position);
-    }
-  return cell_collect;
 }
 
 

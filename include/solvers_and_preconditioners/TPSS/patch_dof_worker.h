@@ -14,8 +14,12 @@ template<int dim, typename Number>
 class PatchDoFWorker : public PatchWorker<dim, Number>
 {
 public:
-  using patch_worker_type                  = PatchWorker<dim, Number>;
-  static constexpr unsigned int macro_size = patch_worker_type::macro_size;
+  using Base = PatchWorker<dim, Number>;
+
+  using Base::macro_size;
+
+  using patch_worker_type  = Base;
+  using cell_iterator_type = typename PatchInfo<dim>::dof_cell_iterator_type;
 
   PatchDoFWorker() = delete;
 
@@ -25,6 +29,17 @@ public:
 
   PatchDoFWorker &
   operator=(const PatchDoFWorker &) = delete;
+
+  cell_iterator_type
+  get_cell_iterator(const unsigned int patch_index,
+                    const unsigned int cell_no,
+                    const unsigned int lane) const;
+
+  std::vector<cell_iterator_type>
+  get_cell_collection(const unsigned int patch_index, const unsigned int lane) const;
+
+  std::vector<std::array<cell_iterator_type, macro_size>>
+  get_cell_collection(const unsigned int patch_index) const;
 
   std::set<unsigned int>
   get_constrained_local_dof_indices_1d(const unsigned int patch_id,
@@ -653,7 +668,7 @@ PatchDoFWorker<dim, Number>::n_dofs() const
   /// DGP has truncated tensor structure (special case)
   if(dof_layout == DoFLayout::DGP)
   {
-    const auto n_cells         = patch_worker_type::n_cells_per_subdomain();
+    const auto n_cells         = Base::n_cells_per_subdomain();
     const auto n_dofs_per_cell = get_shape_info().dofs_per_component_on_cell;
     return n_cells * n_dofs_per_cell * n_components;
   }

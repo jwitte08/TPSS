@@ -1,5 +1,6 @@
 namespace TPSS
 {
+/// TODO filling internal_data.cell_iterators is redundant???
 template<int dim>
 void
 PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
@@ -102,13 +103,13 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
   }
 
   /**
-   * Coloring of the "cell patches". For the multiplicative algorithm,
-   * one has to prevent that two local solvers sharing a (global)
-   * degree of freedom are applied to the same residual vector. For
-   * example, DG elements are coupled in terms of the face integrals
-   * involving traces of both elements. Therefore, we cells are in
-   * conflict if they share a common face. TODO other FE types!
+   * Coloring of the "cell patches". For the multiplicative algorithm, one has
+   * to prevent that two local solvers sharing a (global) degree of freedom are
+   * applied to the same residual vector. For example, DG elements are coupled
+   * in terms of the face integrals involving traces of both
+   * elements. Therefore, cells are in conflict if they share a common face.
    */
+  /// TODO treat other finite elements than FE_DGQ
   else if(color_scheme == TPSS::SmootherVariant::multiplicative) // MULTIPLICATIVE
   {
     const bool do_graph_coloring = !additional_data.coloring_func;
@@ -145,7 +146,7 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
   time_data.emplace_back(time.wall_time(), "Submit cell-based patches");
   time.restart();
 
-  // *** check if the InternalData is valid
+  // *** check if internal_data is valid
   if(color_scheme == TPSS::SmootherVariant::additive)
     AssertDimension(internal_data.n_colors(), 1);
   const unsigned int n_physical_subdomains =

@@ -22,12 +22,20 @@
 
 namespace TPSS
 {
+/// TODO description...
+/// TODO conceptional PatchInfo should be a struct to store patch
+/// distributions and interfacing should be done by PatchWorker (and its
+/// derivatives)...
 template<int dim>
 class PatchInfo
 {
 public:
-  using CellIterator  = typename dealii::DoFHandler<dim>::level_cell_iterator;
-  using PatchIterator = typename std::vector<std::vector<CellIterator>>::const_iterator;
+  /// TODO CellIterator does not need to have underlying DoFAccessor type
+  /// TODO CellIterator should handle active cells if PatchInfo does so
+  using cell_iterator_type     = typename dealii::Triangulation<dim>::cell_iterator;
+  using dof_cell_iterator_type = typename dealii::DoFHandler<dim>::level_cell_iterator;
+  using CellIterator           = dof_cell_iterator_type;                                 // DEPR
+  using PatchIterator = typename std::vector<std::vector<CellIterator>>::const_iterator; // DEPR
 
   struct AdditionalData;
 
@@ -74,9 +82,6 @@ public:
 
   const std::vector<std::pair<int, int>> &
   get_cell_level_and_index_pairs() const;
-
-  CellIterator
-  get_cell_iterator(const unsigned int cell_position) const;
 
   const Triangulation<dim> &
   get_triangulation() const;
@@ -330,6 +335,7 @@ struct PatchInfo<dim>::InternalData
    * CellIterator. During the initialization this array is compressed to @p
    * cell_level_and_index_pairs.
    */
+  /// TODO this field becomes redundant if we rely on cell_level_and_index_pairs
   std::vector<CellIterator> cell_iterators;
 
   /**
@@ -360,8 +366,8 @@ struct PatchInfo<dim>::InternalData
    */
   const Triangulation<dim> * triangulation = nullptr;
 
-  // TODO we should not need dof handler !!!
-  const DoFHandler<dim> * dof_handler = nullptr;
+  // TODO we should not have to cache a DoFHandler !!!
+  const DoFHandler<dim> * dof_handler = nullptr; // DEPR
 };
 
 
@@ -380,10 +386,10 @@ struct PatchInfo<dim>::SubdomainData
 template<int dim>
 struct FaceInfoLocal
 {
-  using CellIterator = typename PatchInfo<dim>::CellIterator;
+  using cell_iterator_type = typename PatchInfo<dim>::cell_iterator_type;
 
-  FaceInfoLocal(const unsigned int                my_cell_no,
-                const std::vector<CellIterator> & cell_collection_in);
+  FaceInfoLocal(const unsigned int                      my_cell_no,
+                const std::vector<cell_iterator_type> & cell_collection_in);
 
   static constexpr unsigned int
   n_faces();
@@ -427,8 +433,8 @@ struct FaceInfoLocal
 
 
 template<int dim>
-FaceInfoLocal<dim>::FaceInfoLocal(const unsigned int                my_cell_no,
-                                  const std::vector<CellIterator> & cell_collection_in)
+FaceInfoLocal<dim>::FaceInfoLocal(const unsigned int                      my_cell_no,
+                                  const std::vector<cell_iterator_type> & cell_collection_in)
   : cell_number(my_cell_no), n_cells(cell_collection_in.size())
 {
   AssertIndexRange(my_cell_no, cell_collection_in.size());
@@ -556,6 +562,7 @@ FaceInfoLocal<dim>::get_face_numbers_lower_neighbor() const
 }
 
 
+
 // --------------------------------   PatchInfo   --------------------------------
 
 
@@ -604,19 +611,6 @@ inline const std::vector<std::pair<int, int>> &
 PatchInfo<dim>::get_cell_level_and_index_pairs() const
 {
   return get_internal_data()->cell_level_and_index_pairs;
-}
-
-
-template<int dim>
-inline typename PatchInfo<dim>::CellIterator
-PatchInfo<dim>::get_cell_iterator(const unsigned int cell_position) const
-{
-  const auto & tria                   = get_triangulation();
-  const auto [cell_level, cell_index] = get_cell_level_and_index(cell_position);
-  // TODO we should not need dof handler here -> exchange CellIterator
-  const auto dof_handler = get_internal_data()->dof_handler;
-  Assert(dof_handler, ExcMessage("DoFHandler is not set. TODO"));
-  return CellIterator(&tria, cell_level, cell_index, dof_handler);
 }
 
 
