@@ -3,6 +3,9 @@
 
 #include <deal.II/base/exceptions.h>
 #include <deal.II/base/vectorization.h>
+
+#include <deal.II/grid/filtered_iterator.h>
+
 #include <deal.II/matrix_free/evaluation_kernels.h>
 
 #include <array>
@@ -130,7 +133,7 @@ struct BelongsToCollection
  * iterators passed.
  */
 template<typename BaseIterator>
-IteratorRange<FilteredIterator<BaseIterator>>
+IteratorRange<dealii::FilteredIterator<BaseIterator>>
 make_local_cell_range(const std::vector<BaseIterator> & cell_collection_in)
 {
   Assert(!cell_collection_in.empty(), ExcMessage("Collection is empty."));
