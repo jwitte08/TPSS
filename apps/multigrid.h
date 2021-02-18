@@ -292,10 +292,22 @@ public:
     switch(prms.precondition_variant)
     {
       case CoarseGridParameter::PreconditionVariant::None:
+      {
         AssertThrow(
           is_prec_id,
           ExcMessage(
             "If you want to make use of the preconditioner passed set precondition_variant to PreconditionVariant::User. If you want to apply the iterative solver without preconditioner do not pass a preconditioner to this function."));
+        /// this looks akward but we need a local PreconditionIdentity object
+        /// that is kept alive...
+        using coarse_grid_solver_type = MGCoarseGridIterativeSolver<VectorType,
+                                                                    SolverSelector<VectorType>,
+                                                                    MatrixType,
+                                                                    PreconditionIdentity>;
+        Base::coarse_grid_solver      = std::make_shared<coarse_grid_solver_type>(iterative_solver,
+                                                                             coarse_matrix,
+                                                                             preconditioner_id);
+        break;
+      }
       case CoarseGridParameter::PreconditionVariant::User:
       {
         using coarse_grid_solver_type = MGCoarseGridIterativeSolver<VectorType,
@@ -343,6 +355,7 @@ public:
 
 private:
   SolverSelector<VectorType> iterative_solver;
+  /// we need this PreconditionIdentity object...
   const PreconditionIdentity preconditioner_id;
 };
 
