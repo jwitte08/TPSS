@@ -7,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include "solvers_and_preconditioners/TPSS/matrix_helper.h"
+
 #include "common_integrator.h"
 #include "poisson_problem.h"
 
@@ -471,6 +473,7 @@ protected:
       }
     }
 
+    //: assemble (local)
     std::vector<MatrixAsTable<VectorizedArray<double>>> local_matrices_ass;
     {
       ScratchData<dim> scratch_data(
