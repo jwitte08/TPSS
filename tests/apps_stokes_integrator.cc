@@ -442,6 +442,96 @@ protected:
   }
 
 
+  template<Stokes::Method method = Method::Qkplus2_DGPk>
+  void
+  check_matrixintegratorlmw(const bool do_velocity_only)
+  {
+    /// TODO define parameters outside of this function ?
+    const auto patch_variant    = TPSS::PatchVariant::vertex;
+    const auto smoother_variant = TPSS::SmootherVariant::additive;
+    const auto damping          = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
+    options.setup(/*CG_GMG*/ 5, damping, patch_variant, smoother_variant);
+
+    /// TODO define equation data outside of this function ?
+    EquationData equation_data;
+
+    using StokesProblem = ModelProblem<dim, fe_degree_p, method>;
+
+    const auto stokes_problem = std::make_shared<StokesProblem>(options.prms, equation_data);
+    stokes_problem->pcout     = pcout_owned;
+    stokes_problem->make_grid();
+    stokes_problem->setup_system();
+    const auto mgc = stokes_problem->make_multigrid_velocity_pressure();
+    stokes_problem->print_informations();
+
+    using MatrixIntegrator  = VelocityPressure::FD::MatrixIntegratorLMW<dim,
+                                                                       fe_degree_p,
+                                                                       double,
+                                                                       StokesProblem::dof_layout_v,
+                                                                       StokesProblem::fe_degree_v>;
+    using local_matrix_type = typename MatrixIntegrator::matrix_type;
+
+    ASSERT_TRUE(mgc->mg_schwarz_smoother_pre) << "mg_smoother is not initialized.";
+
+    const auto   level             = stokes_problem->max_level();
+    const auto   mgss              = mgc->mg_schwarz_smoother_pre;
+    const auto   subdomain_handler = mgss->get_subdomain_handler(level);
+    const auto & partition_data    = subdomain_handler->get_partition_data();
+    const TrilinosWrappers::BlockSparseMatrix & level_matrix = mgc->mg_matrices[level];
+    const auto                                  n_subdomains = partition_data.n_subdomains();
+    std::vector<local_matrix_type>              local_matrices(n_subdomains);
+
+    MatrixIntegrator integrator;
+    integrator.initialize(equation_data);
+
+    integrator.assemble_subspace_inverses(*subdomain_handler,
+                                          local_matrices,
+                                          level_matrix,
+                                          partition_data.get_patch_range());
+
+    using MatrixIntegratorCut =
+      VelocityPressure::FD::MatrixIntegratorCut<dim,
+                                                fe_degree_p,
+                                                double,
+                                                StokesProblem::dof_layout_v,
+                                                StokesProblem::fe_degree_v>;
+
+    std::vector<local_matrix_type> local_matrices_cut(n_subdomains);
+
+    MatrixIntegratorCut integrator_cut;
+    integrator_cut.initialize(equation_data);
+
+    integrator_cut.assemble_subspace_inverses(*subdomain_handler,
+                                              local_matrices_cut,
+                                              level_matrix,
+                                              partition_data.get_patch_range());
+
+    const auto   patch_transfer     = integrator.get_patch_transfer(*subdomain_handler);
+    const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
+
+    ASSERT_EQ(local_matrices.size(), local_matrices_cut.size());
+    for(auto patch_index = 0U; patch_index < local_matrices.size(); ++patch_index)
+    {
+      for(auto lane = 0U; lane < patch_dof_worker_v.n_lanes_filled(patch_index); ++lane)
+      {
+        auto & patch_matrix     = local_matrices[patch_index];
+        auto & patch_matrix_cut = local_matrices_cut[patch_index];
+
+        if(do_velocity_only)
+        {
+          const auto & fullmatrix =
+            table_to_fullmatrix(patch_matrix.get_block(0, 0).as_table(), lane);
+          const auto & fullmatrix_cut =
+            table_to_fullmatrix(patch_matrix_cut.get_block(0, 0).as_table(), lane);
+          compare_matrix(fullmatrix, fullmatrix_cut);
+        }
+        else
+          ASSERT_TRUE(false) << "not implemented...";
+      }
+    }
+  }
+
+
   void
   compare_matrix(const FullMatrix<double> & patch_matrix_full,
                  const FullMatrix<double> & other) const
@@ -486,6 +576,8 @@ protected:
 
 TYPED_TEST_SUITE_P(TestStokesIntegrator);
 
+
+
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrixVelocity)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
@@ -497,6 +589,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrixVelocity)
   Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::check_system_matrix_velocity();
 }
+
+
 
 TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityMPI)
 {
@@ -510,6 +604,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityMPI)
   Fixture::check_local_solvers_velocity(true);
   Fixture::check_local_solvers_velocity(false);
 }
+
+
 
 TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversDGVelocity)
 {
@@ -525,6 +621,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversDGVelocity)
   Fixture::template check_local_solvers_velocity<Method::TaylorHoodDGQ>(false);
 }
 
+
+
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrix)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
@@ -539,6 +637,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrix)
   Fixture::check_system_matrix(false);
 }
 
+
+
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemRHS)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
@@ -551,6 +651,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckSystemRHS)
   Fixture::check_system_matrix(false, true);
 }
 
+
+
 TYPED_TEST_P(TestStokesIntegrator, CheckLevelMatrixVelocityPressure)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
@@ -562,6 +664,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLevelMatrixVelocityPressure)
   Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::check_local_solvers_block(false, true);
 }
+
+
 
 TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
 {
@@ -577,6 +681,21 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
   Fixture::check_local_solvers_block(false);
 }
 
+
+
+TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmw_velocityonly_MPI)
+{
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 1;
+  Fixture::check_matrixintegratorlmw(true);
+  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::check_matrixintegratorlmw(true);
+}
+
+
+
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckSystemMatrixVelocity,
                             CheckLocalSolversVelocityMPI,
@@ -584,17 +703,22 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckSystemMatrix,
                             CheckSystemRHS,
                             CheckLevelMatrixVelocityPressure,
-                            CheckLocalSolversVelocityPressure);
+                            CheckLocalSolversVelocityPressure,
+                            matrixintegratorlmw_velocityonly_MPI);
+
+
 
 using TestParamsConstant  = testing::Types<Util::NonTypeParams<2, 0>>;
 using TestParamsLinear    = testing::Types<Util::NonTypeParams<2, 1>>;
 using TestParamsQuadratic = testing::Types<Util::NonTypeParams<2, 2>>;
-using TestParamsHighOrder = testing::Types<Util::NonTypeParams<2, 5>>;
+// using TestParamsHighOrder = testing::Types<Util::NonTypeParams<2, 5>>;
+
+
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Constant2D, TestStokesIntegrator, TestParamsConstant);
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestStokesIntegrator, TestParamsLinear);
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestStokesIntegrator, TestParamsQuadratic);
-INSTANTIATE_TYPED_TEST_SUITE_P(HighOrder2D, TestStokesIntegrator, TestParamsHighOrder);
+// INSTANTIATE_TYPED_TEST_SUITE_P(HighOrder2D, TestStokesIntegrator, TestParamsHighOrder);
 
 
 

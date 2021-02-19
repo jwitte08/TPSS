@@ -554,7 +554,7 @@ struct ModelProblemBase<Method::Qkplus2_DGPk, dim, fe_degree_p>
   using fe_type_v                               = FE_Q<dim>;
   using fe_type_p                               = FE_DGP<dim>;
   static constexpr int           fe_degree_v = fe_degree_p == 0 ? fe_degree_p + 2 : fe_degree_p + 1;
-  static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
+  static constexpr LocalAssembly local_assembly = LocalAssembly::LMW;
 };
 
 template<int dim, int fe_degree_p>

@@ -1416,7 +1416,8 @@ namespace Stokes
 enum class LocalAssembly
 {
   Tensor,
-  Cut
+  Cut,
+  LMW
 };
 
 enum class LocalSolver

@@ -2611,7 +2611,7 @@ template<int dim,
 class MatrixIntegratorCut
 {
 public:
-  using This = MatrixIntegratorCut<dim, fe_degree_p, Number>;
+  using This = MatrixIntegratorCut<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
 
   static constexpr int n_q_points_1d = fe_degree_v + 1;
 
@@ -2634,24 +2634,41 @@ public:
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
 
-    const auto                           patch_transfer = get_patch_transfer(subdomain_handler);
+    const unsigned int n_mpi_procs = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
+
     typename matrix_type::AdditionalData additional_data;
     additional_data.basic_inverse = {equation_data.local_kernel_size,
                                      equation_data.local_kernel_threshold};
+
+    const auto   patch_transfer        = get_patch_transfer(subdomain_handler);
+    const auto & patch_worker_velocity = patch_transfer->get_patch_dof_worker(0);
 
     FullMatrix<double> tmp_v_v;
     FullMatrix<double> tmp_p_p;
     FullMatrix<double> tmp_v_p;
     FullMatrix<double> tmp_p_v;
 
+    FullMatrix<double> locally_relevant_level_matrix_v_v;
+    if(n_mpi_procs > 1)
+    {
+      locally_relevant_level_matrix_v_v = std::move(
+        Util::extract_locally_relevant_matrix(level_matrix.block(0, 0),
+                                              subdomain_handler.get_vector_partitioner(0)));
+
+      std::ofstream      ofs;
+      std::ostringstream oss;
+      oss << "debug.p" << mpi_rank << ".txt";
+      ofs.open(oss.str(), std::ios_base::out);
+      locally_relevant_level_matrix_v_v.print_formatted(ofs);
+    }
+
     for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
         ++patch_index)
     {
       patch_transfer->reinit(patch_index);
-      const auto   n_dofs                = patch_transfer->n_dofs_per_patch();
-      const auto   n_dofs_velocity       = patch_transfer->n_dofs_per_patch(0);
-      const auto   n_dofs_pressure       = patch_transfer->n_dofs_per_patch(1);
-      const auto & patch_worker_velocity = patch_transfer->get_patch_dof_worker(0);
+      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
+      const auto n_dofs_velocity = patch_transfer->n_dofs_per_patch(0);
+      const auto n_dofs_pressure = patch_transfer->n_dofs_per_patch(1);
 
       matrix_type & patch_matrix = local_matrices[patch_index];
 
@@ -2675,47 +2692,71 @@ public:
       {
         /// Patch-wise local and global dof indices of velocity block.
         const auto & patch_transfer_velocity = patch_transfer->get_patch_transfer(0);
-        std::vector<types::global_dof_index> velocity_dof_indices_on_patch;
-        {
-          const auto view = patch_transfer_velocity.get_dof_indices(lane);
-          std::copy(view.cbegin(), view.cend(), std::back_inserter(velocity_dof_indices_on_patch));
-        }
+        const std::vector<types::global_dof_index> velocity_dof_indices_on_patch =
+          std::move(patch_transfer_velocity.get_global_dof_indices(lane));
 
         /// Patch-wise local and global dof indices of pressure block.
         const auto & patch_transfer_pressure = patch_transfer->get_patch_transfer(1);
-        std::vector<types::global_dof_index> pressure_dof_indices_on_patch;
-        {
-          const auto view = patch_transfer_pressure.get_dof_indices(lane);
-          std::copy(view.cbegin(), view.cend(), std::back_inserter(pressure_dof_indices_on_patch));
-        }
+        const std::vector<types::global_dof_index> pressure_dof_indices_on_patch =
+          std::move(patch_transfer_pressure.get_global_dof_indices(lane));
+
+        const auto & g2l = patch_transfer_velocity.get_global_to_local_dof_indices(lane);
+
+        const auto make_local_indices_v =
+          [&](const std::vector<types::global_dof_index> & indices) {
+            std::vector<unsigned int> local_dof_indices;
+            std::transform(indices.begin(),
+                           indices.end(),
+                           std::back_inserter(local_dof_indices),
+                           [&](const auto dof_index) {
+                             return subdomain_handler.get_vector_partitioner(0)->global_to_local(
+                               dof_index);
+                           });
+            return local_dof_indices;
+          };
+
+        const auto local_dof_indices =
+          std::move(make_local_indices_v(velocity_dof_indices_on_patch));
 
         /// velocity block
-        if(equation_data.local_solver == LocalSolver::Vdiag)
+        if(n_mpi_procs > 1) /// parallel
         {
-          for(auto comp = 0U; comp < dim; ++comp)
-          {
-            std::vector<types::global_dof_index> velocity_dof_indices_per_comp;
-            const auto view = patch_transfer_velocity.get_dof_indices(lane, comp);
-            std::copy(view.cbegin(),
-                      view.cend(),
-                      std::back_inserter(velocity_dof_indices_per_comp));
-            const auto n_velocity_dofs_per_comp = velocity_dof_indices_per_comp.size();
-
-            tmp_v_v.reinit(n_velocity_dofs_per_comp, n_velocity_dofs_per_comp);
-            tmp_v_v.extract_submatrix_from(level_matrix.block(0U, 0U),
-                                           velocity_dof_indices_per_comp,
-                                           velocity_dof_indices_per_comp);
-
-            const auto start = comp * n_velocity_dofs_per_comp;
-            local_block_velocity.fill_submatrix(tmp_v_v, start, start, lane);
-          }
-        }
-        else
-        {
-          tmp_v_v.extract_submatrix_from(level_matrix.block(0U, 0U),
-                                         velocity_dof_indices_on_patch,
-                                         velocity_dof_indices_on_patch);
+          AssertThrow(equation_data.local_solver == LocalSolver::Exact, ExcMessage("TODO..."));
+          tmp_v_v.extract_submatrix_from(locally_relevant_level_matrix_v_v,
+                                         local_dof_indices,
+                                         local_dof_indices);
           local_block_velocity.fill_submatrix(tmp_v_v, 0U, 0U, lane);
+        }
+
+        else /// serial
+        {
+          if(equation_data.local_solver == LocalSolver::Vdiag)
+          {
+            for(auto comp = 0U; comp < dim; ++comp)
+            {
+              std::vector<types::global_dof_index> velocity_dof_indices_per_comp;
+              const auto view = patch_transfer_velocity.get_dof_indices(lane, comp);
+              std::copy(view.cbegin(),
+                        view.cend(),
+                        std::back_inserter(velocity_dof_indices_per_comp));
+              const auto n_velocity_dofs_per_comp = velocity_dof_indices_per_comp.size();
+
+              tmp_v_v.reinit(n_velocity_dofs_per_comp, n_velocity_dofs_per_comp);
+              tmp_v_v.extract_submatrix_from(level_matrix.block(0U, 0U),
+                                             velocity_dof_indices_per_comp,
+                                             velocity_dof_indices_per_comp);
+
+              const auto start = comp * n_velocity_dofs_per_comp;
+              local_block_velocity.fill_submatrix(tmp_v_v, start, start, lane);
+            }
+          }
+          else
+          {
+            tmp_v_v.extract_submatrix_from(level_matrix.block(0U, 0U),
+                                           velocity_dof_indices_on_patch,
+                                           velocity_dof_indices_on_patch);
+            local_block_velocity.fill_submatrix(tmp_v_v, 0U, 0U, lane);
+          }
         }
 
         /// pressure block
@@ -2735,6 +2776,227 @@ public:
                                        pressure_dof_indices_on_patch,
                                        velocity_dof_indices_on_patch);
         local_block_pressure_velocity.fill_submatrix(tmp_p_v, 0U, 0U, lane);
+      }
+
+      (void)n_dofs;
+      AssertDimension(patch_matrix.m(), n_dofs);
+      AssertDimension(patch_matrix.n(), n_dofs);
+
+      patch_matrix.invert(additional_data);
+    }
+  }
+
+  std::shared_ptr<transfer_type>
+  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    return std::make_shared<transfer_type>(subdomain_handler);
+  }
+
+  EquationData       equation_data;
+  const unsigned int mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+};
+
+
+
+/**
+ * This class actually makes no use of fast diagonalization but simply uses the
+ * MeshWorker framework to assemble local matrices. Nevertheless
+ * PatchTransferBlock is used as transfer and its underlying PatchDoFWorker to
+ * determine collections of cell iterators.
+ *
+ * Therefore, all local matrices are stored and inverted in a standard way, that
+ * is without exploiting any tensor structure.
+ */
+template<int dim,
+         int fe_degree_p,
+         typename Number              = double,
+         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
+         int             fe_degree_v  = fe_degree_p + 1>
+class MatrixIntegratorLMW
+{
+public:
+  using This = MatrixIntegratorLMW<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
+
+  static constexpr int  n_q_points_1d       = fe_degree_v + 1;
+  static constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
+  static constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
+  static constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
+
+  using value_type    = Number;
+  using transfer_type = typename TPSS::PatchTransferBlock<dim, Number>;
+  using matrix_type   = Tensors::BlockMatrixBasic2x2<MatrixAsTable<VectorizedArray<Number>>>;
+  using operator_type = TrilinosWrappers::BlockSparseMatrix;
+
+  void
+  initialize(const EquationData & equation_data_in)
+  {
+    equation_data = equation_data_in;
+  }
+
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
+                             std::vector<matrix_type> &            local_matrices,
+                             const operator_type & /*level_matrix*/,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+
+    typename matrix_type::AdditionalData additional_data;
+    additional_data.basic_inverse = {equation_data.local_kernel_size,
+                                     equation_data.local_kernel_threshold};
+
+    const auto   patch_transfer     = get_patch_transfer(subdomain_handler);
+    const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
+    const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
+
+    FullMatrix<double> tmp_v_v;
+    FullMatrix<double> tmp_p_p;
+    FullMatrix<double> tmp_v_p;
+    FullMatrix<double> tmp_p_v;
+
+    const auto [begin, end] = subdomain_range;
+    for(auto patch_index = begin; patch_index < end; ++patch_index)
+    {
+      patch_transfer->reinit(patch_index);
+
+      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
+      const auto n_dofs_velocity = patch_transfer->n_dofs_per_patch(0);
+      const auto n_dofs_pressure = patch_transfer->n_dofs_per_patch(1);
+
+      const auto & patch_transfer_v = patch_transfer->get_patch_transfer(0);
+      const auto & patch_transfer_p = patch_transfer->get_patch_transfer(1);
+
+      matrix_type & patch_matrix = local_matrices[patch_index];
+
+      auto & block_velocity = patch_matrix.get_block(0U, 0U);
+      block_velocity.as_table().reinit(n_dofs_velocity, n_dofs_velocity);
+      tmp_v_v.reinit(n_dofs_velocity, n_dofs_velocity);
+
+      auto & block_pressure = patch_matrix.get_block(1U, 1U);
+      block_pressure.as_table().reinit(n_dofs_pressure, n_dofs_pressure);
+      tmp_p_p.reinit(n_dofs_pressure, n_dofs_pressure);
+
+      auto & block_velocity_pressure = patch_matrix.get_block(0U, 1U);
+      block_velocity_pressure.as_table().reinit(n_dofs_velocity, n_dofs_pressure);
+      tmp_v_p.reinit(n_dofs_velocity, n_dofs_pressure);
+
+      auto & block_pressure_velocity = patch_matrix.get_block(1U, 0U);
+      block_pressure_velocity.as_table().reinit(n_dofs_pressure, n_dofs_velocity);
+      tmp_p_v.reinit(n_dofs_pressure, n_dofs_velocity);
+
+      for(auto lane = 0U; lane < patch_dof_worker_v.n_lanes_filled(patch_index); ++lane)
+      {
+        /// velocity block
+        {
+          using Velocity::SIPG::MW::CopyData;
+          using Velocity::SIPG::MW::ScratchData;
+          using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
+
+          tmp_v_v = 0.;
+
+          const auto & cell_collection = patch_dof_worker_v.get_cell_collection(patch_index, lane);
+
+          const auto & local_cell_range = TPSS::make_local_cell_range(cell_collection);
+
+          const auto & g2l = patch_transfer_v.get_global_to_local_dof_indices(lane);
+
+          const auto distribute_local_to_patch_impl = [&](const auto & cd) {
+            std::vector<unsigned int> local_dof_indices;
+            std::transform(cd.dof_indices.begin(),
+                           cd.dof_indices.end(),
+                           std::back_inserter(local_dof_indices),
+                           [&](const auto dof_index) {
+                             const auto & local_index = g2l.find(dof_index);
+                             return local_index != g2l.cend() ? local_index->second :
+                                                                numbers::invalid_unsigned_int;
+                           });
+            for(auto i = 0U; i < cd.matrix.m(); ++i)
+              if(local_dof_indices[i] != numbers::invalid_unsigned_int)
+                for(auto j = 0U; j < cd.matrix.n(); ++j)
+                  if(local_dof_indices[j] != numbers::invalid_unsigned_int)
+                    tmp_v_v(local_dof_indices[i], local_dof_indices[j]) += cd.matrix(i, j);
+          };
+
+          const auto local_copier = [&](const CopyData & copy_data) {
+            for(const auto & cd : copy_data.cell_data)
+              distribute_local_to_patch_impl(cd);
+            for(const auto & cdf : copy_data.face_data)
+              distribute_local_to_patch_impl(cdf);
+          };
+
+          const MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+
+          const UpdateFlags update_flags =
+            update_values | update_gradients | update_quadrature_points | update_JxW_values;
+          const UpdateFlags interface_update_flags = update_flags | update_normal_vectors;
+          ScratchData<dim>  scratch_data(subdomain_handler.get_mapping(),
+                                        subdomain_handler.get_dof_handler(0).get_fe(),
+                                        subdomain_handler.get_dof_handler(0).get_fe(),
+                                        n_q_points_1d,
+                                        update_flags,
+                                        update_flags,
+                                        interface_update_flags,
+                                        interface_update_flags);
+
+          CopyData copy_data;
+
+          if(use_conf_method)
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range,
+              [&](const auto & cell, auto & scratch_data, auto & copy_data) {
+                matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+              },
+              local_copier,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
+
+          else
+            Assert(false, ExcMessage("FEM is not implemented."));
+        }
+
+        if(equation_data.local_solver == LocalSolver::Vdiag)
+        {
+          for(auto comp = 0U; comp < dim; ++comp)
+          {
+            const std::vector<types::global_dof_index> & velocity_dof_indices_per_comp =
+              patch_transfer_v.get_global_dof_indices(lane, comp);
+            const auto n_velocity_dofs_per_comp = velocity_dof_indices_per_comp.size();
+
+            const unsigned int start = comp * n_velocity_dofs_per_comp;
+
+            std::vector<unsigned int> local_dof_indices(n_velocity_dofs_per_comp);
+            std::iota(local_dof_indices.begin(), local_dof_indices.end(), start);
+
+            FullMatrix<double> tmp_per_comp(n_velocity_dofs_per_comp);
+            tmp_per_comp.extract_submatrix_from(tmp_v_v, local_dof_indices, local_dof_indices);
+
+            block_velocity.fill_submatrix(tmp_per_comp, start, start, lane);
+          }
+        }
+        else if(equation_data.local_solver == LocalSolver::Exact)
+          block_velocity.fill_submatrix(tmp_v_v, 0U, 0U, lane);
+        else
+          Assert(false, ExcMessage("local solver variant not implemented"));
+
+        //     /// pressure block
+        //     tmp_p_p.extract_submatrix_from(level_matrix.block(1U, 1U),
+        //                                    pressure_dof_indices_on_patch,
+        //                                    pressure_dof_indices_on_patch);
+        //     block_pressure.fill_submatrix(tmp_p_p, 0U, 0U, lane);
+
+        //     /// velocity-pressure block
+        (void)patch_transfer_p, (void)patch_dof_worker_p;
+        //     tmp_v_p.extract_submatrix_from(level_matrix.block(0U, 1U),
+        //                                    velocity_dof_indices_on_patch,
+        //                                    pressure_dof_indices_on_patch);
+        //     block_velocity_pressure.fill_submatrix(tmp_v_p, 0U, 0U, lane);
+
+        //     /// pressure-velocity block
+        //     tmp_p_v.extract_submatrix_from(level_matrix.block(1U, 0U),
+        //                                    pressure_dof_indices_on_patch,
+        //                                    velocity_dof_indices_on_patch);
+        //     block_pressure_velocity.fill_submatrix(tmp_p_v, 0U, 0U, lane);
       }
 
       (void)n_dofs;
@@ -2792,6 +3054,18 @@ struct MatrixIntegratorSelector<LocalAssembly::Cut,
 {
   using type = MatrixIntegratorCut<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
 };
+
+template<int dim, int fe_degree_p, typename Number, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
+struct MatrixIntegratorSelector<LocalAssembly::LMW,
+                                dim,
+                                fe_degree_p,
+                                Number,
+                                dof_layout_v,
+                                fe_degree_v>
+{
+  using type = MatrixIntegratorLMW<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
+};
+
 
 
 /**
