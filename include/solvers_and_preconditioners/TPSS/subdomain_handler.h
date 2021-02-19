@@ -105,6 +105,12 @@ public:
   const TPSS::PatchInfo<dim> &
   get_patch_info() const;
 
+  const Mapping<dim> &
+  get_mapping() const
+  {
+    return *(get_matrix_free().get_mapping_info().mapping);
+  }
+
   const TPSS::MappingInfo<dim, Number> &
   get_mapping_info() const;
 
