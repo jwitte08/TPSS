@@ -801,22 +801,29 @@ namespace Util
 FullMatrix<double>
 extract_locally_relevant_matrix(
   const TrilinosWrappers::SparseMatrix &                   matrix,
-  const std::shared_ptr<const Utilities::MPI::Partitioner> partitioner)
+  const std::shared_ptr<const Utilities::MPI::Partitioner> partitioner_row,
+  const std::shared_ptr<const Utilities::MPI::Partitioner> partitioner_column)
 {
-  AssertDimension(matrix.m(), matrix.n());
   AssertIndexRange(matrix.m(), 1000); // small matrices!
+  AssertIndexRange(matrix.n(), 1000); // small matrices!
 
-  const auto locally_relevant_size = partitioner->local_size() + partitioner->n_ghost_indices();
+  const auto locally_relevant_row_size =
+    partitioner_row->local_size() + partitioner_row->n_ghost_indices();
+  const auto locally_relevant_column_size =
+    partitioner_column->local_size() + partitioner_column->n_ghost_indices();
 
-  FullMatrix<double> submatrix(locally_relevant_size, locally_relevant_size);
+  FullMatrix<double> submatrix(locally_relevant_row_size, locally_relevant_column_size);
 
-  LinearAlgebra::distributed::Vector<double> e_j(partitioner);
-  LinearAlgebra::distributed::Vector<double> dst(partitioner);
+  LinearAlgebra::distributed::Vector<double> e_j(partitioner_column);
+  LinearAlgebra::distributed::Vector<double> dst(partitioner_row);
+
+  AssertDimension(matrix.m(), dst.size());
+  AssertDimension(matrix.n(), e_j.size());
 
   /// DEBUG
-  // const bool mpi_rank = Utilities::MPI::this_mpi_process(partitioner->get_mpi_communicator());
-  // std::ostringstream oss;
-  // oss << get_filename(partitioner->get_mpi_communicator()) << "." << mpi_rank;
+  // const bool mpi_rank =
+  // Utilities::MPI::this_mpi_process(partitioner_row->get_mpi_communicator()); std::ostringstream
+  // oss; oss << get_filename(partitioner_row->get_mpi_communicator()) << "." << mpi_rank;
   // std::ofstream                       ofs;
   // ofs.open(oss.str(), std::ios_base::out);
 
@@ -825,8 +832,8 @@ extract_locally_relevant_matrix(
     e_j = 0.;
     dst = 0.;
 
-    if(partitioner->in_local_range(j))
-      e_j.local_element(partitioner->global_to_local(j)) = 1.;
+    if(partitioner_column->in_local_range(j))
+      e_j.local_element(partitioner_column->global_to_local(j)) = 1.;
 
     // e_j.update_ghost_values();
     dst.zero_out_ghosts();
@@ -842,9 +849,9 @@ extract_locally_relevant_matrix(
     matrix.vmult(dst, e_j);
 
     /// DEBUG
-    // const bool j_is_ghost = partitioner->is_ghost_entry(j) ? 1 : 0;
+    // const bool j_is_ghost = partitioner_column->is_ghost_entry(j) ? 1 : 0;
     // const bool j_is_ghost_on_any_proc =
-    //   Utilities::MPI::max<int>(j_is_ghost, partitioner->get_mpi_communicator());
+    //   Utilities::MPI::max<int>(j_is_ghost, partitioner_column->get_mpi_communicator());
     // {
     //   std::ostringstream oss;
     //   oss << "dst = A e_" << j << " : " << std::endl;
@@ -863,15 +870,29 @@ extract_locally_relevant_matrix(
     //   ofs << oss.str();
     // }
 
-    if(partitioner->in_local_range(j) || partitioner->is_ghost_entry(j))
+    if(partitioner_column->in_local_range(j) || partitioner_column->is_ghost_entry(j))
     {
-      const auto jj = partitioner->global_to_local(j);
-      for(auto ii = 0U; ii < locally_relevant_size; ++ii)
+      const auto jj = partitioner_column->global_to_local(j);
+      for(auto ii = 0U; ii < locally_relevant_row_size; ++ii)
         submatrix(ii, jj) = dst.local_element(ii);
     }
   }
 
   return submatrix;
+}
+
+
+
+/**
+ * Same as above but more convenient for square matrices.
+ */
+FullMatrix<double>
+extract_locally_relevant_matrix(
+  const TrilinosWrappers::SparseMatrix &                   matrix,
+  const std::shared_ptr<const Utilities::MPI::Partitioner> partitioner)
+{
+  AssertDimension(matrix.m(), matrix.n());
+  return extract_locally_relevant_matrix(matrix, partitioner, partitioner);
 }
 
 } // namespace Util
