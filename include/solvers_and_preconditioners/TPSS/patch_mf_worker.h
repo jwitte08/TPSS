@@ -14,7 +14,8 @@ template<int dim, typename Number>
 class PatchMFWorker : public PatchDoFWorker<dim, Number>
 {
 public:
-  using Base                               = PatchDoFWorker<dim, Number>;
+  using Base = PatchDoFWorker<dim, Number>;
+
   static constexpr unsigned int macro_size = Base::macro_size;
 
   PatchMFWorker() = delete;
