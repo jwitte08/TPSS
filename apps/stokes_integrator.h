@@ -2649,18 +2649,43 @@ public:
     FullMatrix<double> tmp_p_v;
 
     FullMatrix<double> locally_relevant_level_matrix_v_v;
+    FullMatrix<double> locally_relevant_level_matrix_p_p;
+    FullMatrix<double> locally_relevant_level_matrix_v_p;
+    FullMatrix<double> locally_relevant_level_matrix_p_v;
     if(n_mpi_procs > 1)
     {
-      locally_relevant_level_matrix_v_v = std::move(
-        Util::extract_locally_relevant_matrix(level_matrix.block(0, 0),
-                                              subdomain_handler.get_vector_partitioner(0)));
+      const auto partitioner_v = subdomain_handler.get_vector_partitioner(0);
+      const auto partitioner_p = subdomain_handler.get_vector_partitioner(1);
 
-      std::ofstream      ofs;
-      std::ostringstream oss;
-      oss << "debug.p" << mpi_rank << ".txt";
-      ofs.open(oss.str(), std::ios_base::out);
-      locally_relevant_level_matrix_v_v.print_formatted(ofs);
+      locally_relevant_level_matrix_v_v =
+        std::move(Util::extract_locally_relevant_matrix(level_matrix.block(0, 0), partitioner_v));
+      locally_relevant_level_matrix_p_p =
+        std::move(Util::extract_locally_relevant_matrix(level_matrix.block(1, 1), partitioner_p));
+      locally_relevant_level_matrix_v_p = std::move(Util::extract_locally_relevant_matrix(
+        level_matrix.block(0, 1), partitioner_v, partitioner_p));
+      locally_relevant_level_matrix_p_v = std::move(Util::extract_locally_relevant_matrix(
+        level_matrix.block(1, 0), partitioner_p, partitioner_v));
+
+      /// DEBUG
+      // std::ofstream      ofs;
+      // std::ostringstream oss;
+      // oss << "debug.p" << mpi_rank << ".txt";
+      // ofs.open(oss.str(), std::ios_base::out);
+      // locally_relevant_level_matrix_v_v.print_formatted(ofs);
     }
+
+    const auto make_local_indices_impl =
+      [&](const std::vector<types::global_dof_index> &               indices,
+          const std::shared_ptr<const Utilities::MPI::Partitioner> & vector_partitioner) {
+        std::vector<unsigned int> local_dof_indices;
+        std::transform(indices.begin(),
+                       indices.end(),
+                       std::back_inserter(local_dof_indices),
+                       [&](const auto dof_index) {
+                         return vector_partitioner->global_to_local(dof_index);
+                       });
+        return local_dof_indices;
+      };
 
     for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
         ++patch_index)
@@ -2700,31 +2725,21 @@ public:
         const std::vector<types::global_dof_index> pressure_dof_indices_on_patch =
           std::move(patch_transfer_pressure.get_global_dof_indices(lane));
 
-        const auto & g2l = patch_transfer_velocity.get_global_to_local_dof_indices(lane);
+        const auto local_dof_indices_v =
+          std::move(make_local_indices_impl(velocity_dof_indices_on_patch,
+                                            subdomain_handler.get_vector_partitioner(0)));
 
-        const auto make_local_indices_v =
-          [&](const std::vector<types::global_dof_index> & indices) {
-            std::vector<unsigned int> local_dof_indices;
-            std::transform(indices.begin(),
-                           indices.end(),
-                           std::back_inserter(local_dof_indices),
-                           [&](const auto dof_index) {
-                             return subdomain_handler.get_vector_partitioner(0)->global_to_local(
-                               dof_index);
-                           });
-            return local_dof_indices;
-          };
-
-        const auto local_dof_indices =
-          std::move(make_local_indices_v(velocity_dof_indices_on_patch));
+        const auto local_dof_indices_p =
+          std::move(make_local_indices_impl(pressure_dof_indices_on_patch,
+                                            subdomain_handler.get_vector_partitioner(1)));
 
         /// velocity block
         if(n_mpi_procs > 1) /// parallel
         {
           AssertThrow(equation_data.local_solver == LocalSolver::Exact, ExcMessage("TODO..."));
           tmp_v_v.extract_submatrix_from(locally_relevant_level_matrix_v_v,
-                                         local_dof_indices,
-                                         local_dof_indices);
+                                         local_dof_indices_v,
+                                         local_dof_indices_v);
           local_block_velocity.fill_submatrix(tmp_v_v, 0U, 0U, lane);
         }
 
@@ -2760,21 +2775,36 @@ public:
         }
 
         /// pressure block
-        tmp_p_p.extract_submatrix_from(level_matrix.block(1U, 1U),
-                                       pressure_dof_indices_on_patch,
-                                       pressure_dof_indices_on_patch);
+        if(n_mpi_procs > 1) /// parallel
+          tmp_p_p.extract_submatrix_from(locally_relevant_level_matrix_p_p,
+                                         local_dof_indices_p,
+                                         local_dof_indices_p);
+        else /// serial
+          tmp_p_p.extract_submatrix_from(level_matrix.block(1U, 1U),
+                                         pressure_dof_indices_on_patch,
+                                         pressure_dof_indices_on_patch);
         local_block_pressure.fill_submatrix(tmp_p_p, 0U, 0U, lane);
 
         /// velocity-pressure block
-        tmp_v_p.extract_submatrix_from(level_matrix.block(0U, 1U),
-                                       velocity_dof_indices_on_patch,
-                                       pressure_dof_indices_on_patch);
+        if(n_mpi_procs > 1) /// parallel
+          tmp_v_p.extract_submatrix_from(locally_relevant_level_matrix_v_p,
+                                         local_dof_indices_v,
+                                         local_dof_indices_p);
+        else
+          tmp_v_p.extract_submatrix_from(level_matrix.block(0U, 1U),
+                                         velocity_dof_indices_on_patch,
+                                         pressure_dof_indices_on_patch);
         local_block_velocity_pressure.fill_submatrix(tmp_v_p, 0U, 0U, lane);
 
         /// pressure-velocity block
-        tmp_p_v.extract_submatrix_from(level_matrix.block(1U, 0U),
-                                       pressure_dof_indices_on_patch,
-                                       velocity_dof_indices_on_patch);
+        if(n_mpi_procs > 1) /// parallel
+          tmp_p_v.extract_submatrix_from(locally_relevant_level_matrix_p_v,
+                                         local_dof_indices_p,
+                                         local_dof_indices_v);
+        else
+          tmp_p_v.extract_submatrix_from(level_matrix.block(1U, 0U),
+                                         pressure_dof_indices_on_patch,
+                                         velocity_dof_indices_on_patch);
         local_block_pressure_velocity.fill_submatrix(tmp_p_v, 0U, 0U, lane);
       }
 
@@ -2979,24 +3009,133 @@ public:
         else
           Assert(false, ExcMessage("local solver variant not implemented"));
 
-        //     /// pressure block
-        //     tmp_p_p.extract_submatrix_from(level_matrix.block(1U, 1U),
-        //                                    pressure_dof_indices_on_patch,
-        //                                    pressure_dof_indices_on_patch);
-        //     block_pressure.fill_submatrix(tmp_p_p, 0U, 0U, lane);
+        /// pressure block (just fill with zeros!)
+        block_pressure.fill_submatrix(tmp_p_p, 0U, 0U, lane);
 
-        //     /// velocity-pressure block
-        (void)patch_transfer_p, (void)patch_dof_worker_p;
-        //     tmp_v_p.extract_submatrix_from(level_matrix.block(0U, 1U),
-        //                                    velocity_dof_indices_on_patch,
-        //                                    pressure_dof_indices_on_patch);
-        //     block_velocity_pressure.fill_submatrix(tmp_v_p, 0U, 0U, lane);
+        /// velocity-pressure block & pressure-velocity block
+        {
+          using VelocityPressure::MW::Mixed::CopyData;
+          using VelocityPressure::MW::Mixed::ScratchData;
+          using MatrixIntegrator   = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, true>;
+          using cell_iterator_type = typename MatrixIntegrator::IteratorType;
 
-        //     /// pressure-velocity block
-        //     tmp_p_v.extract_submatrix_from(level_matrix.block(1U, 0U),
-        //                                    pressure_dof_indices_on_patch,
-        //                                    velocity_dof_indices_on_patch);
-        //     block_pressure_velocity.fill_submatrix(tmp_p_v, 0U, 0U, lane);
+          tmp_v_p = 0.;
+          tmp_p_v = 0.;
+
+          const auto & dof_handler_velocity = subdomain_handler.get_dof_handler(0);
+          const auto & dof_handler_pressure = subdomain_handler.get_dof_handler(1);
+
+          const auto & cell_collection_v =
+            patch_dof_worker_v.get_cell_collection(patch_index, lane);
+          const auto & cell_collection_p =
+            patch_dof_worker_p.get_cell_collection(patch_index, lane);
+
+          const auto & local_cell_range_v = TPSS::make_local_cell_range(cell_collection_v);
+
+          const auto & g2l_v = patch_transfer_v.get_global_to_local_dof_indices(lane);
+          const auto & g2l_p = patch_transfer_p.get_global_to_local_dof_indices(lane);
+
+          const auto distribute_local_to_patch_impl = [&](const auto & cd,
+                                                          const auto & cd_flipped) {
+            std::vector<unsigned int> local_dof_indices_v;
+            std::transform(cd.dof_indices.begin(),
+                           cd.dof_indices.end(),
+                           std::back_inserter(local_dof_indices_v),
+                           [&](const auto dof_index) {
+                             const auto & local_index = g2l_v.find(dof_index);
+                             return local_index != g2l_v.cend() ? local_index->second :
+                                                                  numbers::invalid_unsigned_int;
+                           });
+            std::vector<unsigned int> local_dof_indices_p;
+            std::transform(cd.dof_indices_column.begin(),
+                           cd.dof_indices_column.end(),
+                           std::back_inserter(local_dof_indices_p),
+                           [&](const auto dof_index) {
+                             const auto & local_index = g2l_p.find(dof_index);
+                             return local_index != g2l_p.cend() ? local_index->second :
+                                                                  numbers::invalid_unsigned_int;
+                           });
+            AssertDimension(cd.matrix.m(), local_dof_indices_v.size());
+            AssertDimension(cd.matrix.n(), local_dof_indices_p.size());
+            /// velocity-pressure
+            for(auto i = 0U; i < cd.matrix.m(); ++i)
+              if(local_dof_indices_v[i] != numbers::invalid_unsigned_int)
+                for(auto j = 0U; j < cd.matrix.n(); ++j)
+                  if(local_dof_indices_p[j] != numbers::invalid_unsigned_int)
+                    tmp_v_p(local_dof_indices_v[i], local_dof_indices_p[j]) += cd.matrix(i, j);
+            AssertDimension(cd_flipped.matrix.m(), local_dof_indices_p.size());
+            AssertDimension(cd_flipped.matrix.n(), local_dof_indices_v.size());
+            /// pressure-velocity
+            for(auto i = 0U; i < cd_flipped.matrix.m(); ++i)
+              if(local_dof_indices_p[i] != numbers::invalid_unsigned_int)
+                for(auto j = 0U; j < cd_flipped.matrix.n(); ++j)
+                  if(local_dof_indices_v[j] != numbers::invalid_unsigned_int)
+                    tmp_p_v(local_dof_indices_p[i], local_dof_indices_v[j]) +=
+                      cd_flipped.matrix(i, j);
+          };
+
+          const auto local_copier = [&](const CopyData & copy_data_pair) {
+            const auto & [copy_data, copy_data_flipped] = copy_data_pair;
+
+            AssertDimension(copy_data.cell_data.size(), copy_data_flipped.cell_data.size());
+            AssertDimension(copy_data.face_data.size(), copy_data_flipped.face_data.size());
+
+            auto cd_flipped = copy_data_flipped.cell_data.cbegin();
+            auto cd         = copy_data.cell_data.cbegin();
+            for(; cd != copy_data.cell_data.cend(); ++cd, ++cd_flipped)
+              distribute_local_to_patch_impl(*cd, *cd_flipped);
+
+            auto cdf_flipped = copy_data_flipped.face_data.cbegin();
+            auto cdf         = copy_data.face_data.cbegin();
+            for(; cdf != copy_data.face_data.cend(); ++cdf, ++cdf_flipped)
+              distribute_local_to_patch_impl(*cdf, *cdf_flipped);
+          };
+
+          const MatrixIntegrator matrix_integrator(
+            nullptr, nullptr, nullptr, nullptr, equation_data);
+
+          const UpdateFlags update_flags_velocity =
+            update_values | update_gradients | update_quadrature_points | update_JxW_values;
+          const UpdateFlags update_flags_pressure =
+            update_values | update_gradients | update_quadrature_points | update_JxW_values;
+          const UpdateFlags interface_update_flags_velocity =
+            update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+          const UpdateFlags interface_update_flags_pressure =
+            update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+
+          ScratchData<dim> scratch_data(subdomain_handler.get_mapping(),
+                                        dof_handler_velocity.get_fe(),
+                                        dof_handler_pressure.get_fe(),
+                                        n_q_points_1d,
+                                        update_flags_velocity,
+                                        update_flags_pressure,
+                                        interface_update_flags_velocity,
+                                        interface_update_flags_pressure);
+
+          CopyData copy_data;
+
+          if(use_conf_method)
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range_v,
+              [&](const cell_iterator_type & cell, auto & scratch_data, auto & copy_data) {
+                cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
+                                               cell->level(),
+                                               cell->index(),
+                                               &dof_handler_pressure);
+                matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
+              },
+              local_copier,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
+
+          else
+            Assert(false, ExcMessage("FEM is not implemented."));
+
+          block_velocity_pressure.fill_submatrix(tmp_v_p, 0U, 0U, lane);
+
+          block_pressure_velocity.fill_submatrix(tmp_p_v, 0U, 0U, lane);
+        }
       }
 
       (void)n_dofs;

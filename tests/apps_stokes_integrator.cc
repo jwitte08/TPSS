@@ -442,10 +442,18 @@ protected:
   }
 
 
-  template<Stokes::Method method = Method::Qkplus2_DGPk>
+  template<Stokes::Method method>
   void
-  check_matrixintegratorlmw(const bool do_velocity_only)
+  check_matrixintegratorlmw(const std::array<unsigned int, 2> block_index)
   {
+    const auto [block_row, block_column] = block_index;
+    // const bool do_velocity_velocity      = block_row == 0U && block_column == 0U;
+    // const bool do_velocity_pressure      = block_row == 0U && block_column == 1U;
+    // const bool do_pressure_velocity      = block_row == 1U && block_column == 0U;
+    const bool do_pressure_pressure = block_row == 1U && block_column == 1U;
+
+    ASSERT_FALSE(do_pressure_pressure) << "block is zero thus not implemented...";
+
     /// TODO define parameters outside of this function ?
     const auto patch_variant    = TPSS::PatchVariant::vertex;
     const auto smoother_variant = TPSS::SmootherVariant::additive;
@@ -517,16 +525,11 @@ protected:
         auto & patch_matrix     = local_matrices[patch_index];
         auto & patch_matrix_cut = local_matrices_cut[patch_index];
 
-        if(do_velocity_only)
-        {
-          const auto & fullmatrix =
-            table_to_fullmatrix(patch_matrix.get_block(0, 0).as_table(), lane);
-          const auto & fullmatrix_cut =
-            table_to_fullmatrix(patch_matrix_cut.get_block(0, 0).as_table(), lane);
-          compare_matrix(fullmatrix, fullmatrix_cut);
-        }
-        else
-          ASSERT_TRUE(false) << "not implemented...";
+        const auto & fullmatrix =
+          table_to_fullmatrix(patch_matrix.get_block(block_row, block_column).as_table(), lane);
+        const auto & fullmatrix_cut =
+          table_to_fullmatrix(patch_matrix_cut.get_block(block_row, block_column).as_table(), lane);
+        compare_matrix(fullmatrix, fullmatrix_cut);
       }
     }
   }
@@ -683,15 +686,41 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
 
 
 
-TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmw_velocityonly_MPI)
+TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_velocityvelocity_MPI)
 {
   using Fixture                               = TestStokesIntegrator<TypeParam>;
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 1;
-  Fixture::check_matrixintegratorlmw(true);
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::Qkplus2_DGPk>({0U, 0U});
   Fixture::options.prms.mesh.n_refinements = 2;
-  Fixture::check_matrixintegratorlmw(true);
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::Qkplus2_DGPk>({0U, 0U});
+}
+
+
+
+TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_velocitypressure_MPI)
+{
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 1;
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::Qkplus2_DGPk>({0U, 1U});
+  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::Qkplus2_DGPk>({0U, 1U});
+}
+
+
+
+TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_pressurevelocity_MPI)
+{
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 1;
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::Qkplus2_DGPk>({1U, 0U});
+  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::Qkplus2_DGPk>({1U, 0U});
 }
 
 
@@ -704,7 +733,9 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckSystemRHS,
                             CheckLevelMatrixVelocityPressure,
                             CheckLocalSolversVelocityPressure,
-                            matrixintegratorlmw_velocityonly_MPI);
+                            matrixintegratorlmwQ_velocityvelocity_MPI,
+                            matrixintegratorlmwQ_velocitypressure_MPI,
+                            matrixintegratorlmwQ_pressurevelocity_MPI);
 
 
 
