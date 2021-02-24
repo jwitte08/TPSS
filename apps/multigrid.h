@@ -25,10 +25,13 @@
 #include <deal.II/multigrid/multigrid.h>
 
 
-#include "solver.h"
+#include "solvers_and_preconditioners/TPSS/block_matrix.h"
 #include "solvers_and_preconditioners/TPSS/schwarz_smoother_data.h"
 #include "solvers_and_preconditioners/TPSS/tensors.h"
 #include "solvers_and_preconditioners/smoother/schwarz_smoother.h"
+
+
+#include "solver.h"
 #include "utilities.h"
 
 
@@ -103,6 +106,7 @@ struct CoarseGridParameter
   std::string         iterative_solver     = "none"; // see SolverSelector
   double              accuracy             = 1.e-12;
   double              threshold_svd        = 0.;
+  unsigned int        kernel_size          = 0;
 
   std::string
   to_string() const;
@@ -200,6 +204,130 @@ struct MGCoarseGridDirect : public MGCoarseGridBase<VectorType>
 
 
 /**
+ * A MGCoarseGridBase derivative treating block matrices. Template
+ * specializations for different vector types can be found below.
+ */
+template<typename VectorType>
+struct MGCoarseGridBlockSVD : public MGCoarseGridBase<VectorType>
+{
+  // using Base = MGCoarseGridBase<VectorType>;
+
+  // ~MGCoarseGridDirect() override final = default;
+
+  // void
+  // operator()(const unsigned int /*level*/,
+  //            VectorType &       dst,
+  //            const VectorType & src) const override final
+  // {
+  //   ...
+  // }
+};
+
+
+
+/**
+ * This specialization handles parallel BlockVectors. Public members have to be
+ * initialized properly: entries of the distributed block matrix have to
+ * transferred to the first process following the global block-wise dof
+ * numbering.
+ */
+template<typename Number>
+struct MGCoarseGridBlockSVD<LinearAlgebra::distributed::BlockVector<Number>>
+  : public MGCoarseGridBase<LinearAlgebra::distributed::BlockVector<Number>>
+{
+  using Base = MGCoarseGridBase<LinearAlgebra::distributed::BlockVector<Number>>;
+
+  using local_matrix_type = Tensors::BlockMatrixBasic<MatrixAsTable<Number>>;
+
+  ~MGCoarseGridBlockSVD() override final = default;
+
+  void
+  operator()(const unsigned int /*level*/,
+             LinearAlgebra::distributed::BlockVector<Number> &       dst,
+             const LinearAlgebra::distributed::BlockVector<Number> & src) const override final
+  {
+    Assert(master_mpi_rank != numbers::invalid_unsigned_int, ExcMessage("Master process not set."));
+    AssertIndexRange(master_mpi_rank, Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) + 1);
+    AssertDimension(Utilities::MPI::max(master_mpi_rank, MPI_COMM_WORLD),
+                    Utilities::MPI::min(master_mpi_rank, MPI_COMM_WORLD));
+    if(master_mpi_rank == this_mpi_rank)
+    {
+      Assert(master_matrix, ExcMessage("Master matrix not set"));
+      AssertDimension(master_matrix->n_block_rows(), master_matrix->n_block_cols());
+      AssertDimension(dst.n_blocks(), master_matrix->n_block_rows());
+      AssertDimension(src.n_blocks(), master_matrix->n_block_cols());
+    }
+    AssertDimension(Utilities::MPI::max(master_mpi_rank == this_mpi_rank ?
+                                          master_matrix->n_block_rows() :
+                                          0,
+                                        MPI_COMM_WORLD),
+                    partitioners.size());
+
+    /// switch from the mpi communication pattern of dst and src to the
+    /// master-slave pattern cached
+    AssertDimension(dst.n_blocks(), partitioners.size());
+    AssertDimension(src.n_blocks(), partitioners.size());
+    const auto setup_and_fill_vector = [&](auto & tmp_vec, const auto & vec, const bool do_fill) {
+      for(auto b = 0U; b < partitioners.size(); ++b)
+      {
+        const auto & bvec     = vec.block(b);
+        auto &       tmp_bvec = tmp_vec.block(b);
+        tmp_bvec.reinit(partitioners[b]);
+        Assert(tmp_bvec.locally_owned_elements() == bvec.locally_owned_elements(),
+               ExcMessage("Mismatching locally owned dof indices."));
+        if(do_fill)
+          tmp_bvec.copy_locally_owned_data_from(bvec);
+      }
+      tmp_vec.collect_sizes();
+    };
+    LinearAlgebra::distributed::BlockVector<Number> tmp_dst(partitioners.size());
+    setup_and_fill_vector(tmp_dst, dst, false);
+    LinearAlgebra::distributed::BlockVector<Number> tmp_src(partitioners.size());
+    setup_and_fill_vector(tmp_src, src, true);
+    tmp_src.update_ghost_values();
+
+    /// the gathered global values of src are used to locally invert on the
+    /// master process. afterwards scatter local dst values to other processes
+    BlockVector<Number> local_dst(partitioners.size());
+    BlockVector<Number> local_src(partitioners.size());
+    for(auto b = 0U; b < partitioners.size(); ++b)
+    {
+      const auto & tmp_bsrc   = tmp_src.block(b);
+      auto &       local_bsrc = local_src.block(b);
+      local_bsrc.reinit(tmp_bsrc.size());
+      if(master_mpi_rank == this_mpi_rank)
+        for(types::global_dof_index dof = 0; dof < local_bsrc.size(); ++dof)
+          local_bsrc(dof) = tmp_bsrc(dof);
+      local_dst.block(b).reinit(tmp_dst.block(b).size());
+    }
+    local_dst.collect_sizes();
+    local_src.collect_sizes();
+
+    if(master_mpi_rank == this_mpi_rank)
+      master_matrix->apply_inverse(local_dst, local_src);
+
+    tmp_dst.zero_out_ghosts();
+    if(master_mpi_rank == this_mpi_rank)
+      for(auto b = 0U; b < partitioners.size(); ++b)
+        for(types::global_dof_index dof = 0; dof < local_dst.block(b).size(); ++dof)
+          tmp_dst.block(b)(dof) = local_dst.block(b)(dof);
+
+    /// finally, fill all dst values to be returned
+    tmp_dst.compress(VectorOperation::add);
+    for(auto b = 0U; b < partitioners.size(); ++b)
+      dst.block(b).copy_locally_owned_data_from(tmp_dst.block(b));
+  }
+
+  unsigned int                             master_mpi_rank = numbers::invalid_unsigned_int;
+  std::shared_ptr<const local_matrix_type> master_matrix;
+  std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners;
+
+  const unsigned int this_mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+};
+
+
+
+/**
  * A base class that handles the infrastructure required for coarse grid solvers
  * used in multigrid routines.
  */
@@ -272,6 +400,126 @@ public:
     using coarse_grid_solver_type = MGCoarseGridSVDSerial<value_type, VectorType>;
     const auto solver             = std::make_shared<coarse_grid_solver_type>();
     solver->initialize(coarse_matrix, prms.threshold_svd);
+    Base::coarse_grid_solver = solver;
+  }
+
+  void
+  initialize_direct(const TrilinosWrappers::BlockSparseMatrix & distributed_blockmatrix,
+                    const CoarseGridParameter &                 prms)
+  {
+    using coarse_grid_solver_type = MGCoarseGridBlockSVD<VectorType>;
+    using local_matrix_type       = typename coarse_grid_solver_type::local_matrix_type;
+
+    AssertDimension(distributed_blockmatrix.m(), distributed_blockmatrix.n());
+    AssertDimension(distributed_blockmatrix.n_block_rows(), distributed_blockmatrix.n_block_cols());
+    const auto n_blocks = distributed_blockmatrix.n_block_rows();
+
+    const auto solver_control = Base::set_solver_control(prms);
+
+    const auto solver = std::make_shared<coarse_grid_solver_type>();
+
+    const auto this_mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+
+    /// DEBUG
+    // std::ostringstream oss;
+    // oss << "debug.p" << this_mpi_rank << ".txt";
+    // std::ofstream ofs;
+    // ofs.open(oss.str(), std::ios_base::out);
+
+    std::vector<IndexSet> global_ranges;
+    std::vector<IndexSet> local_ranges;
+    unsigned int          n_locally_owned_indices = 0;
+    for(auto b = 0U; b < n_blocks; ++b)
+    {
+      const auto & this_matrix = distributed_blockmatrix.block(b, b);
+      AssertDimension(this_matrix.m(), this_matrix.n());
+      auto & this_global_range = global_ranges.emplace_back(this_matrix.m());
+      this_global_range.add_range(0, this_matrix.m());
+      this_global_range.compress();
+      auto & this_local_range             = local_ranges.emplace_back(this_matrix.m());
+      const auto [local_begin, local_end] = this_matrix.local_range();
+      this_local_range.add_range(local_begin, local_end);
+      this_local_range.compress();
+      n_locally_owned_indices += this_matrix.local_size();
+    }
+
+    AssertDimension(Utilities::MPI::sum(n_locally_owned_indices, MPI_COMM_WORLD),
+                    distributed_blockmatrix.m());
+    AssertDimension(global_ranges.size(), n_blocks);
+    AssertDimension(local_ranges.size(), n_blocks);
+
+    {
+      const auto n_loi_max = Utilities::MPI::max(n_locally_owned_indices, MPI_COMM_WORLD);
+      solver->master_mpi_rank =
+        Utilities::MPI::max(n_locally_owned_indices == n_loi_max ? this_mpi_rank : 0U,
+                            MPI_COMM_WORLD);
+    }
+
+    const bool is_master_proc = this_mpi_rank == solver->master_mpi_rank;
+
+    solver->partitioners.clear();
+    for(auto b = 0U; b < n_blocks; ++b)
+      solver->partitioners.emplace_back(std::make_shared<const Utilities::MPI::Partitioner>(
+        local_ranges[b], is_master_proc ? global_ranges[b] : local_ranges[b], MPI_COMM_WORLD));
+
+    const auto locally_relevant_blockmatrix = std::make_shared<local_matrix_type>();
+    locally_relevant_blockmatrix->resize(2U, 2U);
+
+    for(auto brow = 0U; brow < 2U; ++brow)
+    {
+      const auto                partitioner_row = solver->partitioners[brow];
+      std::vector<unsigned int> this_g2l_row;
+      if(is_master_proc)
+        for(types::global_dof_index dof = 0; dof < partitioner_row->size(); ++dof)
+          this_g2l_row.emplace_back(partitioner_row->global_to_local(dof));
+
+      /// DEBUG
+      // ofs << "g2l_row: " << vector_to_string(this_g2l_row) << std::endl;
+
+      for(auto bcol = 0U; bcol < 2U; ++bcol)
+      {
+        const auto partitioner_col = solver->partitioners[bcol];
+
+        std::vector<unsigned int> this_g2l_col;
+        if(is_master_proc)
+          for(types::global_dof_index dof = 0; dof < partitioner_col->size(); ++dof)
+            this_g2l_col.emplace_back(partitioner_col->global_to_local(dof));
+
+        /// DEBUG
+        // ofs << "g2l_col: " << vector_to_string(this_g2l_col) << std::endl;
+
+        /// this is a collective operation thus all processes need to call this method
+        const auto & locally_relevant_matrix =
+          Util::extract_locally_relevant_matrix(distributed_blockmatrix.block(brow, bcol),
+                                                partitioner_row,
+                                                partitioner_col);
+
+        /// DEBUG
+        // ofs << "block: " << brow << "-" << bcol << std::endl;
+        // ofs << "size: " << locally_relevant_matrix.m() << "x" << locally_relevant_matrix.n()
+        //     << std::endl;
+        // locally_relevant_matrix.print_formatted(ofs);
+        // ofs << std::endl;
+
+        if(is_master_proc)
+        {
+          FullMatrix<double> tmp(locally_relevant_matrix.m(), locally_relevant_matrix.n());
+          tmp.extract_submatrix_from(locally_relevant_matrix, this_g2l_row, this_g2l_col);
+          locally_relevant_blockmatrix->get_block(brow, bcol) = tmp;
+        }
+      }
+    }
+
+    if(is_master_proc)
+    {
+      typename local_matrix_type::AdditionalData additional_data;
+      additional_data.threshold   = prms.threshold_svd;
+      additional_data.kernel_size = prms.kernel_size;
+      locally_relevant_blockmatrix->invert(additional_data);
+
+      solver->master_matrix = locally_relevant_blockmatrix;
+    }
+
     Base::coarse_grid_solver = solver;
   }
 
@@ -761,6 +1009,11 @@ CoarseGridParameter::to_string() const
     oss << Util::parameter_to_fstring("Coarse grid preconditioner:",
                                       str_precondition_variant(precondition_variant));
   }
+  else if(solver_variant == SolverVariant::DirectSVD)
+  {
+    oss << Util::parameter_to_fstring("Threshold (singular values):", threshold_svd);
+    oss << Util::parameter_to_fstring("Kernel size:", kernel_size);
+  }
   return oss.str();
 }
 
@@ -797,11 +1050,11 @@ MGParameter::to_string() const
 {
   std::ostringstream oss;
   oss << Util::parameter_to_fstring("Multigrid:", cycle_variant);
-  oss << Util::parameter_to_fstring("/// Pre-smoother", "");
+  oss << Util::parameter_to_fstring("  /// Pre-smoother", "");
   oss << pre_smoother.to_string();
-  oss << Util::parameter_to_fstring("/// Post-smoother", "");
+  oss << Util::parameter_to_fstring("  /// Post-smoother", "");
   oss << post_smoother.to_string();
-  oss << Util::parameter_to_fstring("/// Coarse grid solver", "");
+  oss << Util::parameter_to_fstring("  /// Coarse grid solver", "");
   oss << coarse_grid.to_string();
   return oss.str();
 }
