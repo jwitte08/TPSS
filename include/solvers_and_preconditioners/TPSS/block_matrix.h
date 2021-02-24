@@ -10,6 +10,7 @@
 
 
 #include "kroneckersvd.h"
+#include "matrix_helper.h"
 #include "tensor_product_matrix.h"
 
 
@@ -1558,6 +1559,9 @@ public:
 
   void
   apply_inverse(const ArrayView<Number> & dst, const ArrayView<const Number> & src) const;
+
+  void
+  apply_inverse(BlockVector<Number> & dst, const BlockVector<Number> & src) const;
 
   Table<2, Number>
   as_inverse_table() const;

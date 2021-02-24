@@ -613,6 +613,47 @@ BlockMatrixBasic<MatrixType, Number>::apply_inverse(const ArrayView<Number> &   
 
 
 
+template<typename MatrixType, typename Number>
+void
+BlockMatrixBasic<MatrixType, Number>::apply_inverse(BlockVector<Number> &       dst,
+                                                    const BlockVector<Number> & src) const
+{
+  AssertDimension(dst.n_blocks(), this->n_block_rows());
+  AssertDimension(src.n_blocks(), this->n_block_cols());
+  AssertDimension(dst.n_blocks(), src.n_blocks());
+
+  AlignedVector<Number> tmp_dst(dst.size());
+  AlignedVector<Number> tmp_src(src.size());
+  {
+    auto begin_dst = tmp_dst.begin();
+    auto begin_src = tmp_src.begin();
+    for(auto b = 0U; b < dst.n_blocks(); ++b)
+    {
+      const auto & block_dst = dst.block(b);
+      begin_dst              = std::copy(block_dst.begin(), block_dst.end(), begin_dst);
+      const auto & block_src = src.block(b);
+      begin_src              = std::copy(block_src.begin(), block_src.end(), begin_src);
+    }
+  }
+
+  const ArrayView<Number>       view_dst(tmp_dst.begin(), tmp_dst.size());
+  const ArrayView<const Number> view_src(tmp_src.begin(), tmp_src.size());
+  apply_inverse(view_dst, view_src);
+
+  {
+    auto begin_dst = view_dst.begin();
+    for(auto b = 0U; b < dst.n_blocks(); ++b)
+    {
+      auto & block_dst = dst.block(b);
+      std::copy_n(begin_dst, block_dst.size(), block_dst.begin());
+      begin_dst += block_dst.size();
+    }
+    Assert(begin_dst == view_dst.end(), ExcMessage("Mismatching strides."));
+  }
+}
+
+
+
 ////////// BlockMatrixBasic2x2
 
 
