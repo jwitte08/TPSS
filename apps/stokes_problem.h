@@ -182,7 +182,7 @@ public:
  * subtracts a given mode after each matrix-vector multiplication with the
  * sparse matrix (@p vmult()).
  */
-class BlockSparseMatrixFiltered
+class BlockSparseMatrixFiltered : public Subscriptor
 {
 public:
   using matrix_type = TrilinosWrappers::BlockSparseMatrix;
@@ -198,8 +198,27 @@ public:
   Tvmult(LinearAlgebra::distributed::BlockVector<value_type> &       dst,
          const LinearAlgebra::distributed::BlockVector<value_type> & src) const;
 
+  matrix_type::size_type
+  m() const
+  {
+    return matrix.m();
+  }
+
+  matrix_type::size_type
+  n() const
+  {
+    return matrix.n();
+  }
+
+  operator const FullMatrix<double> &() const
+  {
+    AssertThrow(false, ExcMessage("Not implemented..."));
+    return fullmatrix_dummy;
+  }
+
   const matrix_type &                                    matrix;
   const LinearAlgebra::distributed::Vector<value_type> * mode;
+  FullMatrix<double>                                     fullmatrix_dummy;
 };
 
 
@@ -497,12 +516,15 @@ struct MGCollectionVelocityPressure
   TrilinosWrappers::PreconditionILU     coarse_mass_precondition_ilu_pressure;
   std::shared_ptr<coarse_solver_S_type> coarse_preconditioner_S;
   std::shared_ptr<PreconditionBlockSchur<coarse_solver_A_type, coarse_solver_S_type>>
-    coarse_preconditioner;
+                                                   coarse_preconditioner;
+  LinearAlgebra::distributed::Vector<double>       coarse_constant_pressure_mode;
+  std::shared_ptr<const BlockSparseMatrixFiltered> coarse_matrix_with_filter;
 
-  CoarseGridSolver<matrix_type, vector_type> coarse_grid_solver;
-  const MGCoarseGridBase<vector_type> *      mg_coarse_grid;
-  mg::Matrix<vector_type>                    mg_matrix_wrapper;
-  std::shared_ptr<Multigrid<vector_type>>    multigrid;
+  CoarseGridSolver<matrix_type, vector_type>               coarse_grid_solver;
+  CoarseGridSolver<BlockSparseMatrixFiltered, vector_type> coarse_grid_solver_with_filter;
+  const MGCoarseGridBase<vector_type> *                    mg_coarse_grid;
+  mg::Matrix<vector_type>                                  mg_matrix_wrapper;
+  std::shared_ptr<Multigrid<vector_type>>                  multigrid;
 
   mutable std::shared_ptr<const PreconditionMG<dim, vector_type, mg_transfer_type>>
     preconditioner_mg;
@@ -721,7 +743,7 @@ private:
   compute_mass_foreach_pressure_dof() const;
 
   LinearAlgebra::distributed::Vector<double>
-  compute_constant_pressure_mode() const;
+  make_constant_pressure_mode(const unsigned int level = numbers::invalid_unsigned_int) const;
 
   void
   assemble_system_velocity_pressure();
@@ -1106,36 +1128,52 @@ ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof() cons
 
 template<int dim, int fe_degree_p, Method method>
 LinearAlgebra::distributed::Vector<double>
-ModelProblem<dim, fe_degree_p, method>::compute_constant_pressure_mode() const
+ModelProblem<dim, fe_degree_p, method>::make_constant_pressure_mode(const unsigned int level) const
 {
-  const auto & locally_owned_dof_indices = dof_handler_pressure.locally_owned_dofs();
-  IndexSet     locally_relevant_dof_indices;
-  DoFTools::extract_locally_relevant_dofs(dof_handler_pressure, locally_relevant_dof_indices);
+  const bool is_multigrid = level != numbers::invalid_unsigned_int;
+
+  const auto & locally_owned_dof_indices = is_multigrid ?
+                                             dof_handler_pressure.locally_owned_mg_dofs(level) :
+                                             dof_handler_pressure.locally_owned_dofs();
+  IndexSet locally_relevant_dof_indices;
+  if(is_multigrid)
+    DoFTools::extract_locally_relevant_level_dofs(dof_handler_pressure,
+                                                  level,
+                                                  locally_relevant_dof_indices);
+  else
+    DoFTools::extract_locally_relevant_dofs(dof_handler_pressure, locally_relevant_dof_indices);
 
   LinearAlgebra::distributed::Vector<double> mode(locally_owned_dof_indices,
                                                   locally_relevant_dof_indices,
                                                   MPI_COMM_WORLD);
 
-  const bool is_dgq_legendre =
-    dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
+  const auto compute_impl = [&](const auto & locally_owned_cells_range) {
+    const bool is_dgq_legendre =
+      dof_handler_pressure.get_fe().get_name().find("FE_DGQLegendre") != std::string::npos;
 
-  const auto locally_owned_cells_range =
-    filter_iterators(dof_handler_pressure.active_cell_iterators(),
-                     IteratorFilters::LocallyOwnedCell());
-  std::vector<types::global_dof_index> dof_indices_on_cell(
-    dof_handler_pressure.get_fe().dofs_per_cell);
-  for(const auto & cell : locally_owned_cells_range)
-  {
-    cell->get_active_or_mg_dof_indices(dof_indices_on_cell);
+    std::vector<types::global_dof_index> dof_indices_on_cell(
+      dof_handler_pressure.get_fe().dofs_per_cell);
+    for(const auto & cell : locally_owned_cells_range)
+    {
+      cell->get_active_or_mg_dof_indices(dof_indices_on_cell);
 
-    if(is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP)
-      mode[dof_indices_on_cell.front()] = 1.;
-    else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
-      for(const auto dof_index : dof_indices_on_cell)
-        mode[dof_index] = 1.;
-    else
-      AssertThrow(false, ExcMessage("Dof layout is not supported."));
-  }
+      if(is_dgq_legendre || dof_layout_p == TPSS::DoFLayout::DGP)
+        mode[dof_indices_on_cell.front()] = 1.;
+      else if(dof_layout_p == TPSS::DoFLayout::DGQ || dof_layout_p == TPSS::DoFLayout::Q)
+        for(const auto dof_index : dof_indices_on_cell)
+          mode[dof_index] = 1.;
+      else
+        AssertThrow(false, ExcMessage("Dof layout is not supported."));
+    }
+    mode.compress(VectorOperation::insert);
+  };
+
+  if(is_multigrid)
+    compute_impl(filter_iterators(dof_handler_pressure.mg_cell_iterators_on_level(level),
+                                  IteratorFilters::LocallyOwnedLevelCell()));
+  else
+    compute_impl(filter_iterators(dof_handler_pressure.active_cell_iterators(),
+                                  IteratorFilters::LocallyOwnedCell()));
 
   return mode;
 }
@@ -1397,7 +1435,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     /// matrix-vector products with the system matrix.
     else
     {
-      constant_mode_pressure = std::move(compute_constant_pressure_mode());
+      constant_mode_pressure = std::move(make_constant_pressure_mode());
     }
 
     Assert(mean_value_constraints.is_consistent_in_parallel(
@@ -1966,8 +2004,10 @@ ModelProblem<dim, fe_degree_p, method>::make_multigrid_velocity_pressure()
     MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>>(
     rt_parameters, equation_data);
 
+  const auto & prms = rt_parameters.multigrid;
+
   const unsigned int mg_level_max = max_level();
-  const unsigned int mg_level_min = rt_parameters.multigrid.coarse_level;
+  const unsigned int mg_level_min = prms.coarse_level;
 
   std::vector<unsigned int> component_mask(dim + 1, 0U);
   component_mask[dim] = 1U; // pressure
@@ -1984,6 +2024,9 @@ ModelProblem<dim, fe_degree_p, method>::make_multigrid_velocity_pressure()
   mgc_velocity_pressure->mapping              = &mapping;
   mgc_velocity_pressure->cell_integrals_mask  = cell_integrals_mask;
   mgc_velocity_pressure->face_integrals_mask  = face_integrals_mask;
+  if(prms.coarse_grid.solver_variant == CoarseGridParameter::SolverVariant::Iterative)
+    mgc_velocity_pressure->coarse_constant_pressure_mode =
+      std::move(make_constant_pressure_mode(mg_level_min));
 
   mgc_velocity_pressure->initialize(mg_level_max, user_coloring);
 
@@ -2220,7 +2263,7 @@ ModelProblem<dim, fe_degree_p, method>::post_process_solution_vector()
 
   if(!constant_mode_pressure.get_partitioner()->is_globally_compatible(
        *(system_solution.block(1).get_partitioner())))
-    constant_mode_pressure = std::move(compute_constant_pressure_mode());
+    constant_mode_pressure = std::move(make_constant_pressure_mode());
 
   system_solution.block(1).add(-mean_pressure, constant_mode_pressure);
 
@@ -2645,9 +2688,7 @@ BlockSparseMatrixFiltered::vmult(
   if(mode)
   {
     AssertDimension(2U, dst.n_blocks());
-    auto & dst_pressure = dst.block(1);
-    Assert(mode->get_partitioner()->is_compatible(*(dst_pressure.get_partitioner())),
-           ExcMessage("the vector partitioning is incompatible."));
+    auto &           dst_pressure        = dst.block(1);
     const value_type inner_product_value = (*mode) * dst_pressure;
     dst_pressure.add(-inner_product_value, *mode);
   }
@@ -3195,10 +3236,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     use_tbb(rt_parameters_in.use_tbb),
     n_mpi_procs(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD)),
     use_coarse_preconditioner(parameters.coarse_grid.solver_variant ==
-                              CoarseGridParameter::SolverVariant::
-                                Iterative /*&&
-n_mpi_procs > 1*/)                        // !!!
-
+                              CoarseGridParameter::SolverVariant::Iterative)
 {
 }
 
@@ -3836,15 +3874,16 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
       AssertThrow(false, ExcMessage("Invalid smoothing variant."));
   }
 
-  /// TODO !!! the parallel interface of CoarseGridSolver is not aware of
-  /// threshold_svd which handles the rank-deficiency of the coarse grid
-  /// problem. Thus, ignoring the mean value constraint for the pressure
-  /// component could lead to problems...
-
   //: initialize coarse grid solver
   {
     if(use_coarse_preconditioner)
     {
+      /// TODO !!! the parallel interface of CoarseGridSolver is not aware of
+      /// threshold_svd which handles the rank-deficiency of the coarse grid
+      /// problem. Thus, ignoring the mean value constraint for the pressure
+      /// component could lead to problems...
+      AssertThrow(false, ExcMessage("Does not lead to a stable solver convergence..."));
+
       coarse_preconditioner_A =
         std::make_shared<coarse_solver_A_type>(mg_matrices[mg_level_min].block(0, 0));
 
@@ -3855,19 +3894,30 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                                coarse_mass_precondition_ilu_pressure);
       coarse_preconditioner_S->solver_variant   = "cg";
       coarse_preconditioner_S->n_iterations_max = 999;
-      coarse_preconditioner_S->rel_accuracy     = 1.e-6;
+      coarse_preconditioner_S->rel_accuracy     = 1.e-10; // 1.e-6;
       coarse_preconditioner_S->abs_accuracy     = 1.e-12;
 
       coarse_preconditioner =
         std::make_shared<PreconditionBlockSchur<coarse_solver_A_type, coarse_solver_S_type>>(
           mg_matrices[mg_level_min], *coarse_preconditioner_A, *coarse_preconditioner_S);
-      coarse_grid_solver.initialize(mg_matrices[mg_level_min],
-                                    parameters.coarse_grid,
-                                    *coarse_preconditioner);
+
+      Assert(coarse_constant_pressure_mode.size() != 0, ExcMessage("Not setup..."));
+      coarse_matrix_with_filter =
+        std::make_shared<BlockSparseMatrixFiltered>(mg_matrices[mg_level_min],
+                                                    coarse_constant_pressure_mode);
+
+      coarse_grid_solver_with_filter.initialize(*coarse_matrix_with_filter,
+                                                parameters.coarse_grid,
+                                                *coarse_preconditioner);
+
+      mg_coarse_grid = &coarse_grid_solver_with_filter;
     }
+
     else
+    {
       coarse_grid_solver.initialize(mg_matrices[mg_level_min], parameters.coarse_grid);
-    mg_coarse_grid = &coarse_grid_solver;
+      mg_coarse_grid = &coarse_grid_solver;
+    }
   }
 
   //: initialize geometric multigrid method

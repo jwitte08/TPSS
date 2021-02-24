@@ -98,14 +98,20 @@ struct StokesFlow
       prms.multigrid.coarse_grid.threshold_svd = 1.e-8;
     const bool use_block_system_gmg =
       prms.solver.variant == "CG_GMG" || prms.solver.variant == "GMRES_GMG";
-    if(use_block_system_gmg /*&& n_mpi_procs > 1*/) // !!!
+    if(use_block_system_gmg)
     {
-      prms.multigrid.coarse_grid.threshold_svd    = 0.;
-      prms.multigrid.coarse_grid.solver_variant   = CoarseGridParameter::SolverVariant::Iterative;
-      prms.multigrid.coarse_grid.iterative_solver = "fgmres";
-      prms.multigrid.coarse_grid.precondition_variant =
-        CoarseGridParameter::PreconditionVariant::User;
-      prms.multigrid.coarse_grid.accuracy = 1.e-10;
+      prms.multigrid.coarse_grid.kernel_size = 1U;
+
+      /// The iterative solver settings do not result in convergence for all
+      /// reference solutions and refinements
+
+      // prms.multigrid.coarse_grid.threshold_svd    = 0.;
+      // prms.multigrid.coarse_grid.solver_variant   =
+      // CoarseGridParameter::SolverVariant::Iterative;
+      // prms.multigrid.coarse_grid.iterative_solver = "fgmres";
+      // prms.multigrid.coarse_grid.precondition_variant =
+      //   CoarseGridParameter::PreconditionVariant::User;
+      // prms.multigrid.coarse_grid.accuracy = 1.e-12;
     }
 
     //:: pre-smoother
