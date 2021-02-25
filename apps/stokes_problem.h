@@ -422,7 +422,7 @@ public:
     preconditioner_mg;
 
   const bool         use_tbb;
-  const unsigned int mpi_rank;
+  const unsigned int this_mpi_rank;
 };
 
 
@@ -690,7 +690,7 @@ public:
   const FiniteElement<dim> &
   get_finite_element_pressure() const;
 
-  const unsigned int mpi_rank;
+  const unsigned int this_mpi_rank;
   const bool         is_first_proc;
 
   std::shared_ptr<ConditionalOStream> pcout;
@@ -843,8 +843,8 @@ assemble_pressure_mass_matrix_impl(TrilinosWrappers::SparseMatrix &  matrix,
 template<int dim, int fe_degree_p, Method method>
 ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_parameters_in,
                                                      const EquationData &  equation_data_in)
-  : mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)),
-    is_first_proc(mpi_rank == 0U),
+  : this_mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)),
+    is_first_proc(this_mpi_rank == 0U),
     pcout(std::make_shared<ConditionalOStream>(std::cout, is_first_proc)),
     rt_parameters(rt_parameters_in),
     equation_data(equation_data_in),
@@ -1505,7 +1505,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   //                                      false /*???*/,
   //                                      cell_integrals_mask,
   //                                      face_integrals_mask,
-  //                                      mpi_rank);
+  //                                      this_mpi_rank);
   // dsp.compress();
 
   {
@@ -1535,7 +1535,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
                                            false,
                                            cell_integrals_mask_velocity,
                                            face_integrals_mask_velocity,
-                                           mpi_rank);
+                                           this_mpi_rank);
     }
 
     /// pressure - pressure
@@ -1553,25 +1553,50 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
     /// velocity - pressure
     {
-      AssertThrow(!use_sipg_method && !use_hdivsipg_method, ExcMessage("TODO..."));
+      AssertThrow(!use_hdivsipg_method, ExcMessage("TODO..."));
+      Table<2, DoFTools::Coupling> this_cell_integrals_mask(dim, 1U);
+      Table<2, DoFTools::Coupling> this_face_integrals_mask(dim, 1U);
+      for(auto i = 0U; i < dim; ++i)
+      {
+        this_cell_integrals_mask(i, 0) = cell_integrals_mask(i, dim);
+        this_face_integrals_mask(i, 0) = face_integrals_mask(i, dim);
+      }
       auto & this_dsp = dsp.block(0, 1);
       this_dsp.reinit(lodof_indices_foreach_block[0],
                       lodof_indices_foreach_block[1],
                       lrdof_indices_foreach_block[0],
                       MPI_COMM_WORLD);
-      Tools::make_sparsity_pattern(dof_handler_velocity, dof_handler_pressure, this_dsp);
+      // Tools::make_sparsity_pattern(dof_handler_velocity, dof_handler_pressure, this_dsp);
+      Tools::make_flux_sparsity_pattern(dof_handler_velocity,
+                                        dof_handler_pressure,
+                                        this_dsp,
+                                        this_cell_integrals_mask,
+                                        this_face_integrals_mask,
+                                        this_mpi_rank);
     }
 
     /// pressure - velocity
     {
-      AssertThrow(!use_sipg_method && !use_hdivsipg_method, ExcMessage("TODO..."));
+      AssertThrow(!use_hdivsipg_method, ExcMessage("TODO..."));
+      Table<2, DoFTools::Coupling> this_cell_integrals_mask(1U, dim);
+      Table<2, DoFTools::Coupling> this_face_integrals_mask(1U, dim);
+      for(auto j = 0U; j < dim; ++j)
+      {
+        this_cell_integrals_mask(0, j) = cell_integrals_mask(dim, j);
+        this_face_integrals_mask(0, j) = face_integrals_mask(dim, j);
+      }
       auto & this_dsp = dsp.block(1, 0);
       this_dsp.reinit(lodof_indices_foreach_block[1],
                       lodof_indices_foreach_block[0],
                       lrdof_indices_foreach_block[1],
                       MPI_COMM_WORLD);
-
-      Tools::make_sparsity_pattern(dof_handler_pressure, dof_handler_velocity, this_dsp);
+      // Tools::make_sparsity_pattern(dof_handler_pressure, dof_handler_velocity, this_dsp);
+      Tools::make_flux_sparsity_pattern(dof_handler_pressure,
+                                        dof_handler_velocity,
+                                        this_dsp,
+                                        this_cell_integrals_mask,
+                                        this_face_integrals_mask,
+                                        this_mpi_rank);
     }
 
     dsp.collect_sizes();
@@ -2884,7 +2909,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::MGCollectionVelocity(
     parameters(rt_parameters_in.multigrid),
     equation_data(equation_data_in),
     use_tbb(rt_parameters_in.use_tbb),
-    mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD))
+    this_mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD))
 {
 }
 
@@ -2954,7 +2979,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::initialize(
                                           locally_owned_dof_indices,
                                           locally_relevant_dof_indices,
                                           MPI_COMM_WORLD);
-    /// TODO 1.) this method does not receive the mpi_rank: is it compatible in
+    /// TODO 1.) this method does not receive the mpi rank: is it compatible in
     /// parallel? YES! 2.) there is no variant which receives constraints: is it
     /// applicable in the Hdiv case?
     MGTools::make_flux_sparsity_pattern(

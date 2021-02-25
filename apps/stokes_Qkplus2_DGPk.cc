@@ -61,8 +61,7 @@ main(int argc, char * argv[])
     }
 
     options.setup(test_index, damping);
-    options.prms.n_cycles             = n_cycles;
-    options.prms.solver.rel_tolerance = 1.e-8; // !!!
+    options.prms.n_cycles = n_cycles;
 
     EquationData equation_data;
     AssertThrow(pde_index < EquationData::n_variants,
