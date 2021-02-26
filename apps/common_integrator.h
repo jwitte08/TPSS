@@ -1000,11 +1000,19 @@ compute_symgrad_impl(const EvaluatorType & phi, const unsigned int i, const unsi
   return symgrad_of_phi;
 }
 
+/// TODO obsolete due to FEValuesBase variant?
 template<int dim>
 SymmetricTensor<2, dim>
 compute_symgrad(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
 {
   return compute_symgrad_impl<dim, FEValues<dim>>(phi, i, q);
+}
+
+template<int dim>
+SymmetricTensor<2, dim>
+compute_symgrad(const FEValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return compute_symgrad_impl<dim, FEValuesBase<dim>>(phi, i, q);
 }
 
 
@@ -1114,6 +1122,7 @@ compute_vvalue_impl(const EvaluatorType & phi, const unsigned int i, const unsig
   return value_phi;
 }
 
+/// TODO obsolete by FEValuesBase variant?
 template<int dim>
 Tensor<1, dim>
 compute_vvalue(const FEValues<dim> & phi, const unsigned int i, const unsigned int q)
@@ -1121,11 +1130,8 @@ compute_vvalue(const FEValues<dim> & phi, const unsigned int i, const unsigned i
   return compute_vvalue_impl<dim, FEValues<dim>>(phi, i, q);
 }
 
-
-
-/**
- * [[ phi ]] = phi^+ - phi^-
- */
+/// TODO use ..._impl
+/// TODO obsolete by FEValuesBase variant?
 template<int dim>
 Tensor<1, dim>
 compute_vvalue(const FEFaceValues<dim> & phi, const unsigned int i, const unsigned int q)
@@ -1134,6 +1140,13 @@ compute_vvalue(const FEFaceValues<dim> & phi, const unsigned int i, const unsign
   for(auto c = 0; c < dim; ++c)
     value_phi[c] = phi.shape_value_component(i, q, c);
   return value_phi;
+}
+
+template<int dim>
+Tensor<1, dim>
+compute_vvalue(const FEValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return compute_vvalue_impl<dim, FEValuesBase<dim>>(phi, i, q);
 }
 
 
