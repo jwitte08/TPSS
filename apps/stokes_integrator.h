@@ -276,6 +276,20 @@ struct MatrixIntegrator
                               const double                gamma_over_h,
                               CopyData::FaceData &        copy_data) const;
 
+  template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
+  void
+  uniface_worker_impl(const TestEvaluatorType &   phi_test,
+                      const AnsatzEvaluatorType & phi_ansatz,
+                      const double                gamma_over_h,
+                      CopyData::FaceData &        face_data) const;
+
+  void
+  uniface_worker(const IteratorType & cell,
+                 const unsigned int & f,
+                 const unsigned int & sf,
+                 ScratchData<dim> &   scratch_data,
+                 CopyData &           copy_data) const;
+
   void
   boundary_worker(const IteratorType & cell,
                   const unsigned int & face_no,
@@ -309,14 +323,14 @@ struct MatrixIntegrator
                                                 ScratchData<dim, true> & scratch_data,
                                                 CopyData &               copy_data) const;
 
-  template<bool do_nitsche, typename TestEvaluatorType, typename AnsatzEvaluatorType>
+  template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
   void
   boundary_worker_impl(const TestEvaluatorType &   phi_test,
                        const AnsatzEvaluatorType & phi_ansatz,
                        const double                gamma_over_h,
                        CopyData::FaceData &        copy_data) const;
 
-  template<bool do_nitsche, typename TestEvaluatorType, typename AnsatzEvaluatorType>
+  template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
   void
   boundary_worker_tangential_impl(const TestEvaluatorType &   phi_test,
                                   const AnsatzEvaluatorType & phi_ansatz,
@@ -692,14 +706,12 @@ MatrixIntegrator<dim, is_multigrid>::face_worker_impl(const TestEvaluatorType & 
       // OR   n (x) [[ phi ]]
       // BUT for tangential worker it might be relevant...
       const auto & jump_phi_i_cross_n = outer_product(jump_phi_i, n);
-      // const auto & jump_phi_i_cross_n = compute_vjump_cross_normal(phi_test, i, q);
 
       for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
       {
         const auto & av_symgrad_phi_j   = compute_average_symgrad(phi_ansatz, j, q);
         const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
         const auto & jump_phi_j_cross_n = outer_product(jump_phi_j, n);
-        // const auto & jump_phi_j_cross_n = compute_vjump_cross_normal(phi_ansatz, j, q);
 
         integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
         integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
@@ -1025,7 +1037,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_stream(const IteratorType &
 
 
 template<int dim, bool is_multigrid>
-template<bool do_nitsche, typename TestEvaluatorType, typename AnsatzEvaluatorType>
+template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
 MatrixIntegrator<dim, is_multigrid>::boundary_worker_impl(const TestEvaluatorType &   phi_test,
                                                           const AnsatzEvaluatorType & phi_ansatz,
@@ -1041,7 +1053,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_impl(const TestEvaluatorTyp
   std::vector<Tensor<1, dim>>         solution_values;
   std::vector<Tensor<2, dim>>         solution_cross_normals;
   const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
-  if(do_nitsche)
+  if(do_rhs)
   {
     Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
     AssertDimension(analytical_solution->n_components, dim);
@@ -1074,22 +1086,18 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_impl(const TestEvaluatorTyp
     const auto n = normals[q];
     for(unsigned int i = 0; i < n_interface_dofs_test; ++i)
     {
-      const auto & av_symgrad_phi_i = compute_average_symgrad(phi_test, i, q);
-      // const auto & jump_phi_i_cross_n = compute_vjump_cross_normal(phi_test, i, q);
+      const auto & av_symgrad_phi_i   = compute_average_symgrad(phi_test, i, q);
       const auto & jump_phi_i         = compute_vjump(phi_test, i, q);
       const auto & jump_phi_i_cross_n = outer_product(jump_phi_i, n);
 
       for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
       {
-        const auto & av_symgrad_phi_j = compute_average_symgrad(phi_ansatz, j, q);
-        // const auto & jump_phi_j_cross_n = compute_vjump_cross_normal(phi_ansatz, j, q);
+        const auto & av_symgrad_phi_j   = compute_average_symgrad(phi_ansatz, j, q);
         const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
         const auto & jump_phi_j_cross_n = outer_product(jump_phi_j, n);
 
         integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
-        // integral_ijq = -jump_phi_i * (av_symgrad_phi_j * n);
         integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
-        // integral_ijq += -jump_phi_j * (av_symgrad_phi_i * n);
         integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
         integral_ijq *= 2. * phi_test.JxW(q);
 
@@ -1097,14 +1105,12 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_impl(const TestEvaluatorTyp
       }
 
       /// Nitsche method (weak Dirichlet conditions)
-      if(do_nitsche)
+      if(do_rhs)
       {
-        const auto & u = solution_values[q];
-        // const auto & u_cross_n = solution_cross_normals[q];
+        const auto & u         = solution_values[q];
         const auto & u_cross_n = outer_product(u, n);
 
         nitsche_iq = -scalar_product(u_cross_n, av_symgrad_phi_i);
-        // nitsche_iq = -u * (av_symgrad_phi_i * n);
         nitsche_iq += gamma_over_h * u * jump_phi_i;
         nitsche_iq *= 2. * phi_test.JxW(q);
 
@@ -1112,6 +1118,90 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_impl(const TestEvaluatorTyp
       }
     }
   }
+}
+
+
+
+/// TODO use one implementation combining boundary_worker_impl and
+/// uniface_worker_impl
+template<int dim, bool is_multigrid>
+template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
+void
+MatrixIntegrator<dim, is_multigrid>::uniface_worker_impl(const TestEvaluatorType &   phi_test,
+                                                         const AnsatzEvaluatorType & phi_ansatz,
+                                                         const double                gamma_over_h,
+                                                         CopyData::FaceData & face_data) const
+{
+  const auto n_interface_dofs_test   = phi_test.dofs_per_cell;
+  const auto n_interface_dofs_ansatz = phi_ansatz.dofs_per_cell;
+
+  AssertDimension(face_data.matrix.m(), n_interface_dofs_test);
+  AssertDimension(face_data.matrix.n(), n_interface_dofs_ansatz);
+
+  const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
+
+  double integral_ijq = 0.;
+  for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
+  {
+    const auto n = normals[q];
+    for(unsigned int i = 0; i < n_interface_dofs_test; ++i)
+    {
+      const auto & av_symgrad_phi_i   = 0.5 * compute_symgrad(phi_test, i, q);
+      const auto & jump_phi_i         = compute_vvalue(phi_test, i, q);
+      const auto & jump_phi_i_cross_n = outer_product(jump_phi_i, n);
+
+      for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+      {
+        const auto & av_symgrad_phi_j   = 0.5 * compute_symgrad(phi_ansatz, j, q);
+        const auto & jump_phi_j         = compute_vvalue(phi_ansatz, j, q);
+        const auto & jump_phi_j_cross_n = outer_product(jump_phi_j, n);
+
+        integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
+        integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
+        integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
+        integral_ijq *= 2. * phi_test.JxW(q);
+
+        face_data.matrix(i, j) += integral_ijq;
+      }
+    }
+  }
+}
+
+
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::uniface_worker(const IteratorType & cell,
+                                                    const unsigned int & f,
+                                                    const unsigned int & sf,
+                                                    ScratchData<dim> &   scratch_data,
+                                                    CopyData &           copy_data) const
+{
+  FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values_test;
+  fe_interface_values.reinit(cell, f, sf, cell, f, sf);
+
+  const FEFaceValuesBase<dim> & phi = fe_interface_values.get_fe_face_values(0);
+
+  const unsigned int n_interface_dofs = phi.dofs_per_cell;
+
+  CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_interface_dofs);
+
+  cell->get_active_or_mg_dof_indices(face_data.dof_indices);
+  face_data.dof_indices_column = face_data.dof_indices;
+
+  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
+  /// TODO In general we require the neighboring cell but it suffices to use h
+  /// here (on distributed triangulation this leads to a global communication of
+  /// h and nh).
+  const auto   nh        = h;
+  const auto   fe_degree = scratch_data.fe_values_test.get_fe().degree;
+  const double gamma_over_h =
+    equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
+
+  uniface_worker_impl(phi, phi, gamma_over_h, face_data);
+
+  AssertDimension(face_data.matrix.m(), n_interface_dofs);
+  AssertDimension(face_data.matrix.n(), n_interface_dofs);
 }
 
 
@@ -1189,10 +1279,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential(
   const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, h);
   // std::cout << "st:bdry:gamma: " << gamma_over_h << " " << fe_degree << " " << h << std::endl;
 
-  boundary_worker_tangential_impl</*do_nitsche*/ true>(phi_test,
-                                                       phi_ansatz,
-                                                       gamma_over_h,
-                                                       face_data);
+  boundary_worker_tangential_impl</*do_rhs*/ true>(phi_test, phi_ansatz, gamma_over_h, face_data);
 
   Assert(discrete_solution, ExcMessage("Discrete stream function solution isnt set."));
   Vector<double> dof_values(face_data.dof_indices_column.size());
@@ -1250,10 +1337,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential_interfa
   const auto   fe_degree    = phi_ansatz.get_fe().degree; // stream function degree !
   const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, h);
 
-  boundary_worker_tangential_impl</*do_nitsche*/ true>(phi_test,
-                                                       phi_ansatz,
-                                                       gamma_over_h,
-                                                       face_data);
+  boundary_worker_tangential_impl</*do_rhs*/ true>(phi_test, phi_ansatz, gamma_over_h, face_data);
 
   AssertDimension(face_data.matrix.m(), face_data.rhs.size());
   AssertDimension(face_data.matrix.n(), face_data.dof_indices_column.size());
@@ -1273,7 +1357,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential_interfa
 
 
 template<int dim, bool is_multigrid>
-template<bool do_nitsche, typename TestEvaluatorType, typename AnsatzEvaluatorType>
+template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
 MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential_impl(
   const TestEvaluatorType &   phi_test,
@@ -1292,7 +1376,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential_impl(
   std::vector<Tensor<1, dim>>         solution_values;
   std::vector<Tensor<1, dim>>         tangential_solution_values;
   const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
-  if(do_nitsche)
+  if(do_rhs)
   {
     Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
     AssertDimension(analytical_solution->n_components, dim);
@@ -1358,7 +1442,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential_impl(
       }
 
       /// Nitsche method (weak Dirichlet conditions)
-      if(do_nitsche)
+      if(do_rhs)
       {
         /// ut is the tangential vector field of the vector field u (which
         /// should not be confused with the tangential component of the vector
@@ -2920,11 +3004,15 @@ public:
         {
           using Velocity::SIPG::MW::CopyData;
           using Velocity::SIPG::MW::ScratchData;
-          using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
+          using MatrixIntegrator   = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
+          using cell_iterator_type = typename MatrixIntegrator::IteratorType;
 
           tmp_v_v = 0.;
 
           const auto & cell_collection = patch_dof_worker_v.get_cell_collection(patch_index, lane);
+
+          const TPSS::BelongsToCollection<cell_iterator_type> belongs_to_collection(
+            cell_collection);
 
           const auto & local_cell_range = TPSS::make_local_cell_range(cell_collection);
 
@@ -2980,6 +3068,48 @@ public:
               scratch_data,
               copy_data,
               MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
+
+          else if(use_sipg_method)
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range,
+              [&](const auto & cell, auto & scratch_data, auto & copy_data) {
+                matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+              },
+              local_copier,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells |
+                MeshWorker::assemble_boundary_faces | MeshWorker::assemble_own_interior_faces_both |
+                MeshWorker::assemble_ghost_faces_both,
+              /*assemble faces at ghosts?*/ true,
+              [&](const auto & cell, const auto face_no, auto & scratch_data, auto & copy_data) {
+                matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+              },
+              [&](const auto & cell,
+                  const auto   face_no,
+                  const auto   sface_no,
+                  const auto & ncell,
+                  const auto   nface_no,
+                  const auto   nsface_no,
+                  auto &       scratch_data,
+                  auto &       copy_data) {
+                const bool cell_belongs_to_collection  = belongs_to_collection(cell);
+                const bool ncell_belongs_to_collection = belongs_to_collection(ncell);
+                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
+                if(is_interface)
+                {
+                  matrix_integrator.face_worker(
+                    cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
+                  /// interfaces are assembled from both sides
+                  copy_data.face_data.back().matrix *= 0.5;
+                  return;
+                }
+                if(cell_belongs_to_collection)
+                {
+                  matrix_integrator.uniface_worker(
+                    cell, face_no, sface_no, scratch_data, copy_data);
+                }
+              });
 
           else
             Assert(false, ExcMessage("FEM is not implemented."));
@@ -3128,6 +3258,9 @@ public:
               scratch_data,
               copy_data,
               MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
+
+          else if(use_sipg_method)
+            ; // !!!
 
           else
             Assert(false, ExcMessage("FEM is not implemented."));
