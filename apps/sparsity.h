@@ -186,6 +186,10 @@ make_flux_sparsity_pattern_impl(const DoFHandler<dim, spacedim> &    dofh_row,
   const AffineConstraints<Number> constraints;
   const bool                      keep_constrained_dofs = true;
 
+  /// level should be set to default if is_multigrid is set to false
+  if(!is_multigrid)
+    AssertDimension(level, numbers::invalid_unsigned_int);
+
   const types::global_dof_index n_dofs_row =
     is_multigrid ? dofh_row.n_dofs(level) : dofh_row.n_dofs();
   const types::global_dof_index n_dofs_column =
@@ -276,8 +280,8 @@ make_flux_sparsity_pattern_impl(const DoFHandler<dim, spacedim> &    dofh_row,
                                              cell->index(),
                                              &dofh_column);
 
-        cell->get_dof_indices(row_dofs_on_this_cell);
-        cell_column->get_dof_indices(column_dofs_on_this_cell);
+        cell->get_active_or_mg_dof_indices(row_dofs_on_this_cell);
+        cell_column->get_active_or_mg_dof_indices(column_dofs_on_this_cell);
 
         /// TODO what if we actually use constraints? QA: do AffineConstraints
         /// treat non-square matrices, in particular, is
@@ -319,25 +323,28 @@ make_flux_sparsity_pattern_impl(const DoFHandler<dim, spacedim> &    dofh_row,
             Assert(!(cell->has_periodic_neighbor(face_n)),
                    ExcMessage("Periodicity is not supported..."));
 
-            typename DoFHandler<dim, spacedim>::level_cell_iterator neighbor =
-              cell->neighbor_or_periodic_neighbor(face_n);
-            typename DoFHandler<dim, spacedim>::level_cell_iterator neighbor_column =
-              cell_column->neighbor_or_periodic_neighbor(face_n);
+            auto neighbor        = cell->neighbor(face_n);
+            auto neighbor_column = cell_column->neighbor(face_n);
+
+            // typename DoFHandler<dim, spacedim>::level_cell_iterator neighbor =
+            //   cell->neighbor_or_periodic_neighbor(face_n);
+            // typename DoFHandler<dim, spacedim>::level_cell_iterator neighbor_column =
+            //   cell_column->neighbor_or_periodic_neighbor(face_n);
 
             /// double-check that neighbor and neighbor_column have the same cell index and level
             AssertDimension(neighbor->index(), neighbor_column->index());
             AssertDimension(neighbor->level(), neighbor_column->level());
 
             const bool neighbor_has_same_level = neighbor->level() == cell->level();
-            const bool neighbor_is_active_if_not_mg =
-              level == numbers::invalid_unsigned_int ? neighbor->is_active() : true;
+            const bool neighbor_is_active_or_is_multigrid =
+              is_multigrid ? true : neighbor->is_active();
             const bool neighbor_is_locally_owned = is_locally_owned(neighbor);
             /// If the cells are on the same level (and both are
             /// active, locally-owned cells) then only add to the
             /// sparsity pattern if the current cell is 'greater'
             /// in the total ordering.
             if(neighbor_is_locally_owned && neighbor_has_same_level &&
-               neighbor_is_active_if_not_mg && neighbor->index() > cell->index())
+               neighbor_is_active_or_is_multigrid && neighbor->index() > cell->index())
               continue;
             /// If we are more refined then the neighbor, then we
             /// will automatically find the active neighbor cell
@@ -364,21 +371,20 @@ make_flux_sparsity_pattern_impl(const DoFHandler<dim, spacedim> &    dofh_row,
             // below. We need to do this since we otherwise
             // iterate over the children of the face, which are
             // always 0 in 1D.
-            if(dim == 1)
+            if(dim == 1 && !is_multigrid)
               while(neighbor->has_children())
                 neighbor = neighbor->child(face_n == 0 ? 1 : 0);
 
-
             /// TODO adaptive refinement...
-            Assert(!(neighbor->has_children()),
+            Assert(is_multigrid ? true : !(neighbor->has_children()),
                    ExcMessage("Adaptive refinement is not supported..."));
 
             /// Either a locally owned interface with cell->index() >
             /// neighbor->index() or an interface between locally owned cell and
             /// ghosted neighbor
             {
-              neighbor->get_dof_indices(row_dofs_on_other_cell);
-              neighbor_column->get_dof_indices(column_dofs_on_other_cell);
+              neighbor->get_active_or_mg_dof_indices(row_dofs_on_other_cell);
+              neighbor_column->get_active_or_mg_dof_indices(column_dofs_on_other_cell);
 
               for(unsigned int i = 0; i < fe_row.n_dofs_per_cell(); ++i)
               {
@@ -447,6 +453,37 @@ make_flux_sparsity_pattern(const DoFHandler<dim, spacedim> &    dofh_row,
                            const Table<2, DoFTools::Coupling> & flux_mask)
 {
   make_flux_sparsity_pattern_impl<false>(dofh_row, dofh_column, sparsity, int_mask, flux_mask);
+}
+
+
+
+/**
+ * A make_flux_sparsity_pattern() multigrid variant for non-rectangular matrices
+ * based on different finite elements for ansatz and test functions but sharing
+ * the same triangulation. Distributed triangulations are supported.
+ *
+ * What's not supported?
+ * (0) constraints
+ * (1) adaptive refinement
+ * (2) periodicity
+ * (3) couplings in int_mask which are not set to 'always'
+ *
+ * Extending this function for (1)-(2) seems to easy by following the
+ * implementation of make_flux_sparsity_pattern() for square
+ * matrices. Extending this function for (0) or (3) requires a deeper
+ * understanding of or adding functionality to AffineConstraints.
+ */
+template<int dim, int spacedim, typename SparsityPatternType>
+void
+make_flux_sparsity_pattern(const DoFHandler<dim, spacedim> &    dofh_row,
+                           const DoFHandler<dim, spacedim> &    dofh_column,
+                           SparsityPatternType &                sparsity,
+                           const Table<2, DoFTools::Coupling> & int_mask,
+                           const Table<2, DoFTools::Coupling> & flux_mask,
+                           const unsigned int                   level)
+{
+  make_flux_sparsity_pattern_impl<true>(
+    dofh_row, dofh_column, sparsity, int_mask, flux_mask, level);
 }
 
 } // namespace Tools
