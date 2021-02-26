@@ -587,7 +587,7 @@ struct ModelProblemBase<Method::DGQkplus2_DGPk, dim, fe_degree_p>
   using fe_type_v                               = FE_DGQ<dim>;
   using fe_type_p                               = FE_DGP<dim>;
   static constexpr int           fe_degree_v    = fe_degree_p + 1;
-  static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
+  static constexpr LocalAssembly local_assembly = LocalAssembly::LMW;
 };
 
 template<int dim, int fe_degree_p>
@@ -3771,10 +3771,8 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                         lodof_indices_foreach_block[0],
                         lrdof_indices_foreach_block[0],
                         MPI_COMM_WORLD);
-        Table<2, DoFTools::Coupling> cell_integrals_mask_velocity;
-        Table<2, DoFTools::Coupling> face_integrals_mask_velocity;
-        cell_integrals_mask_velocity.reinit(dim, dim);
-        face_integrals_mask_velocity.reinit(dim, dim);
+        Table<2, DoFTools::Coupling> cell_integrals_mask_velocity(dim, dim);
+        Table<2, DoFTools::Coupling> face_integrals_mask_velocity(dim, dim);
         for(auto i = 0U; i < dim; ++i)
           for(auto j = 0U; j < dim; ++j)
           {
@@ -3809,24 +3807,50 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
       /// velocity - pressure
       {
-        AssertThrow(!use_sipg_method && !use_hdivsipg_method, ExcMessage("TODO..."));
+        AssertThrow(!use_hdivsipg_method, ExcMessage("TODO..."));
+        Table<2, DoFTools::Coupling> this_cell_integrals_mask(dim, 1U);
+        Table<2, DoFTools::Coupling> this_face_integrals_mask(dim, 1U);
+        for(auto i = 0U; i < dim; ++i)
+        {
+          this_cell_integrals_mask(i, 0) = cell_integrals_mask(i, dim);
+          this_face_integrals_mask(i, 0) = face_integrals_mask(i, dim);
+        }
         auto & this_dsp = dsp.block(0, 1);
         this_dsp.reinit(lodof_indices_foreach_block[0],
                         lodof_indices_foreach_block[1],
                         lrdof_indices_foreach_block[0],
                         MPI_COMM_WORLD);
-        Tools::make_sparsity_pattern(*dof_handler_velocity, *dof_handler_pressure, this_dsp, level);
+        Tools::make_flux_sparsity_pattern(*dof_handler_velocity,
+                                          *dof_handler_pressure,
+                                          this_dsp,
+                                          this_cell_integrals_mask,
+                                          this_face_integrals_mask,
+                                          level);
       }
 
       /// pressure - velocity
       {
-        AssertThrow(!use_sipg_method && !use_hdivsipg_method, ExcMessage("TODO..."));
+        AssertThrow(!use_hdivsipg_method, ExcMessage("TODO..."));
+        Table<2, DoFTools::Coupling> this_cell_integrals_mask(1U, dim);
+        Table<2, DoFTools::Coupling> this_face_integrals_mask(1U, dim);
+        for(auto j = 0U; j < dim; ++j)
+        {
+          this_cell_integrals_mask(0, j) = cell_integrals_mask(dim, j);
+          this_face_integrals_mask(0, j) = face_integrals_mask(dim, j);
+        }
         auto & this_dsp = dsp.block(1, 0);
         this_dsp.reinit(lodof_indices_foreach_block[1],
                         lodof_indices_foreach_block[0],
                         lrdof_indices_foreach_block[1],
                         MPI_COMM_WORLD);
-        Tools::make_sparsity_pattern(*dof_handler_pressure, *dof_handler_velocity, this_dsp, level);
+        // Tools::make_sparsity_pattern(*dof_handler_pressure, *dof_handler_velocity, this_dsp,
+        // level);
+        Tools::make_flux_sparsity_pattern(*dof_handler_pressure,
+                                          *dof_handler_velocity,
+                                          this_dsp,
+                                          this_cell_integrals_mask,
+                                          this_face_integrals_mask,
+                                          level);
       }
 
       dsp.collect_sizes();
