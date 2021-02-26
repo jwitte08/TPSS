@@ -2153,6 +2153,8 @@ struct MatrixIntegrator
 
 namespace Mixed
 {
+using ::MW::compute_vvalue;
+
 using ::MW::compute_vjump;
 
 using ::MW::compute_vjump_dot_normal;
@@ -2212,6 +2214,23 @@ struct MatrixIntegrator
               const unsigned int & nsf,
               ScratchData<dim> &   scratch_data,
               CopyData &           copy_data) const;
+
+  template<bool is_uniface>
+  void
+  boundary_or_uniface_worker(const IteratorType & cellU,
+                             const IteratorType & cellP,
+                             const unsigned int & f,
+                             const unsigned int & sf,
+                             ScratchData<dim> &   scratch_data,
+                             CopyData &           copy_data) const;
+
+  void
+  uniface_worker(const IteratorType & cellU,
+                 const IteratorType & cellP,
+                 const unsigned int & f,
+                 const unsigned int & sf,
+                 ScratchData<dim> &   scratch_data,
+                 CopyData &           copy_data) const;
 
   void
   boundary_worker(const IteratorType & cellU,
@@ -2372,40 +2391,56 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cellU,
       face_data_flipped.matrix(j, i) = face_data.matrix(i, j);
 }
 
+
+
 template<int dim, bool is_multigrid>
+template<bool is_uniface>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
-                                                     const IteratorType & cellP,
-                                                     const unsigned int & f,
-                                                     ScratchData<dim> &   scratch_data,
-                                                     CopyData &           copy_data_pair) const
+MatrixIntegrator<dim, is_multigrid>::boundary_or_uniface_worker(const IteratorType & cellU,
+                                                                const IteratorType & cellP,
+                                                                const unsigned int & f,
+                                                                const unsigned int & sf,
+                                                                ScratchData<dim> &   scratch_data,
+                                                                CopyData & copy_data_pair) const
 {
+  constexpr bool do_rhs = !is_multigrid && !is_uniface;
+
+  if(!is_uniface)
+    AssertDimension(sf, numbers::invalid_unsigned_int); // prevent from being used
+
   auto & [copy_data, copy_data_flipped] = copy_data_pair;
 
   /// Velocity "U" takes test function role (in flipped mode ansatz function)
-  auto & phiU = scratch_data.fe_interface_values_test;
-  phiU.reinit(cellU, f);
-  const auto n_dofsU = phiU.n_current_interface_dofs();
+  if(is_uniface)
+    scratch_data.fe_interface_values_test.reinit(cellU, f, sf, cellU, f, sf);
+  else
+    scratch_data.fe_interface_values_test.reinit(cellU, f);
+  const auto & phiU    = scratch_data.fe_interface_values_test.get_fe_face_values(0);
+  const auto   n_dofsU = phiU.dofs_per_cell; // phiU.n_current_interface_dofs();
 
   /// Pressure "P" takes ansatz function role (in flipped mode test function)
-  auto & phiP = scratch_data.fe_interface_values_ansatz;
-  phiP.reinit(cellP, f);
-  const auto n_dofsP = phiP.n_current_interface_dofs();
+  if(is_uniface)
+    scratch_data.fe_interface_values_ansatz.reinit(cellP, f, sf, cellP, f, sf);
+  else
+    scratch_data.fe_interface_values_ansatz.reinit(cellP, f);
+  const auto & phiP    = scratch_data.fe_interface_values_ansatz.get_fe_face_values(0);
+  const auto   n_dofsP = phiP.dofs_per_cell;
 
   auto & face_data         = copy_data.face_data.emplace_back(n_dofsU, n_dofsP);
   auto & face_data_flipped = copy_data_flipped.face_data.emplace_back(n_dofsP, n_dofsU);
 
-  face_data.dof_indices        = phiU.get_interface_dof_indices();
-  face_data.dof_indices_column = phiP.get_interface_dof_indices();
+  cellU->get_active_or_mg_dof_indices(face_data.dof_indices);
+  cellP->get_active_or_mg_dof_indices(face_data.dof_indices_column);
+
+  const std::vector<Tensor<1, dim>> & normals = phiU.get_normal_vectors();
 
   AssertDimension(phiU.n_quadrature_points, phiP.n_quadrature_points);
   std::vector<double> velocity_solution_dot_normals;
-  if(!is_multigrid)
+  if(do_rhs)
   {
     Assert(analytical_solutionU, ExcMessage("analytical_solutionU is not set."));
     AssertDimension(analytical_solutionU->n_components, dim);
-    const auto &                        q_points = phiU.get_quadrature_points();
-    const std::vector<Tensor<1, dim>> & normals  = phiU.get_normal_vectors();
+    const auto & q_points = phiU.get_quadrature_points();
     std::transform(q_points.cbegin(),
                    q_points.cend(),
                    normals.cbegin(),
@@ -2424,10 +2459,10 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
   {
     for(unsigned int j = 0; j < n_dofsP; ++j)
     {
-      const auto & av_phiP_j = phiP.average(j, q);
+      const auto & av_phiP_j = is_uniface ? 0.5 * phiP.shape_value(j, q) : phiP.shape_value(j, q);
 
-      /// Nitsche method (weak Dirichlet conditions)
-      if(!is_multigrid) // here P is test function
+      /// weak Dirichlet conditions (P is test function)
+      if(do_rhs)
       {
         const auto & u_dot_n =
           velocity_solution_dot_normals[q]; // !!! should be zero for hdiv conf method
@@ -2437,10 +2472,12 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
         face_data.rhs(j) += integral_jq;
       }
 
+      /// interior penalty contribution
       for(unsigned int i = 0; i < n_dofsU; ++i)
       {
-        /// IP method
-        const auto & jump_phiU_i_dot_n = compute_vjump_dot_normal(phiU, i, q);
+        const auto & jump_phiU         = compute_vvalue(phiU, i, q);
+        const auto & n                 = normals[q];
+        const auto & jump_phiU_i_dot_n = jump_phiU * n;
 
         integral_ijq = av_phiP_j * jump_phiU_i_dot_n * phiU.JxW(q);
 
@@ -2454,6 +2491,111 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
   for(unsigned int i = 0; i < n_dofsU; ++i)
     for(unsigned int j = 0; j < n_dofsP; ++j)
       face_data_flipped.matrix(j, i) = face_data.matrix(i, j);
+
+  AssertDimension(copy_data.face_data.size(), copy_data_flipped.face_data.size());
+}
+
+
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::uniface_worker(const IteratorType & cellU,
+                                                    const IteratorType & cellP,
+                                                    const unsigned int & f,
+                                                    const unsigned int & sf,
+                                                    ScratchData<dim> &   scratch_data,
+                                                    CopyData &           copy_data_pair) const
+{
+  boundary_or_uniface_worker<true>(cellU, cellP, f, sf, scratch_data, copy_data_pair);
+}
+
+
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
+                                                     const IteratorType & cellP,
+                                                     const unsigned int & f,
+                                                     ScratchData<dim> &   scratch_data,
+                                                     CopyData &           copy_data_pair) const
+{
+  boundary_or_uniface_worker<false>(
+    cellU, cellP, f, numbers::invalid_unsigned_int, scratch_data, copy_data_pair);
+
+  // auto & [copy_data, copy_data_flipped] = copy_data_pair;
+
+  // /// Velocity "U" takes test function role (in flipped mode ansatz function)
+  // auto & phiU = scratch_data.fe_interface_values_test;
+  // phiU.reinit(cellU, f);
+  // const auto n_dofsU = phiU.n_current_interface_dofs();
+
+  // /// Pressure "P" takes ansatz function role (in flipped mode test function)
+  // auto & phiP = scratch_data.fe_interface_values_ansatz;
+  // phiP.reinit(cellP, f);
+  // const auto n_dofsP = phiP.n_current_interface_dofs();
+
+  // auto & face_data         = copy_data.face_data.emplace_back(n_dofsU, n_dofsP);
+  // auto & face_data_flipped = copy_data_flipped.face_data.emplace_back(n_dofsP, n_dofsU);
+
+  // face_data.dof_indices        = phiU.get_interface_dof_indices();
+  // face_data.dof_indices_column = phiP.get_interface_dof_indices();
+
+  // AssertDimension(phiU.n_quadrature_points, phiP.n_quadrature_points);
+  // std::vector<double> velocity_solution_dot_normals;
+  // if(!is_multigrid)
+  // {
+  //   Assert(analytical_solutionU, ExcMessage("analytical_solutionU is not set."));
+  //   AssertDimension(analytical_solutionU->n_components, dim);
+  //   const auto &                        q_points = phiU.get_quadrature_points();
+  //   const std::vector<Tensor<1, dim>> & normals  = phiU.get_normal_vectors();
+  //   std::transform(q_points.cbegin(),
+  //                  q_points.cend(),
+  //                  normals.cbegin(),
+  //                  std::back_inserter(velocity_solution_dot_normals),
+  //                  [this](const auto & x_q, const auto & normal) {
+  //                    Tensor<1, dim> u_q;
+  //                    for(auto c = 0U; c < dim; ++c)
+  //                      u_q[c] = analytical_solutionU->value(x_q, c);
+  //                    return u_q * normal;
+  //                  });
+  // }
+
+  // double integral_ijq = 0.;
+  // double integral_jq  = 0.;
+  // for(unsigned int q = 0; q < phiP.n_quadrature_points; ++q)
+  // {
+  //   for(unsigned int j = 0; j < n_dofsP; ++j)
+  //   {
+  //     const auto & av_phiP_j = phiP.average(j, q);
+
+  //     /// Nitsche method (weak Dirichlet conditions)
+  //     if(!is_multigrid) // here P is test function
+  //     {
+  //       const auto & u_dot_n =
+  //         velocity_solution_dot_normals[q]; // !!! should be zero for hdiv conf method
+
+  //       integral_jq = u_dot_n * av_phiP_j * phiP.JxW(q);
+
+  //       face_data.rhs(j) += integral_jq;
+  //     }
+
+  //     for(unsigned int i = 0; i < n_dofsU; ++i)
+  //     {
+  //       /// IP method
+  //       const auto & jump_phiU_i_dot_n = compute_vjump_dot_normal(phiU, i, q);
+
+  //       integral_ijq = av_phiP_j * jump_phiU_i_dot_n * phiU.JxW(q);
+
+  //       face_data.matrix(i, j) += integral_ijq;
+  //     }
+  //   }
+  // }
+
+  // /// The pressure-velocity block ("flipped") is the transpose of the
+  // /// velocity-pressure block.
+  // for(unsigned int i = 0; i < n_dofsU; ++i)
+  //   for(unsigned int j = 0; j < n_dofsP; ++j)
+  //     face_data_flipped.matrix(j, i) = face_data.matrix(i, j);
 }
 
 } // namespace Mixed
@@ -3162,6 +3304,9 @@ public:
 
           const auto & local_cell_range_v = TPSS::make_local_cell_range(cell_collection_v);
 
+          const TPSS::BelongsToCollection<cell_iterator_type> belongs_to_collection_v(
+            cell_collection_v);
+
           const auto & g2l_v = patch_transfer_v.get_global_to_local_dof_indices(lane);
           const auto & g2l_p = patch_transfer_p.get_global_to_local_dof_indices(lane);
 
@@ -3260,7 +3405,73 @@ public:
               MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
 
           else if(use_sipg_method)
-            ; // !!!
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range_v,
+              [&](const auto & cell, auto & scratch_data, auto & copy_data) {
+                cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
+                                               cell->level(),
+                                               cell->index(),
+                                               &dof_handler_pressure);
+                matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
+              },
+              local_copier,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells |
+                MeshWorker::assemble_boundary_faces | MeshWorker::assemble_own_interior_faces_both |
+                MeshWorker::assemble_ghost_faces_both,
+              /*assemble faces at ghosts?*/ true,
+              [&](const auto & cell, const auto face_no, auto & scratch_data, auto & copy_data) {
+                cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
+                                               cell->level(),
+                                               cell->index(),
+                                               &dof_handler_pressure);
+                matrix_integrator.boundary_worker(
+                  cell, cell_ansatz, face_no, scratch_data, copy_data);
+              },
+              [&](const auto & cell,
+                  const auto   face_no,
+                  const auto   sface_no,
+                  const auto & ncell,
+                  const auto   nface_no,
+                  const auto   nsface_no,
+                  auto &       scratch_data,
+                  auto &       copy_data_pair) {
+                cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
+                                               cell->level(),
+                                               cell->index(),
+                                               &dof_handler_pressure);
+                cell_iterator_type ncell_ansatz(&(dof_handler_pressure.get_triangulation()),
+                                                ncell->level(),
+                                                ncell->index(),
+                                                &dof_handler_pressure);
+                const bool         cell_belongs_to_collection  = belongs_to_collection_v(cell);
+                const bool         ncell_belongs_to_collection = belongs_to_collection_v(ncell);
+                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
+                if(is_interface)
+                {
+                  matrix_integrator.face_worker(cell,
+                                                cell_ansatz,
+                                                face_no,
+                                                sface_no,
+                                                ncell,
+                                                ncell_ansatz,
+                                                nface_no,
+                                                nsface_no,
+                                                scratch_data,
+                                                copy_data_pair);
+                  /// interfaces are assembled from both sides
+                  auto & [copy_data, copy_data_flipped] = copy_data_pair;
+                  copy_data.face_data.back().matrix *= 0.5;
+                  copy_data_flipped.face_data.back().matrix *= 0.5;
+                  return;
+                }
+                if(cell_belongs_to_collection)
+                {
+                  matrix_integrator.uniface_worker(
+                    cell, cell_ansatz, face_no, sface_no, scratch_data, copy_data_pair);
+                }
+              });
 
           else
             Assert(false, ExcMessage("FEM is not implemented."));
