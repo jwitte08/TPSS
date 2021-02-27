@@ -2469,7 +2469,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_or_uniface_worker(const IteratorTy
 
         integral_jq = u_dot_n * av_phiP_j * phiP.JxW(q);
 
-        face_data.rhs(j) += integral_jq;
+        face_data_flipped.rhs(j) += integral_jq;
       }
 
       /// interior penalty contribution
@@ -2576,7 +2576,7 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
 
   //       integral_jq = u_dot_n * av_phiP_j * phiP.JxW(q);
 
-  //       face_data.rhs(j) += integral_jq;
+  //       face_data_flipped.rhs(j) += integral_jq;
   //     }
 
   //     for(unsigned int i = 0; i < n_dofsU; ++i)
