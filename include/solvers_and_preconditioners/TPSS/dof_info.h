@@ -59,7 +59,7 @@ public:
   n_dofs_per_cell(const unsigned int cell_no) const;
 
   /**
-   * Returns the number of patch local dofs located at cell @p cell_no.
+   * Returns the number of patch-local dofs located at cell @p cell_no.
    */
   unsigned int
   n_dofs_per_cell_on_patch(const unsigned int cell_no) const;
@@ -74,20 +74,22 @@ public:
 
 
 /**
- * Helps with the (one-dimensional) patch local dof indexing depending on the
- * underlying finite element. For example, for Q-like finite elements we have
- * to treat the dofs at cell boundaries belonging to more than one cell.
+ * Helps with the (one-dimensional) patch-local dof indexing depending on the
+ * underlying finite element. For example, for Q-like finite elements we have to
+ * treat dofs associated with cell interfaces, thus belonging to more than one
+ * cell.
  */
 template<int n_dimensions>
 class PatchLocalIndexHelper
 {
 public:
+  /// TODO passing cell_dof_tensor_in seems redundant since we have to pass a DoFLayout
   PatchLocalIndexHelper(const Tensors::TensorHelper<n_dimensions> & cell_tensor_in,
                         const Tensors::TensorHelper<n_dimensions> & cell_dof_tensor_in,
                         const DoFLayout                             dof_layout_in);
 
   /**
-   * Returns the one-dimensional patch local dof index with cell local dof index
+   * Returns the one-dimensional patch-local dof index with cell local dof index
    * @p cell_dof_index within local cell @p cell_no in spatial dimension @p
    * dimension. Local cells and cell local dof indices are subject to
    * lexicographical ordering.
@@ -96,12 +98,12 @@ public:
    * elements this mapping is surjective but not injective.
    */
   unsigned int
-  dof_index_1d(const unsigned int cell_no,
-               const unsigned int cell_dof_index,
+  dof_index_1d(const unsigned int cell_no_1d,
+               const unsigned int cell_dof_index_1d,
                const int          dimension) const;
 
   std::pair<unsigned int, unsigned int>
-  dof_range_1d(const unsigned int cell_no, const unsigned int dimension) const;
+  cell_dof_range_1d(const unsigned int cell_no_1d, const unsigned int dimension) const;
 
   unsigned int
   n_cells_1d(const unsigned int dimension) const;
@@ -118,34 +120,34 @@ private:
    * Implementation of @p dof_index_1d for Q-like finite elements.
    */
   unsigned int
-  dof_index_1d_q_impl(const unsigned int cell_no,
-                      const unsigned int cell_dof_index,
+  dof_index_1d_q_impl(const unsigned int cell_no_1d,
+                      const unsigned int cell_dof_index_1d,
                       const int          dimension) const;
 
   /**
    * Implementation of @p dof_index_1d for DGQ-like finite elements.
    */
   unsigned int
-  dof_index_1d_dgq_impl(const unsigned int cell_no,
-                        const unsigned int cell_dof_index,
+  dof_index_1d_dgq_impl(const unsigned int cell_no_1d,
+                        const unsigned int cell_dof_index_1d,
                         const int          dimension) const;
 
   /**
    * Implementation of @p dof_index_1d for DGP-like finite elements.
    */
-  // !!! TODO the current implementation is not correct. actually this function
-  // !!! makes no sense on a truncated tensor, but we need this interface for
+  // !!! TODO the current implementation is not reasonable: actually this function
+  // !!! makes no sense for a truncated tensor, but we need this interface for
   // !!! compatibility ...
   unsigned int
-  dof_index_1d_dgp_impl(const unsigned int cell_no,
-                        const unsigned int cell_dof_index,
+  dof_index_1d_dgp_impl(const unsigned int cell_no_1d,
+                        const unsigned int cell_dof_index_1d,
                         const int          dimension) const;
 };
 
 
 
 /**
- * Helps with the d-dimensional patch local dof indexing depending on the finite element.
+ * Helps with the d-dimensional patch-local dof indexing depending on the finite element.
  */
 template<int n_dimensions>
 class PatchLocalTensorHelper : public PatchLocalIndexHelper<n_dimensions>,
@@ -160,28 +162,29 @@ public:
                          const DoFLayout                             dof_layout_in);
 
   /**
-   * Returns wether the patch local dof index @p patch_dof_index is part of the
+   * Returns whether the patch-local dof index @p patch_dof_index is part of the
    * outermost layer of dofs.
    */
   bool
   is_boundary_face_dof(const unsigned int patch_dof_index) const;
 
-  /**
-   * Returns wether the patch local dof index @p patch_dof_index is part of the
-   * outermost layer of dofs.
-   */
-  bool
-  is_boundary_face_dof_1d(const unsigned int patch_dof_index, const unsigned int dimension) const;
+  // /**
+  //  * Returns whether the patch-local dof index @p patch_dof_index is part of the
+  //  * outermost layer of dofs.
+  //  */
+  // bool
+  // is_boundary_face_dof_1d(const unsigned int patch_dof_index, const unsigned int dimension)
+  // const;
 
   /**
-   * Returns the patch local dof index as multi-index subject to lexicographical
+   * Returns the patch-local dof index as multi-index subject to lexicographical
    * ordering. For more details see PatchLocalIndexHelper::dof_index_1d.
    */
   std::array<unsigned int, n_dimensions>
   dof_multi_index(const unsigned int cell_no, const unsigned int cell_dof_index) const;
 
   /**
-   * Returns the patch local dof index as univariate index subject to
+   * Returns the patch-local dof index as univariate index subject to
    * lexicographical ordering. For more details see
    * PatchLocalIndexHelper::dof_index_1d.
    */
@@ -251,9 +254,9 @@ struct DoFInfo
 
   /**
    * Stores the starting position of cached dof indices in @p
-   * dof_indices_cellwise for each patch local cell stored by @p
+   * dof_indices_cellwise for each patch-local cell stored by @p
    * patch_info as well as the number of dofs. Each element of this array is
-   * uniquely associated to patch local cell identified by @p
+   * uniquely associated to patch-local cell identified by @p
    * PatchWorker::cell_position()
    */
   std::vector<std::pair<unsigned int, unsigned int>> start_and_number_of_dof_indices_cellwise;
@@ -315,6 +318,42 @@ struct DoFInfo<dim, Number>::AdditionalData
 
 
 
+template<int dim>
+unsigned int
+dof_index_1d_discontinuous(const Tensors::TensorHelper<dim> & cell_tensor,
+                           const Tensors::TensorHelper<dim> & cell_dof_tensor,
+                           const unsigned int &               cell_no_1d,
+                           const unsigned int &               cell_dof_index_1d,
+                           const int &                        dimension)
+{
+  (void)cell_tensor;
+  AssertIndexRange(cell_no_1d, cell_tensor.n[dimension]);
+  AssertIndexRange(cell_dof_index_1d, cell_dof_tensor.n[dimension]);
+  AssertIndexRange(dimension, dim);
+  const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
+  return cell_no_1d * n_dofs_per_cell_1d + cell_dof_index_1d;
+}
+
+
+
+template<int dim>
+unsigned int
+dof_index_1d_continuous(const Tensors::TensorHelper<dim> & cell_tensor,
+                        const Tensors::TensorHelper<dim> & cell_dof_tensor,
+                        const unsigned int &               cell_no_1d,
+                        const unsigned int &               cell_dof_index_1d,
+                        const int &                        dimension)
+{
+  (void)cell_tensor;
+  AssertIndexRange(cell_no_1d, cell_tensor.n[dimension]);
+  AssertIndexRange(cell_dof_index_1d, cell_dof_tensor.n[dimension]);
+  AssertIndexRange(dimension, dim);
+  const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
+  return cell_no_1d * n_dofs_per_cell_1d + cell_dof_index_1d - cell_no_1d;
+}
+
+
+
 template<int n_dimensions>
 inline PatchLocalIndexHelper<n_dimensions>::PatchLocalIndexHelper(
   const Tensors::TensorHelper<n_dimensions> & cell_tensor_in,
@@ -325,92 +364,110 @@ inline PatchLocalIndexHelper<n_dimensions>::PatchLocalIndexHelper(
 }
 
 
+
 template<int n_dimensions>
 inline unsigned int
-PatchLocalIndexHelper<n_dimensions>::dof_index_1d(const unsigned int cell_no,
-                                                  const unsigned int cell_dof_index,
+PatchLocalIndexHelper<n_dimensions>::dof_index_1d(const unsigned int cell_no_1d,
+                                                  const unsigned int cell_dof_index_1d,
                                                   const int          dimension) const
 {
   if(dof_layout == DoFLayout::DGQ)
-    return dof_index_1d_dgq_impl(cell_no, cell_dof_index, dimension);
+    return dof_index_1d_dgq_impl(cell_no_1d, cell_dof_index_1d, dimension);
   else if(dof_layout == DoFLayout::Q)
-    return dof_index_1d_q_impl(cell_no, cell_dof_index, dimension);
+    return dof_index_1d_q_impl(cell_no_1d, cell_dof_index_1d, dimension);
   else if(dof_layout == DoFLayout::DGP)
-    return dof_index_1d_dgp_impl(cell_no, cell_dof_index, dimension);
+    return dof_index_1d_dgp_impl(cell_no_1d, cell_dof_index_1d, dimension);
   AssertThrow(false, ExcMessage("Finite element not supported."));
   return numbers::invalid_unsigned_int;
 }
 
+
+
 template<int n_dimensions>
 inline unsigned int
-PatchLocalIndexHelper<n_dimensions>::dof_index_1d_q_impl(const unsigned int cell_no,
-                                                         const unsigned int cell_dof_index,
+PatchLocalIndexHelper<n_dimensions>::dof_index_1d_q_impl(const unsigned int cell_no_1d,
+                                                         const unsigned int cell_dof_index_1d,
                                                          const int          dimension) const
 {
-  AssertIndexRange(cell_no, cell_tensor.n[dimension]);
-  AssertIndexRange(cell_dof_index, cell_dof_tensor.n[dimension]);
-  AssertIndexRange(dimension, n_dimensions);
-  const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
-  return cell_no * n_dofs_per_cell_1d + cell_dof_index - cell_no;
+  return dof_index_1d_continuous(
+    cell_tensor, cell_dof_tensor, cell_no_1d, cell_dof_index_1d, dimension);
+  // AssertIndexRange(cell_no_1d, cell_tensor.n[dimension]);
+  // AssertIndexRange(cell_dof_index_1d, cell_dof_tensor.n[dimension]);
+  // AssertIndexRange(dimension, n_dimensions);
+  // const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
+  // return cell_no_1d * n_dofs_per_cell_1d + cell_dof_index_1d - cell_no_1d;
 }
+
 
 
 template<int n_dimensions>
 inline unsigned int
-PatchLocalIndexHelper<n_dimensions>::dof_index_1d_dgq_impl(const unsigned int cell_no,
-                                                           const unsigned int cell_dof_index,
+PatchLocalIndexHelper<n_dimensions>::dof_index_1d_dgq_impl(const unsigned int cell_no_1d,
+                                                           const unsigned int cell_dof_index_1d,
                                                            const int          dimension) const
 {
-  AssertIndexRange(cell_no, cell_tensor.n[dimension]);
-  AssertIndexRange(cell_dof_index, cell_dof_tensor.n[dimension]);
-  AssertIndexRange(dimension, n_dimensions);
-  const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
-  return cell_no * n_dofs_per_cell_1d + cell_dof_index;
+  // AssertIndexRange(cell_no_1d, cell_tensor.n[dimension]);
+  // AssertIndexRange(cell_dof_index_1d, cell_dof_tensor.n[dimension]);
+  // AssertIndexRange(dimension, n_dimensions);
+  // const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
+  // return cell_no_1d * n_dofs_per_cell_1d + cell_dof_index_1d;
+  return dof_index_1d_discontinuous(
+    cell_tensor, cell_dof_tensor, cell_no_1d, cell_dof_index_1d, dimension);
 }
 
 
+
+// !!! TODO currently, the truncated tensor structure is treated as
+// !!! "full" tensor (i.e. isotropic w.r.t. the polynomial degree)
+// FIX? one could return the actual 1D dof index if it is part of the
+// truncated and otherwhise return numbers::invalid_unsigned_int
 template<int n_dimensions>
 inline unsigned int
-PatchLocalIndexHelper<n_dimensions>::dof_index_1d_dgp_impl(const unsigned int cell_no,
-                                                           const unsigned int cell_dof_index,
+PatchLocalIndexHelper<n_dimensions>::dof_index_1d_dgp_impl(const unsigned int cell_no_1d,
+                                                           const unsigned int cell_dof_index_1d,
                                                            const int          dimension) const
 {
-  AssertIndexRange(cell_no, cell_tensor.n[dimension]);
-  AssertIndexRange(cell_dof_index, cell_dof_tensor.n[dimension]);
-  AssertIndexRange(dimension, n_dimensions);
-  // !!! TODO currently, the actually truncated tensor structure is treated as
-  // !!! "full" tensor (i.e. isotropic w.r.t. the polynomial degree)
-  // FIX? one could return the actual 1D dof index if it is part of the
-  // truncated and otherwhise return numbers::invalid_unsigned_int
-  const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
-  return cell_no * n_dofs_per_cell_1d + cell_dof_index;
+  // AssertIndexRange(cell_no_1d, cell_tensor.n[dimension]);
+  // AssertIndexRange(cell_dof_index_1d, cell_dof_tensor.n[dimension]);
+  // AssertIndexRange(dimension, n_dimensions);
+  // const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
+  // return cell_no_1d * n_dofs_per_cell_1d + cell_dof_index_1d;
+  return dof_index_1d_discontinuous(
+    cell_tensor, cell_dof_tensor, cell_no_1d, cell_dof_index_1d, dimension);
 }
+
 
 
 template<int n_dimensions>
 inline std::pair<unsigned int, unsigned int>
-PatchLocalIndexHelper<n_dimensions>::dof_range_1d(const unsigned int cell_no,
-                                                  const unsigned int dimension) const
+PatchLocalIndexHelper<n_dimensions>::cell_dof_range_1d(const unsigned int cell_no_1d,
+                                                       const unsigned int dimension) const
 {
-  const auto         last_cell_dof_index = this->n_dofs_per_cell_1d(dimension) - 1;
-  const unsigned int first               = dof_index_1d(cell_no, 0, dimension);
-  const unsigned int last                = dof_index_1d(cell_no, last_cell_dof_index, dimension);
+  AssertIndexRange(cell_no_1d, cell_tensor.n[dimension]);
+  AssertIndexRange(dimension, n_dimensions);
+  const auto         last_cell_dof_index_1d = this->n_dofs_per_cell_1d(dimension) - 1;
+  const unsigned int first                  = dof_index_1d(cell_no_1d, 0, dimension);
+  const unsigned int last = dof_index_1d(cell_no_1d, last_cell_dof_index_1d, dimension);
   return {first, last + 1};
 }
+
 
 
 template<int n_dimensions>
 inline unsigned int
 PatchLocalIndexHelper<n_dimensions>::n_cells_1d(const unsigned int dimension) const
 {
+  AssertIndexRange(dimension, n_dimensions);
   return this->cell_tensor.size(dimension);
 }
+
 
 
 template<int n_dimensions>
 inline unsigned int
 PatchLocalIndexHelper<n_dimensions>::n_dofs_per_cell_1d(const unsigned int dimension) const
 {
+  AssertIndexRange(dimension, n_dimensions);
   return this->cell_dof_tensor.size(dimension);
 }
 
@@ -443,6 +500,11 @@ template<int n_dimensions>
 inline bool
 PatchLocalTensorHelper<n_dimensions>::is_boundary_face_dof(const unsigned int patch_dof_index) const
 {
+  const auto & is_boundary_face_dof_1d = [&](const auto index_1d, const auto dimension) {
+    AssertIndexRange(index_1d, n_dofs_1d(dimension));
+    const auto last_index_1d = n_dofs_1d(dimension) - 1;
+    return index_1d == 0 || index_1d == last_index_1d;
+  };
   const auto & patch_dof_index_multi = TensorHelperBase::multi_index(patch_dof_index);
   for(auto d = 0U; d < n_dimensions; ++d)
     if(is_boundary_face_dof_1d(patch_dof_index_multi[d], d))
@@ -476,15 +538,15 @@ PatchLocalTensorHelper<n_dimensions>::dof_index(const unsigned int cell_no,
 }
 
 
-template<int n_dimensions>
-inline bool
-PatchLocalTensorHelper<n_dimensions>::is_boundary_face_dof_1d(const unsigned int patch_dof_index,
-                                                              const unsigned int dimension) const
-{
-  AssertIndexRange(patch_dof_index, n_dofs_1d(dimension));
-  const auto last_patch_dof_index = n_dofs_1d(dimension) - 1;
-  return patch_dof_index == 0 || patch_dof_index == last_patch_dof_index;
-}
+// template<int n_dimensions>
+// inline bool
+// PatchLocalTensorHelper<n_dimensions>::is_boundary_face_dof_1d(const unsigned int index_1d,
+//                                                               const unsigned int dimension) const
+// {
+//   AssertIndexRange(index_1d, n_dofs_1d(dimension));
+//   const auto last_index_1d = n_dofs_1d(dimension) - 1;
+//   return index_1d == 0 || index_1d == last_index_1d;
+// }
 
 
 template<int n_dimensions>

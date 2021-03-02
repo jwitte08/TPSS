@@ -36,7 +36,7 @@ void
 SubdomainHandler<dim, Number>::internal_reinit()
 {
   // *** check if additional_data is reasonable
-  Assert(additional_data.level != static_cast<unsigned int>(-1), ExcNotImplemented());
+  Assert(additional_data.level != numbers::invalid_unsigned_int, ExcNotImplemented());
   Assert(additional_data.patch_variant != TPSS::PatchVariant::invalid, ExcInvalidState());
   Assert(additional_data.smoother_variant != TPSS::SmootherVariant::invalid, ExcInvalidState());
 
@@ -45,11 +45,11 @@ SubdomainHandler<dim, Number>::internal_reinit()
   std::vector<const dealii::DoFHandler<dim> *> unique_dof_handlers;
   {
     const auto check_dof_handler = [&](const auto dof_handler) {
-      AssertThrow(mf_storage->is_supported(dof_handler->get_fe()),
-                  ExcMessage("Finite element not supported."));
+      // AssertThrow(mf_storage->is_supported(dof_handler->get_fe()),
+      //             ExcMessage("Finite element not supported."));
       AssertIndexRange(additional_data.level, dof_handler->get_triangulation().n_global_levels());
-      Assert(dof_handler->get_fe().is_primitive(),
-             ExcMessage("Currently, only primitive finite elements are supported"));
+      // Assert(dof_handler->get_fe().is_primitive(),
+      //        ExcMessage("Currently, only primitive finite elements are supported"));
       Assert(dof_handler->get_fe().n_components() == 1 ||
                dof_handler->get_fe().n_components() == dim,
              ExcMessage(
@@ -99,7 +99,8 @@ SubdomainHandler<dim, Number>::internal_reinit()
   TPSS::PatchWorker<dim, Number> patch_worker{patch_info};
 
 
-  { // *** (partially) store dof indices and patch-local dof information
+  // *** (partially) store dof indices and patch-local dof information
+  {
     Assert(additional_data.foreach_dofh.empty() ||
              additional_data.foreach_dofh.size() == n_dof_handlers(),
            ExcMessage("additional_data.foreach_dofh has an incompatible size"));
@@ -145,7 +146,6 @@ SubdomainHandler<dim, Number>::internal_reinit()
   mapping_info_data.normalize_patch = additional_data.normalize_surrogate_patch;
   mapping_info_data.use_arc_length  = additional_data.use_arc_length;
   mapping_info.initialize_storage(patch_info, mf_connect, mapping_info_data);
-
 
   // TODO
   // // *** if possible compress the data

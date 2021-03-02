@@ -253,13 +253,19 @@ inline PatchDoFWorker<dim, Number>::PatchDoFWorker(const DoFInfo<dim, Number> & 
   : PatchWorker<dim, Number>(*(dof_info_in.patch_info)),
     dof_info(&dof_info_in),
     dof_layout(dof_info_in.get_dof_layout()),
-    patch_dof_tensor(TPSS::UniversalInfo<dim>::n_cells_per_direction(
-                       this->patch_info->get_additional_data().patch_variant),
-                     /// currently assuming isotropy ...
-                     get_shape_info().get_shape_data().fe_degree + 1,
-                     dof_info_in.get_dof_layout()),
+    patch_dof_tensor( /// currently supporting isotropic patches only...
+      TPSS::UniversalInfo<dim>::n_cells_per_direction(
+        this->patch_info->get_additional_data().patch_variant),
+      /// currently assuming isotropy ...
+      get_shape_info().get_shape_data().fe_degree + 1,
+      dof_info_in.get_dof_layout()),
     n_components(dof_info_in.shape_info->n_components)
 {
+  AssertDimension(patch_dof_tensor.cell_tensor.n_flat(), this->n_cells_per_subdomain());
+  /// DEBUG
+  std::cout << dof_info->dof_handler->get_fe().get_name() << std::endl;
+  std::cout << "#components: " << n_components << std::endl;
+  std::cout << "#dofs: " << patch_dof_tensor.n_flat() << std::endl;
   for(auto component = 0U; component < n_components; ++component)
   {
     unsigned int n_dofs_preceding = 0;
@@ -284,9 +290,9 @@ PatchDoFWorker<dim, Number>::fill_dof_indices_on_patch(const unsigned int patch_
 {
   AssertIndexRange(patch_id, this->get_partition_data().n_subdomains());
   AssertIndexRange(lane, this->n_lanes_filled(patch_id));
-  const auto & additional_data = dof_info->get_additional_data();
-  const auto n_cells = this->n_cells_per_subdomain(); // !!! patch_dof_tensor.cell_tensor.n_flat();
-  const auto n_dofs_per_cell_per_comp = dof_layout == DoFLayout::DGP ?
+  const auto & additional_data          = dof_info->get_additional_data();
+  const auto   n_cells                  = this->n_cells_per_subdomain();
+  const auto   n_dofs_per_cell_per_comp = dof_layout == DoFLayout::DGP ?
                                           get_shape_info().dofs_per_component_on_cell :
                                           patch_dof_tensor.cell_dof_tensor.n_flat();
   std::vector<unsigned int> global_dof_indices;

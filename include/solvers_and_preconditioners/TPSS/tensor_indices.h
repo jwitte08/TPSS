@@ -183,9 +183,8 @@ struct TensorHelper
 
 
   /**
-   * If we think of the @p order dimensional index set as hypercube, then, we
-   * have 2*order hyperfaces of order @p order-1 following a lexicographical
-   * ordering, see for example dealii::GeometryInfo. In analogy to the
+   * If we think of the @p order -dimensional index set as hypercube, then, we
+   * have 2*order hyperfaces where each represents an index set of order @p order-1. In analogy to the
    * one-dimensional case we refer to hyperfaces as edge numbers @p edge_no. If
    * index @p index is in the interior of the imaginary hypercube, the set of
    * edge numbers is empty. If the index is located at a vertex dim edge numbers
@@ -207,7 +206,7 @@ struct TensorHelper
   }
 
   /**
-   * Returns the one-dimensional edge number of the @p mode'th mode of
+   * Returns the one-dimensional edge number of the @p mode th mode of
    * multi-index @p multi_index. That is, 0 for the first, 1 for the last and -1
    * for all interior indices with respect to mode @p mode is reutrned.
    */
