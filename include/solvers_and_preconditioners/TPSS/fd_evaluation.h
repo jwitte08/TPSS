@@ -310,6 +310,8 @@ private:
 
   const TPSS::PatchDoFWorker<dim, Number> patch_worker;
 
+  const TPSS::PatchLocalTensorHelper<dim> & patch_dof_tensor;
+
   const TPSS::MappingInfo<dim, Number> & mapping_info;
 
   const MatrixFree<dim, Number> & mf_storage;
@@ -458,6 +460,7 @@ inline FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::FDEvaluation(
   const unsigned int                    component_in)
   : sd_handler(sd_handler_in),
     patch_worker(sd_handler_in.get_dof_info(dofh_index_in)),
+    patch_dof_tensor(patch_worker.get_dof_tensor()),
     mapping_info(sd_handler_in.get_mapping_info()),
     mf_storage(sd_handler_in.get_matrix_free()),
     dofh_index(dofh_index_in),
@@ -700,7 +703,7 @@ template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline const TPSS::PatchLocalTensorHelper<dim> &
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::get_dof_tensor() const
 {
-  return patch_worker.get_dof_tensor();
+  return patch_dof_tensor;
 }
 
 
@@ -834,7 +837,7 @@ inline unsigned int
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_cells_1d(const unsigned int dimension) const
 {
   AssertIndexRange(dimension, dim);
-  return patch_worker.get_dof_tensor().n_cells_1d(dimension);
+  return patch_dof_tensor.get_cell_tensor().size(dimension);
 }
 
 
@@ -854,7 +857,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_dofs_per_cell_1d(
   const unsigned int dimension) const
 {
   AssertIndexRange(dimension, dim);
-  return patch_worker.get_dof_tensor().n_dofs_per_cell_1d(dimension);
+  return patch_worker.get_dof_tensor().get_cell_dof_tensor().size(dimension);
 }
 
 

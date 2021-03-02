@@ -105,15 +105,19 @@ public:
   std::pair<unsigned int, unsigned int>
   cell_dof_range_1d(const unsigned int cell_no_1d, const unsigned int dimension) const;
 
-  unsigned int
-  n_cells_1d(const unsigned int dimension) const;
+  /// DEPRECATED: use cell_tensor.size(dimension) instead...
+  // unsigned int
+  // n_cells_1d(const unsigned int dimension) const;
 
-  unsigned int
-  n_dofs_per_cell_1d(const unsigned int dimension) const;
+  /// DEPRECATED: use cell_dof_tensor.size(dimension) instead...
+  // unsigned int
+  // n_dofs_per_cell_1d(const unsigned int dimension) const;
+
+  const Tensors::TensorHelper<n_dimensions> cell_tensor;
 
   const Tensors::TensorHelper<n_dimensions> cell_dof_tensor;
-  const Tensors::TensorHelper<n_dimensions> cell_tensor;
-  const DoFLayout                           dof_layout;
+
+  const DoFLayout dof_layout;
 
 private:
   /**
@@ -150,11 +154,9 @@ private:
  * Helps with the d-dimensional patch-local dof indexing depending on the finite element.
  */
 template<int n_dimensions>
-class PatchLocalTensorHelper : public PatchLocalIndexHelper<n_dimensions>,
-                               public Tensors::TensorHelper<n_dimensions>
+struct PatchLocalTensorHelper : public Tensors::TensorHelper<n_dimensions>
 {
-public:
-  using IndexHelperBase  = PatchLocalIndexHelper<n_dimensions>;
+  // using IndexHelperBase  = PatchLocalIndexHelper<n_dimensions>;
   using TensorHelperBase = Tensors::TensorHelper<n_dimensions>;
 
   PatchLocalTensorHelper(const Tensors::TensorHelper<n_dimensions> & cell_tensor_in,
@@ -193,6 +195,20 @@ public:
 
   unsigned int
   n_dofs_1d(const unsigned int dimension) const;
+
+  const Tensors::TensorHelper<n_dimensions> &
+  get_cell_tensor() const
+  {
+    return plain.cell_tensor;
+  }
+
+  const Tensors::TensorHelper<n_dimensions> &
+  get_cell_dof_tensor() const
+  {
+    return plain.cell_dof_tensor;
+  }
+
+  const PatchLocalIndexHelper<n_dimensions> plain;
 };
 
 
@@ -359,7 +375,7 @@ inline PatchLocalIndexHelper<n_dimensions>::PatchLocalIndexHelper(
   const Tensors::TensorHelper<n_dimensions> & cell_tensor_in,
   const Tensors::TensorHelper<n_dimensions> & cell_dof_tensor_in,
   const DoFLayout                             dof_layout_in)
-  : cell_dof_tensor(cell_dof_tensor_in), cell_tensor(cell_tensor_in), dof_layout(dof_layout_in)
+  : cell_tensor(cell_tensor_in), cell_dof_tensor(cell_dof_tensor_in), dof_layout(dof_layout_in)
 {
 }
 
@@ -445,7 +461,7 @@ PatchLocalIndexHelper<n_dimensions>::cell_dof_range_1d(const unsigned int cell_n
 {
   AssertIndexRange(cell_no_1d, cell_tensor.n[dimension]);
   AssertIndexRange(dimension, n_dimensions);
-  const auto         last_cell_dof_index_1d = this->n_dofs_per_cell_1d(dimension) - 1;
+  const auto         last_cell_dof_index_1d = cell_dof_tensor.size(dimension) - 1;
   const unsigned int first                  = dof_index_1d(cell_no_1d, 0, dimension);
   const unsigned int last = dof_index_1d(cell_no_1d, last_cell_dof_index_1d, dimension);
   return {first, last + 1};
@@ -453,23 +469,23 @@ PatchLocalIndexHelper<n_dimensions>::cell_dof_range_1d(const unsigned int cell_n
 
 
 
-template<int n_dimensions>
-inline unsigned int
-PatchLocalIndexHelper<n_dimensions>::n_cells_1d(const unsigned int dimension) const
-{
-  AssertIndexRange(dimension, n_dimensions);
-  return this->cell_tensor.size(dimension);
-}
+// template<int n_dimensions>
+// inline unsigned int
+// PatchLocalIndexHelper<n_dimensions>::n_cells_1d(const unsigned int dimension) const
+// {
+//   AssertIndexRange(dimension, n_dimensions);
+//   return this->cell_tensor.size(dimension);
+// }
 
 
 
-template<int n_dimensions>
-inline unsigned int
-PatchLocalIndexHelper<n_dimensions>::n_dofs_per_cell_1d(const unsigned int dimension) const
-{
-  AssertIndexRange(dimension, n_dimensions);
-  return this->cell_dof_tensor.size(dimension);
-}
+// template<int n_dimensions>
+// inline unsigned int
+// PatchLocalIndexHelper<n_dimensions>::n_dofs_per_cell_1d(const unsigned int dimension) const
+// {
+//   AssertIndexRange(dimension, n_dimensions);
+//   return this->cell_dof_tensor.size(dimension);
+// }
 
 
 
@@ -482,16 +498,24 @@ inline PatchLocalTensorHelper<n_dimensions>::PatchLocalTensorHelper(
   const Tensors::TensorHelper<n_dimensions> & cell_tensor_in,
   const Tensors::TensorHelper<n_dimensions> & cell_dof_tensor_in,
   const DoFLayout                             dof_layout_in)
-  : IndexHelperBase(cell_tensor_in, cell_dof_tensor_in, dof_layout_in), TensorHelperBase([&]() {
+  : TensorHelperBase([&]() {
+      /// TODO is there a better way instead of using this intermediate object
+      /// which is cached later on... ???
+      PatchLocalIndexHelper<n_dimensions>    tmp(cell_tensor_in, cell_dof_tensor_in, dof_layout_in);
       std::array<unsigned int, n_dimensions> sizes;
       for(auto d = 0U; d < n_dimensions; ++d)
       {
-        const auto last_cell_no        = this->n_cells_1d(d) - 1;
-        const auto last_cell_dof_index = this->n_dofs_per_cell_1d(d) - 1;
-        sizes[d] = this->dof_index_1d(last_cell_no, last_cell_dof_index, d) + 1;
+        const auto last_cell_no        = cell_tensor_in.size(d) - 1;
+        const auto last_cell_dof_index = cell_dof_tensor_in.size(d) - 1;
+        sizes[d]                       = tmp.dof_index_1d(last_cell_no, last_cell_dof_index, d) + 1;
       }
+      std::cout << "sizes: ";
+      for(const auto s : sizes)
+        std::cout << s << " ";
+      std::cout << std::endl;
       return sizes;
-    }())
+    }()),
+    plain(cell_tensor_in, cell_dof_tensor_in, dof_layout_in)
 {
 }
 
@@ -518,14 +542,23 @@ inline std::array<unsigned int, n_dimensions>
 PatchLocalTensorHelper<n_dimensions>::dof_multi_index(const unsigned int cell_no,
                                                       const unsigned int cell_dof_index) const
 {
-  const auto & cell_no_multi        = IndexHelperBase::cell_tensor.multi_index(cell_no);
-  const auto & cell_dof_index_multi = IndexHelperBase::cell_dof_tensor.multi_index(cell_dof_index);
+  const auto & cell_no_multi        = plain.cell_tensor.multi_index(cell_no);
+  const auto & cell_dof_index_multi = plain.cell_dof_tensor.multi_index(cell_dof_index);
   std::array<unsigned int, n_dimensions> patch_dof_index_multi;
   for(auto d = 0U; d < n_dimensions; ++d)
-    patch_dof_index_multi[d] =
-      IndexHelperBase::dof_index_1d(cell_no_multi[d], cell_dof_index_multi[d], d);
+    patch_dof_index_multi[d] = plain.dof_index_1d(cell_no_multi[d], cell_dof_index_multi[d], d);
+
+  std::cout << "cell_dof_index_multi: ";
+  for(const auto s : cell_dof_index_multi)
+    std::cout << s << " ";
+  std::cout << std::endl;
+  std::cout << "patch_dof_index_multi: ";
+  for(const auto s : patch_dof_index_multi)
+    std::cout << s << " ";
+  std::cout << std::endl;
   return patch_dof_index_multi;
 }
+
 
 
 template<int n_dimensions>

@@ -261,7 +261,7 @@ inline PatchDoFWorker<dim, Number>::PatchDoFWorker(const DoFInfo<dim, Number> & 
       dof_info_in.get_dof_layout()),
     n_components(dof_info_in.shape_info->n_components)
 {
-  AssertDimension(patch_dof_tensor.cell_tensor.n_flat(), this->n_cells_per_subdomain());
+  AssertDimension(patch_dof_tensor.get_cell_tensor().n_flat(), this->n_cells_per_subdomain());
   /// DEBUG
   std::cout << dof_info->dof_handler->get_fe().get_name() << std::endl;
   std::cout << "#components: " << n_components << std::endl;
@@ -276,7 +276,7 @@ inline PatchDoFWorker<dim, Number>::PatchDoFWorker(const DoFInfo<dim, Number> & 
   AssertDimension(n_preceding_dofs_on_cell_.size(), n_components);
 
   for(auto d = 0U; d < dim; ++d)
-    AssertDimension(get_dof_tensor().n_dofs_per_cell_1d(d),
+    AssertDimension(get_dof_tensor().get_cell_dof_tensor().size(d),
                     get_shape_info().get_shape_data(d).fe_degree + 1);
   Assert(dof_info->get_additional_data().level != numbers::invalid_unsigned_int,
          ExcMessage("Implemented for level cells only."));
@@ -294,7 +294,7 @@ PatchDoFWorker<dim, Number>::fill_dof_indices_on_patch(const unsigned int patch_
   const auto   n_cells                  = this->n_cells_per_subdomain();
   const auto   n_dofs_per_cell_per_comp = dof_layout == DoFLayout::DGP ?
                                           get_shape_info().dofs_per_component_on_cell :
-                                          patch_dof_tensor.cell_dof_tensor.n_flat();
+                                          patch_dof_tensor.get_cell_dof_tensor().n_flat();
   std::vector<unsigned int> global_dof_indices;
 
   const bool is_L2_conforming =
@@ -322,6 +322,7 @@ PatchDoFWorker<dim, Number>::fill_dof_indices_on_patch(const unsigned int patch_
             get_dof_indices_on_cell(patch_id, cell_no, lane, comp);
           for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell_per_comp; ++cell_dof_index)
           {
+            std::cout << "n_dofs_per_cell_per_comp: " << n_dofs_per_cell_per_comp << std::endl;
             const unsigned int patch_dof_index_per_comp =
               patch_dof_tensor.dof_index(cell_no, cell_dof_index);
             const bool is_boundary_dof =
@@ -391,9 +392,14 @@ PatchDoFWorker<dim, Number>::get_constrained_local_dof_indices_1d(const unsigned
                                                                   const unsigned int dimension,
                                                                   const unsigned int lane) const
 {
+  /// TODO requires testing... however, it seems this function is obsolete anyway...
+  AssertThrow(false,
+              ExcMessage(
+                "After refactoring PatchLocalTensorHelper this functionality is untested..."));
+
   Assert(this->patch_info, ExcMessage("Patch info is not initialized."));
   std::set<unsigned int> constrained_dof_indices;
-  const auto             n_dofs_1d       = patch_dof_tensor.n_dofs_1d(dimension);
+  const auto             n_dofs_1d       = patch_dof_tensor.plain.n_dofs_1d(dimension);
   const auto             first_dof_index = 0U;
   const auto             last_dof_index  = n_dofs_1d - 1;
 
