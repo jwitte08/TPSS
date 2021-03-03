@@ -184,11 +184,11 @@ struct TensorHelper
 
   /**
    * If we think of the @p order -dimensional index set as hypercube, then, we
-   * have 2*order hyperfaces where each represents an index set of order @p order-1. In analogy to the
-   * one-dimensional case we refer to hyperfaces as edge numbers @p edge_no. If
-   * index @p index is in the interior of the imaginary hypercube, the set of
-   * edge numbers is empty. If the index is located at a vertex dim edge numbers
-   * are returned.
+   * have 2*order hyperfaces where each represents an index set of order @p
+   * order-1. In analogy to the one-dimensional case we refer to hyperfaces as
+   * edge numbers @p edge_no. If index @p index is in the interior of the
+   * imaginary hypercube, the set of edge numbers is empty. If the index is
+   * located at a vertex dim edge numbers are returned.
    */
   std::vector<unsigned int>
   get_edge_numbers(const IntType index) const
@@ -232,18 +232,32 @@ struct TensorHelper
     return false;
   }
 
+  IntType
+  first_index(const unsigned int mode) const
+  {
+    AssertIndexRange(mode, order);
+    return static_cast<IntType>(0);
+  }
+
+  IntType
+  last_index(const unsigned int mode) const
+  {
+    AssertIndexRange(mode, order);
+    return size(mode) - 1;
+  }
+
   bool
   is_first_index_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
   {
     AssertIndexRange(mode, order);
-    return multi_index[mode] == static_cast<IntType>(0);
+    return multi_index[mode] == first_index(mode);
   }
 
   bool
   is_last_index_1d(const std::array<IntType, order> & multi_index, const unsigned int mode) const
   {
     AssertIndexRange(mode, order);
-    return multi_index[mode] == (size(mode) - 1);
+    return multi_index[mode] == last_index(mode);
   }
 
   bool
@@ -310,8 +324,8 @@ struct TensorHelper
   bool
   is_isotropic() const
   {
-    for(auto direction = 0; direction < order; ++direction)
-      if(size(0) != size(direction))
+    for(auto direction = 1U; direction < order; ++direction)
+      if(size(0U) != size(direction))
         return false;
     return true;
   }
