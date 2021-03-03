@@ -378,6 +378,83 @@ struct PatchLocalTensorHelper : public Tensors::TensorHelper<n_dimensions>
 
 
 /**
+ * TODO description missing...
+ */
+template<int n_dimensions>
+struct PatchLocalTensorIndices
+{
+  using Base = Tensors::TensorHelper<n_dimensions>;
+
+  PatchLocalTensorIndices(
+    const Tensors::TensorHelper<n_dimensions> &              cell_tensor_in,
+    const std::vector<Tensors::TensorHelper<n_dimensions>> & cell_dof_tensors_in,
+    const DoFLayout                                          dof_layout_in)
+    : n_components(cell_dof_tensors_in.size()),
+      dof_tensors(std::move([&]() {
+        Assert(!cell_dof_tensors_in.empty(), ExcMessage("Pass at least one cell dof tensor!"));
+        std::vector<PatchLocalTensorHelper<n_dimensions>> dof_tensors_in;
+        for(const auto & cell_dof_tensor_in : cell_dof_tensors_in)
+          dof_tensors_in.emplace_back(cell_tensor_in, cell_dof_tensor_in, dof_layout_in);
+        return dof_tensors_in;
+      }())),
+      n_dofs([&]() {
+        return std::accumulate(dof_tensors.cbegin(),
+                               dof_tensors.cend(),
+                               0U,
+                               [](const unsigned int sum, const auto & dof_tensor) {
+                                 return sum + dof_tensor.n_flat();
+                               });
+      }()),
+      n_plain_dofs([&]() {
+        return std::accumulate(dof_tensors.cbegin(),
+                               dof_tensors.cend(),
+                               0U,
+                               [](const unsigned int sum, const auto & dof_tensor) {
+                                 return sum + dof_tensor.plain.n_flat();
+                               });
+      }()),
+      n_dofs_per_cell([&]() {
+        std::vector<unsigned int> n_dofs_per_cell_in;
+        for(const auto & dof_tensor : dof_tensors)
+          n_dofs_per_cell_in.emplace_back(dof_tensor.get_cell_dof_tensor().n_flat());
+        return n_dofs_per_cell_in;
+      }())
+  {
+    AssertDimension(n_components, dof_tensors.size());
+    AssertDimension(n_components, n_dofs_per_cell.size());
+  }
+
+  const PatchLocalTensorHelper<n_dimensions> &
+  get_dof_tensor(unsigned int component) const
+  {
+    AssertIndexRange(component, n_components);
+    return dof_tensors[component];
+  }
+
+  /// NOTE not needed as long as no reinit() exists...
+  // void clear()
+  // {
+  //   n_components = numbers::invalid_unsigned_int;
+  //   dof_tensors.clear();
+  //   n_dofs = numbers::invalid_unsigned_int;
+  //   n_plain_dofs = numbers::invalid_unsigned_int;
+  //   n_dofs_per_cell.clear();
+  // }
+
+  const unsigned int n_components;
+
+  const std::vector<PatchLocalTensorHelper<n_dimensions>> dof_tensors;
+
+  const unsigned int n_dofs;
+
+  const unsigned int n_plain_dofs;
+
+  const std::vector<unsigned int> n_dofs_per_cell;
+};
+
+
+
+/**
  * TODO description missing ...
  */
 // !!! TODO do not pass level as additional data, directly use the level of patch_info_in
@@ -433,6 +510,8 @@ struct DoFInfo
 
   const DoFHandler<dim> * dof_handler = nullptr;
 
+  DoFLayout dof_layout = DoFLayout::invalid;
+
   /**
    * Stores the starting position of cached dof indices in @p
    * dof_indices_cellwise for each patch-local cell stored by @p
@@ -478,7 +557,7 @@ struct DoFInfo
 
   std::vector<unsigned int> l2h;
 
-  std::vector<unsigned int> n_dofs_on_cell_per_comp;
+  std::shared_ptr<const PatchLocalTensorIndices<dim>> patch_dof_tensors;
 };
 
 
@@ -570,18 +649,15 @@ inline PatchLocalIndexHelper<n_dimensions>::PatchLocalIndexHelper(
   const Tensors::TensorHelper<n_dimensions> & cell_dof_tensor_in,
   const DoFLayout                             dof_layout_in)
   : Base([&]() {
+      Assert(dof_layout_in != DoFLayout::invalid, ExcMessage("Not supported."));
       std::array<unsigned int, n_dimensions> sizes;
       for(auto d = 0U; d < n_dimensions; ++d)
       {
-        const auto last_cell_no        = cell_tensor_in.size(d) - 1;
-        const auto last_cell_dof_index = cell_dof_tensor_in.size(d) - 1;
-        sizes[d]                       = dof_index_1d_impl<n_dimensions>(cell_tensor_in,
-                                                   cell_dof_tensor_in,
-                                                   dof_layout_in,
-                                                   last_cell_no,
-                                                   last_cell_dof_index,
-                                                   d) +
-                   1;
+        const auto last_cell_no         = cell_tensor_in.size(d) - 1;
+        const auto last_cell_dof_index  = cell_dof_tensor_in.size(d) - 1;
+        const auto last_patch_dof_index = dof_index_1d_impl<n_dimensions>(
+          cell_tensor_in, cell_dof_tensor_in, dof_layout_in, last_cell_no, last_cell_dof_index, d);
+        sizes[d] = last_patch_dof_index + 1;
       }
       /// DEBUG
       std::cout << "plain sizes: ";
@@ -593,7 +669,6 @@ inline PatchLocalIndexHelper<n_dimensions>::PatchLocalIndexHelper(
     cell_tensor(cell_tensor_in),
     cell_dof_tensor(cell_dof_tensor_in),
     dof_layout(dof_layout_in)
-
 {
 }
 
@@ -796,7 +871,7 @@ inline PatchLocalTensorHelper<n_dimensions>::PatchLocalTensorHelper(
 {
   const bool is_single_cell = cell_tensor_in.n_flat() == 1U;
   if(is_single_cell)
-    AssertThrow(dof_layout_in == DoFLayout::DGQ,
+    AssertThrow(dof_layout_in == DoFLayout::DGQ || dof_layout_in == DoFLayout::DGP,
                 ExcMessage("A single cell patch is not supported for this dof layout..."));
 }
 
@@ -1009,9 +1084,10 @@ DoFInfo<dim, Number>::clear()
   start_of_dof_indices_patchwise.clear();
   dof_indices_patchwise.clear();
   dof_handler     = nullptr;
+  dof_layout      = DoFLayout::invalid;
   additional_data = AdditionalData{};
   l2h.clear();
-  n_dofs_on_cell_per_comp.clear();
+  patch_dof_tensors.reset();
 }
 
 
@@ -1041,7 +1117,9 @@ inline DoFLayout
 DoFInfo<dim, Number>::get_dof_layout() const
 {
   Assert(dof_handler, ExcMessage("DoF handler not initialized."));
-  return TPSS::get_dof_layout(dof_handler->get_fe());
+  Assert(dof_layout != DoFLayout::invalid, ExcMessage("Not a valid dof layout."));
+  // return TPSS::get_dof_layout(dof_handler->get_fe());
+  return dof_layout;
 }
 
 

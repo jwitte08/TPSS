@@ -20,6 +20,7 @@ DoFInfo<dim, Number>::initialize(
 
   clear();
   dof_handler     = dof_handler_in;
+  dof_layout      = TPSS::get_dof_layout(dof_handler->get_fe());
   patch_info      = patch_info_in;
   shape_info      = shape_info_in;
   additional_data = additional_data_in;
@@ -27,13 +28,36 @@ DoFInfo<dim, Number>::initialize(
   //: fill the lexicographic-to-hierarchic-numbering map
   l2h = shape_info->lexicographic_numbering;
 
-  //: fill the cell-wise number of dofs per component (assume isotropy)
-  n_dofs_on_cell_per_comp.resize(shape_info_in->n_components);
-  std::fill(n_dofs_on_cell_per_comp.begin(),
-            n_dofs_on_cell_per_comp.end(),
-            shape_info_in->dofs_per_component_on_cell);
+  /// Initialize a helper that handles the tensor structure for a regular patch
+  /// of cells, cell-local dof indices and, in particular, patch-local dof
+  /// indices which are treated either "plain", i.e. without taking patch-local
+  /// constraints into account, or only those which are not constrained.
+  {
+    /// supporting isotropic patches of cells...
+    const auto n_cells_1d = TPSS::UniversalInfo<dim>::n_cells_per_direction(
+      patch_info_in->get_additional_data().patch_variant);
+    const unsigned int                      n_components = shape_info_in->n_components;
+    std::vector<Tensors::TensorHelper<dim>> cell_dof_tensors_in;
+    for(auto comp = 0U; comp < n_components; ++comp)
+    {
+      std::array<unsigned int, dim> degrees;
+      for(auto dimension = 0U; dimension < dim; ++dimension)
+        degrees[dimension] = shape_info_in->get_shape_data(dimension, comp).fe_degree + 1;
+      cell_dof_tensors_in.emplace_back(degrees);
+    }
+    patch_dof_tensors = std::make_shared<const PatchLocalTensorIndices<dim>>(n_cells_1d,
+                                                                             cell_dof_tensors_in,
+                                                                             dof_layout);
+  }
 
   initialize_impl();
+
+  /// double-check if shape_info and patch_dof_tensors are in sync...
+  AssertDimension(patch_dof_tensors->n_components, shape_info->n_components);
+  for(auto c = 0U; c < patch_dof_tensors->n_components; ++c)
+    if(dof_layout != DoFLayout::DGP)
+      AssertDimension(patch_dof_tensors->get_dof_tensor(c).get_cell_dof_tensor().n_flat(),
+                      shape_info->dofs_per_component_on_cell);
 }
 
 

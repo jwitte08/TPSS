@@ -130,11 +130,11 @@ MatrixFreeConnect<dim, Number>::initialize(
           /// dof numbering is lexicographical.
           for(auto cell_no = 0U; cell_no < local_helper.n_cells(); ++cell_no)
           {
-            /// Note this field returns all global dof indices on the cell even
-            /// those not being part of the patch.
-            AssertThrow(dof_info.n_dofs_on_cell_per_comp.size() == 1,
+            AssertThrow(dof_info.patch_dof_tensors->n_components == 1,
                         ExcMessage(
                           "TODO not implemented for vector-valued shape functions.")); // !!!
+            /// Note this field returns all global dof indices on the cell even
+            /// those not being part of the patch.
             const auto & global_dof_indices_on_cell = patch_dof_worker.get_dof_indices_on_cell(
               patch_id, cell_no, lane, /*!!! component*/ 0);
             AssertDimension(global_dof_indices_on_cell.size(),
