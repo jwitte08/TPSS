@@ -212,17 +212,9 @@ DoFInfo<dim, Number>::compute_restricted_dofs_impl()
               ExcMessage("Additive scheme is only supported."));
 
   PatchDoFWorker<dim, Number> patch_dof_worker(*this);
-  const auto &                partition_data = patch_dof_worker.get_partition_data();
-  const auto                  n_subdomains   = partition_data.n_subdomains();
-
-  std::array<unsigned int, dim> inner_sizes;
-  for(auto d = 0U; d < dim; ++d)
-    inner_sizes[d] = patch_dof_worker.n_dofs_1d(d);
-  // const auto & patch_dof_tensor = patch_dof_worker.get_dof_tensor();
-  // auto         inner_sizes      = patch_dof_tensor.size();
-  // for(auto d = 0U; d < dim; ++d)
-  //   inner_sizes[d] -= 2U;
-  Tensors::TensorHelper<dim> dof_tensor_inner(inner_sizes);
+  const auto & dof_tensor_inner = patch_dof_worker.get_dof_tensor(/*assuming component==0*/);
+  const auto & partition_data   = patch_dof_worker.get_partition_data();
+  const auto   n_subdomains     = partition_data.n_subdomains();
 
   const auto comp_distance_impl_q = [&](const unsigned int index) {
     const auto & mindex = dof_tensor_inner.multi_index(index);

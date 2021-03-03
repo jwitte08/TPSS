@@ -288,30 +288,35 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::post_process_constraints(
   std::array<Table<2, VectorizedArray<Number>>, dim> &                   matrices,
   const FDEvaluation<dim, fe_degree_ansatz, n_q_points_ansatz, Number> & eval_ansatz) const
 {
-  if(TPSS::DoFLayout::DGQ == get_dof_layout())
-    return;
+  for(auto direction = 0U; direction < dim; ++direction)
+    patch_dof_tensor.apply_constraints(matrices.at(direction),
+                                       direction,
+                                       eval_ansatz.get_dof_tensor());
 
-  else if(TPSS::DoFLayout::Q == get_dof_layout())
-  {
-    for(auto direction = 0U; direction < dim; ++direction)
-    {
-      auto & matrix = matrices[direction];
+  // if(TPSS::DoFLayout::DGQ == get_dof_layout())
+  //   return;
 
-      if(patch_variant == TPSS::PatchVariant::vertex)
-      {
-        restrict_matrix_qvp(matrix, patch_worker, eval_ansatz.patch_worker);
-        AssertDimension(this->patch_worker.n_dofs_1d(direction), matrices.at(direction).n_rows());
-        AssertDimension(eval_ansatz.patch_worker.n_dofs_1d(direction),
-                        matrices.at(direction).n_cols());
-      }
-      else
-        AssertThrow(false, ExcMessage("Patch variant is not supported."));
-    }
-    return;
-  }
+  // else if(TPSS::DoFLayout::Q == get_dof_layout())
+  // {
+  //   for(auto direction = 0U; direction < dim; ++direction)
+  //   {
+  //     auto & matrix = matrices[direction];
 
-  AssertThrow(false, ExcMessage("Post processing of constraints is not implemented."));
-  return;
+  //     if(patch_variant == TPSS::PatchVariant::vertex)
+  //     {
+  //       restrict_matrix_qvp(matrix, patch_worker, eval_ansatz.patch_worker);
+  //       AssertDimension(this->patch_worker.n_dofs_1d(direction), matrices.at(direction).n_rows());
+  //       AssertDimension(eval_ansatz.patch_worker.n_dofs_1d(direction),
+  //                       matrices.at(direction).n_cols());
+  //     }
+  //     else
+  //       AssertThrow(false, ExcMessage("Patch variant is not supported."));
+  //   }
+  //   return;
+  // }
+
+  // AssertThrow(false, ExcMessage("Post processing of constraints is not implemented."));
+  // return;
 }
 
 
@@ -358,19 +363,22 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::submit_cell_matrix(
   const auto & patch_dof_tensor_col =
     patch_dof_tensor_ansatz ? *patch_dof_tensor_ansatz : patch_dof_tensor_row;
   const auto n_dofs_per_cell_1d_row = patch_dof_tensor_row.get_cell_dof_tensor().size(dimension);
-  const auto n_dofs_per_cell_1d_col = patch_dof_tensor_col.get_cell_dof_tensor().size(dimension);
+  // const auto n_dofs_per_cell_1d_col = patch_dof_tensor_col.get_cell_dof_tensor().size(dimension);
   /// assuming isotropy ...
   AssertDimension(fe_order, n_dofs_per_cell_1d_row);
-  AssertIndexRange(dimension, dim);
-  AssertDimension(cell_matrix.n_rows(), n_dofs_per_cell_1d_row);
-  AssertDimension(cell_matrix.n_cols(), n_dofs_per_cell_1d_col);
-  AssertDimension(patch_dof_tensor_row.n_dofs_1d(dimension), subdomain_matrix.n_rows());
-  AssertDimension(patch_dof_tensor_col.n_dofs_1d(dimension), subdomain_matrix.n_cols());
-  for(unsigned int i = 0; i < n_dofs_per_cell_1d_row; ++i)
-    for(unsigned int j = 0; j < n_dofs_per_cell_1d_col; ++j)
-    {
-      const auto ii = patch_dof_tensor_row.plain.dof_index_1d(cell_no_row, i, dimension);
-      const auto jj = patch_dof_tensor_col.plain.dof_index_1d(cell_no_col, j, dimension);
-      subdomain_matrix(ii, jj) += cell_matrix(i, j);
-    }
+  patch_dof_tensor_row.submit_cell_matrix_plain(
+    subdomain_matrix, cell_matrix, cell_no_row, cell_no_col, dimension, patch_dof_tensor_col);
+  /// OLD
+  // AssertIndexRange(dimension, dim);
+  // AssertDimension(cell_matrix.n_rows(), n_dofs_per_cell_1d_row);
+  // AssertDimension(cell_matrix.n_cols(), n_dofs_per_cell_1d_col);
+  // AssertDimension(patch_dof_tensor_row.n_dofs_1d(dimension), subdomain_matrix.n_rows());
+  // AssertDimension(patch_dof_tensor_col.n_dofs_1d(dimension), subdomain_matrix.n_cols());
+  // for(unsigned int i = 0; i < n_dofs_per_cell_1d_row; ++i)
+  //   for(unsigned int j = 0; j < n_dofs_per_cell_1d_col; ++j)
+  //   {
+  //     const auto ii = patch_dof_tensor_row.plain.dof_index_1d(cell_no_row, i, dimension);
+  //     const auto jj = patch_dof_tensor_col.plain.dof_index_1d(cell_no_col, j, dimension);
+  //     subdomain_matrix(ii, jj) += cell_matrix(i, j);
+  //   }
 }

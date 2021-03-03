@@ -837,7 +837,7 @@ inline unsigned int
 FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_cells_1d(const unsigned int dimension) const
 {
   AssertIndexRange(dimension, dim);
-  return patch_dof_tensor.get_cell_tensor().size(dimension);
+  return patch_dof_tensor.plain.cell_tensor.size(dimension);
 }
 
 
@@ -847,7 +847,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_dofs_plain_1d(
   const unsigned int dimension) const
 {
   AssertIndexRange(dimension, dim);
-  return patch_worker.n_dofs_plain_1d(dimension);
+  return patch_dof_tensor.n_plain_dofs_1d(dimension);
 }
 
 
@@ -857,7 +857,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_dofs_per_cell_1d(
   const unsigned int dimension) const
 {
   AssertIndexRange(dimension, dim);
-  return patch_worker.get_dof_tensor().get_cell_dof_tensor().size(dimension);
+  return patch_dof_tensor.plain.cell_dof_tensor.size(dimension);
 }
 
 
