@@ -103,6 +103,32 @@ str_dof_layout(const FiniteElement<dim> & finite_element)
 
 
 
+enum class ConstraintVariant
+{
+  None,
+  Dirichlet
+};
+
+
+
+template<int dim>
+Table<2, ConstraintVariant>
+make_constrained_hyperface_mask(const DoFLayout dof_layout)
+{
+  Table<2, ConstraintVariant> mask(dim, 2U);
+  if(dof_layout == DoFLayout::DGQ)
+    mask.fill(ConstraintVariant::None);
+  else if(dof_layout == DoFLayout::Q)
+    mask.fill(ConstraintVariant::Dirichlet);
+  else if(dof_layout == DoFLayout::DGP)
+    mask.fill(ConstraintVariant::None);
+  else
+    Assert(false, ExcMessage("Layout not implemented."));
+  return mask;
+}
+
+
+
 /**
  * A predicate returning true if the iterator passed belongs to the collection
  * passed at construction.
