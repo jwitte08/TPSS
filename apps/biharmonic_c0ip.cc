@@ -132,7 +132,7 @@ main(int argc, char * argv[])
 
 
     //: default
-    unsigned int solver_index              = 4; // CG + unprec
+    unsigned int solver_index              = 4; // CG + GMG + TPSS
     unsigned int debug_depth               = 0;
     double       damping                   = 0.;
     double       ip_factor                 = 1.;
@@ -143,6 +143,7 @@ main(int argc, char * argv[])
     unsigned int n_smoothing_steps         = 2;
     unsigned int local_solver_index        = 0; // exact
     unsigned int ksvd_rank                 = 1;
+    unsigned int n_cycles                  = 3;
 
     //: parse arguments
     atoi_if(solver_index, 1);
@@ -150,12 +151,13 @@ main(int argc, char * argv[])
     atof_if(damping, 3);
     atof_if(local_solver_index, 4);
     atof_if(ksvd_rank, 5);
-    atoi_if(n_smoothing_steps, 6);
-    atof_if(ip_factor, 7);
-    atoi_if(n_threads_max, 8);
-    atoi_if(use_doubling_of_steps, 9);
-    atoi_if(debug_depth, 10);
-    atoi_if(use_hierarchical_elements, 11);
+    atoi_if(n_cycles, 6);
+    atoi_if(n_smoothing_steps, 7);
+    atof_if(ip_factor, 8);
+    atoi_if(n_threads_max, 9);
+    atoi_if(use_doubling_of_steps, 10);
+    atoi_if(debug_depth, 11);
+    atoi_if(use_hierarchical_elements, 12);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
@@ -193,7 +195,7 @@ main(int argc, char * argv[])
       prms.use_tbb = MultithreadInfo::n_threads() > 1;
 
       //: discretization
-      prms.n_cycles              = 12;
+      prms.n_cycles              = n_cycles;
       prms.dof_limits            = {1e1, 2e5}; //{1e5, 1e7};
       prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
       prms.mesh.n_refinements    = 1;
