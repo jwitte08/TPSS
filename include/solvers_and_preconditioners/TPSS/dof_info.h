@@ -413,15 +413,76 @@ struct PatchLocalTensorIndices
                                  return sum + dof_tensor.plain.n_flat();
                                });
       }()),
+      n_preceding_plain_dofs([&]() {
+        std::vector<unsigned int> n_preceding_plain_dofs_in;
+        n_preceding_plain_dofs_in.emplace_back(0U);
+        for(auto comp = 1U; comp < n_components; ++comp)
+          n_preceding_plain_dofs_in.emplace_back(n_preceding_plain_dofs_in.back() +
+                                                 dof_tensors[comp - 1].plain.n_flat());
+        return n_preceding_plain_dofs_in;
+      }()),
       n_dofs_per_cell([&]() {
         std::vector<unsigned int> n_dofs_per_cell_in;
         for(const auto & dof_tensor : dof_tensors)
           n_dofs_per_cell_in.emplace_back(dof_tensor.get_cell_dof_tensor().n_flat());
         return n_dofs_per_cell_in;
+      }()),
+      n_preceding_dofs_per_cell([&]() {
+        std::vector<unsigned int> n_preceding_dofs_per_cell_in;
+        n_preceding_dofs_per_cell_in.emplace_back(0U);
+        for(auto comp = 1U; comp < n_components; ++comp)
+          n_preceding_dofs_per_cell_in.emplace_back(n_preceding_dofs_per_cell_in.back() +
+                                                    n_dofs_per_cell[comp - 1]);
+        return n_preceding_dofs_per_cell_in;
       }())
   {
+    if(dof_layout_in == DoFLayout::DGP || dof_layout_in == DoFLayout::DGQ)
+      Assert(!has_constraints(), ExcMessage("Not implemented..."));
+
     AssertDimension(n_components, dof_tensors.size());
+    AssertDimension(n_components, n_preceding_plain_dofs.size());
     AssertDimension(n_components, n_dofs_per_cell.size());
+    AssertDimension(n_components, n_preceding_dofs_per_cell.size());
+
+    AssertDimension(n_preceding_plain_dofs.back() + dof_tensors.back().plain.n_flat(),
+                    n_plain_dofs);
+    AssertDimension(n_preceding_dofs_per_cell.back() + n_dofs_per_cell.back(),
+                    std::accumulate(n_dofs_per_cell.cbegin(), n_dofs_per_cell.cend(), 0U));
+  }
+
+  template<typename DoFIndexType>
+  void
+  apply_constraints(std::vector<DoFIndexType> & plain_dof_indices) const
+  {
+    AssertDimension(plain_dof_indices.size(), n_plain_dofs);
+
+    /// no work to do if no constraints exist
+    if(n_dofs == n_plain_dofs)
+      return;
+
+    std::vector<DoFIndexType> dof_indices;
+    for(auto component = 0U; component < n_components; ++component)
+    {
+      const auto & dof_tensor = dof_tensors[component];
+      const auto * begin_at_component =
+        plain_dof_indices.data() + n_preceding_plain_dofs[component];
+      ArrayView<const DoFIndexType> view_plain(begin_at_component, dof_tensor.plain.n_flat());
+      for(auto i = 0U; i < view_plain.size(); ++i)
+        if(!(dof_tensor.is_constrained(i)))
+          dof_indices.emplace_back(view_plain[i]);
+    }
+
+    /// passing dof_indices as reference through plain_dof_indices
+    AssertDimension(dof_indices.size(), n_dofs);
+    std::swap(plain_dof_indices, dof_indices);
+  }
+
+  bool
+  has_constraints() const
+  {
+    return std::any_of(dof_tensors.cbegin(), dof_tensors.cend(), [&](const auto & dof_tensor) {
+      return dof_tensor.has_constraints();
+    });
   }
 
   const PatchLocalTensorHelper<n_dimensions> &
@@ -431,16 +492,6 @@ struct PatchLocalTensorIndices
     return dof_tensors[component];
   }
 
-  /// NOTE not needed as long as no reinit() exists...
-  // void clear()
-  // {
-  //   n_components = numbers::invalid_unsigned_int;
-  //   dof_tensors.clear();
-  //   n_dofs = numbers::invalid_unsigned_int;
-  //   n_plain_dofs = numbers::invalid_unsigned_int;
-  //   n_dofs_per_cell.clear();
-  // }
-
   const unsigned int n_components;
 
   const std::vector<PatchLocalTensorHelper<n_dimensions>> dof_tensors;
@@ -449,7 +500,11 @@ struct PatchLocalTensorIndices
 
   const unsigned int n_plain_dofs;
 
+  const std::vector<unsigned int> n_preceding_plain_dofs;
+
   const std::vector<unsigned int> n_dofs_per_cell;
+
+  const std::vector<unsigned int> n_preceding_dofs_per_cell;
 };
 
 
@@ -1161,8 +1216,9 @@ DoFInfo<dim, Number>::fill_level_dof_indices_impl(
   std::vector<types::global_dof_index> level_dof_indices(n_dofs_per_cell);
   cell.get_mg_dof_indices(cell.level(), level_dof_indices);
 
-  /// Reorder level dof indices lexicographically within each component and
-  /// concatenate dof indices per component.
+  /// We assume here that l2h provides the renumbering from a cell-local
+  /// lexicographical order to deal.II's hierarchical order for each vector
+  /// component of the finite element.
   AssertDimension(level_dof_indices.size(), l2h.size());
   std::vector<types::global_dof_index> level_dof_indices_lxco;
   std::transform(l2h.cbegin(),

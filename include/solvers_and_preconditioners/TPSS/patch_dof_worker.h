@@ -50,19 +50,20 @@ public:
   get_constrained_local_dof_indices(const unsigned int patch_id, const unsigned int lane) const;
 
   /**
-   * Returns cached global dof indices of local cell @p cell_no subject to a
-   * cell local lexicographical ordering. We emphasize that all global dof
-   * indices are returned, even those that might not be part of patch @p
-   * patch_id (for example vertex patches based on conforming finite
-   * elements exclude dofs at the patch boundary).
+   * Returns the cached global dof indices of cell with patch-local numbering @p
+   * cell_no on patch @p patch_id. The dof indices are subject to a cell-local
+   * lexicographical order and given in the proc-local numbering (translated by
+   * the underlying mpi vector partitioner). We emphasize that locally
+   * constrained dofs are not excluded, in other words a subset of the plain
+   * patch-local dof indices is returned.
    */
   std::array<ArrayView<const unsigned int>, macro_size>
   get_dof_indices_on_cell(const unsigned int patch_id, const unsigned int cell_no) const;
 
   /**
    * Same as above, but returning only global dof indices for vectorization lane
-   * @lane and shape function component @p component (assuming the underlying
-   * finite element is primitive).
+   * @lane and restricted to vector component @p component of the finite
+   * element.
    */
   ArrayView<const unsigned int>
   get_dof_indices_on_cell(const unsigned int patch_id,
@@ -72,7 +73,9 @@ public:
 
   /**
    * Returns cached global dof indices on patch @patch_id at vectorization lane
-   * @p lane. The returned array is subject to patch local lexicographical ordering.
+   * @p lane. The returned array is subject to patch local lexicographical
+   * ordering. Note that locally constrained dofs are excluded and the numbering
+   * is proc-local (translated by the underyling mpi vector partitioner).
    */
   ArrayView<const unsigned int>
   get_dof_indices_on_patch(const unsigned int patch_id, const unsigned int lane) const;
@@ -80,7 +83,9 @@ public:
   /**
    * Returns cached global dof indices on patch @patch_id at vectorization lane
    * @p lane of vector component @component. The returned array is subject to
-   * patch local lexicographical ordering.
+   * patch local lexicographical ordering. Note that locally constrained dofs
+   * are excluded and the numbering is proc-local (translated by the underyling
+   * mpi vector partitioner).
    */
   ArrayView<const unsigned int>
   get_dof_indices_on_patch(const unsigned int patch_id,
@@ -88,16 +93,17 @@ public:
                            const unsigned int component) const;
 
   /**
-   * Returns global dof indices on patch @patch_id at vectorization lane @p lane
-   * in its unique numbering among all mpi processes.
+   * Same as the @p get_dof_indices_on_patch() counterpart but here global dof
+   * indices in its unique numbering among all mpi processes are returned
+   * (translated by the underyling mpi vector partitioner).
    */
   std::vector<types::global_dof_index>
   get_global_dof_indices_on_patch(const unsigned int patch_id, const unsigned int lane) const;
 
   /**
-   * Returns global dof indices on patch @patch_id at vectorization lane @p lane
-   * of vector component @component in its unique numbering among all mpi
-   * processes.
+   * Same as the @p get_dof_indices_on_patch() counterpart but global dof
+   * indices in its unique numbering among all mpi processes are returned
+   * (translated by the underyling mpi vector partitioner).
    */
   std::vector<types::global_dof_index>
   get_global_dof_indices_on_patch(const unsigned int patch_id,
@@ -105,8 +111,10 @@ public:
                                   const unsigned int component) const;
 
   /**
-   * Returns global dof indices on the fly on patch @patch_id at vectorization
-   * lane @p lane. The returned array is subject to lexicographical ordering.
+   * Makes global dof indices on patch @patch_id at vectorization lane
+   * @p lane. The returned array is subject to patch local lexicographical
+   * ordering. Note that locally constrained dofs are excluded and the numbering
+   * is proc-local (translated by the underyling mpi vector partitioner).
    */
   std::vector<unsigned int>
   fill_dof_indices_on_patch(const unsigned int patch_id, const unsigned int lane) const;
@@ -121,17 +129,18 @@ public:
   get_shape_info() const;
 
   /**
-   * Returns the start position of global dof indices on patch @patch_id at
+   * Returns the start position of global dof indices on patch @p patch_id at
    * vectorization lane @p lane stored in the flat field @p
-   * dof_indices_patchwise of the underlying dof info. In addition,
-   * returns the number of dof indices on the given patch.
+   * dof_indices_patchwise of the underlying dof_info. In addition, the second
+   * member of the returned pair provides the number of dof indices on given
+   * patch.
    */
   std::pair<unsigned int, unsigned int>
   get_dof_start_and_quantity_on_patch(const unsigned int patch_id, const unsigned int lane) const;
 
   /**
    * Same as above but we return only the start position and quantity of dofs
-   * for the specified component @p component.
+   * for vector component @p component of the finite element.
    */
   std::pair<unsigned int, unsigned int>
   get_dof_start_and_quantity_on_patch(const unsigned int patch_id,
@@ -161,13 +170,6 @@ public:
   std::vector<bool>
   get_restricted_dof_flags(const unsigned int patch_id, const unsigned int lane) const;
 
-  // /**
-  //  * TODO ... this method is not tested
-  //  * the DoFInfo takes care of setting up a MPI::Partitioner during initialization
-  //  */
-  // std::shared_ptr<const Utilities::MPI::Partitioner>
-  // initialize_vector_partitioner() const;
-
   /**
    * The MPI::Partitioner in the underlying DoFInfo is used to initialize global
    * dof vectors with respect to locally owned and ghosted dof indices.
@@ -183,55 +185,82 @@ public:
   initialize_dof_vector(Vector<Number> & vec) const;
 
   /**
-   * Number of degrees of freedom on patch (assuming same number on all patches)
-   * TODO...
+   * The number of degrees of freedom per patch of cells when excluding those
+   * which are locally constrained. This method does not require finite elements
+   * with (full) tensor structure: for instance, DGP-like elements are treated
+   * as well.
    */
-  /// TODO !!!
   unsigned int
   n_dofs() const;
 
   /**
-   * Return the total number of global dofs on the current mesh level. In case
-   * of a parallel distributed mesh this corresponds to the number of global
-   * dofs accumulated over all mpi processes.
+   * The number of degrees of freedom per patch of cells taking also locally
+   * constrained dofs into account. This method does not require finite elements
+   * with (full) tensor structure: for instance, DGP-like elements are treated
+   * as well.
+   */
+  unsigned int
+  n_plain_dofs() const;
+
+  /**
+   * The total number of global dofs on the current mesh level. In case of a
+   * parallel distributed mesh, this corresponds to the number of global dofs
+   * accumulated over all mpi processes.
    */
   types::global_dof_index
   n_global_dofs() const;
 
   /**
-   * The actual number of degrees of freedom on a patch in dimension @p
-   * dimension. This excludes degrees of freedom at the boundary of a patch
-   * which are usually neglected in favor of homogeneous boundary conditions.
+   * The "one-dimensional" number of degrees of freedom for each patch of cells
+   * seen from dimension @p dimension. Similar to @p n_dofs() constrained
+   * degrees of freedom (at the local boundary) are excluded from counting. This
+   * method is only valid if the finite element has (full) tensor structure.
    */
-  /// TODO !!!
   unsigned int
   n_dofs_1d(const unsigned int dimension) const;
 
   /**
-   * The number of degrees of freedom on a patch in dimension @p dimension if
-   * degrees of freedom at the boundary of a patch are not excluded.
+   * The "one-dimensional" number of degrees of freedom for each patch of cells
+   * seen from dimension @p dimension. Similar to @p n_plain_dofs() constrained
+   * degrees of freedom (at the local boundary) are counted. This method is only
+   * valid if the finite element has (full) tensor structure.
    */
   unsigned int
-  /// TODO !!!
-  n_dofs_plain_1d(const unsigned int dimension) const;
+  n_plain_dofs_1d(const unsigned int dimension) const;
 
-  /// TODO !!! rename into n_dofs_per_cell...
+  /**
+   * The number of degrees of freedom per cell restricted to vector component @p
+   * component of the finite element.
+   */
   unsigned int
-  n_dofs_on_cell(const unsigned int component) const
+  n_dofs_per_cell(const unsigned int component) const
   {
     AssertIndexRange(component, n_components);
+
     /// DGP is not supported by PatchLocalTensorHelper (special case)
     if(dof_layout == DoFLayout::DGP)
       return get_shape_info().dofs_per_component_on_cell;
+
     AssertDimension(n_components, patch_dof_tensors.n_dofs_per_cell.size());
     return patch_dof_tensors.n_dofs_per_cell[component];
   }
 
   unsigned int
-  n_preceding_dofs_on_cell(const unsigned int component) const
+  n_preceding_dofs_per_cell(const unsigned int component) const
   {
     AssertIndexRange(component, n_components);
-    return n_preceding_dofs_on_cell_[component];
+
+    /// DGP is not supported by PatchLocalTensorHelper (special case)
+    if(dof_layout == DoFLayout::DGP)
+    {
+      auto n_dofs_preceding = 0U;
+      for(auto c = 0U; c < component; ++c)
+        n_dofs_preceding += n_dofs_per_cell(c);
+      return n_dofs_preceding;
+    }
+
+    AssertDimension(patch_dof_tensors.n_preceding_dofs_per_cell.size(), n_components);
+    return patch_dof_tensors.n_preceding_dofs_per_cell[component];
   }
 
 private:
@@ -246,9 +275,6 @@ private:
   const PatchLocalTensorIndices<dim> patch_dof_tensors;
 
   const unsigned int n_components;
-
-  /// TODO !!! move to PatchLocalTensorIndices...
-  std::vector<unsigned int> n_preceding_dofs_on_cell_;
 };
 
 
@@ -269,15 +295,8 @@ inline PatchDoFWorker<dim, Number>::PatchDoFWorker(const DoFInfo<dim, Number> & 
     n_components(dof_info_in.shape_info->n_components)
 {
   AssertDimension(get_dof_tensor().get_cell_tensor().n_flat(), this->n_cells_per_subdomain());
-  for(auto component = 0U; component < n_components; ++component)
-  {
-    unsigned int n_dofs_preceding = 0;
-    for(auto c = 0U; c < component; ++c)
-      n_dofs_preceding += n_dofs_on_cell(c);
-    n_preceding_dofs_on_cell_.push_back(n_dofs_preceding);
-  }
-  AssertDimension(n_preceding_dofs_on_cell_.size(), n_components);
 
+  /// double-check dof info ingredients
   for(auto d = 0U; d < dim; ++d)
     AssertDimension(get_dof_tensor().get_cell_dof_tensor().size(d),
                     get_shape_info().get_shape_data(d).fe_degree + 1);
@@ -293,98 +312,78 @@ PatchDoFWorker<dim, Number>::fill_dof_indices_on_patch(const unsigned int patch_
 {
   AssertIndexRange(patch_id, this->get_partition_data().n_subdomains());
   AssertIndexRange(lane, this->n_lanes_filled(patch_id));
-  const auto & additional_data          = dof_info->get_additional_data();
-  const auto   n_cells                  = this->n_cells_per_subdomain();
-  const auto   n_dofs_per_cell_per_comp = dof_layout == DoFLayout::DGP ?
-                                          get_shape_info().dofs_per_component_on_cell :
-                                          get_dof_tensor().get_cell_dof_tensor().n_flat();
-  std::vector<unsigned int> global_dof_indices;
 
-  const bool is_L2_conforming =
-    dof_layout == DoFLayout::DGQ ||
-    (dof_layout == DoFLayout::Q && additional_data.force_no_boundary_condition) ||
-    dof_layout == DoFLayout::DGP;
-  const bool is_H1_conforming =
-    (dof_layout == DoFLayout::Q && !additional_data.force_no_boundary_condition);
+  std::vector<unsigned int> global_dof_indices(n_plain_dofs());
 
-  if(is_H1_conforming)
+  const bool has_tensor_structure =
+    dof_layout == DoFLayout::DGQ || dof_layout == DoFLayout::Q /*|| dof_layout == DoFLayout::RT*/;
+
+  if(has_tensor_structure)
   {
-    if(this->patch_variant == TPSS::PatchVariant::vertex)
-    {
-      /// Fill global dof indices with a patch local lexicographical
-      /// ordering. Dof indices at the patch boundary are marked as invalid.
-      const unsigned            n_patch_dofs_per_component = get_dof_tensor().plain.n_flat();
-      std::vector<unsigned int> global_dof_indices_plain(n_components * n_patch_dofs_per_component);
-      for(auto comp = 0U; comp < n_components; ++comp)
-      {
-        AssertDimension(n_dofs_per_cell_per_comp, n_dofs_on_cell(comp));
-        const unsigned int comp_stride = comp * n_patch_dofs_per_component;
-        for(auto cell_no = 0U; cell_no < n_cells; ++cell_no)
-        {
-          const auto global_dof_indices_on_cell =
-            get_dof_indices_on_cell(patch_id, cell_no, lane, comp);
-          for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell_per_comp; ++cell_dof_index)
-          {
-            const unsigned int patch_dof_index_per_comp =
-              get_dof_tensor().plain.dof_index(cell_no, cell_dof_index);
-            const bool is_boundary_dof =
-              get_dof_tensor().is_plain_edge_dof(patch_dof_index_per_comp);
-            global_dof_indices_plain[comp_stride + patch_dof_index_per_comp] =
-              is_boundary_dof ? numbers::invalid_unsigned_int :
-                                global_dof_indices_on_cell[cell_dof_index];
-          }
-        }
-      }
-
-      /// Copy global dof indices neglecting all indices at the patch boundary
-      /// (which have been marked in a previous step).
-      std::copy_if(global_dof_indices_plain.cbegin(),
-                   global_dof_indices_plain.cend(),
-                   std::back_inserter(global_dof_indices),
-                   [](const auto dof_index) { return dof_index != numbers::invalid_unsigned_int; });
-    }
-    else
-      AssertThrow(false, ExcMessage("Patch variant is not supported."));
-  }
-
-  else if(is_L2_conforming)
-  {
-    const unsigned int n_patch_dofs_per_component =
-      dof_layout == DoFLayout::DGP ? n_cells * get_shape_info().dofs_per_component_on_cell :
-                                     get_dof_tensor().plain.n_flat();
-    AssertIndexRange(n_patch_dofs_per_component, get_dof_tensor().plain.n_flat() + 1);
-    std::vector<unsigned int> global_dof_indices_plain(n_components * n_patch_dofs_per_component);
     for(auto comp = 0U; comp < n_components; ++comp)
     {
-      AssertDimension(n_dofs_per_cell_per_comp, n_dofs_on_cell(comp));
-      const unsigned int patch_dof_stride = comp * n_patch_dofs_per_component;
+      const auto & dof_tensor = get_dof_tensor(comp);
+
+      const unsigned int n_cells = dof_tensor.plain.cell_tensor.n_flat();
+
+      const unsigned int this_n_plain_dofs     = dof_tensor.plain.n_flat();
+      const unsigned int this_patch_dof_offset = patch_dof_tensors.n_preceding_plain_dofs[comp];
+
+      const ArrayView<unsigned int> comp_view_at_global_dof_indices(global_dof_indices.data() +
+                                                                      this_patch_dof_offset,
+                                                                    this_n_plain_dofs);
+
       for(auto cell_no = 0U; cell_no < n_cells; ++cell_no)
       {
         const auto global_dof_indices_on_cell =
           get_dof_indices_on_cell(patch_id, cell_no, lane, comp);
-        AssertDimension(n_dofs_per_cell_per_comp, global_dof_indices_on_cell.size()); // ???
-        for(auto cell_dof_index = 0U; cell_dof_index < n_dofs_per_cell_per_comp; ++cell_dof_index)
+        for(auto i = 0U; i < global_dof_indices_on_cell.size(); ++i)
         {
-          /// We dont obtain a patch-local lexicographical ordering for DGP
-          /// (TODO is it possible to have a truncated lexicographical
-          /// ordering?).
-          const unsigned int patch_dof_index =
-            patch_dof_stride + (dof_layout == DoFLayout::DGP ?
-                                  cell_no * n_dofs_per_cell_per_comp + cell_dof_index :
-                                  get_dof_tensor().plain.dof_index(cell_no, cell_dof_index));
-          global_dof_indices_plain[patch_dof_index] = global_dof_indices_on_cell[cell_dof_index];
+          const unsigned int plain_dof_index               = dof_tensor.plain.dof_index(cell_no, i);
+          comp_view_at_global_dof_indices[plain_dof_index] = global_dof_indices_on_cell[i];
         }
       }
     }
-    std::swap(global_dof_indices, global_dof_indices_plain);
+
+    patch_dof_tensors.apply_constraints(global_dof_indices);
+  }
+
+  else if(dof_layout == DoFLayout::DGP)
+  {
+    const auto n_cells = this->n_cells_per_subdomain();
+
+    for(auto comp = 0U; comp < n_components; ++comp)
+    {
+      const unsigned int this_n_dofs_per_cell = n_dofs_per_cell(comp);
+
+      const unsigned int this_n_plain_dofs     = n_cells * this_n_dofs_per_cell;
+      const unsigned int this_patch_dof_offset = comp * this_n_plain_dofs;
+
+      const ArrayView<unsigned int> comp_view_at_global_dof_indices(global_dof_indices.data() +
+                                                                      this_patch_dof_offset,
+                                                                    this_n_plain_dofs);
+
+      for(auto cell_no = 0U; cell_no < n_cells; ++cell_no)
+      {
+        const auto global_dof_indices_on_cell =
+          get_dof_indices_on_cell(patch_id, cell_no, lane, comp);
+        for(auto cell_dof_index = 0U; cell_dof_index < this_n_dofs_per_cell; ++cell_dof_index)
+        {
+          const unsigned int plain_dof_index = cell_no * this_n_dofs_per_cell + cell_dof_index;
+          comp_view_at_global_dof_indices[plain_dof_index] =
+            global_dof_indices_on_cell[cell_dof_index];
+        }
+      }
+    }
   }
 
   else
-    AssertThrow(false, ExcMessage("Finite element is not supported."));
+    AssertThrow(false, ExcMessage("Not implemented."));
 
   AssertDimension(n_dofs(), global_dof_indices.size());
   return global_dof_indices;
 }
+
 
 
 template<int dim, typename Number>
@@ -474,15 +473,16 @@ PatchDoFWorker<dim, Number>::get_dof_indices_on_cell(const unsigned int patch_id
   AssertIndexRange(lane, macro_size);
   AssertIndexRange(component, n_components);
   const unsigned int n_lanes_filled = this->n_lanes_filled(patch_id);
-  if(lane >= n_lanes_filled) // !!! TODO throw exc instead?
-    return get_dof_indices_on_cell(patch_id, cell_no, 0, component);
+  /// this...
+  AssertIndexRange(lane, n_lanes_filled);
+  /// ...or that
+  // if(lane >= n_lanes_filled)
+  //   return get_dof_indices_on_cell(patch_id, cell_no, 0, component);
 
   const auto [dof_start, n_dofs] = get_dof_start_and_quantity_on_cell(patch_id, cell_no, lane);
   (void)n_dofs;
-  AssertDimension(n_preceding_dofs_on_cell(n_components - 1) + n_dofs_on_cell(n_components - 1),
-                  n_dofs);
-  const unsigned int n_dofs_component = n_dofs_on_cell(component);
-  const unsigned int n_dofs_preceding = n_preceding_dofs_on_cell(component);
+  const unsigned int n_dofs_component = n_dofs_per_cell(component);
+  const unsigned int n_dofs_preceding = n_preceding_dofs_per_cell(component);
   const auto         begin = dof_info->dof_indices_cellwise.data() + dof_start + n_dofs_preceding;
 
   return ArrayView<const unsigned int>(begin, n_dofs_component);
@@ -681,22 +681,25 @@ PatchDoFWorker<dim, Number>::n_dofs() const
 {
   /// DGP is not supported by PatchLocalTensorHelper (special case)
   if(dof_layout == DoFLayout::DGP)
+    return n_plain_dofs();
+
+  return patch_dof_tensors.n_dofs;
+}
+
+
+template<int dim, typename Number>
+inline unsigned int
+PatchDoFWorker<dim, Number>::n_plain_dofs() const
+{
+  /// DGP is not supported by PatchLocalTensorHelper (special case)
+  if(dof_layout == DoFLayout::DGP)
   {
     const auto n_cells         = Base::n_cells_per_subdomain();
     const auto n_dofs_per_cell = get_shape_info().dofs_per_component_on_cell;
     return n_cells * n_dofs_per_cell * n_components;
   }
 
-  /// OLD
-  // /// TODO currently, assuming isotropy for each dimension
-  // unsigned int n_dofs = 1;
-  // for(auto d = 0U; d < dim; ++d)
-  //   n_dofs *= n_dofs_1d(d);
-  // /// TODO currently, assuming isotropy for each component
-  // n_dofs *= n_components;
-
-  const auto n_dofs = patch_dof_tensors.n_dofs;
-  return n_dofs;
+  return patch_dof_tensors.n_plain_dofs;
 }
 
 
@@ -724,7 +727,7 @@ PatchDoFWorker<dim, Number>::n_dofs_1d(const unsigned dimension) const
 
 template<int dim, typename Number>
 inline unsigned int
-PatchDoFWorker<dim, Number>::n_dofs_plain_1d(const unsigned dimension) const
+PatchDoFWorker<dim, Number>::n_plain_dofs_1d(const unsigned dimension) const
 {
   AssertIndexRange(dimension, dim);
   return get_dof_tensor().n_plain_dofs_1d(dimension);

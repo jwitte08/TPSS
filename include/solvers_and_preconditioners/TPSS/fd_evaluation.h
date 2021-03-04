@@ -104,7 +104,7 @@ public:
   n_cells_1d(const unsigned int dimension) const;
 
   unsigned int
-  n_dofs_plain_1d(const unsigned int dimension) const;
+  n_plain_dofs_1d(const unsigned int dimension) const;
 
   unsigned int
   n_dofs_per_cell_1d(const unsigned int dimension) const;
@@ -843,7 +843,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_cells_1d(const unsigned 
 
 template<int dim, int fe_degree, int n_q_points_1d_, typename Number>
 inline unsigned int
-FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_dofs_plain_1d(
+FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::n_plain_dofs_1d(
   const unsigned int dimension) const
 {
   AssertIndexRange(dimension, dim);

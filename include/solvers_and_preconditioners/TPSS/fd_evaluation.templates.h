@@ -178,14 +178,14 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action_impl(
   std::array<MatrixType, dim> matrices;
   for(int direction = 0; direction < dim; ++direction)
   {
-    const auto n_dofs_plain_1d_test      = this->n_dofs_plain_1d(direction);
-    const auto n_dofs_plain_1d_ansatz    = eval_ansatz.n_dofs_plain_1d(direction);
+    const auto n_plain_dofs_1d_test      = this->n_plain_dofs_1d(direction);
+    const auto n_plain_dofs_1d_ansatz    = eval_ansatz.n_plain_dofs_1d(direction);
     const auto n_dofs_per_cell_1d_test   = this->n_dofs_per_cell_1d(direction);
     const auto n_dofs_per_cell_1d_ansatz = eval_ansatz.n_dofs_per_cell_1d(direction);
 
     /// assemble one-dimensional matrices on each cell (i.e. interval)
     MatrixType & matrix = matrices[direction];
-    matrix.reinit(n_dofs_plain_1d_test, n_dofs_plain_1d_ansatz);
+    matrix.reinit(n_plain_dofs_1d_test, n_plain_dofs_1d_ansatz);
     for(unsigned int cell_no = 0; cell_no < n_cells_1d(direction); ++cell_no)
     {
       MatrixType cell_matrix(n_dofs_per_cell_1d_test, n_dofs_per_cell_1d_ansatz);
@@ -193,8 +193,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action_impl(
         cell_operation)(eval_ansatz, *this, cell_matrix, direction, cell_no);
       submit_cell_matrix(matrix, cell_matrix, cell_no, cell_no, direction, patch_dof_tensor_ansatz);
     }
-    AssertDimension(n_dofs_plain_1d_test, matrices.at(direction).n_rows());
-    AssertDimension(n_dofs_plain_1d_ansatz, matrices.at(direction).n_cols());
+    AssertDimension(n_plain_dofs_1d_test, matrices.at(direction).n_rows());
+    AssertDimension(n_plain_dofs_1d_ansatz, matrices.at(direction).n_cols());
   }
   return matrices;
 }
@@ -273,8 +273,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::patch_action_impl(
                            patch_dof_tensor_ansatz);
       }
     }
-    AssertDimension(this->n_dofs_plain_1d(direction), matrices.at(direction).n_rows());
-    AssertDimension(eval_ansatz.n_dofs_plain_1d(direction), matrices.at(direction).n_cols());
+    AssertDimension(this->n_plain_dofs_1d(direction), matrices.at(direction).n_rows());
+    AssertDimension(eval_ansatz.n_plain_dofs_1d(direction), matrices.at(direction).n_cols());
   }
 
   return matrices;
@@ -305,7 +305,8 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::post_process_constraints(
   //     if(patch_variant == TPSS::PatchVariant::vertex)
   //     {
   //       restrict_matrix_qvp(matrix, patch_worker, eval_ansatz.patch_worker);
-  //       AssertDimension(this->patch_worker.n_dofs_1d(direction), matrices.at(direction).n_rows());
+  //       AssertDimension(this->patch_worker.n_dofs_1d(direction),
+  //       matrices.at(direction).n_rows());
   //       AssertDimension(eval_ansatz.patch_worker.n_dofs_1d(direction),
   //                       matrices.at(direction).n_cols());
   //     }

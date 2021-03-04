@@ -130,7 +130,15 @@ DoFInfo<dim, Number>::initialize_impl()
     for(const auto & [cell_index, cell_positions] : cell_index_to_cell_position)
     {
       const auto & cell = get_level_dof_accessor_impl(cell_index, additional_data.level);
-      const auto   level_dof_indices = fill_level_dof_indices_impl(cell);
+
+      /// The returned level dof indices shall have a lexicographical order
+      /// within each vector component of the finite element. The so-ordered
+      /// indices are simply concatenated for each vector component. This
+      /// assumes that a one-to-one relation, in deal.II speak "primitive finite
+      /// element", is satisfied, at least in unit space (for
+      /// instance, Raviart-Thomas elements might not be primitive in real(?)
+      /// space).
+      const auto level_dof_indices = fill_level_dof_indices_impl(cell);
 
       //: set dof start and quantity
       const auto dof_start = global_dof_indices_cellwise.size();
