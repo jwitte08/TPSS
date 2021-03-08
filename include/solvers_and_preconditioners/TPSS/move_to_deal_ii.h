@@ -50,6 +50,7 @@
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_q_dg0.h>
 #include <deal.II/fe/fe_raviart_thomas.h>
+#include <deal.II/fe/fe_raviart_thomas_new.h>
 #include <deal.II/fe/fe_system.h>
 #include <deal.II/fe/fe_tools.h>
 #include <deal.II/fe/fe_values.h>
@@ -104,6 +105,8 @@
 #include <typeinfo>
 #include <vector>
 // VECTORTOOLSFIX END
+
+
 
 namespace dealii
 {
@@ -440,7 +443,11 @@ project_boundary_values_div_conforming(const DoFHandler<dim> &     dof_handler,
               // check this.
               if(dynamic_cast<const FESystem<dim> *>(&cell->get_fe()) == nullptr)
               {
-                AssertThrow(dynamic_cast<const FE_RaviartThomas<dim> *>(&cell->get_fe()) != nullptr,
+                /// TODO untested if FE_RaviartThomasNodal_new is used...
+                AssertThrow(dynamic_cast<const FE_RaviartThomas<dim> *>(&cell->get_fe()) !=
+                                nullptr ||
+                              dynamic_cast<const FE_RaviartThomasNodal_new<dim> *>(
+                                &cell->get_fe()) != nullptr,
                             typename FiniteElement<dim>::ExcInterpolationNotImplemented());
               }
 

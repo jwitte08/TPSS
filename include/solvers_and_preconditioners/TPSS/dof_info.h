@@ -88,7 +88,7 @@ class PatchLocalIndexHelper : public Tensors::TensorHelper<n_dimensions>
   using Base = Tensors::TensorHelper<n_dimensions>;
 
 public:
-  /// TODO passing cell_dof_tensor_in seems redundant since we have to pass a DoFLayout
+  /// TODO description...
   PatchLocalIndexHelper(const Tensors::TensorHelper<n_dimensions> & cell_tensor_in,
                         const Tensors::TensorHelper<n_dimensions> & cell_dof_tensor_in,
                         const DoFLayout                             dof_layout_in);
@@ -149,33 +149,7 @@ public:
 
   const DoFLayout dof_layout;
 
-  // private:
-  //   /**
-  //    * Implementation of @p dof_index_1d for Q-like finite elements.
-  //    */
-  //   unsigned int
-  //   dof_index_1d_q_impl(const unsigned int cell_no_1d,
-  //                       const unsigned int cell_dof_index_1d,
-  //                       const int          dimension) const;
-
-  //   /**
-  //    * Implementation of @p dof_index_1d for DGQ-like finite elements.
-  //    */
-  //   unsigned int
-  //   dof_index_1d_dgq_impl(const unsigned int cell_no_1d,
-  //                         const unsigned int cell_dof_index_1d,
-  //                         const int          dimension) const;
-
-  //   /**
-  //    * Implementation of @p dof_index_1d for DGP-like finite elements.
-  //    */
-  //   // !!! TODO the current implementation is not reasonable: actually this function
-  //   // !!! makes no sense for a truncated tensor, but we need this interface for
-  //   // !!! compatibility ...
-  //   unsigned int
-  //   dof_index_1d_dgp_impl(const unsigned int cell_no_1d,
-  //                         const unsigned int cell_dof_index_1d,
-  //                         const int          dimension) const;
+  const unsigned int dimension_with_high_degree;
 };
 
 
@@ -204,6 +178,11 @@ struct PatchLocalTensorHelper : public Tensors::TensorHelper<n_dimensions>
   bool
   is_plain_edge_dof(const unsigned int plain_patch_dof_index) const;
 
+  /// DEPRECATED use is_plain_edge_dof()
+  // bool
+  // is_boundary_face_dof_1d(const unsigned int patch_dof_index, const unsigned int dimension)
+  // const;
+
   /**
    * Determines whether the one-dimensional plain dof index @p
    * plain_patch_dof_index_1d is constrained.
@@ -219,121 +198,8 @@ struct PatchLocalTensorHelper : public Tensors::TensorHelper<n_dimensions>
   is_constrained(const unsigned int plain_dof_index) const;
 
   bool
-  has_constraints() const
-  {
-    const auto n_constraints =
-      std::accumulate(constrained_dof_mask.cbegin(),
-                      constrained_dof_mask.cend(),
-                      0U,
-                      [&](const unsigned int n, const auto & set) { return n + set.size(); });
-    return n_constraints > 0;
-  }
+  has_constraints() const;
 
-  template<typename Number>
-  void
-  apply_constraints_impl(Table<2, Number> &             subdomain_matrix,
-                         const unsigned int             dimension,
-                         const PatchLocalTensorHelper & other_column) const
-  {
-    const auto subdomain_matrix_plain = subdomain_matrix;
-    AssertDimension(subdomain_matrix_plain.n_rows(), plain.size(dimension));
-    AssertDimension(subdomain_matrix_plain.n_cols(), other_column.plain.size(dimension));
-    subdomain_matrix.reinit(this->size(dimension), other_column.size(dimension));
-    for(auto i = 0U; i < subdomain_matrix.n_rows(); ++i)
-    {
-      const auto ii = map_plain_dof_index_from[dimension][i];
-      for(auto j = 0U; j < subdomain_matrix.n_cols(); ++j)
-      {
-        const auto jj          = other_column.map_plain_dof_index_from[dimension][j];
-        subdomain_matrix(i, j) = subdomain_matrix_plain(ii, jj);
-      }
-    }
-  }
-
-  template<typename Number>
-  void
-  apply_constraints(Table<2, Number> & subdomain_matrix, const unsigned int dimension) const
-  {
-    apply_constraints_impl(subdomain_matrix, dimension, *this);
-  }
-
-  template<typename Number>
-  void
-  apply_constraints(Table<2, Number> &             subdomain_matrix,
-                    const unsigned int             dimension,
-                    const PatchLocalTensorHelper & other_column) const
-  {
-    apply_constraints_impl(subdomain_matrix, dimension, other_column);
-  }
-
-  // /**
-  //  * Returns whether the patch-local dof index @p patch_dof_index is part of the
-  //  * outermost layer of dofs.
-  //  */
-  // bool
-  // is_boundary_face_dof_1d(const unsigned int patch_dof_index, const unsigned int dimension)
-  // const;
-
-  /**
-   * Returns the plain patch-local dof index subject to lexicographical ordering
-   * (that is plain.dof_index_1d()), if it is unconstrained. Otherwise
-   * numbers::invalid_unsigned_int is returned.
-   */
-  unsigned int
-  plain_dof_index_if(const unsigned int cell_no, const unsigned int cell_dof_index) const;
-
-  unsigned int
-  plain_dof_index_if_1d(const unsigned int cell_no_1d, const unsigned int cell_dof_index_1d) const;
-
-  template<typename Number>
-  void
-  submit_cell_matrix_plain_impl(Table<2, Number> &             subdomain_matrix,
-                                const Table<2, Number> &       cell_matrix,
-                                const unsigned int             cell_no_1d_row,
-                                const unsigned int             cell_no_1d_col,
-                                const unsigned int             dimension,
-                                const PatchLocalTensorHelper & ansatz) const
-  {
-    AssertIndexRange(dimension, n_dimensions);
-    AssertDimension(cell_matrix.n_rows(), plain.cell_dof_tensor.size(dimension));
-    AssertDimension(cell_matrix.n_cols(), ansatz.plain.cell_dof_tensor.size(dimension));
-    AssertDimension(subdomain_matrix.n_rows(), n_plain_dofs_1d(dimension));
-    AssertDimension(subdomain_matrix.n_cols(), ansatz.n_plain_dofs_1d(dimension));
-    for(unsigned int i = 0; i < plain.cell_dof_tensor.size(dimension); ++i)
-    {
-      const unsigned int ii = plain.dof_index_1d(cell_no_1d_row, i, dimension);
-      for(unsigned int j = 0; j < ansatz.plain.cell_dof_tensor.size(dimension); ++j)
-      {
-        const unsigned int jj = ansatz.plain.dof_index_1d(cell_no_1d_col, j, dimension);
-        subdomain_matrix(ii, jj) += cell_matrix(i, j);
-      }
-    }
-  }
-
-  template<typename Number>
-  void
-  submit_cell_matrix_plain(Table<2, Number> &       subdomain_matrix,
-                           const Table<2, Number> & cell_matrix,
-                           const unsigned int       cell_no_1d_row,
-                           const unsigned int       cell_no_1d_col,
-                           const unsigned int       dimension) const
-  {
-    submit_cell_matrix_plain_impl(
-      subdomain_matrix, cell_matrix, cell_no_1d_row, cell_no_1d_col, dimension, *this);
-  }
-
-  template<typename Number>
-  void
-  submit_cell_matrix_plain(Table<2, Number> &             subdomain_matrix,
-                           const Table<2, Number> &       cell_matrix,
-                           const unsigned int             cell_no_1d_row,
-                           const unsigned int             cell_no_1d_col,
-                           const unsigned int             dimension,
-                           const PatchLocalTensorHelper & ansatz) const
-  {
-    submit_cell_matrix_plain_impl(
-      subdomain_matrix, cell_matrix, cell_no_1d_row, cell_no_1d_col, dimension, ansatz);
-  }
 
   /**
    * Returns the number of degrees of freedom seen from dimension @p dimension
@@ -349,24 +215,95 @@ struct PatchLocalTensorHelper : public Tensors::TensorHelper<n_dimensions>
    * calling @p plain.size(dimension).
    */
   unsigned int
-  n_plain_dofs_1d(const unsigned int dimension) const
-  {
-    Assert(plain.dof_layout != DoFLayout::DGP,
-           ExcMessage("Not supported as long as truncated tensor are not handled..."));
-    return plain.size(dimension);
-  }
+  n_plain_dofs_1d(const unsigned int dimension) const;
+
+  /**
+   * Returns the plain patch-local dof index subject to lexicographical ordering
+   * (that is plain.dof_index_1d()), if it is unconstrained. Otherwise
+   * numbers::invalid_unsigned_int is returned.
+   */
+  unsigned int
+  plain_dof_index_if(const unsigned int cell_no, const unsigned int cell_dof_index) const;
+
+  unsigned int
+  plain_dof_index_if_1d(const unsigned int cell_no_1d, const unsigned int cell_dof_index_1d) const;
+
+  /**
+   * A "plain" square one-dimensional matrix @p subdomain_matrix representing
+   * the univariate discretization on a subdomain with tensor structure is
+   * passed. Then, all rows and columns associated with constrained dofs of
+   * dimension @p dimension are deleted and the "constrained" matrix is returned
+   * by reference @p subdomain_matrix. In other words, the matrix @p
+   * subdomain_matrix passed follows the tensor structure of member @p plain and
+   * the matrix returned by reference @p subdomain_matrix follows the tensor
+   * structure of the base class TensorHelper.
+   */
+  template<typename Number>
+  void
+  apply_constraints(Table<2, Number> & subdomain_matrix, const unsigned int dimension) const;
+
+  /**
+   * Same as above, but for rectangular matrices, where this class is
+   * responsible for rows and PatchLocalTensorHelper @p other_column for the
+   * columns.
+   */
+  template<typename Number>
+  void
+  apply_constraints(Table<2, Number> &             subdomain_matrix,
+                    const unsigned int             dimension,
+                    const PatchLocalTensorHelper & other_column) const;
+
+  /**
+   * Submits the entries of one-dimensional matrix @p cell_matrix into the
+   * "plain" one-dimensional matrix @p subdomain_matrix for dimension @p
+   * dimension. Both matrices are assumed to be quadratic, this means that
+   * univariate ansatz and test space coincide. For instance, different cell
+   * numbers occur if we compute (DG) interface contributions for ansatz
+   * functions on cell/interval with identifier @p cell_no_1d_row and test
+   * functions on cell/interval with identifier @p cell_no_1d_col.
+   */
+  template<typename Number>
+  void
+  submit_cell_matrix_plain(Table<2, Number> &       subdomain_matrix,
+                           const Table<2, Number> & cell_matrix,
+                           const unsigned int       cell_no_1d_row,
+                           const unsigned int       cell_no_1d_col,
+                           const unsigned int       dimension) const;
+
+  /**
+   * Same as above, but matrices are not assumed to be square: actually this
+   * PatchLocaLTensorHelper handles univariate test functions (columns) and the
+   * PatchLocalTensorHelper @p ansatz univariate ansatz functions (rows).
+   */
+  template<typename Number>
+  void
+  submit_cell_matrix_plain(Table<2, Number> &             subdomain_matrix,
+                           const Table<2, Number> &       cell_matrix,
+                           const unsigned int             cell_no_1d_row,
+                           const unsigned int             cell_no_1d_col,
+                           const unsigned int             dimension,
+                           const PatchLocalTensorHelper & ansatz) const;
 
   const Tensors::TensorHelper<n_dimensions> &
-  get_cell_tensor() const
-  {
-    return plain.cell_tensor;
-  }
+  get_cell_tensor() const;
 
   const Tensors::TensorHelper<n_dimensions> &
-  get_cell_dof_tensor() const
-  {
-    return plain.cell_dof_tensor;
-  }
+  get_cell_dof_tensor() const;
+
+  template<typename Number>
+  void
+  submit_cell_matrix_plain_impl(Table<2, Number> &             subdomain_matrix,
+                                const Table<2, Number> &       cell_matrix,
+                                const unsigned int             cell_no_1d_row,
+                                const unsigned int             cell_no_1d_col,
+                                const unsigned int             dimension,
+                                const PatchLocalTensorHelper & ansatz) const;
+
+  template<typename Number>
+  void
+  apply_constraints_impl(Table<2, Number> &             subdomain_matrix,
+                         const unsigned int             dimension,
+                         const PatchLocalTensorHelper & other_column) const;
 
   const PatchLocalIndexHelper<n_dimensions> plain;
 
@@ -388,109 +325,25 @@ struct PatchLocalTensorIndices
   PatchLocalTensorIndices(
     const Tensors::TensorHelper<n_dimensions> &              cell_tensor_in,
     const std::vector<Tensors::TensorHelper<n_dimensions>> & cell_dof_tensors_in,
-    const DoFLayout                                          dof_layout_in)
-    : n_components(cell_dof_tensors_in.size()),
-      dof_tensors(std::move([&]() {
-        Assert(!cell_dof_tensors_in.empty(), ExcMessage("Pass at least one cell dof tensor!"));
-        std::vector<PatchLocalTensorHelper<n_dimensions>> dof_tensors_in;
-        for(const auto & cell_dof_tensor_in : cell_dof_tensors_in)
-          dof_tensors_in.emplace_back(cell_tensor_in, cell_dof_tensor_in, dof_layout_in);
-        return dof_tensors_in;
-      }())),
-      n_dofs([&]() {
-        return std::accumulate(dof_tensors.cbegin(),
-                               dof_tensors.cend(),
-                               0U,
-                               [](const unsigned int sum, const auto & dof_tensor) {
-                                 return sum + dof_tensor.n_flat();
-                               });
-      }()),
-      n_plain_dofs([&]() {
-        return std::accumulate(dof_tensors.cbegin(),
-                               dof_tensors.cend(),
-                               0U,
-                               [](const unsigned int sum, const auto & dof_tensor) {
-                                 return sum + dof_tensor.plain.n_flat();
-                               });
-      }()),
-      n_preceding_plain_dofs([&]() {
-        std::vector<unsigned int> n_preceding_plain_dofs_in;
-        n_preceding_plain_dofs_in.emplace_back(0U);
-        for(auto comp = 1U; comp < n_components; ++comp)
-          n_preceding_plain_dofs_in.emplace_back(n_preceding_plain_dofs_in.back() +
-                                                 dof_tensors[comp - 1].plain.n_flat());
-        return n_preceding_plain_dofs_in;
-      }()),
-      n_dofs_per_cell([&]() {
-        std::vector<unsigned int> n_dofs_per_cell_in;
-        for(const auto & dof_tensor : dof_tensors)
-          n_dofs_per_cell_in.emplace_back(dof_tensor.get_cell_dof_tensor().n_flat());
-        return n_dofs_per_cell_in;
-      }()),
-      n_preceding_dofs_per_cell([&]() {
-        std::vector<unsigned int> n_preceding_dofs_per_cell_in;
-        n_preceding_dofs_per_cell_in.emplace_back(0U);
-        for(auto comp = 1U; comp < n_components; ++comp)
-          n_preceding_dofs_per_cell_in.emplace_back(n_preceding_dofs_per_cell_in.back() +
-                                                    n_dofs_per_cell[comp - 1]);
-        return n_preceding_dofs_per_cell_in;
-      }())
-  {
-    if(dof_layout_in == DoFLayout::DGP || dof_layout_in == DoFLayout::DGQ)
-      Assert(!has_constraints(), ExcMessage("Not implemented..."));
+    const DoFLayout                                          dof_layout_in);
 
-    AssertDimension(n_components, dof_tensors.size());
-    AssertDimension(n_components, n_preceding_plain_dofs.size());
-    AssertDimension(n_components, n_dofs_per_cell.size());
-    AssertDimension(n_components, n_preceding_dofs_per_cell.size());
-
-    AssertDimension(n_preceding_plain_dofs.back() + dof_tensors.back().plain.n_flat(),
-                    n_plain_dofs);
-    AssertDimension(n_preceding_dofs_per_cell.back() + n_dofs_per_cell.back(),
-                    std::accumulate(n_dofs_per_cell.cbegin(), n_dofs_per_cell.cend(), 0U));
-  }
-
+  /**
+   * The set of dof indices @p plain_dof_indices subject to a lexicographical
+   * order from the plain tensor dof structure, i.e. including all constrained
+   * dofs, is restricted to the set of unconstrained dof indices (returned as
+   * reference @p plain_dof_indices). For vector-valued finite elements dof
+   * indices for each component are subject to lexicographical order. Indices
+   * are juxtaposed in @p plain_dof_indices component by component.
+   */
   template<typename DoFIndexType>
   void
-  apply_constraints(std::vector<DoFIndexType> & plain_dof_indices) const
-  {
-    AssertDimension(plain_dof_indices.size(), n_plain_dofs);
-
-    /// no work to do if no constraints exist
-    if(n_dofs == n_plain_dofs)
-      return;
-
-    std::vector<DoFIndexType> dof_indices;
-    for(auto component = 0U; component < n_components; ++component)
-    {
-      const auto & dof_tensor = dof_tensors[component];
-      const auto * begin_at_component =
-        plain_dof_indices.data() + n_preceding_plain_dofs[component];
-      ArrayView<const DoFIndexType> view_plain(begin_at_component, dof_tensor.plain.n_flat());
-      for(auto i = 0U; i < view_plain.size(); ++i)
-        if(!(dof_tensor.is_constrained(i)))
-          dof_indices.emplace_back(view_plain[i]);
-    }
-
-    /// passing dof_indices as reference through plain_dof_indices
-    AssertDimension(dof_indices.size(), n_dofs);
-    std::swap(plain_dof_indices, dof_indices);
-  }
+  apply_constraints(std::vector<DoFIndexType> & plain_dof_indices) const;
 
   bool
-  has_constraints() const
-  {
-    return std::any_of(dof_tensors.cbegin(), dof_tensors.cend(), [&](const auto & dof_tensor) {
-      return dof_tensor.has_constraints();
-    });
-  }
+  has_constraints() const;
 
   const PatchLocalTensorHelper<n_dimensions> &
-  get_dof_tensor(unsigned int component) const
-  {
-    AssertIndexRange(component, n_components);
-    return dof_tensors[component];
-  }
+  get_dof_tensor(unsigned int component) const;
 
   const unsigned int n_components;
 
@@ -517,6 +370,8 @@ template<int dim, typename Number>
 struct DoFInfo
 {
   static constexpr unsigned int macro_size = VectorizedArray<Number>::size();
+
+  using cell_iterator_type = typename PatchInfo<dim>::dof_cell_iterator_type;
 
   struct AdditionalData;
 
@@ -551,15 +406,23 @@ struct DoFInfo
   DoFLayout
   get_dof_layout() const;
 
+  /// TODO replace DoFAccessor<dim, dim, dim, true> by cell_iterator_type
+  /// NOTE difference between 'accessor' and 'iterator'
   DoFAccessor<dim, dim, dim, true>
   get_level_dof_accessor(const unsigned int cell_position) const;
 
+  /// TODO replace DoFAccessor<dim, dim, dim, true> by cell_iterator_type
+  /// NOTE difference between 'accessor' and 'iterator'
   DoFAccessor<dim, dim, dim, true>
   get_level_dof_accessor_impl(const unsigned int cell_index, const unsigned int level) const;
 
+  /// TODO replace DoFAccessor<dim, dim, dim, true> by cell_iterator_type
+  /// NOTE difference between 'accessor' and 'iterator'
   std::vector<types::global_dof_index>
   fill_level_dof_indices(const unsigned int cell_position) const;
 
+  /// TODO replace DoFAccessor<dim, dim, dim, true> by cell_iterator_type
+  /// NOTE difference between 'accessor' and 'iterator'
   std::vector<types::global_dof_index>
   fill_level_dof_indices_impl(const DoFAccessor<dim, dim, dim, true> & cell) const;
 
@@ -676,7 +539,8 @@ dof_index_1d_impl(const Tensors::TensorHelper<dim> & cell_tensor,
                   const DoFLayout                    dof_layout,
                   const unsigned int                 cell_no_1d,
                   const unsigned int                 cell_dof_index_1d,
-                  const int                          dimension)
+                  const int                          dimension,
+                  const int                          dimension_high = -1)
 {
   if(dof_layout == DoFLayout::DGQ)
     return dof_index_1d_discontinuous(
@@ -691,6 +555,15 @@ dof_index_1d_impl(const Tensors::TensorHelper<dim> & cell_tensor,
     // truncated and otherwhise return numbers::invalid_unsigned_int
     return dof_index_1d_discontinuous(
       cell_tensor, cell_dof_tensor, cell_no_1d, cell_dof_index_1d, dimension);
+  else if(dof_layout == DoFLayout::RT)
+  {
+    if(dimension == dimension_high)
+      return dof_index_1d_continuous(
+        cell_tensor, cell_dof_tensor, cell_no_1d, cell_dof_index_1d, dimension);
+    else
+      return dof_index_1d_discontinuous(
+        cell_tensor, cell_dof_tensor, cell_no_1d, cell_dof_index_1d, dimension);
+  }
 
   AssertThrow(false, ExcMessage("Finite element not supported."));
   return numbers::invalid_unsigned_int;
@@ -705,25 +578,32 @@ inline PatchLocalIndexHelper<n_dimensions>::PatchLocalIndexHelper(
   const DoFLayout                             dof_layout_in)
   : Base([&]() {
       Assert(dof_layout_in != DoFLayout::invalid, ExcMessage("Not supported."));
+      /// double-check Raviart-Thomas tensor
+      if(dof_layout_in == DoFLayout::RT)
+        for(auto d = 0U; d < n_dimensions; ++d)
+          if(d != cell_dof_tensor_in.max_dimension())
+            AssertDimension(cell_dof_tensor_in.size(d) + 1, cell_dof_tensor_in.max_size());
+
       std::array<unsigned int, n_dimensions> sizes;
       for(auto d = 0U; d < n_dimensions; ++d)
       {
         const auto last_cell_no         = cell_tensor_in.size(d) - 1;
         const auto last_cell_dof_index  = cell_dof_tensor_in.size(d) - 1;
-        const auto last_patch_dof_index = dof_index_1d_impl<n_dimensions>(
-          cell_tensor_in, cell_dof_tensor_in, dof_layout_in, last_cell_no, last_cell_dof_index, d);
-        sizes[d] = last_patch_dof_index + 1;
+        const auto last_patch_dof_index = dof_index_1d_impl(cell_tensor_in,
+                                                            cell_dof_tensor_in,
+                                                            dof_layout_in,
+                                                            last_cell_no,
+                                                            last_cell_dof_index,
+                                                            d,
+                                                            cell_dof_tensor_in.max_dimension());
+        sizes[d]                        = last_patch_dof_index + 1;
       }
-      /// DEBUG
-      std::cout << "plain sizes: ";
-      for(const auto s : sizes)
-        std::cout << s << " ";
-      std::cout << std::endl;
       return sizes;
     }()),
     cell_tensor(cell_tensor_in),
     cell_dof_tensor(cell_dof_tensor_in),
-    dof_layout(dof_layout_in)
+    dof_layout(dof_layout_in),
+    dimension_with_high_degree(cell_dof_tensor_in.max_dimension())
 {
 }
 
@@ -735,72 +615,14 @@ PatchLocalIndexHelper<n_dimensions>::dof_index_1d(const unsigned int cell_no_1d,
                                                   const unsigned int cell_dof_index_1d,
                                                   const int          dimension) const
 {
-  // if(dof_layout == DoFLayout::DGQ)
-  //   return dof_index_1d_dgq_impl(cell_no_1d, cell_dof_index_1d, dimension);
-  // else if(dof_layout == DoFLayout::Q)
-  //   return dof_index_1d_q_impl(cell_no_1d, cell_dof_index_1d, dimension);
-  // else if(dof_layout == DoFLayout::DGP)
-  //   return dof_index_1d_dgp_impl(cell_no_1d, cell_dof_index_1d, dimension);
-  // AssertThrow(false, ExcMessage("Finite element not supported."));
-  // return numbers::invalid_unsigned_int;
-  return dof_index_1d_impl(
-    cell_tensor, cell_dof_tensor, dof_layout, cell_no_1d, cell_dof_index_1d, dimension);
+  return dof_index_1d_impl(cell_tensor,
+                           cell_dof_tensor,
+                           dof_layout,
+                           cell_no_1d,
+                           cell_dof_index_1d,
+                           dimension,
+                           dimension_with_high_degree);
 }
-
-
-
-// template<int n_dimensions>
-// inline unsigned int
-// PatchLocalIndexHelper<n_dimensions>::dof_index_1d_q_impl(const unsigned int cell_no_1d,
-//                                                          const unsigned int cell_dof_index_1d,
-//                                                          const int          dimension) const
-// {
-//   return dof_index_1d_continuous(
-//     cell_tensor, cell_dof_tensor, cell_no_1d, cell_dof_index_1d, dimension);
-//   // AssertIndexRange(cell_no_1d, cell_tensor.n[dimension]);
-//   // AssertIndexRange(cell_dof_index_1d, cell_dof_tensor.n[dimension]);
-//   // AssertIndexRange(dimension, n_dimensions);
-//   // const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
-//   // return cell_no_1d * n_dofs_per_cell_1d + cell_dof_index_1d - cell_no_1d;
-// }
-
-
-
-// template<int n_dimensions>
-// inline unsigned int
-// PatchLocalIndexHelper<n_dimensions>::dof_index_1d_dgq_impl(const unsigned int cell_no_1d,
-//                                                            const unsigned int cell_dof_index_1d,
-//                                                            const int          dimension) const
-// {
-//   // AssertIndexRange(cell_no_1d, cell_tensor.n[dimension]);
-//   // AssertIndexRange(cell_dof_index_1d, cell_dof_tensor.n[dimension]);
-//   // AssertIndexRange(dimension, n_dimensions);
-//   // const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
-//   // return cell_no_1d * n_dofs_per_cell_1d + cell_dof_index_1d;
-//   return dof_index_1d_discontinuous(
-//     cell_tensor, cell_dof_tensor, cell_no_1d, cell_dof_index_1d, dimension);
-// }
-
-
-
-// // !!! TODO currently, the truncated tensor structure is treated as
-// // !!! "full" tensor (i.e. isotropic w.r.t. the polynomial degree)
-// // FIX? one could return the actual 1D dof index if it is part of the
-// // truncated and otherwhise return numbers::invalid_unsigned_int
-// template<int n_dimensions>
-// inline unsigned int
-// PatchLocalIndexHelper<n_dimensions>::dof_index_1d_dgp_impl(const unsigned int cell_no_1d,
-//                                                            const unsigned int cell_dof_index_1d,
-//                                                            const int          dimension) const
-// {
-//   // AssertIndexRange(cell_no_1d, cell_tensor.n[dimension]);
-//   // AssertIndexRange(cell_dof_index_1d, cell_dof_tensor.n[dimension]);
-//   // AssertIndexRange(dimension, n_dimensions);
-//   // const auto & n_dofs_per_cell_1d = cell_dof_tensor.n[dimension];
-//   // return cell_no_1d * n_dofs_per_cell_1d + cell_dof_index_1d;
-//   return dof_index_1d_discontinuous(
-//     cell_tensor, cell_dof_tensor, cell_no_1d, cell_dof_index_1d, dimension);
-// }
 
 
 
@@ -899,20 +721,19 @@ inline PatchLocalTensorHelper<n_dimensions>::PatchLocalTensorHelper(
                                                           cell_dof_tensor_in,
                                                           dof_layout_in);
       const auto tmp_constrained_dof_mask = make_constrained_dof_mask_impl<n_dimensions>(
-        tmp_plain, make_constrained_hyperface_mask<n_dimensions>(dof_layout_in));
+        tmp_plain,
+        make_constrained_hyperface_mask<n_dimensions>(dof_layout_in,
+                                                      tmp_plain.dimension_with_high_degree));
       std::array<unsigned int, n_dimensions> sizes;
       for(auto d = 0U; d < n_dimensions; ++d)
         sizes[d] = tmp_plain.size(d) - tmp_constrained_dof_mask[d].size();
-      std::cout << "sizes: ";
-      for(const auto s : sizes)
-        std::cout << s << " ";
-      std::cout << std::endl;
       return sizes;
     }()),
     plain(cell_tensor_in, cell_dof_tensor_in, dof_layout_in),
     constrained_dof_mask(make_constrained_dof_mask_impl<n_dimensions>(
       plain,
-      make_constrained_hyperface_mask<n_dimensions>(dof_layout_in))),
+      make_constrained_hyperface_mask<n_dimensions>(dof_layout_in,
+                                                    plain.dimension_with_high_degree))),
     map_plain_dof_index_from([&]() {
       std::array<std::vector<unsigned int>, n_dimensions> map;
       for(auto d = 0U; d < n_dimensions; ++d)
@@ -936,15 +757,6 @@ template<int n_dimensions>
 inline bool
 PatchLocalTensorHelper<n_dimensions>::is_plain_edge_dof(const unsigned int plain_dof_index) const
 {
-  // const auto & is_boundary_face_dof_1d = [&](const auto index_1d, const auto dimension) {
-  //   AssertIndexRange(index_1d, n_dofs_1d(dimension));
-  //   const auto last_index_1d = n_dofs_1d(dimension) - 1;
-  //   return index_1d == 0 || index_1d == last_index_1d;
-  // };
-  // const auto & dof_index_multi = Base::multi_index(dof_index);
-  // for(auto d = 0U; d < n_dimensions; ++d)
-  //   if(is_boundary_face_dof_1d(dof_index_multi[d], d))
-  //     return true;
   return plain.is_edge_index(plain_dof_index);
 }
 
@@ -971,6 +783,20 @@ PatchLocalTensorHelper<n_dimensions>::is_constrained(const unsigned int plain_do
     if(is_constrained_1d(plain_dof_index_multi[d], d))
       return true;
   return false;
+}
+
+
+
+template<int n_dimensions>
+inline bool
+PatchLocalTensorHelper<n_dimensions>::has_constraints() const
+{
+  const auto n_constraints =
+    std::accumulate(constrained_dof_mask.cbegin(),
+                    constrained_dof_mask.cend(),
+                    0U,
+                    [&](const unsigned int n, const auto & set) { return n + set.size(); });
+  return n_constraints > 0;
 }
 
 
@@ -1007,6 +833,127 @@ PatchLocalTensorHelper<n_dimensions>::n_dofs_1d(const unsigned int dimension) co
   Assert(plain.dof_layout != DoFLayout::DGP,
          ExcMessage("Not supported as long as truncated tensor are not handled..."));
   return Base::size(dimension);
+}
+
+
+
+template<int n_dimensions>
+inline unsigned int
+PatchLocalTensorHelper<n_dimensions>::n_plain_dofs_1d(const unsigned int dimension) const
+{
+  Assert(plain.dof_layout != DoFLayout::DGP,
+         ExcMessage("Not supported as long as truncated tensor are not handled..."));
+  return plain.size(dimension);
+}
+
+
+
+template<int n_dimensions>
+inline const Tensors::TensorHelper<n_dimensions> &
+PatchLocalTensorHelper<n_dimensions>::get_cell_tensor() const
+{
+  return plain.cell_tensor;
+}
+
+
+
+template<int n_dimensions>
+inline const Tensors::TensorHelper<n_dimensions> &
+PatchLocalTensorHelper<n_dimensions>::get_cell_dof_tensor() const
+{
+  return plain.cell_dof_tensor;
+}
+
+
+
+// -----------------------------   PatchLocalTensorIndices   ----------------------------
+
+
+
+template<int n_dimensions>
+PatchLocalTensorIndices<n_dimensions>::PatchLocalTensorIndices(
+  const Tensors::TensorHelper<n_dimensions> &              cell_tensor_in,
+  const std::vector<Tensors::TensorHelper<n_dimensions>> & cell_dof_tensors_in,
+  const DoFLayout                                          dof_layout_in)
+  : n_components(cell_dof_tensors_in.size()),
+    dof_tensors(std::move([&]() {
+      Assert(!cell_dof_tensors_in.empty(), ExcMessage("Pass at least one cell dof tensor!"));
+      std::vector<PatchLocalTensorHelper<n_dimensions>> dof_tensors_in;
+      for(const auto & cell_dof_tensor_in : cell_dof_tensors_in)
+        dof_tensors_in.emplace_back(cell_tensor_in, cell_dof_tensor_in, dof_layout_in);
+      return dof_tensors_in;
+    }())),
+    n_dofs([&]() {
+      return std::accumulate(dof_tensors.cbegin(),
+                             dof_tensors.cend(),
+                             0U,
+                             [](const unsigned int sum, const auto & dof_tensor) {
+                               return sum + dof_tensor.n_flat();
+                             });
+    }()),
+    n_plain_dofs([&]() {
+      return std::accumulate(dof_tensors.cbegin(),
+                             dof_tensors.cend(),
+                             0U,
+                             [](const unsigned int sum, const auto & dof_tensor) {
+                               return sum + dof_tensor.plain.n_flat();
+                             });
+    }()),
+    n_preceding_plain_dofs([&]() {
+      std::vector<unsigned int> n_preceding_plain_dofs_in;
+      n_preceding_plain_dofs_in.emplace_back(0U);
+      for(auto comp = 1U; comp < n_components; ++comp)
+        n_preceding_plain_dofs_in.emplace_back(n_preceding_plain_dofs_in.back() +
+                                               dof_tensors[comp - 1].plain.n_flat());
+      return n_preceding_plain_dofs_in;
+    }()),
+    n_dofs_per_cell([&]() {
+      std::vector<unsigned int> n_dofs_per_cell_in;
+      for(const auto & dof_tensor : dof_tensors)
+        n_dofs_per_cell_in.emplace_back(dof_tensor.get_cell_dof_tensor().n_flat());
+      return n_dofs_per_cell_in;
+    }()),
+    n_preceding_dofs_per_cell([&]() {
+      std::vector<unsigned int> n_preceding_dofs_per_cell_in;
+      n_preceding_dofs_per_cell_in.emplace_back(0U);
+      for(auto comp = 1U; comp < n_components; ++comp)
+        n_preceding_dofs_per_cell_in.emplace_back(n_preceding_dofs_per_cell_in.back() +
+                                                  n_dofs_per_cell[comp - 1]);
+      return n_preceding_dofs_per_cell_in;
+    }())
+{
+  if(dof_layout_in == DoFLayout::DGP || dof_layout_in == DoFLayout::DGQ)
+    Assert(!has_constraints(), ExcMessage("Not implemented..."));
+
+  AssertDimension(n_components, dof_tensors.size());
+  AssertDimension(n_components, n_preceding_plain_dofs.size());
+  AssertDimension(n_components, n_dofs_per_cell.size());
+  AssertDimension(n_components, n_preceding_dofs_per_cell.size());
+
+  AssertDimension(n_preceding_plain_dofs.back() + dof_tensors.back().plain.n_flat(), n_plain_dofs);
+  AssertDimension(n_preceding_dofs_per_cell.back() + n_dofs_per_cell.back(),
+                  std::accumulate(n_dofs_per_cell.cbegin(), n_dofs_per_cell.cend(), 0U));
+}
+
+
+
+template<int n_dimensions>
+inline bool
+PatchLocalTensorIndices<n_dimensions>::has_constraints() const
+{
+  return std::any_of(dof_tensors.cbegin(), dof_tensors.cend(), [&](const auto & dof_tensor) {
+    return dof_tensor.has_constraints();
+  });
+}
+
+
+
+template<int n_dimensions>
+inline const PatchLocalTensorHelper<n_dimensions> &
+PatchLocalTensorIndices<n_dimensions>::get_dof_tensor(unsigned int component) const
+{
+  AssertIndexRange(component, n_components);
+  return dof_tensors[component];
 }
 
 
@@ -1178,6 +1125,8 @@ DoFInfo<dim, Number>::get_dof_layout() const
 }
 
 
+/// TODO replace DoFAccessor<dim, dim, dim, true> by cell_iterator_type
+/// NOTE difference between 'accessor' and 'iterator'
 template<int dim, typename Number>
 inline DoFAccessor<dim, dim, dim, true>
 DoFInfo<dim, Number>::get_level_dof_accessor(const unsigned int cell_position) const
@@ -1188,6 +1137,8 @@ DoFInfo<dim, Number>::get_level_dof_accessor(const unsigned int cell_position) c
 }
 
 
+/// TODO replace DoFAccessor<dim, dim, dim, true> by cell_iterator_type
+/// NOTE difference between 'accessor' and 'iterator'
 template<int dim, typename Number>
 inline DoFAccessor<dim, dim, dim, true>
 DoFInfo<dim, Number>::get_level_dof_accessor_impl(const unsigned int cell_index,
@@ -1198,6 +1149,8 @@ DoFInfo<dim, Number>::get_level_dof_accessor_impl(const unsigned int cell_index,
 }
 
 
+/// TODO replace DoFAccessor<dim, dim, dim, true> by cell_iterator_type
+/// NOTE difference between 'accessor' and 'iterator'
 template<int dim, typename Number>
 inline std::vector<types::global_dof_index>
 DoFInfo<dim, Number>::fill_level_dof_indices(const unsigned int cell_position) const
@@ -1207,6 +1160,8 @@ DoFInfo<dim, Number>::fill_level_dof_indices(const unsigned int cell_position) c
 }
 
 
+/// TODO replace DoFAccessor<dim, dim, dim, true> by cell_iterator_type
+/// NOTE difference between 'accessor' and 'iterator'
 template<int dim, typename Number>
 inline std::vector<types::global_dof_index>
 DoFInfo<dim, Number>::fill_level_dof_indices_impl(
@@ -1225,6 +1180,7 @@ DoFInfo<dim, Number>::fill_level_dof_indices_impl(
                  l2h.cend(),
                  std::back_inserter(level_dof_indices_lxco),
                  [&](const auto & h) { return level_dof_indices[h]; });
+
   return level_dof_indices_lxco;
 }
 

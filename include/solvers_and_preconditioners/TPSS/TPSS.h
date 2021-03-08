@@ -113,7 +113,8 @@ enum class ConstraintVariant
 
 template<int dim>
 Table<2, ConstraintVariant>
-make_constrained_hyperface_mask(const DoFLayout dof_layout)
+make_constrained_hyperface_mask(const DoFLayout    dof_layout,
+                                const unsigned int component = numbers::invalid_unsigned_int)
 {
   Table<2, ConstraintVariant> mask(dim, 2U);
   if(dof_layout == DoFLayout::DGQ)
@@ -122,6 +123,16 @@ make_constrained_hyperface_mask(const DoFLayout dof_layout)
     mask.fill(ConstraintVariant::Dirichlet);
   else if(dof_layout == DoFLayout::DGP)
     mask.fill(ConstraintVariant::None);
+  else if(dof_layout == DoFLayout::RT)
+  {
+    AssertIndexRange(component, dim);
+    for(auto dimension = 0U; dimension < dim; ++dimension)
+      for(auto face_no = 0U; face_no < mask.n_cols(); ++face_no)
+        if(dimension == component)
+          mask(dimension, face_no) = ConstraintVariant::Dirichlet;
+        else
+          mask(dimension, face_no) = ConstraintVariant::None;
+  }
   else
     Assert(false, ExcMessage("Layout not implemented."));
   return mask;

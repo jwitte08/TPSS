@@ -13,6 +13,7 @@
  *    (4b) DGP vertex patch (scalar) (MPI)
  *    (4c) Q^dim x DGP vertex patch (block) (MPI)
  *    (5a) RAS Q vertex patch (scalar)
+ *    (6a) RT vertex patch (vector-valued) (MPI)
  *
  *  Created on: Feb 06, 2020
  *      Author: witte
@@ -34,15 +35,17 @@ using namespace dealii;
 
 
 
-using TestParamsConstant2D = testing::Types<Util::NonTypeParams<2, 0>>;
-using TestParamsLinear2D   = testing::Types<Util::NonTypeParams<2, 1>>;
+using TestParamsConstant2D  = testing::Types<Util::NonTypeParams<2, 0>>;
+using TestParamsLinear2D    = testing::Types<Util::NonTypeParams<2, 1>>;
+using TestParamsQuadratic2D = testing::Types<Util::NonTypeParams<2, 2>>;
 using TestParamsHigherOrder2D =
   testing::Types<Util::NonTypeParams<2, 3>, Util::NonTypeParams<2, 4>>;
 
-using TestParamsLinear3D = testing::Types<Util::NonTypeParams<3, 1>>;
+using TestParamsConstant3D  = testing::Types<Util::NonTypeParams<3, 0>>;
+using TestParamsLinear3D    = testing::Types<Util::NonTypeParams<3, 1>>;
+using TestParamsQuadratic3D = testing::Types<Util::NonTypeParams<3, 2>>;
 using TestParamsHigherOrder3D =
   testing::Types<Util::NonTypeParams<3, 3>, Util::NonTypeParams<3, 4>>;
-using TestParamsConstant3D = testing::Types<Util::NonTypeParams<3, 0>>;
 
 
 
@@ -113,8 +116,7 @@ protected:
   SetUp() override
   {
     ofs.open("patch_transfer.log", std::ios_base::app);
-    const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
-    pcout                    = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
+    pcout = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
 
     /// base mesh is a vertex patch
     rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
@@ -129,6 +131,9 @@ protected:
     ofs.close();
   }
 
+
+  const unsigned int this_mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+  const bool         is_first_proc = this_mpi_rank == 0U;
 
   std::ofstream                       ofs;
   std::shared_ptr<ConditionalOStream> pcout;
@@ -307,6 +312,7 @@ TYPED_TEST_P(TestPatchTransfer, VertexPatchQ)
 REGISTER_TYPED_TEST_SUITE_P(TestPatchTransfer, CellPatchDG, VertexPatchDG, VertexPatchQ);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransfer, TestParamsLinear2D);
+INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestPatchTransfer, TestParamsQuadratic2D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransfer, TestParamsHigherOrder2D);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransfer, TestParamsLinear3D);
@@ -653,6 +659,7 @@ REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferVectorValued,
                             VertexPatchQ);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferVectorValued, TestParamsLinear2D);
+INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestPatchTransferVectorValued, TestParamsQuadratic2D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D,
                                TestPatchTransferVectorValued,
                                TestParamsHigherOrder2D);
@@ -844,7 +851,6 @@ TYPED_TEST_P(TestPatchTransferBlockWithVector, VertexPatch)
 REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferBlockWithVector, VertexPatch);
 
 /// linear is not possible: MatrixFree does not support DGQ(0) pressure !
-using TestParamsQuadratic2D = testing::Types<Util::NonTypeParams<2, 2>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D,
                                TestPatchTransferBlockWithVector,
                                TestParamsQuadratic2D);
@@ -853,7 +859,6 @@ INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D,
                                TestParamsHigherOrder2D);
 
 /// linear is not possible: MatrixFree does not support DGQ(0) pressure !
-using TestParamsQuadratic3D = testing::Types<Util::NonTypeParams<3, 2>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic3D,
                                TestPatchTransferBlockWithVector,
                                TestParamsQuadratic3D);
@@ -1603,6 +1608,8 @@ TYPED_TEST_P(TestPatchTransferrscatter, DGQ)
   TestFixture::check_rscatter(fe);
 }
 
+
+
 REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferrscatter, Q, DGQ);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestPatchTransferrscatter, TestParamsQuadratic2D);
@@ -1610,6 +1617,256 @@ INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder2D, TestPatchTransferrscatter, TestPar
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic3D, TestPatchTransferrscatter, TestParamsQuadratic3D);
 INSTANTIATE_TYPED_TEST_SUITE_P(HigherOrder3D, TestPatchTransferrscatter, TestParamsHigherOrder3D);
+
+
+
+template<typename T>
+class TestPatchTransferRaviartThomas : public TestPatchTransferBase<T>
+{
+protected:
+  using Base = TestPatchTransferBase<T>;
+
+  using Base::dim;
+  using Base::fe_degree;
+
+  using Base::pcout;
+  using Base::rt_parameters;
+  using Base::this_mpi_rank;
+
+  void
+  check()
+  {
+    rt_parameters.multigrid.post_smoother.schwarz = rt_parameters.multigrid.pre_smoother.schwarz;
+
+    //: generate mesh
+    parallel::distributed::Triangulation<dim> triangulation(
+      MPI_COMM_WORLD,
+      Triangulation<dim>::limit_level_difference_at_vertices,
+      parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy);
+    *pcout << create_mesh(triangulation, rt_parameters.mesh) << std::endl;
+    const unsigned int level = triangulation.n_global_levels() - 1;
+
+    //: initialize dof_handler
+    const auto fe = std::make_shared<FE_RaviartThomasNodal_new<dim>>(fe_degree);
+    *pcout << fe->get_name() << std::endl;
+    DoFHandler<dim> dof_handler;
+    dof_handler.initialize(triangulation, *fe);
+    dof_handler.distribute_mg_dofs();
+
+    const auto n_components = fe->n_components();
+    ASSERT_EQ(n_components, dim);
+    ASSERT_EQ(TPSS::get_dof_layout(*fe), TPSS::DoFLayout::RT);
+
+    //: initialize zero-boundary constraints
+    AffineConstraints<double> zero_constraints;
+    {
+      IndexSet relevant_dofs;
+      DoFTools::extract_locally_relevant_level_dofs(dof_handler, level, relevant_dofs);
+      zero_constraints.reinit(relevant_dofs);
+      DoFTools::make_zero_boundary_constraints(dof_handler, 0U, zero_constraints);
+    }
+    zero_constraints.close();
+
+    //: distribute subdomains
+    TPSS::PatchInfo<dim> patch_info;
+    {
+      typename TPSS::PatchInfo<dim>::AdditionalData additional_data;
+      const auto schwarz_data          = rt_parameters.multigrid.pre_smoother.schwarz;
+      additional_data.patch_variant    = schwarz_data.patch_variant;
+      additional_data.smoother_variant = schwarz_data.smoother_variant;
+      additional_data.level            = level;
+      patch_info.initialize(&dof_handler, additional_data); // raw
+      TPSS::PatchWorker<dim, double>{patch_info};           // vectorized
+    }
+
+    /// DEBUG
+    // if(this_mpi_rank == 0U)
+    // {
+    //   Triangulation<dim> unit_triangulation(Triangulation<dim>::maximum_smoothing);
+    //   {
+    //     MeshParameter mesh_prms;
+    //     mesh_prms.geometry_variant = MeshParameter::GeometryVariant::Cube;
+    //     mesh_prms.n_refinements    = 0U;
+    //     mesh_prms.n_repetitions    = 1U;
+    //     create_mesh(unit_triangulation, mesh_prms);
+    //     AssertDimension(unit_triangulation.n_active_cells(), 1U);
+    //   }
+
+    //   DoFHandler<dim> unit_dofh_v;
+    //   unit_dofh_v.initialize(unit_triangulation, *fe);
+    //   MappingQ1<dim> mapping;
+
+    //   ASSERT_EQ(fe->dofs_per_cell, unit_dofh_v.n_dofs())
+    //     << "mesh should consist of a single cell...";
+
+    //   for(auto i = 0U; i < fe->dofs_per_cell; ++i)
+    //   {
+    //     Vector<double> phi_i(fe->dofs_per_cell);
+    //     phi_i[i] = 1.;
+
+    //     std::vector<std::string> names(dim, "shape_function");
+    //     const std::string        prefix         = "RT";
+    //     const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
+    //     const auto               n_subdivisions = 30U;
+    //     std::vector<DataComponentInterpretation::DataComponentInterpretation> interpretation(
+    //       dim, DataComponentInterpretation::component_is_part_of_vector);
+    //     visualize_dof_vector(
+    //       unit_dofh_v, phi_i, names, prefix, suffix, n_subdivisions, interpretation, mapping);
+    //   }
+    // }
+
+    //: distribute dofs on subdomains
+    QGauss<1>                                                         quadrature(fe_degree + 1);
+    internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info;
+    shape_info.reinit(quadrature, *fe, /*base_element_index*/ 0);
+
+    /// DEBUG
+    // if(Base::do_visualize)
+    // {
+    //   const auto & h2l = shape_info.lexicographic_numbering;
+    //   for(auto i = 0U; i < h2l.size(); ++i)
+    //     *pcout << i << ":" << h2l[i] << "  ";
+    //   *pcout << std::endl;
+
+    //   *pcout << "hierarchical numbering: " << std::endl;
+    //   const auto & support_points = fe->get_generalized_support_points();
+    //   for(auto i = 0U; i < support_points.size(); ++i)
+    //     *pcout << i << ": " << support_points[i] << std::endl;
+    //   *pcout << std::endl;
+
+    //   *pcout << "lexicograpical numbering: " << std::endl;
+    //   const auto & l2h = Utilities::invert_permutation(h2l);
+    //   for(auto i = 0U; i < support_points.size(); ++i)
+    //     *pcout << i << " (" << l2h[i] << ") : " << support_points[l2h[i]] << std::endl;
+    //   *pcout << std::endl;
+    // }
+
+    TPSS::DoFInfo<dim, double> dof_info;
+    {
+      typename TPSS::DoFInfo<dim, double>::AdditionalData additional_data;
+      additional_data.level = level;
+      dof_info.initialize(&dof_handler, &patch_info, &shape_info, additional_data);
+    }
+
+    const auto   patch_transfer   = std::make_shared<TPSS::PatchTransfer<dim, double>>(dof_info);
+    const auto & patch_dof_worker = patch_transfer->get_patch_dof_worker();
+
+    //: generate random input
+    LinearAlgebra::distributed::Vector<double> dst;
+    patch_dof_worker.initialize_dof_vector(dst);
+    fill_with_random_values(dst); // first time !
+    zero_constraints.set_zero(dst);
+    const LinearAlgebra::distributed::Vector<double> src(dst);
+
+    src.update_ghost_values();
+    dst.zero_out_ghosts();
+
+    //: restrict to and prolongate from each patch
+    *pcout << "Restrict & Prolongate = Identity ...  \n\n";
+    const auto & partition_data = patch_dof_worker.get_partition_data();
+    const auto   n_subdomains   = partition_data.n_subdomains();
+    for(unsigned patch_index = 0; patch_index < n_subdomains; ++patch_index)
+    {
+      patch_transfer->reinit(patch_index);
+      const auto local_vector = patch_transfer->gather(src);
+      patch_transfer->scatter_add(dst, local_vector); // second time !
+    }
+    dst.compress(VectorOperation::add);
+
+    //: compare vectors (we added 2 times src !)
+    dst *= 0.5;
+    Util::compare_vector(dst, src, *pcout);
+
+    /// DEBUG
+    // if(Base::do_visualize)
+    // {
+    //   AssertDimension(this_mpi_rank, 0U); // only serial
+
+    //   MappingQ1<dim> mapping;
+
+    //   unsigned int patch_index = 0;
+    //   unsigned int lane        = 0;
+
+    //   patch_transfer->reinit(patch_index);
+
+    //   AlignedVector<VectorizedArray<double>> local_phi;
+    //   patch_transfer->reinit_local_vector(local_phi);
+
+    //   LinearAlgebra::distributed::Vector<double> phi;
+    //   patch_transfer->initialize_dof_vector(phi);
+
+    //   const auto & h2l             = shape_info.lexicographic_numbering;
+    //   const auto & l2h             = Utilities::invert_permutation(h2l);
+    //   const auto   cell_collection = patch_dof_worker.get_cell_collection(patch_index, lane);
+    //   std::vector<types::global_dof_index> indices_on_cell(h2l.size());
+    //   for(const auto & cell : cell_collection)
+    //   {
+    //     cell->get_active_or_mg_dof_indices(indices_on_cell);
+    //     std::vector<types::global_dof_index> lxco_indices_on_cell;
+    //     for(const auto h : l2h)
+    //       lxco_indices_on_cell.emplace_back(indices_on_cell[h]);
+    //     *pcout << vector_to_string(lxco_indices_on_cell) << std::endl;
+    //   }
+
+    //   const auto & indices_on_patch = patch_transfer->get_global_dof_indices(lane);
+    //   *pcout << vector_to_string(indices_on_patch) << std::endl;
+
+    //   for(auto i = 0U; i < local_phi.size(); ++i)
+    //   {
+    //     local_phi.fill(0.);
+    //     auto one     = make_vectorized_array(0.);
+    //     one[lane]    = 1.;
+    //     local_phi[i] = one;
+
+    //     phi = 0.;
+
+    //     patch_transfer->scatter_add(phi, local_phi);
+
+    //     std::vector<std::string> names(dim, "shape_function");
+    //     const std::string        prefix         = "patch_RT";
+    //     const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
+    //     const auto               n_subdivisions = 30U;
+    //     std::vector<DataComponentInterpretation::DataComponentInterpretation> interpretation(
+    //       dim, DataComponentInterpretation::component_is_part_of_vector);
+    //     visualize_dof_vector(
+    //       dof_handler, phi, names, prefix, suffix, n_subdivisions, interpretation, mapping);
+    //   }
+    // }
+  }
+};
+
+
+
+TYPED_TEST_SUITE_P(TestPatchTransferRaviartThomas);
+
+TYPED_TEST_P(TestPatchTransferRaviartThomas, RT)
+{
+  // constexpr auto dim       = TestFixture::dim;
+  // constexpr auto fe_degree = TestFixture::fe_degree;
+
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant =
+    TPSS::SmootherVariant::additive;
+
+  /// vertex patch
+  TestFixture::rt_parameters.multigrid.pre_smoother.schwarz.patch_variant =
+    TPSS::PatchVariant::vertex;
+  TestFixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  TestFixture::rt_parameters.mesh.n_repetitions    = 2U;
+
+  /// single vertex patch
+  TestFixture::do_visualize = true;
+  TestFixture::check();
+}
+
+
+
+REGISTER_TYPED_TEST_SUITE_P(TestPatchTransferRaviartThomas, RT);
+
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear2D, TestPatchTransferRaviartThomas, TestParamsLinear2D);
+INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestPatchTransferRaviartThomas, TestParamsQuadratic2D);
+
+INSTANTIATE_TYPED_TEST_SUITE_P(Linear3D, TestPatchTransferRaviartThomas, TestParamsLinear3D);
+INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic3D, TestPatchTransferRaviartThomas, TestParamsQuadratic3D);
 
 
 

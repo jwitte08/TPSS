@@ -235,6 +235,7 @@ struct TensorHelper
   IntType
   first_index(const unsigned int mode) const
   {
+    (void)mode;
     AssertIndexRange(mode, order);
     return static_cast<IntType>(0);
   }
@@ -354,6 +355,52 @@ struct TensorHelper
   {
     AssertIndexRange(mode, order);
     return n[mode];
+  }
+
+  /**
+   * Returns the minimum size of any dimension.
+   */
+  IntType
+  min_size() const
+  {
+    IntType min = 0;
+    for(const auto i : n)
+      min = std::min(i, min);
+    return min;
+  }
+
+  /**
+   * Returns the maximum size of any dimension.
+   */
+  IntType
+  max_size() const
+  {
+    IntType max = 0;
+    for(const auto i : n)
+      max = std::max(i, max);
+    return max;
+  }
+
+  /**
+   * Returns the dimension which has the minimum size of all dimensions. If more
+   * than one dimension is of minimum size the first dimension with minimum size
+   * is returned.
+   */
+  unsigned int
+  min_dimension() const
+  {
+    return std::distance(n.cbegin(), std::min_element(n.cbegin(), n.cend()));
+  }
+
+  /**
+   * Returns the dimension which has the maximum size of all dimensions. If more
+   * than one dimension is of maximum size the first dimension with maximum size
+   * is returned.
+   */
+  unsigned int
+  max_dimension() const
+  {
+    return std::distance(n.cbegin(), std::max_element(n.cbegin(), n.cend()));
   }
 
   const std::array<IntType, order> &

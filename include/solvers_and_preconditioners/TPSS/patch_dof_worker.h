@@ -316,7 +316,7 @@ PatchDoFWorker<dim, Number>::fill_dof_indices_on_patch(const unsigned int patch_
   std::vector<unsigned int> global_dof_indices(n_plain_dofs());
 
   const bool has_tensor_structure =
-    dof_layout == DoFLayout::DGQ || dof_layout == DoFLayout::Q /*|| dof_layout == DoFLayout::RT*/;
+    dof_layout == DoFLayout::DGQ || dof_layout == DoFLayout::Q || dof_layout == DoFLayout::RT;
 
   if(has_tensor_structure)
   {
@@ -337,6 +337,7 @@ PatchDoFWorker<dim, Number>::fill_dof_indices_on_patch(const unsigned int patch_
       {
         const auto global_dof_indices_on_cell =
           get_dof_indices_on_cell(patch_id, cell_no, lane, comp);
+
         for(auto i = 0U; i < global_dof_indices_on_cell.size(); ++i)
         {
           const unsigned int plain_dof_index               = dof_tensor.plain.dof_index(cell_no, i);
@@ -472,8 +473,10 @@ PatchDoFWorker<dim, Number>::get_dof_indices_on_cell(const unsigned int patch_id
 {
   AssertIndexRange(lane, macro_size);
   AssertIndexRange(component, n_components);
+
   const unsigned int n_lanes_filled = this->n_lanes_filled(patch_id);
   /// this...
+  (void)n_lanes_filled;
   AssertIndexRange(lane, n_lanes_filled);
   /// ...or that
   // if(lane >= n_lanes_filled)
