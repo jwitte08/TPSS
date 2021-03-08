@@ -595,8 +595,8 @@ struct ModelProblemBase<Method::RaviartThomas, dim, fe_degree_p>
 {
   static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::RT;
   static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::DGQ;
-  // using fe_type_v                               = FE_RaviartThomasNodal_new<dim>;
-  using fe_type_v                               = FE_RaviartThomas<dim>;
+  using fe_type_v                               = FE_RaviartThomasNodal_new<dim>;
+  // using fe_type_v                               = FE_RaviartThomas<dim>; // !!!
   using fe_type_p                               = FE_DGQLegendre<dim>;
   static constexpr int           fe_degree_v    = fe_degree_p;
   static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
@@ -898,6 +898,8 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
       if constexpr(dof_layout_v == TPSS::DoFLayout::Q)
         return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
       else if(dof_layout_v == TPSS::DoFLayout::DGQ)
+        return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
+      else if(dof_layout_v == TPSS::DoFLayout::RT)
         return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
       return std::shared_ptr<ColoringBase<dim>>();
     }()),
@@ -1553,7 +1555,6 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
     /// velocity - pressure
     {
-      AssertThrow(!use_hdivsipg_method, ExcMessage("TODO..."));
       Table<2, DoFTools::Coupling> this_cell_integrals_mask(dim, 1U);
       Table<2, DoFTools::Coupling> this_face_integrals_mask(dim, 1U);
       for(auto i = 0U; i < dim; ++i)
@@ -1571,13 +1572,11 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
                                         dof_handler_pressure,
                                         this_dsp,
                                         this_cell_integrals_mask,
-                                        this_face_integrals_mask/*,
-								  this_mpi_rank*/);
+                                        this_face_integrals_mask);
     }
 
     /// pressure - velocity
     {
-      AssertThrow(!use_hdivsipg_method, ExcMessage("TODO..."));
       Table<2, DoFTools::Coupling> this_cell_integrals_mask(1U, dim);
       Table<2, DoFTools::Coupling> this_face_integrals_mask(1U, dim);
       for(auto j = 0U; j < dim; ++j)
@@ -1595,8 +1594,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
                                         dof_handler_velocity,
                                         this_dsp,
                                         this_cell_integrals_mask,
-                                        this_face_integrals_mask/*,
-								  this_mpi_rank*/);
+                                        this_face_integrals_mask);
     }
 
     dsp.collect_sizes();
@@ -1679,7 +1677,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
       if(use_sipg_method)
         matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
       else if(use_hdivsipg_method)
-        // matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
         matrix_integrator.face_worker_tangential(
           cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
       else
@@ -1693,7 +1690,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
       if(use_sipg_method)
         matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
       else if(use_hdivsipg_method)
-        // matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
         matrix_integrator.boundary_worker_tangential(cell, face_no, scratch_data, copy_data);
       else
         AssertThrow(false, ExcMessage("This velocity dof layout is not supported."));
@@ -2474,7 +2470,7 @@ ModelProblem<dim, fe_degree_p, method>::run()
 
     compute_discretization_errors();
 
-    output_results(cycle);
+    // output_results(cycle);
 
     Utilities::System::MemoryStats mem;
     Utilities::System::get_memory_stats(mem);
@@ -3353,21 +3349,29 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
       };
 
     auto face_worker = [&](const auto &         cell,
-                           const unsigned int & f,
-                           const unsigned int & sf,
+                           const unsigned int & face_no,
+                           const unsigned int & sface_no,
                            const auto &         ncell,
-                           const unsigned int & nf,
-                           const unsigned int & nsf,
+                           const unsigned int & nface_no,
+                           const unsigned int & nsface_no,
                            ScratchData<dim> &   scratch_data,
                            CopyData &           copy_data) {
-      matrix_integrator.face_worker(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
+      if(use_sipg_method)
+        matrix_integrator.face_worker(
+          cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
+      else if(use_hdivsipg_method)
+        matrix_integrator.face_worker_tangential(
+          cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
     };
 
     auto boundary_worker = [&](const auto &         cell,
                                const unsigned int & face_no,
                                ScratchData<dim> &   scratch_data,
                                CopyData &           copy_data) {
-      matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+      if(use_sipg_method)
+        matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+      else if(use_hdivsipg_method)
+        matrix_integrator.boundary_worker_tangential(cell, face_no, scratch_data, copy_data);
     };
 
     const auto distribute_local_to_global_impl = [&](const auto & cd) {
@@ -3378,10 +3382,8 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
     const auto copier = [&](const CopyData & copy_data) {
       AssertIndexRange(copy_data.cell_data.size(), 2U);
-
       for(const auto & cd : copy_data.cell_data)
         distribute_local_to_global_impl(cd);
-
       for(auto & cdf : copy_data.face_data)
         distribute_local_to_global_impl(cdf);
     };
@@ -3649,11 +3651,10 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   if(dof_layout_v == TPSS::DoFLayout::Q)
     mg_constrained_dofs_velocity->make_zero_boundary_constraints(
       *dof_handler_velocity, equation_data.dirichlet_boundary_ids_velocity);
-  else if(dof_layout_v == TPSS::DoFLayout::RT) // !!!
-    for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
-      mg_constrained_dofs_velocity->make_no_normal_flux_constraints(*dof_handler_velocity,
-                                                                    boundary_id,
-                                                                    0U);
+  /// make_no_normal_flux_constraints() seems not to work...
+  else if(dof_layout_v == TPSS::DoFLayout::RT) // !!! TODO
+    mg_constrained_dofs_velocity->make_zero_boundary_constraints(
+      *dof_handler_velocity, equation_data.dirichlet_boundary_ids_velocity);
 
   mg_constrained_dofs_pressure = std::make_shared<MGConstrainedDoFs>();
   mg_constrained_dofs_pressure->initialize(*dof_handler_pressure);
@@ -3807,7 +3808,6 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
       /// velocity - pressure
       {
-        AssertThrow(!use_hdivsipg_method, ExcMessage("TODO..."));
         Table<2, DoFTools::Coupling> this_cell_integrals_mask(dim, 1U);
         Table<2, DoFTools::Coupling> this_face_integrals_mask(dim, 1U);
         for(auto i = 0U; i < dim; ++i)
@@ -3830,7 +3830,6 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
       /// pressure - velocity
       {
-        AssertThrow(!use_hdivsipg_method, ExcMessage("TODO..."));
         Table<2, DoFTools::Coupling> this_cell_integrals_mask(1U, dim);
         Table<2, DoFTools::Coupling> this_face_integrals_mask(1U, dim);
         for(auto j = 0U; j < dim; ++j)
@@ -3843,8 +3842,6 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                         lodof_indices_foreach_block[0],
                         lrdof_indices_foreach_block[1],
                         MPI_COMM_WORLD);
-        // Tools::make_sparsity_pattern(*dof_handler_pressure, *dof_handler_velocity, this_dsp,
-        // level);
         Tools::make_flux_sparsity_pattern(*dof_handler_pressure,
                                           *dof_handler_velocity,
                                           this_dsp,

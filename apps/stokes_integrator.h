@@ -64,6 +64,8 @@ using ::MW::compute_average_symgrad;
 
 using ::MW::compute_vvalue;
 
+using ::MW::compute_vvalue_tangential;
+
 using ::MW::compute_vjump;
 
 using ::MW::compute_vjump_cross_normal;
@@ -152,8 +154,6 @@ get_interface_testfunc_indices_impl(const InterfaceHandler<dim> & interface_hand
   }
 
   AssertDimension(testfunc_indices.size(), global_dof_indices_on_cell.size());
-  // std::cout << "test: " << vector_to_string(testfunc_indices) << std::endl;
-  // std::cout << "dof: " << vector_to_string(global_dof_indices_on_cell) << std::endl;
   return indices;
 }
 
@@ -323,6 +323,13 @@ struct MatrixIntegrator
                                                 ScratchData<dim, true> & scratch_data,
                                                 CopyData &               copy_data) const;
 
+  void
+  uniface_worker_tangential(const IteratorType & cell,
+                            const unsigned int & f,
+                            const unsigned int & sf,
+                            ScratchData<dim> &   scratch_data,
+                            CopyData &           copy_data) const;
+
   template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
   void
   boundary_worker_impl(const TestEvaluatorType &   phi_test,
@@ -336,6 +343,13 @@ struct MatrixIntegrator
                                   const AnsatzEvaluatorType & phi_ansatz,
                                   const double                gamma_over_h,
                                   CopyData::FaceData &        copy_data) const;
+
+  template<bool is_uniface>
+  void
+  boundary_or_uniface_worker_tangential_impl(const FEFaceValuesBase<dim> & phi_test,
+                                             const FEFaceValuesBase<dim> & phi_ansatz,
+                                             const double                  gamma_over_h,
+                                             CopyData::FaceData &          face_data) const;
 
   // FREE FUNCTION
   /**
@@ -883,7 +897,6 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential(
   const auto   fe_degree = phi_ansatz.get_fe().degree; // stream function degree !
   const double gamma_over_h =
     equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
-  // std::cout << "st:face:gamma: " << gamma_over_h << " " << fe_degree << " " << h << std::endl;
 
   face_worker_tangential_impl(phi_test, phi_ansatz, gamma_over_h, face_data);
 
@@ -1277,7 +1290,6 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential(
   const auto   h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
   const auto   fe_degree    = phi_ansatz.get_fe().degree; // stream function degree !
   const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, h);
-  // std::cout << "st:bdry:gamma: " << gamma_over_h << " " << fe_degree << " " << h << std::endl;
 
   boundary_worker_tangential_impl</*do_rhs*/ true>(phi_test, phi_ansatz, gamma_over_h, face_data);
 
@@ -1368,14 +1380,16 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential_impl(
   const auto n_interface_dofs_test   = phi_test.n_current_interface_dofs();
   const auto n_interface_dofs_ansatz = phi_ansatz.n_current_interface_dofs();
 
-  AssertDimension(n_interface_dofs_test, face_data.matrix.m());         // ???
-  AssertDimension(n_interface_dofs_ansatz, face_data.matrix.n());       // ???
-  AssertDimension(n_interface_dofs_test, face_data.dof_indices.size()); // ???
-  // AssertDimension(n_interface_dofs_ansatz, face_data.dof_indices_column.size()); // ???
+  AssertDimension(n_interface_dofs_test, face_data.matrix.m());
+  AssertDimension(n_interface_dofs_ansatz, face_data.matrix.n());
+  AssertDimension(n_interface_dofs_test, face_data.dof_indices.size());
+  if(!face_data.dof_indices_column.empty())
+    AssertDimension(n_interface_dofs_ansatz, face_data.dof_indices_column.size());
 
-  std::vector<Tensor<1, dim>>         solution_values;
-  std::vector<Tensor<1, dim>>         tangential_solution_values;
   const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
+
+  std::vector<Tensor<1, dim>> solution_values;
+  std::vector<Tensor<1, dim>> tangential_solution_values;
   if(do_rhs)
   {
     Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
@@ -1458,6 +1472,129 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential_impl(
       }
     }
   }
+}
+
+
+
+template<int dim, bool is_multigrid>
+template<bool is_uniface>
+void
+MatrixIntegrator<dim, is_multigrid>::boundary_or_uniface_worker_tangential_impl(
+  const FEFaceValuesBase<dim> & phi_test,
+  const FEFaceValuesBase<dim> & phi_ansatz,
+  const double                  gamma_over_h,
+  CopyData::FaceData &          face_data) const
+{
+  constexpr bool do_rhs = !is_multigrid && !is_uniface;
+
+  const auto n_interface_dofs_test   = face_data.matrix.m();
+  const auto n_interface_dofs_ansatz = face_data.matrix.n();
+
+  AssertDimension(n_interface_dofs_test, face_data.dof_indices.size());
+  if(!face_data.dof_indices_column.empty())
+    AssertDimension(n_interface_dofs_ansatz, face_data.dof_indices_column.size());
+
+  const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
+
+  std::vector<Tensor<1, dim>> solution_values;
+  std::vector<Tensor<1, dim>> tangential_solution_values;
+  if(do_rhs)
+  {
+    Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
+    AssertDimension(analytical_solution->n_components, dim);
+    const auto &                        q_points = phi_test.get_quadrature_points();
+    const std::vector<Tensor<1, dim>> & normals  = phi_test.get_normal_vectors();
+    std::transform(q_points.cbegin(),
+                   q_points.cend(),
+                   std::back_inserter(solution_values),
+                   [this](const auto & x_q) {
+                     Tensor<1, dim> value;
+                     for(auto c = 0U; c < dim; ++c)
+                       value[c] = analytical_solution->value(x_q, c);
+                     return value;
+                   });
+    std::transform(solution_values.cbegin(),
+                   solution_values.cend(),
+                   normals.cbegin(),
+                   std::back_inserter(tangential_solution_values),
+                   [](const auto & u_q, const auto & normal) {
+                     return u_q - ((u_q * normal) * normal);
+                   });
+    AssertDimension(solution_values.size(), phi_test.n_quadrature_points);
+    AssertDimension(tangential_solution_values.size(), phi_test.n_quadrature_points);
+  }
+
+  double integral_ijq = 0.;
+  double nitsche_iq   = 0.;
+  for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
+  {
+    const auto & n = normals[q];
+    for(unsigned int i = 0; i < n_interface_dofs_test; ++i)
+    {
+      const auto & jump_phit_i      = compute_vvalue_tangential(phi_test, i, q);
+      const auto & av_symgrad_phi_i = (is_uniface ? 0.5 : 1.0) * compute_symgrad(phi_test, i, q);
+      double       ncontrib_i       = n * av_symgrad_phi_i * n;
+
+      for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+      {
+        const auto & jump_phit_j = compute_vvalue_tangential(phi_ansatz, j, q);
+        const auto & av_symgrad_phi_j =
+          (is_uniface ? 0.5 : 1.0) * compute_symgrad(phi_ansatz, j, q);
+        double ncontrib_j = n * av_symgrad_phi_j * n;
+
+        integral_ijq = -(n * av_symgrad_phi_j - ncontrib_j * n) * jump_phit_i;
+        integral_ijq += -(n * av_symgrad_phi_i - ncontrib_i * n) * jump_phit_j;
+        integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
+        integral_ijq *= 2. * phi_test.JxW(q);
+
+        face_data.matrix(i, j) += integral_ijq;
+      }
+
+      /// Nitsche method (weak Dirichlet conditions)
+      if(do_rhs)
+      {
+        /// ut is the tangential vector field of the vector field u (which
+        /// should not be confused with the tangential component of the vector
+        /// field u!).
+        const auto & ut = tangential_solution_values[q];
+
+        nitsche_iq = -(n * av_symgrad_phi_i - n * ncontrib_i) * ut;
+        nitsche_iq += gamma_over_h * ut * jump_phit_i;
+        nitsche_iq *= 2. * phi_test.JxW(q);
+
+        face_data.rhs(i) += nitsche_iq;
+      }
+    }
+  }
+}
+
+
+
+template<int dim, bool is_multigrid>
+void
+MatrixIntegrator<dim, is_multigrid>::uniface_worker_tangential(const IteratorType & cell,
+                                                               const unsigned int & f,
+                                                               const unsigned int & sf,
+                                                               ScratchData<dim> &   scratch_data,
+                                                               CopyData &           copy_data) const
+{
+  scratch_data.fe_interface_values_test.reinit(cell, f, sf, cell, f, sf);
+  const auto & phi = scratch_data.fe_interface_values_test.get_fe_face_values(0);
+
+  const unsigned int n_dofs = phi.dofs_per_cell; // fe_interface_values.n_current_interface_dofs();
+
+  CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_dofs);
+
+  cell->get_active_or_mg_dof_indices(face_data.dof_indices);
+
+  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
+  /// TODO actually we need the characteristic width nh of the neigboring cell...
+  const auto   nh        = h;
+  const auto   fe_degree = scratch_data.fe_values_test.get_fe().degree;
+  const double gamma_over_h =
+    equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
+
+  boundary_or_uniface_worker_tangential_impl<true>(phi, phi, gamma_over_h, face_data);
 }
 
 
@@ -1580,7 +1717,7 @@ class MatrixIntegrator
 public:
   using This = MatrixIntegrator<dim, fe_degree, Number>;
 
-  static constexpr int n_q_points_1d = fe_degree + 1;
+  static constexpr int n_q_points_1d = fe_degree + 1 + (dof_layout == TPSS::DoFLayout::RT ? 1 : 0);
 
   using value_type     = Number;
   using transfer_type  = typename TPSS::PatchTransfer<dim, Number>;
@@ -2626,7 +2763,8 @@ class MatrixIntegratorTensor
 public:
   using This = MatrixIntegratorTensor<dim, fe_degree_p, Number>;
 
-  static constexpr int n_q_points_1d = fe_degree_v + 1;
+  static constexpr int n_q_points_1d =
+    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
 
   using value_type              = Number;
   using transfer_type           = typename TPSS::PatchTransferBlock<dim, Number>;
@@ -2715,22 +2853,6 @@ public:
                                                  0U);
 
       local_matrix.invert({equation_data.local_kernel_size, equation_data.local_kernel_threshold});
-      // {
-      //   for(auto b = 0U; b < dim; ++b)
-      //   {
-      //     auto lane = 0U;
-      //     std::cout << "block: " << b << ", " << 0 << "   patch: " << patch_index
-      //               << "   lane: " << lane << std::endl;
-      //     const auto & rank1_tensors =
-      //       local_block_velocity_pressure.get_block(b, 0).get_elementary_tensors();
-      //     for(auto d = 0U; d < dim; ++d)
-      //     {
-      //       const auto & matrix_d = rank1_tensors[0][d];
-      //       std::cout << "direction: " << d << std::endl;
-      //       table_to_fullmatrix(matrix_d, lane).print_formatted(std::cout);
-      //     }
-      //   }
-      // }
     }
   }
 
@@ -2839,7 +2961,8 @@ class MatrixIntegratorCut
 public:
   using This = MatrixIntegratorCut<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
 
-  static constexpr int n_q_points_1d = fe_degree_v + 1;
+  static constexpr int n_q_points_1d =
+    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
 
   using value_type    = Number;
   using transfer_type = typename TPSS::PatchTransferBlock<dim, Number>;
@@ -3073,7 +3196,8 @@ class MatrixIntegratorLMW
 public:
   using This = MatrixIntegratorLMW<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
 
-  static constexpr int  n_q_points_1d       = fe_degree_v + 1;
+  static constexpr int n_q_points_1d =
+    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
   static constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
   static constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
   static constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
@@ -3149,6 +3273,11 @@ public:
           using MatrixIntegrator   = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
           using cell_iterator_type = typename MatrixIntegrator::IteratorType;
 
+          /// DEBUG
+          std::cout << "p" << patch_index << "l" << lane << std::endl;
+          const auto & gdi = patch_transfer_v.get_global_dof_indices(lane);
+          std::cout << vector_to_string(gdi) << std::endl;
+
           tmp_v_v = 0.;
 
           const auto & cell_collection = patch_dof_worker_v.get_cell_collection(patch_index, lane);
@@ -3211,7 +3340,7 @@ public:
               copy_data,
               MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
 
-          else if(use_sipg_method)
+          else if(use_sipg_method || use_hdivsipg_method)
             MeshWorker::m2d2::mesh_loop(
               local_cell_range,
               [&](const auto & cell, auto & scratch_data, auto & copy_data) {
@@ -3225,7 +3354,13 @@ public:
                 MeshWorker::assemble_ghost_faces_both,
               /*assemble faces at ghosts?*/ true,
               [&](const auto & cell, const auto face_no, auto & scratch_data, auto & copy_data) {
-                matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+                if(use_sipg_method)
+                  matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+                else if(use_hdivsipg_method)
+                  matrix_integrator.boundary_worker_tangential(cell,
+                                                               face_no,
+                                                               scratch_data,
+                                                               copy_data);
               },
               [&](const auto & cell,
                   const auto   face_no,
@@ -3240,16 +3375,23 @@ public:
                 const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
                 if(is_interface)
                 {
-                  matrix_integrator.face_worker(
-                    cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
-                  /// interfaces are assembled from both sides
-                  copy_data.face_data.back().matrix *= 0.5;
+                  if(use_sipg_method)
+                    matrix_integrator.face_worker(
+                      cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
+                  else if(use_hdivsipg_method)
+                    matrix_integrator.face_worker_tangential(
+                      cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
+                  copy_data.face_data.back().matrix *= 0.5; /// both sides!
                   return;
                 }
                 if(cell_belongs_to_collection)
                 {
-                  matrix_integrator.uniface_worker(
-                    cell, face_no, sface_no, scratch_data, copy_data);
+                  if(use_sipg_method)
+                    matrix_integrator.uniface_worker(
+                      cell, face_no, sface_no, scratch_data, copy_data);
+                  else if(use_hdivsipg_method)
+                    matrix_integrator.uniface_worker_tangential(
+                      cell, face_no, sface_no, scratch_data, copy_data);
                 }
               });
 
@@ -3389,7 +3531,7 @@ public:
 
           CopyData copy_data;
 
-          if(use_conf_method)
+          if(use_conf_method || use_hdivsipg_method)
             MeshWorker::m2d2::mesh_loop(
               local_cell_range_v,
               [&](const cell_iterator_type & cell, auto & scratch_data, auto & copy_data) {

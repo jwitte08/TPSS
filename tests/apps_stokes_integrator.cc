@@ -459,9 +459,14 @@ protected:
     const auto smoother_variant = TPSS::SmootherVariant::additive;
     const auto damping          = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
     options.setup(/*CG_GMG*/ 5, damping, patch_variant, smoother_variant);
+    if(method == Stokes::Method::RaviartThomas)
+      options.prms.mesh.do_colorization = true;
 
     /// TODO define equation data outside of this function ?
     EquationData equation_data;
+    if(options.prms.mesh.do_colorization)
+      for(types::boundary_id id = 0; id < GeometryInfo<dim>::faces_per_cell; ++id)
+        equation_data.dirichlet_boundary_ids_velocity.insert(id);
 
     using StokesProblem = ModelProblem<dim, fe_degree_p, method>;
 
@@ -764,6 +769,19 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwDGQ_pressurevelocity_MPI)
 
 
 
+TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_velocityvelocity_MPI)
+{
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 1;
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::RaviartThomas>({0U, 0U});
+  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::RaviartThomas>({0U, 0U});
+}
+
+
+
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckSystemMatrixVelocity,
                             CheckLocalSolversVelocityMPI,
@@ -777,7 +795,8 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             matrixintegratorlmwQ_pressurevelocity_MPI,
                             matrixintegratorlmwDGQ_velocityvelocity_MPI,
                             matrixintegratorlmwDGQ_velocitypressure_MPI,
-                            matrixintegratorlmwDGQ_pressurevelocity_MPI);
+                            matrixintegratorlmwDGQ_pressurevelocity_MPI,
+                            matrixintegratorlmwRT_velocityvelocity_MPI);
 
 
 
