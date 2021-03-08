@@ -1122,6 +1122,8 @@ compute_vvalue_impl(const EvaluatorType & phi, const unsigned int i, const unsig
   return value_phi;
 }
 
+
+
 /// TODO obsolete by FEValuesBase variant?
 template<int dim>
 Tensor<1, dim>
@@ -1129,6 +1131,8 @@ compute_vvalue(const FEValues<dim> & phi, const unsigned int i, const unsigned i
 {
   return compute_vvalue_impl<dim, FEValues<dim>>(phi, i, q);
 }
+
+
 
 /// TODO use ..._impl
 /// TODO obsolete by FEValuesBase variant?
@@ -1142,11 +1146,27 @@ compute_vvalue(const FEFaceValues<dim> & phi, const unsigned int i, const unsign
   return value_phi;
 }
 
+
+
 template<int dim>
 Tensor<1, dim>
 compute_vvalue(const FEValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
 {
   return compute_vvalue_impl<dim, FEValuesBase<dim>>(phi, i, q);
+}
+
+
+
+/**
+ * The tangential vector field phit = phi - (phi*n) n is returned.
+ */
+template<int dim>
+Tensor<1, dim>
+compute_vvalue_tangential(const FEValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  const Tensor<1, dim> & n         = phi.normal_vector(q);
+  const Tensor<1, dim> & value_phi = compute_vvalue(phi, i, q);
+  return value_phi - (value_phi * n) * n;
 }
 
 
