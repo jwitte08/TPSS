@@ -599,7 +599,7 @@ struct ModelProblemBase<Method::RaviartThomas, dim, fe_degree_p>
   // using fe_type_v                               = FE_RaviartThomas<dim>; // !!!
   using fe_type_p                               = FE_DGQLegendre<dim>;
   static constexpr int           fe_degree_v    = fe_degree_p;
-  static constexpr LocalAssembly local_assembly = LocalAssembly::Cut;
+  static constexpr LocalAssembly local_assembly = LocalAssembly::LMW;
 };
 
 
@@ -3504,14 +3504,14 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
       AssertDimension(copy_data.cell_data.size(), copy_data_flipped.cell_data.size());
       AssertDimension(copy_data.face_data.size(), copy_data_flipped.face_data.size());
 
+      auto cd         = copy_data.cell_data.cbegin();
       auto cd_flipped = copy_data_flipped.cell_data.cbegin();
-      for(auto cd = copy_data.cell_data.cbegin(); cd != copy_data.cell_data.cend();
-          ++cd, ++cd_flipped)
+      for(; cd != copy_data.cell_data.cend(); ++cd, ++cd_flipped)
         distribute_local_to_global_impl(*cd, *cd_flipped);
 
+      auto cdf         = copy_data.face_data.cbegin();
       auto cdf_flipped = copy_data_flipped.face_data.cbegin();
-      for(auto cdf = copy_data.face_data.cbegin(); cdf != copy_data.face_data.cend();
-          ++cdf, ++cdf_flipped)
+      for(; cdf != copy_data.face_data.cend(); ++cdf, ++cdf_flipped)
         distribute_local_to_global_impl(*cdf, *cdf_flipped);
     };
 
@@ -3535,7 +3535,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
     CopyData copy_data;
 
-    if(use_conf_method)
+    if(use_conf_method || use_hdivsipg_method)
       MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
                             dof_handler_velocity->end_mg(level),
                             cell_worker,
@@ -3543,7 +3543,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                             scratch_data,
                             copy_data,
                             MeshWorker::assemble_own_cells);
-    else if(use_sipg_method || use_hdivsipg_method)
+    else if(use_sipg_method)
       MeshWorker::mesh_loop(dof_handler_velocity->begin_mg(level),
                             dof_handler_velocity->end_mg(level),
                             cell_worker,
