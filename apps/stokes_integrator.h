@@ -1880,7 +1880,7 @@ public:
   std::array<matrix_type_1d, dim>
   assemble_mixed_nitsche_tensor(evaluator_type & eval_test, evaluator_type & eval_ansatz) const
   {
-    using CellVoid = ::FD::Void::CellOperation<dim, fe_degree, fe_degree + 1, Number>;
+    using CellVoid = ::FD::Void::CellOperation<dim, fe_degree, n_q_points_1d, Number>;
 
     const auto face_point_mass = [&](const evaluator_type &              eval_ansatz,
                                      const evaluator_type &              eval_test,
@@ -1953,12 +1953,12 @@ public:
   std::array<matrix_type_1d, dim>
   assemble_laplace_tensor(evaluator_type & eval_test, evaluator_type & eval_ansatz) const
   {
-    using CellLaplace = ::FD::Laplace::CellOperation<dim, fe_degree, fe_degree + 1, Number>;
+    using CellLaplace = ::FD::Laplace::CellOperation<dim, fe_degree, n_q_points_1d, Number>;
     CellLaplace cell_laplace;
 
     if constexpr(is_sipg)
     {
-      using FaceLaplace = ::FD::Laplace::SIPG::FaceOperation<dim, fe_degree, fe_degree + 1, Number>;
+      using FaceLaplace = ::FD::Laplace::SIPG::FaceOperation<dim, fe_degree, n_q_points_1d, Number>;
       FaceLaplace nitsche;
       nitsche.penalty_factor          = equation_data.ip_factor;
       nitsche.interior_penalty_factor = equation_data.ip_factor;
@@ -2053,14 +2053,14 @@ public:
   std::array<matrix_type_1d, dim>
   assemble_mass_tensor(evaluator_type & eval_test, evaluator_type & eval_ansatz) const
   {
-    using CellMass = ::FD::L2::CellOperation<dim, fe_degree, fe_degree + 1, Number>;
+    using CellMass = ::FD::L2::CellOperation<dim, fe_degree, n_q_points_1d, Number>;
     return eval_test.patch_action(eval_ansatz, CellMass{});
   }
 
   std::array<matrix_type_1d, dim>
   assemble_gradient_tensor(evaluator_type & eval_test, evaluator_type & eval_ansatz) const
   {
-    using CellGradient = ::FD::Gradient::CellOperation<dim, fe_degree, fe_degree + 1, Number>;
+    using CellGradient = ::FD::Gradient::CellOperation<dim, fe_degree, n_q_points_1d, Number>;
     CellGradient cell_gradient;
     return eval_test.patch_action(eval_ansatz, cell_gradient);
   }
@@ -3273,11 +3273,6 @@ public:
           using MatrixIntegrator   = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
           using cell_iterator_type = typename MatrixIntegrator::IteratorType;
 
-          /// DEBUG
-          std::cout << "p" << patch_index << "l" << lane << std::endl;
-          const auto & gdi = patch_transfer_v.get_global_dof_indices(lane);
-          std::cout << vector_to_string(gdi) << std::endl;
-
           tmp_v_v = 0.;
 
           const auto & cell_collection = patch_dof_worker_v.get_cell_collection(patch_index, lane);
@@ -3531,31 +3526,28 @@ public:
 
           CopyData copy_data;
 
+          const auto & cell_worker =
+            [&](const cell_iterator_type & cell, auto & scratch_data, auto & copy_data) {
+              cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
+                                             cell->level(),
+                                             cell->index(),
+                                             &dof_handler_pressure);
+              matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
+            };
+
           if(use_conf_method || use_hdivsipg_method)
-            MeshWorker::m2d2::mesh_loop(
-              local_cell_range_v,
-              [&](const cell_iterator_type & cell, auto & scratch_data, auto & copy_data) {
-                cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
-                                               cell->level(),
-                                               cell->index(),
-                                               &dof_handler_pressure);
-                matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
-              },
-              local_copier,
-              scratch_data,
-              copy_data,
-              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
+            MeshWorker::m2d2::mesh_loop(local_cell_range_v,
+                                        cell_worker,
+                                        local_copier,
+                                        scratch_data,
+                                        copy_data,
+                                        MeshWorker::assemble_own_cells |
+                                          MeshWorker::assemble_ghost_cells);
 
           else if(use_sipg_method)
             MeshWorker::m2d2::mesh_loop(
               local_cell_range_v,
-              [&](const auto & cell, auto & scratch_data, auto & copy_data) {
-                cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
-                                               cell->level(),
-                                               cell->index(),
-                                               &dof_handler_pressure);
-                matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
-              },
+              cell_worker,
               local_copier,
               scratch_data,
               copy_data,
