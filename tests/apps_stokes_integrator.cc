@@ -782,6 +782,32 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_velocityvelocity_MPI)
 
 
 
+TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_velocitypressure_MPI)
+{
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 1;
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::RaviartThomas>({0U, 1U});
+  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::RaviartThomas>({0U, 1U});
+}
+
+
+
+TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_pressurevelocity_MPI)
+{
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_refinements    = 1;
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::RaviartThomas>({1U, 0U});
+  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::template check_matrixintegratorlmw<Stokes::Method::RaviartThomas>({1U, 0U});
+}
+
+
+
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckSystemMatrixVelocity,
                             CheckLocalSolversVelocityMPI,
@@ -796,7 +822,9 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             matrixintegratorlmwDGQ_velocityvelocity_MPI,
                             matrixintegratorlmwDGQ_velocitypressure_MPI,
                             matrixintegratorlmwDGQ_pressurevelocity_MPI,
-                            matrixintegratorlmwRT_velocityvelocity_MPI);
+                            matrixintegratorlmwRT_velocityvelocity_MPI,
+                            matrixintegratorlmwRT_velocitypressure_MPI,
+                            matrixintegratorlmwRT_pressurevelocity_MPI);
 
 
 
