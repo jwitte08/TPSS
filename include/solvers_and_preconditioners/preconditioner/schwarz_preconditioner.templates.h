@@ -104,8 +104,8 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::compute_invers
 {
   const auto & partition_data      = subdomain_handler->get_partition_data();
   const auto   n_subdomain_batches = partition_data.n_subdomains();
-  subdomain_to_inverse             = std::make_shared<std::vector<MatrixType>>();
-  subdomain_to_inverse->resize(n_subdomain_batches);
+  subdomain_to_inverse             = std::make_shared<std::vector<MatrixType>>(n_subdomain_batches);
+
   // TODO this is a naive way to bind member functions
   const auto make_assembling = [this](const SubdomainHandler<dim, value_type> &     data,
                                       std::vector<MatrixType> &                     inverses,

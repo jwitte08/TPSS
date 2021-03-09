@@ -45,11 +45,11 @@ SubdomainHandler<dim, Number>::internal_reinit()
   std::vector<const dealii::DoFHandler<dim> *> unique_dof_handlers;
   {
     const auto check_dof_handler = [&](const auto dof_handler) {
-      // AssertThrow(mf_storage->is_supported(dof_handler->get_fe()),
-      //             ExcMessage("Finite element not supported."));
+      (void)dof_handler;
+      /// TODO check if finite element has appropriate tensor structure!
+      /// DoFLayout::RT is not supported by
+      /// mf_storage->is_supported(dof_handler->get_fe())
       AssertIndexRange(additional_data.level, dof_handler->get_triangulation().n_global_levels());
-      // Assert(dof_handler->get_fe().is_primitive(),
-      //        ExcMessage("Currently, only primitive finite elements are supported"));
       Assert(dof_handler->get_fe().n_components() == 1 ||
                dof_handler->get_fe().n_components() == dim,
              ExcMessage(
@@ -57,7 +57,6 @@ SubdomainHandler<dim, Number>::internal_reinit()
       Assert(dof_handler->get_fe().n_blocks() == 1 ||
                dof_handler->get_fe().n_blocks() == dof_handler->get_fe().n_components(),
              ExcMessage("Currently, nested block structures are not supported."));
-      // TODO !!! how to check for tensor product finite elements ?!
     };
     const auto   first_dofh_index = 0U;
     const auto & first_dofh       = mf_storage->get_dof_handler(first_dofh_index);
@@ -198,10 +197,6 @@ SubdomainHandler<dim, Number>::serloop_impl(
   const std::pair<unsigned int, unsigned int> &                              range) const
 {
   Assert(range.first <= range.second, ExcMessage("The range is invalid."));
-  const auto n_subdomain_batches = range.second - range.first;
-  if(n_subdomain_batches == 0)
-    return; // nothing to do
-
   patch_operation(*this, output, input, range);
 }
 
@@ -220,18 +215,24 @@ SubdomainHandler<dim, Number>::parloop_impl(
   const std::pair<unsigned int, unsigned int> &                              range) const
 {
   Assert(range.first <= range.second, ExcMessage("The range is invalid."));
-  const auto n_subdomain_batches = range.second - range.first;
-  if(n_subdomain_batches == 0)
-    return; // nothing to do
 
-  const auto grain_size = guess_grain_size(n_subdomain_batches);
+  const auto n_subdomain_batches = range.second - range.first;
+  const auto grain_size          = guess_grain_size(n_subdomain_batches);
 
   const auto & operation_on_subrange = [&](const unsigned int begin, const unsigned int end) {
     const std::pair<unsigned int, unsigned int> subrange{begin, end};
     patch_operation(*this, output, input, subrange);
   };
 
-  parallel::apply_to_subranges(range.first, range.second, operation_on_subrange, grain_size);
+  /// If there are no subdomain batches call the serial loop which ensures a
+  /// call of patch_operation. This might be required if global mpi
+  /// communication happens within patch_operation.
+  if(n_subdomain_batches == 0U)
+    serloop_impl(patch_operation, output, input, range);
+
+  /// If there are subdomain batches it is safe to use a thread-parallel loop.
+  else
+    parallel::apply_to_subranges(range.first, range.second, operation_on_subrange, grain_size);
 }
 
 
