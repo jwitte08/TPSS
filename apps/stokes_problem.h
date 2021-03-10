@@ -712,9 +712,9 @@ public:
   DoFHandler<dim>                           dof_handler_velocity;
   DoFHandler<dim>                           dof_handler_pressure;
 
-  AffineConstraints<double> zero_constraints;
+  // AffineConstraints<double> zero_constraints;
   AffineConstraints<double> zero_constraints_velocity;
-  AffineConstraints<double> mean_value_constraints;
+  // AffineConstraints<double> mean_value_constraints;
   AffineConstraints<double> constraints_velocity;
   AffineConstraints<double> constraints_pressure;
 
@@ -1204,7 +1204,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system_velocity(const bool do_cuth
 
   /// homogeneous boundary conditions for the solution update
   zero_constraints_velocity.clear();
-  zero_constraints.reinit(locally_relevant_dof_indices);
+  zero_constraints_velocity.reinit(locally_relevant_dof_indices);
   if(dof_layout_v == TPSS::DoFLayout::Q)
   {
     print_parameter("Interpolating zero boundary (velo)", "...");
@@ -1366,71 +1366,177 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
   IndexSet     locally_relevant_dof_indices;
   DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dof_indices);
 
-  std::vector<unsigned int>                  block_component{0U, 1U};
-  const std::vector<types::global_dof_index> dofs_per_block =
-    DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
-  const types::global_dof_index n_dofs_velocity = dofs_per_block[0];
-  const types::global_dof_index n_dofs_pressure = dofs_per_block[1];
+  // std::vector<unsigned int>                  block_component{0U, 1U};
+  // const std::vector<types::global_dof_index> dofs_per_block =
+  //   DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
+  // const types::global_dof_index n_dofs_velocity = dofs_per_block[0];
+  // const types::global_dof_index n_dofs_pressure = dofs_per_block[1];
 
-  setup_system_velocity(equation_data.use_cuthill_mckee);
+  std::vector<IndexSet> lodof_indices_foreach_block;
+  lodof_indices_foreach_block.reserve(2U);
+  // lodof_indices_foreach_block.emplace_back(locally_owned_dof_indices.get_view(0U,
+  // n_dofs_velocity)); lodof_indices_foreach_block.emplace_back(
+  //   locally_owned_dof_indices.get_view(n_dofs_velocity, n_dofs_velocity + n_dofs_pressure));
+  std::vector<IndexSet> lrdof_indices_foreach_block;
+  lrdof_indices_foreach_block.reserve(2U);
+  // lrdof_indices_foreach_block.emplace_back(
+  //   locally_relevant_dof_indices.get_view(0U, n_dofs_velocity));
+  // lrdof_indices_foreach_block.emplace_back(
+  //   locally_relevant_dof_indices.get_view(n_dofs_velocity, n_dofs_velocity + n_dofs_pressure));
 
-  setup_system_pressure(equation_data.use_cuthill_mckee);
+  // {
+  const auto & get_locally_relevant_dof_indices = [](const auto & dofh) {
+    IndexSet locally_relevant_dof_indices;
+    DoFTools::extract_locally_relevant_dofs(dofh, locally_relevant_dof_indices);
+    return locally_relevant_dof_indices;
+  };
+  //   (void)get_locally_relevant_dof_indices;
+  //   Assert(get_locally_relevant_dof_indices(dof_handler_velocity) ==
+  //            lrdof_indices_foreach_block.at(0),
+  //          ExcMessage("The dof partitioning is incompatible."));
+  //   Assert(get_locally_relevant_dof_indices(dof_handler_pressure) ==
+  //            lrdof_indices_foreach_block.at(1),
+  //          ExcMessage("The dof partitioning is incompatible."));
+  // }
 
-  /// No-slip boundary conditions (velocity)
-  zero_constraints.clear();
-  zero_constraints.reinit(locally_relevant_dof_indices);
-  if(dof_layout_v == TPSS::DoFLayout::Q)
+
+
+  // setup_system_velocity(equation_data.use_cuthill_mckee);
   {
-    print_parameter("Interpolating zero boundary", "...");
-    const FEValuesExtractors::Vector velocities(0);
-    for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
-      DoFTools::make_zero_boundary_constraints(dof_handler,
-                                               boundary_id,
-                                               zero_constraints,
-                                               fe->component_mask(velocities));
+    Assert(check_finite_element(),
+           ExcMessage("Does the choice of finite elements suit the dof_layout?"));
+
+    /// distribute dofs and initialize MGCollection
+    dof_handler_velocity.initialize(triangulation, get_finite_element_velocity());
+    AssertThrow(!equation_data.use_cuthill_mckee, ExcMessage("TODO MPI..."));
+    // if(do_cuthill_mckee)
+    // {
+    //   AssertThrow(false, ExcMessage("TODO MPI"));
+    //   DoFRenumbering::Cuthill_McKee(dof_handler_velocity);
+    // }
+
+    /// mpi-relevant dof indices
+    IndexSet & locally_owned_dof_indices =
+      lodof_indices_foreach_block.emplace_back(dof_handler_velocity.locally_owned_dofs());
+    IndexSet & locally_relevant_dof_indices = lrdof_indices_foreach_block.emplace_back(
+      get_locally_relevant_dof_indices(dof_handler_velocity));
+
+    /// homogeneous boundary conditions for the solution update
+    zero_constraints_velocity.clear();
+    zero_constraints_velocity.reinit(locally_relevant_dof_indices);
+    if(dof_layout_v == TPSS::DoFLayout::Q)
+    {
+      print_parameter("Interpolating zero boundary (velo)", "...");
+      for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+        DoFTools::make_zero_boundary_constraints(dof_handler_velocity,
+                                                 boundary_id,
+                                                 zero_constraints_velocity);
+    }
+    else if(dof_layout_v == TPSS::DoFLayout::RT)
+    {
+      print_parameter("Projecting div-conf. zero boundary (velo)", "...");
+      Functions::ZeroFunction<dim> zero_velocity(dim);
+      for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+        VectorToolsFix::project_boundary_values_div_conforming(
+          dof_handler_velocity, 0U, zero_velocity, boundary_id, zero_constraints_velocity, mapping);
+    }
+    zero_constraints_velocity.close();
+
+    /// inhomogeneous boundary conditions for the particular solution
+    constraints_velocity.clear();
+    constraints_velocity.reinit(locally_relevant_dof_indices);
+    if(dof_layout_v == TPSS::DoFLayout::Q)
+    {
+      print_parameter("Interpolating boundary (velo)", "...");
+      const auto             component_range = std::make_pair<unsigned int>(0, dim);
+      FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(),
+                                                          component_range);
+      std::map<types::boundary_id, const Function<dim, double> *> boundary_id_to_function;
+      for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+        boundary_id_to_function.emplace(boundary_id, &analytical_solution_velocity);
+      VectorTools::interpolate_boundary_values(dof_handler_velocity,
+                                               boundary_id_to_function,
+                                               constraints_velocity);
+    }
+    else if(dof_layout_v == TPSS::DoFLayout::RT)
+    {
+      print_parameter("Projecting div-conf. boundary (velo)", "...");
+      const auto             component_range = std::make_pair<unsigned int>(0, dim);
+      FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(),
+                                                          component_range);
+      for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+        VectorToolsFix::project_boundary_values_div_conforming(dof_handler_velocity,
+                                                               0U,
+                                                               analytical_solution_velocity,
+                                                               boundary_id,
+                                                               constraints_velocity,
+                                                               mapping);
+    }
+    constraints_velocity.close();
   }
-  else if(dof_layout_v == TPSS::DoFLayout::RT)
-  {
-    print_parameter("Projecting div-conf. zero boundary", "...");
-    Functions::ZeroFunction<dim> zero_velocity(dim);
-    for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
-      VectorToolsFix::project_boundary_values_div_conforming(
-        dof_handler, 0U, zero_velocity, boundary_id, zero_constraints, mapping);
-  }
-  zero_constraints.close();
 
-  {
-    mean_value_constraints.clear();
-    mean_value_constraints.reinit(locally_relevant_dof_indices);
 
-    /// Enforce zero mean-value for discrete pressure functions
+
+  // setup_system_pressure(equation_data.use_cuthill_mckee);
+  {
+    Assert(check_finite_element(),
+           ExcMessage("Does the choice of finite elements suit the dof_layout?"));
+
+    /// distributing (and reordering) dofs
+    dof_handler_pressure.initialize(triangulation, get_finite_element_pressure());
+    AssertThrow(!equation_data.use_cuthill_mckee, ExcMessage("TODO MPI..."));
+    // if(do_cuthill_mckee)
+    // {
+    //   const bool cuthill_mckee_is_compatible = dof_layout_v == dof_layout_p;
+    //   AssertThrow(
+    //     cuthill_mckee_is_compatible,
+    //     ExcMessage(
+    //       "In general, reordering velocity as well as pressure dofs by a Cuthill-McKee algorithm
+    //       does not provide the same order as a Cuthill-McKee reordering on the combined
+    //       velocity-pressure dofs. If the same dof layout is used for the velocity and pressure
+    //       the reorderings might coincide."));
+    //   DoFRenumbering::Cuthill_McKee(dof_handler_pressure);
+    // }
+
+    /// mpi-relevant dof indices
+    IndexSet & locally_owned_dof_indices =
+      lodof_indices_foreach_block.emplace_back(dof_handler_pressure.locally_owned_dofs());
+    IndexSet & locally_relevant_dof_indices = lrdof_indices_foreach_block.emplace_back(
+      get_locally_relevant_dof_indices(dof_handler_pressure));
+
+    constraints_pressure.clear();
+    constraints_pressure.reinit(locally_relevant_dof_indices);
+
+    /// mean-value constraints: Use the space of mean-value free L^2 functions as
+    /// pressure ansatz space. Therefore, compute the (unconstrained) pressure
+    /// mass matrix and apply the coefficient vector which interpolates the
+    /// constant-one-function. This leads to a weight for each degree of
+    /// freedom. If the sum of these weights is zero the discrete pressure
+    /// function is mean-value free.
     if(equation_data.force_mean_value_constraint)
     {
-      print_parameter("Computing mean-value constraints", "...");
-      const auto offset_pressure_dofs = n_dofs_velocity;
+      print_parameter("Computing mean-value constraints (press)", "...");
 
-      /// Set the first pressure dof to zero (parallel code) or fix the first
-      /// pressure dof to be computed from all remaining dofs such that the
-      /// mean-value is zero (serial code).
-      if(constraints_pressure.n_constraints() > 0U)
+      if(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1U)
       {
-        for(const auto line : constraints_pressure.get_lines())
-        {
-          /// NOTE AffineConstraint::shift() did not work due to issues with
-          /// locally relevant index sets.
-          const auto row = line.index + offset_pressure_dofs;
-          std::vector<std::pair<types::global_dof_index, double>> entries;
-          std::transform(line.entries.cbegin(),
-                         line.entries.cend(),
-                         std::back_inserter(entries),
-                         [&](auto entry) {
-                           entry.first += offset_pressure_dofs;
-                           return entry;
-                         });
-          mean_value_constraints.add_line(row);
-          mean_value_constraints.add_entries(row, entries);
-          mean_value_constraints.set_inhomogeneity(row, line.inhomogeneity);
-        }
+        /// If AffineConstraints is initialized only for all relevant indices not all
+        /// procs should have communication to the first dof. Thus, constraining all
+        /// dofs to fix the first dof does not apply in distributed codes.
+        AssertThrow(is_first_proc, ExcMessage("Supported only in serial runs."));
+
+        const auto &                  mass_foreach_dof   = compute_mass_foreach_pressure_dof();
+        const types::global_dof_index first_pressure_dof = 0U;
+        AssertThrow(mass_foreach_dof(0U) > 0., ExcMessage("First dof has no mass!"));
+        constraints_pressure.add_line(first_pressure_dof);
+        for(types::global_dof_index i = 1; i < mass_foreach_dof.size(); ++i)
+          constraints_pressure.add_entry(0U, i, -mass_foreach_dof(i) / mass_foreach_dof(0));
+      }
+
+      else
+      {
+        const types::global_dof_index first_pressure_dof = 0U;
+        if(locally_owned_dof_indices.is_element(first_pressure_dof))
+          constraints_pressure.add_line(first_pressure_dof);
       }
     }
 
@@ -1441,20 +1547,95 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
       constant_mode_pressure = std::move(make_constant_pressure_mode());
     }
 
-    Assert(mean_value_constraints.is_consistent_in_parallel(
-             Utilities::MPI::all_gather(MPI_COMM_WORLD, locally_owned_dof_indices),
-             [&]() {
-               IndexSet locally_active_dof_indices;
-               DoFTools::extract_locally_active_dofs(dof_handler, locally_active_dof_indices);
-               return locally_active_dof_indices;
-             }(),
-             MPI_COMM_WORLD),
-           ExcMessage("mean_value_constraints are not consistent in parallel."));
-
-    mean_value_constraints.close();
+    constraints_pressure.close();
   }
 
-  zero_constraints.merge(mean_value_constraints);
+  AssertDimension(lodof_indices_foreach_block.size(), 2U);
+  AssertDimension(lrdof_indices_foreach_block.size(), 2U);
+  const types::global_dof_index n_dofs_velocity = dof_handler_velocity.n_dofs();
+  const types::global_dof_index n_dofs_pressure = dof_handler_pressure.n_dofs();
+
+
+
+  // /// No-slip boundary conditions (velocity)
+  // zero_constraints.clear();
+  // zero_constraints.reinit(locally_relevant_dof_indices);
+  // if(dof_layout_v == TPSS::DoFLayout::Q)
+  // {
+  //   print_parameter("Interpolating zero boundary", "...");
+  //   const FEValuesExtractors::Vector velocities(0);
+  //   for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+  //     DoFTools::make_zero_boundary_constraints(dof_handler,
+  //                                              boundary_id,
+  //                                              zero_constraints,
+  //                                              fe->component_mask(velocities));
+  // }
+  // else if(dof_layout_v == TPSS::DoFLayout::RT)
+  // {
+  //   print_parameter("Projecting div-conf. zero boundary", "...");
+  //   Functions::ZeroFunction<dim> zero_velocity(dim);
+  //   for(const auto boundary_id : equation_data.dirichlet_boundary_ids_velocity)
+  //     VectorToolsFix::project_boundary_values_div_conforming(
+  //       dof_handler, 0U, zero_velocity, boundary_id, zero_constraints, mapping);
+  // }
+  // zero_constraints.close();
+
+  // {
+  //   mean_value_constraints.clear();
+  //   mean_value_constraints.reinit(locally_relevant_dof_indices);
+
+  //   /// Enforce zero mean-value for discrete pressure functions
+  //   if(equation_data.force_mean_value_constraint)
+  //   {
+  //     print_parameter("Computing mean-value constraints", "...");
+  //     const auto offset_pressure_dofs = n_dofs_velocity;
+
+  //     /// Set the first pressure dof to zero (parallel code) or fix the first
+  //     /// pressure dof to be computed from all remaining dofs such that the
+  //     /// mean-value is zero (serial code).
+  //     if(constraints_pressure.n_constraints() > 0U)
+  //     {
+  //       for(const auto line : constraints_pressure.get_lines())
+  //       {
+  //         /// NOTE AffineConstraint::shift() did not work due to issues with
+  //         /// locally relevant index sets.
+  //         const auto row = line.index + offset_pressure_dofs;
+  //         std::vector<std::pair<types::global_dof_index, double>> entries;
+  //         std::transform(line.entries.cbegin(),
+  //                        line.entries.cend(),
+  //                        std::back_inserter(entries),
+  //                        [&](auto entry) {
+  //                          entry.first += offset_pressure_dofs;
+  //                          return entry;
+  //                        });
+  //         mean_value_constraints.add_line(row);
+  //         mean_value_constraints.add_entries(row, entries);
+  //         mean_value_constraints.set_inhomogeneity(row, line.inhomogeneity);
+  //       }
+  //     }
+  //   }
+
+  //   /// Compute the constant pressure mode which is later used to filter
+  //   /// matrix-vector products with the system matrix.
+  //   else
+  //   {
+  //     constant_mode_pressure = std::move(make_constant_pressure_mode());
+  //   }
+
+  //   Assert(mean_value_constraints.is_consistent_in_parallel(
+  //            Utilities::MPI::all_gather(MPI_COMM_WORLD, locally_owned_dof_indices),
+  //            [&]() {
+  //              IndexSet locally_active_dof_indices;
+  //              DoFTools::extract_locally_active_dofs(dof_handler, locally_active_dof_indices);
+  //              return locally_active_dof_indices;
+  //            }(),
+  //            MPI_COMM_WORLD),
+  //          ExcMessage("mean_value_constraints are not consistent in parallel."));
+
+  //   mean_value_constraints.close();
+  // }
+
+  // zero_constraints.merge(mean_value_constraints);
 
   cell_integrals_mask.reinit(dim + 1, dim + 1);
   face_integrals_mask.reinit(dim + 1, dim + 1);
@@ -1471,31 +1652,6 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
       /// TODO if we do not assemble the pressure mass matrix, the pressure-pressure
       /// block should be ::none
     }
-
-  std::vector<IndexSet> lodof_indices_foreach_block;
-  lodof_indices_foreach_block.emplace_back(locally_owned_dof_indices.get_view(0U, n_dofs_velocity));
-  lodof_indices_foreach_block.emplace_back(
-    locally_owned_dof_indices.get_view(n_dofs_velocity, n_dofs_velocity + n_dofs_pressure));
-  std::vector<IndexSet> lrdof_indices_foreach_block;
-  lrdof_indices_foreach_block.emplace_back(
-    locally_relevant_dof_indices.get_view(0U, n_dofs_velocity));
-  lrdof_indices_foreach_block.emplace_back(
-    locally_relevant_dof_indices.get_view(n_dofs_velocity, n_dofs_velocity + n_dofs_pressure));
-
-  {
-    const auto & get_locally_relevant_dof_indices = [](const auto & dofh) {
-      IndexSet locally_relevant_dof_indices;
-      DoFTools::extract_locally_relevant_dofs(dofh, locally_relevant_dof_indices);
-      return locally_relevant_dof_indices;
-    };
-    (void)get_locally_relevant_dof_indices;
-    Assert(get_locally_relevant_dof_indices(dof_handler_velocity) ==
-             lrdof_indices_foreach_block.at(0),
-           ExcMessage("The dof partitioning is incompatible."));
-    Assert(get_locally_relevant_dof_indices(dof_handler_pressure) ==
-             lrdof_indices_foreach_block.at(1),
-           ExcMessage("The dof partitioning is incompatible."));
-  }
 
   TrilinosWrappers::BlockSparsityPattern dsp(2U, 2U);
   // TrilinosWrappers::BlockSparsityPattern dsp(lodof_indices_foreach_block,
@@ -1614,14 +1770,17 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     pressure_mass_matrix.reinit(dsp.block(1, 1));
   }
 
+  /// particular solution vector
   system_matrix.initialize_dof_vector(system_solution);
-  zero_constraints.set_zero(system_solution);                // zero out
-  constraints_velocity.distribute(system_solution.block(0)); // part. velocity solution!
+  constraints_velocity.distribute(system_solution.block(0));
+  constraints_pressure.set_zero(system_solution.block(1));
 
+  /// homogeneous solution vector
   system_matrix.initialize_dof_vector(system_delta_x);
-  zero_constraints.set_zero(system_delta_x);
-  zero_constraints_velocity.distribute(system_delta_x.block(0)); // hom. velocity solution
+  zero_constraints_velocity.distribute(system_delta_x.block(0));
+  constraints_pressure.set_zero(system_delta_x.block(1));
 
+  /// right-hand side vector
   system_matrix.initialize_dof_vector(system_rhs);
 
   print_parameter("Number of degrees of freedom (velocity):", n_dofs_velocity);
@@ -2034,8 +2193,8 @@ ModelProblem<dim, fe_degree_p, method>::make_multigrid_velocity_pressure()
   const unsigned int mg_level_max = max_level();
   const unsigned int mg_level_min = prms.coarse_level;
 
-  std::vector<unsigned int> component_mask(dim + 1, 0U);
-  component_mask[dim] = 1U; // pressure
+  // std::vector<unsigned int> component_mask(dim + 1, 0U);
+  // component_mask[dim] = 1U; // pressure
 
   // dof_handler.distribute_mg_dofs();
   // for(auto level = 0U; level <= max_level(); ++level)
@@ -2115,7 +2274,7 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
     /// Apply mean value constraints for the pressure component (Dirichlet
     /// conditions for the velocity component have already been applied to
     /// system_solution).
-    mean_value_constraints.distribute(system_delta_x);
+    constraints_pressure.distribute(system_delta_x.block(1));
   }
 
   /// Add the homogeneous solution to the particular solution.
