@@ -53,9 +53,9 @@ main(int argc, char * argv[])
       equation_data.local_kernel_size = 1U;
     AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
                 ExcMessage("Invalid."));
-    equation_data.force_mean_value_constraint = force_mean_value_constraint;
+    equation_data.do_mean_value_constraint = force_mean_value_constraint;
     if(options.prms.solver.variant == "direct")
-      equation_data.force_mean_value_constraint = true;
+      equation_data.do_mean_value_constraint = true;
 
     ModelProblem<dim, fe_degree_p, Method::TaylorHood> stokes_problem(options.prms, equation_data);
 

@@ -1483,8 +1483,7 @@ struct EquationData
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
     oss << Util::parameter_to_fstring("Assemble pressure mass matrix?:",
                                       assemble_pressure_mass_matrix);
-    oss << Util::parameter_to_fstring("Enforce the mean value constraint:",
-                                      force_mean_value_constraint);
+    oss << Util::parameter_to_fstring("Use mean value constraint:", do_mean_value_constraint);
     oss << Util::parameter_to_fstring("Use Cuthill-McKee:", use_cuthill_mckee);
     if(local_kernel_size != numbers::invalid_unsigned_int)
       oss << Util::parameter_to_fstring("Kernel size per local solver:", local_kernel_size);
@@ -1497,7 +1496,7 @@ struct EquationData
   std::set<types::boundary_id> dirichlet_boundary_ids_pressure = {};
   double                       ip_factor                       = 1.;
   bool                         assemble_pressure_mass_matrix   = false;
-  bool                         force_mean_value_constraint     = false;
+  bool                         do_mean_value_constraint        = false;
   bool                         use_cuthill_mckee               = false;
   unsigned int                 local_kernel_size               = numbers::invalid_unsigned_int;
   double                       local_kernel_threshold          = 0.;

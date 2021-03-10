@@ -1290,7 +1290,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     /// constant-one-function. This leads to a weight for each degree of
     /// freedom. If the sum of these weights is zero the discrete pressure
     /// function is mean-value free.
-    if(equation_data.force_mean_value_constraint)
+    if(equation_data.do_mean_value_constraint)
     {
       print_parameter("Computing mean-value constraints (press)", "...");
 
@@ -1933,7 +1933,7 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
     iterative_solver.set_data(additional_data);
   }
 
-  if(!equation_data.force_mean_value_constraint)
+  if(!equation_data.do_mean_value_constraint)
   {
     Assert(constant_mode_pressure.get_partitioner()->is_compatible(
              *(system_delta_x.block(1).get_partitioner())),

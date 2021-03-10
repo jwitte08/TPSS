@@ -100,7 +100,8 @@ struct StokesFlow
       prms.solver.variant == "CG_GMG" || prms.solver.variant == "GMRES_GMG";
     if(use_block_system_gmg)
     {
-      prms.multigrid.coarse_grid.kernel_size = 1U;
+      prms.multigrid.coarse_grid.kernel_size   = 1U;
+      prms.multigrid.coarse_grid.threshold_svd = 1.e-10;
 
       /// The iterative solver settings do not result in convergence for all
       /// reference solutions and refinements
@@ -123,8 +124,9 @@ struct StokesFlow
     prms.multigrid.pre_smoother.schwarz.damping_factor       = damping_factor;
 
     //:: post_smoother
-    prms.multigrid.post_smoother                           = prms.multigrid.pre_smoother;
-    prms.multigrid.post_smoother.schwarz.reverse_smoothing = true;
+    prms.multigrid.post_smoother = prms.multigrid.pre_smoother;
+    if(prms.solver.variant == "CG_GMG")
+      prms.multigrid.post_smoother.schwarz.reverse_smoothing = true;
   }
 
   RT::Parameter      prms;
