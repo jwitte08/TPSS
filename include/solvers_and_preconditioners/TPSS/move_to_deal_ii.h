@@ -416,10 +416,12 @@ project_boundary_values_div_conforming(const DoFHandler<dim> &     dof_handler,
   {
     case 2:
     {
-      const auto locally_owned_cell_iterators =
-        filter_iterators(dof_handler.active_cell_iterators(), IteratorFilters::LocallyOwnedCell());
+      const auto locally_owned_or_ghost_cell_iterators =
+        filter_iterators(dof_handler.active_cell_iterators(), [&](const auto & cell) {
+          return cell->is_locally_owned() || cell->is_ghost();
+        });
 
-      for(const auto & cell : locally_owned_cell_iterators)
+      for(const auto & cell : locally_owned_or_ghost_cell_iterators)
         if(cell->at_boundary())
           for(unsigned int face_no = 0; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
             if(cell->face(face_no)->boundary_id() == boundary_component)
