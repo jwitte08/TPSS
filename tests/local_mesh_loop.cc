@@ -7,10 +7,13 @@
 
 #include <gtest/gtest.h>
 
-#include "solvers_and_preconditioners/TPSS/matrix_helper.h"
+
+#include "solvers_and_preconditioners/TPSS/matrix_utilities.h"
+
 
 #include "common_integrator.h"
 #include "poisson_problem.h"
+
 
 #include "test_utilities.h"
 

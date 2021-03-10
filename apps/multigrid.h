@@ -26,6 +26,7 @@
 
 
 #include "solvers_and_preconditioners/TPSS/block_matrix.h"
+#include "solvers_and_preconditioners/TPSS/matrix_utilities.h"
 #include "solvers_and_preconditioners/TPSS/schwarz_smoother_data.h"
 #include "solvers_and_preconditioners/TPSS/tensors.h"
 #include "solvers_and_preconditioners/smoother/schwarz_smoother.h"

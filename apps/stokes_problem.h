@@ -89,6 +89,7 @@
 #include <iostream>
 
 
+#include "solvers_and_preconditioners/TPSS/matrix_utilities.h"
 #include "solvers_and_preconditioners/TPSS/move_to_deal_ii.h"
 
 
@@ -1946,6 +1947,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
   system_matrix.compress(VectorOperation::add);
   system_rhs.compress(VectorOperation::add);
+
+  /// DEBUG
+  // Util::gather_distributed_blockmatrix(system_matrix);
 }
 
 
@@ -3862,6 +3866,9 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     //: assemble the velocity system A_l on current level l.
     assemble_multigrid(level, level_constraints_velocity, level_constraints_pressure);
 
+    /// DEBUG
+    // Util::gather_distributed_blockmatrix(mg_matrices[level], level);
+
     if(use_coarse_preconditioner && level == mg_level_min)
     {
       coarse_mass_matrix_pressure.reinit(dsp.block(1, 1));
@@ -4005,8 +4012,6 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
       std::make_shared<PreconditionMG<dim, vector_type, mg_transfer_type>>(dofhandlers,
                                                                            *multigrid,
                                                                            *mg_transfer);
-  // preconditioner_mg = std::make_shared<PreconditionMG<dim, vector_type, mg_transfer_type>>(
-  //  *dof_handler, *multigrid, *mg_transfer);
   return *preconditioner_mg;
 }
 

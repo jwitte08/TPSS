@@ -17,6 +17,7 @@
 
 
 #include "solvers_and_preconditioners/TPSS/fd_evaluation.h"
+#include "solvers_and_preconditioners/TPSS/matrix_utilities.h"
 #include "solvers_and_preconditioners/TPSS/tensor_product_matrix.h"
 
 
