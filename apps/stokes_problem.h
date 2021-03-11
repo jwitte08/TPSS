@@ -666,6 +666,15 @@ public:
   void
   compute_discretization_errors();
 
+  double
+  compute_L2_error_velocity() const;
+
+  double
+  compute_L2_error_pressure() const;
+
+  double
+  compute_H1semi_error_velocity() const;
+
   void
   output_results(const unsigned int refinement_cycle) const;
 
@@ -745,15 +754,6 @@ private:
   template<typename PreconditionerType>
   void
   iterative_solve_impl(const PreconditionerType & preconditioner, const std::string solver_variant);
-
-  double
-  compute_L2_error_velocity() const;
-
-  double
-  compute_L2_error_pressure() const;
-
-  double
-  compute_H1semi_error_velocity() const;
 
   /**
    * Depending on the template parameter @p method a default finite element

@@ -312,7 +312,7 @@ private:
   double
   compute_stream_function_error();
 
-  std::shared_ptr<Vector<double>>
+  double
   compute_L2_error_pressure() const;
 };
 
@@ -2121,130 +2121,113 @@ template<int dim, int fe_degree>
 double
 ModelProblem<dim, fe_degree>::compute_stream_function_error()
 {
-  return 0.;
-  AssertThrow(false, ExcMessage("TODO MPI..."));
-  // AssertThrow(analytical_velocity, ExcMessage("analytical_velocity isn't initialized."));
-  // AssertDimension(analytical_velocity->n_components, dim);
+  AssertThrow(analytical_velocity, ExcMessage("analytical_velocity isn't initialized."));
+  AssertDimension(analytical_velocity->n_components, dim);
 
-  // using ::MW::ScratchData;
+  using ::MW::ScratchData;
 
-  // using ::MW::CopyData;
+  using ::MW::CopyData;
 
-  // using ::MW::compute_vcurl;
+  using ::MW::compute_vcurl;
 
-  // AffineConstraints empty_constraints;
-  // empty_constraints.close();
+  AffineConstraints empty_constraints;
+  empty_constraints.close();
 
-  // Vector<double> norm_per_cell(triangulation->n_active_cells());
+  Vector<double> error_per_cell(triangulation->n_active_cells());
 
-  // auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData &
-  // copy_data) {
-  //   auto & phi = scratch_data.fe_values;
-  //   phi.reinit(cell);
+  auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
+    auto & phi = scratch_data.fe_values;
+    phi.reinit(cell);
 
-  //   const unsigned int n_dofs_per_cell = phi.get_fe().dofs_per_cell;
-  //   const unsigned int n_q_points      = phi.n_quadrature_points;
-  //   const auto &       q_points        = phi.get_quadrature_points();
+    const unsigned int n_dofs_per_cell = phi.get_fe().dofs_per_cell;
+    const unsigned int n_q_points      = phi.n_quadrature_points;
+    const auto &       q_points        = phi.get_quadrature_points();
 
-  //   std::vector<Tensor<1, dim>> velocity_values;
-  //   std::transform(q_points.cbegin(),
-  //                  q_points.cend(),
-  //                  std::back_inserter(velocity_values),
-  //                  [this](const auto & x_q) {
-  //                    Tensor<1, dim> u_q;
-  //                    for(auto c = 0U; c < dim; ++c)
-  //                      u_q[c] = analytical_velocity->value(x_q, c);
-  //                    return u_q;
-  //                  });
+    std::vector<Tensor<1, dim>> velocity_values;
+    std::transform(q_points.cbegin(),
+                   q_points.cend(),
+                   std::back_inserter(velocity_values),
+                   [this](const auto & x_q) {
+                     Tensor<1, dim> u_q;
+                     for(auto c = 0U; c < dim; ++c)
+                       u_q[c] = analytical_velocity->value(x_q, c);
+                     return u_q;
+                   });
 
-  //   std::vector<types::global_dof_index> local_dof_indices(n_dofs_per_cell);
-  //   cell->get_active_or_mg_dof_indices(local_dof_indices);
-  //   std::vector<double> stream_function_dof_values;
-  //   std::transform(local_dof_indices.cbegin(),
-  //                  local_dof_indices.cend(),
-  //                  std::back_inserter(stream_function_dof_values),
-  //                  [this](const auto & i) { return system_u(i); });
+    std::vector<types::global_dof_index> local_dof_indices(n_dofs_per_cell);
+    cell->get_active_or_mg_dof_indices(local_dof_indices);
+    std::vector<double> stream_function_dof_values;
+    std::transform(local_dof_indices.cbegin(),
+                   local_dof_indices.cend(),
+                   std::back_inserter(stream_function_dof_values),
+                   [this](const auto & i) { return system_u(i); });
 
-  //   double local_error = 0.;
-  //   for(unsigned int q = 0; q < n_q_points; ++q)
-  //   {
-  //     Tensor<1, dim> uh_q;
-  //     for(unsigned int i = 0; i < n_dofs_per_cell; ++i)
-  //     {
-  //       const auto & alpha_i    = stream_function_dof_values[i];
-  //       const auto & curl_phi_i = compute_vcurl(phi, i, q);
-  //       uh_q += alpha_i * curl_phi_i;
-  //     }
+    double local_error = 0.;
+    for(unsigned int q = 0; q < n_q_points; ++q)
+    {
+      Tensor<1, dim> uh_q;
+      for(unsigned int i = 0; i < n_dofs_per_cell; ++i)
+      {
+        const auto & alpha_i    = stream_function_dof_values[i];
+        const auto & curl_phi_i = compute_vcurl(phi, i, q);
+        uh_q += alpha_i * curl_phi_i;
+      }
 
-  //     const auto & u_q = velocity_values[q];
-  //     local_error += (uh_q - u_q) * (uh_q - u_q) * phi.JxW(q);
-  //   }
+      const auto & u_q = velocity_values[q];
+      local_error += (uh_q - u_q) * (uh_q - u_q) * phi.JxW(q);
+    }
 
-  //   AssertDimension(copy_data.cell_rhs.size(), 1U);
-  //   AssertDimension(copy_data.local_dof_indices.size(), 1U);
-  //   AssertIndexRange(cell->index(), norm_per_cell.size());
+    AssertDimension(copy_data.cell_rhs.size(), 1U);
+    AssertDimension(copy_data.local_dof_indices.size(), 1U);
+    AssertIndexRange(cell->index(), error_per_cell.size());
 
-  //   copy_data.local_dof_indices[0] = cell->index();
-  //   copy_data.cell_rhs(0)          = std::sqrt(local_error);
-  // };
+    copy_data.local_dof_indices[0] = cell->index();
+    copy_data.cell_rhs(0)          = std::sqrt(local_error);
+  };
 
-  // const auto copier = [&](const CopyData & copy_data) {
-  //   /// We first store cell-wise errors to avoid data races in the mesh_loop()
-  //   /// call and then accumulate the global error, instead of directly copying
-  //   /// all local errors to one global error field.
-  //   AssertDimension(copy_data.cell_rhs.size(), 1U);
-  //   AssertDimension(copy_data.local_dof_indices.size(), 1U);
-  //   const auto cell_index     = copy_data.local_dof_indices[0];
-  //   norm_per_cell(cell_index) = copy_data.cell_rhs(0);
-  // };
+  const auto copier = [&](const CopyData & copy_data) {
+    /// We first store cell-wise errors to avoid data races in the mesh_loop()
+    /// call and then accumulate the global error, instead of directly copying
+    /// all local errors to one global error field.
+    AssertDimension(copy_data.cell_rhs.size(), 1U);
+    AssertDimension(copy_data.local_dof_indices.size(), 1U);
+    const auto cell_index      = copy_data.local_dof_indices[0];
+    error_per_cell(cell_index) = copy_data.cell_rhs(0);
+  };
 
-  // const unsigned int n_gauss_points = dof_handler.get_fe().degree + 2;
-  // const UpdateFlags  update_flags =
-  //   update_values | update_gradients | update_quadrature_points | update_JxW_values;
-  // const UpdateFlags interface_update_flags  = update_default;
-  // const auto        n_error_values_per_cell = 1U;
+  const unsigned int n_gauss_points = dof_handler.get_fe().degree + 2;
+  const UpdateFlags  update_flags =
+    update_values | update_gradients | update_quadrature_points | update_JxW_values;
+  const UpdateFlags interface_update_flags  = update_default;
+  const auto        n_error_values_per_cell = 1U;
 
-  // ScratchData<dim> scratch_data(
-  //   mapping, dof_handler.get_fe(), n_gauss_points, update_flags, interface_update_flags);
+  ScratchData<dim> scratch_data(
+    mapping, dof_handler.get_fe(), n_gauss_points, update_flags, interface_update_flags);
 
-  // CopyData copy_data(n_error_values_per_cell);
+  CopyData copy_data(n_error_values_per_cell);
 
-  // MeshWorker::mesh_loop(dof_handler.begin_active(),
-  //                       dof_handler.end(),
-  //                       cell_worker,
-  //                       copier,
-  //                       scratch_data,
-  //                       copy_data,
-  //                       MeshWorker::assemble_own_cells);
+  MeshWorker::mesh_loop(dof_handler.begin_active(),
+                        dof_handler.end(),
+                        cell_worker,
+                        copier,
+                        scratch_data,
+                        copy_data,
+                        MeshWorker::assemble_own_cells);
 
-  // return VectorTools::compute_global_error(*triangulation, norm_per_cell, VectorTools::L2_norm);
+  /// in case of a distributed triangulation a MPI reduction is used internally
+  const double accumulated_error =
+    VectorTools::compute_global_error(*triangulation, error_per_cell, VectorTools::L2_norm);
+  return accumulated_error;
 }
 
 
 
 template<int dim, int fe_degree>
-std::shared_ptr<Vector<double>>
+double
 ModelProblem<dim, fe_degree>::compute_L2_error_pressure() const
 {
-  return std::make_shared<Vector<double>>(triangulation->n_active_cells());
-  AssertThrow(false, ExcMessage("TODO MPI..."));
-  // AssertThrow(stokes_problem, ExcMessage("stokes_problem is not initialized"));
-
-  // const auto component_range_pressure = std::make_pair<unsigned int>(dim, dim + 1);
-  // Stokes::FunctionExtractor<dim> analytical_solution_pressure(
-  //   stokes_problem->analytical_solution.get(), component_range_pressure);
-  // const auto & dof_handler_p     = stokes_problem->dof_handler_pressure;
-  // const auto & discrete_pressure = stokes_problem->system_solution.block(1);
-
-  // const auto difference_per_cell =
-  // std::make_shared<Vector<double>>(triangulation->n_active_cells());
-  // VectorTools::integrate_difference(dof_handler_p,
-  //                                   discrete_pressure,
-  //                                   analytical_solution_pressure,
-  //                                   *difference_per_cell,
-  //                                   QGauss<dim>(stokes_problem->n_q_points_1d + 2),
-  //                                   VectorTools::L2_norm);
-  // return difference_per_cell;
+  Assert(stokes_problem, ExcMessage("Not initialized."));
+  return stokes_problem->compute_L2_error_pressure();
 }
 
 
@@ -2257,7 +2240,6 @@ ModelProblem<dim, fe_degree>::compute_energy_error() const
 
   using ::MW::Cell::CopyData;
 
-  /// TODO !!! parallel vector...
   Vector<double> error_per_cell(triangulation->n_active_cells());
 
   auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
@@ -2431,7 +2413,7 @@ ModelProblem<dim, fe_degree>::compute_discretization_errors()
   {
     /// Velocity - L2
     {
-      AssertThrow(stokes_problem, ExcMessage("stokes_problem isnt initialized"));
+      Assert(stokes_problem, ExcMessage("stokes_problem isnt initialized"));
       const double l2_velocity_error = compute_stream_function_error();
       print_parameter("L2 velocity error (stream function):", l2_velocity_error);
       stokes_problem->pp_data.L2_error.push_back(l2_velocity_error);
@@ -2439,9 +2421,7 @@ ModelProblem<dim, fe_degree>::compute_discretization_errors()
 
     /// Pressure - L2
     {
-      const auto   error_per_cell = compute_L2_error_pressure();
-      const double l2_pressure_error =
-        VectorTools::compute_global_error(*triangulation, *error_per_cell, VectorTools::L2_norm);
+      const auto l2_pressure_error = compute_L2_error_pressure();
       print_parameter("L2 pressure error (stream function):", l2_pressure_error);
       stokes_problem->pp_data_pressure.L2_error.push_back(l2_pressure_error);
     }
