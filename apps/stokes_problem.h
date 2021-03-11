@@ -698,11 +698,11 @@ public:
   mutable PostProcessData pp_data;
   mutable PostProcessData pp_data_pressure;
 
-  parallel::distributed::Triangulation<dim> triangulation;
-  MappingQ<dim>                             mapping;
-  std::shared_ptr<FiniteElement<dim>>       fe;
-  DoFHandler<dim>                           dof_handler_velocity;
-  DoFHandler<dim>                           dof_handler_pressure;
+  std::shared_ptr<parallel::distributed::Triangulation<dim>> triangulation;
+  MappingQ<dim>                                              mapping;
+  std::shared_ptr<FiniteElement<dim>>                        fe;
+  DoFHandler<dim>                                            dof_handler_velocity;
+  DoFHandler<dim>                                            dof_handler_pressure;
 
   AffineConstraints<double> zero_constraints_velocity;
   AffineConstraints<double> constraints_velocity;
@@ -876,9 +876,10 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
     }()),
     n_colors_system(0U),
     n_mg_levels(0U),
-    triangulation(MPI_COMM_WORLD,
-                  Triangulation<dim>::limit_level_difference_at_vertices,
-                  parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy),
+    triangulation(std::make_shared<parallel::distributed::Triangulation<dim>>(
+      MPI_COMM_WORLD,
+      Triangulation<dim>::limit_level_difference_at_vertices,
+      parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy)),
     mapping(1),
     /// finite element for the velocity-pressure system
     fe(make_finite_element()),
@@ -913,7 +914,7 @@ template<int dim, int fe_degree_p, Method method>
 unsigned int
 ModelProblem<dim, fe_degree_p, method>::max_level() const
 {
-  return triangulation.n_global_levels() - 1;
+  return triangulation->n_global_levels() - 1;
 }
 
 
@@ -1046,9 +1047,9 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::make_grid_impl(const MeshParameter & mesh_prms)
 {
-  triangulation.clear();
-  *pcout << create_mesh(triangulation, mesh_prms) << std::endl;
-  pp_data.n_cells_global.push_back(triangulation.n_global_active_cells());
+  triangulation->clear();
+  *pcout << create_mesh(*triangulation, mesh_prms) << std::endl;
+  pp_data.n_cells_global.push_back(triangulation->n_global_active_cells());
   pp_data.n_dimensions = dim;
 }
 
@@ -1192,7 +1193,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   //: set up velocity system
   {
-    dof_handler_velocity.initialize(triangulation, get_finite_element_velocity());
+    dof_handler_velocity.initialize(*triangulation, get_finite_element_velocity());
     AssertThrow(!equation_data.use_cuthill_mckee, ExcMessage("TODO MPI..."));
     // if(do_cuthill_mckee)
     // {
@@ -1261,7 +1262,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   //: set up pressure system
   {
-    dof_handler_pressure.initialize(triangulation, get_finite_element_pressure());
+    dof_handler_pressure.initialize(*triangulation, get_finite_element_pressure());
     AssertThrow(!equation_data.use_cuthill_mckee, ExcMessage("TODO MPI..."));
     // if(do_cuthill_mckee)
     // {
@@ -2110,7 +2111,7 @@ ModelProblem<dim, fe_degree_p, method>::compute_L2_error_velocity() const
 {
   const auto             component_range = std::make_pair<unsigned int>(0, dim);
   FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
-  Vector<double>         difference_per_cell(triangulation.n_active_cells());
+  Vector<double>         difference_per_cell(triangulation->n_active_cells());
   VectorTools::integrate_difference(dof_handler_velocity,
                                     system_solution.block(0),
                                     analytical_solution_velocity,
@@ -2119,7 +2120,7 @@ ModelProblem<dim, fe_degree_p, method>::compute_L2_error_velocity() const
                                     VectorTools::L2_norm);
   /// in case of a distributed triangulation a MPI reduction is used internally
   const double error =
-    VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::L2_norm);
+    VectorTools::compute_global_error(*triangulation, difference_per_cell, VectorTools::L2_norm);
   return error;
 }
 
@@ -2131,7 +2132,7 @@ ModelProblem<dim, fe_degree_p, method>::compute_L2_error_pressure() const
 {
   const auto             component_range = std::make_pair<unsigned int>(dim, dim + 1);
   FunctionExtractor<dim> analytical_solution_pressure(analytical_solution.get(), component_range);
-  Vector<double>         difference_per_cell(triangulation.n_active_cells());
+  Vector<double>         difference_per_cell(triangulation->n_active_cells());
   VectorTools::integrate_difference(dof_handler_pressure,
                                     system_solution.block(1U),
                                     analytical_solution_pressure,
@@ -2140,7 +2141,7 @@ ModelProblem<dim, fe_degree_p, method>::compute_L2_error_pressure() const
                                     VectorTools::L2_norm);
   /// in case of a distributed triangulation a MPI reduction is used internally
   const double error =
-    VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::L2_norm);
+    VectorTools::compute_global_error(*triangulation, difference_per_cell, VectorTools::L2_norm);
   return error;
 }
 
@@ -2152,7 +2153,7 @@ ModelProblem<dim, fe_degree_p, method>::compute_H1semi_error_velocity() const
 {
   const auto             component_range = std::make_pair<unsigned int>(0, dim);
   FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
-  Vector<double>         difference_per_cell(triangulation.n_active_cells());
+  Vector<double>         difference_per_cell(triangulation->n_active_cells());
   VectorTools::integrate_difference(dof_handler_velocity,
                                     system_solution.block(0U),
                                     analytical_solution_velocity,
@@ -2161,7 +2162,7 @@ ModelProblem<dim, fe_degree_p, method>::compute_H1semi_error_velocity() const
                                     VectorTools::H1_norm);
   /// in case of a distributed triangulation a MPI reduction is used internally
   const double error =
-    VectorTools::compute_global_error(triangulation, difference_per_cell, VectorTools::H1_norm);
+    VectorTools::compute_global_error(*triangulation, difference_per_cell, VectorTools::H1_norm);
   return error;
 }
 
@@ -2248,10 +2249,10 @@ ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refine
   }
 
   /// mpi partitioning of locally owned cells
-  Vector<float> mpi_rank_foreach_cell(triangulation.n_active_cells());
+  Vector<float> mpi_rank_foreach_cell(triangulation->n_active_cells());
   {
     for(unsigned int i = 0; i < mpi_rank_foreach_cell.size(); ++i)
-      mpi_rank_foreach_cell(i) = triangulation.locally_owned_subdomain();
+      mpi_rank_foreach_cell(i) = triangulation->locally_owned_subdomain();
     data_out.add_data_vector(mpi_rank_foreach_cell, "mpi_ranks");
   }
 
@@ -3268,7 +3269,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     const auto &     triangulation = dof_handler_pressure->get_triangulation();
     auto             cell_worker =
       [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-        LevelCellIterator cell_ansatz(&triangulation,
+        LevelCellIterator cell_ansatz(&dof_handler_pressure->get_triangulation(),
                                       cell->level(),
                                       cell->index(),
                                       dof_handler_pressure);

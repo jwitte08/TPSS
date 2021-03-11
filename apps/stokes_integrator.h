@@ -446,8 +446,6 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker_stream(const IteratorType & cel
 
   cell->get_active_or_mg_dof_indices(cell_data.dof_indices);
 
-  AssertDimension(cell_data.dof_indices.size(), cell_data.dof_indices_column.size());
-
   cell_worker_impl(phi, phi, cell_data);
 
   /// Subtract the particular solution @p discrete_solution from the right hand
@@ -493,6 +491,7 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker(const IteratorType &  
   std::vector<types::global_dof_index> local_dof_indices_pressure(cell_data.dof_indices.size() + 1);
   cell_pressure->get_active_or_mg_dof_indices(local_dof_indices_pressure);
   AssertDimension(local_dof_indices_pressure.size(), cell_data.dof_indices.size() + 1);
+  /// skipping the first pressure dof
   std::copy(local_dof_indices_pressure.cbegin() + 1,
             local_dof_indices_pressure.cend(),
             cell_data.dof_indices.begin());
@@ -513,8 +512,10 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker(const IteratorType &  
   cell_data.rhs -= Ax;                    // f - Ax
 
   cell_data.dof_indices_column.resize(2U);
+  /// book-keeping index of first pressure dof
   cell_data.dof_indices_column.front() = local_dof_indices_pressure.front();
-  cell_data.dof_indices_column.back()  = interface_handler->get_cell_index(cell->id());
+  /// book-keeping custom cell index
+  cell_data.dof_indices_column.back() = interface_handler->get_cell_index(cell->id());
 }
 
 
@@ -674,8 +675,8 @@ MatrixIntegrator<dim, is_multigrid>::face_worker_stream(const IteratorType & cel
   const unsigned int   n_interface_dofs = phi.n_current_interface_dofs();
   CopyData::FaceData & face_data        = copy_data.face_data.emplace_back(n_interface_dofs);
 
-  face_data.dof_indices        = phi.get_interface_dof_indices();
-  face_data.dof_indices_column = phi.get_interface_dof_indices();
+  face_data.dof_indices = phi.get_interface_dof_indices();
+  // face_data.dof_indices_column = face_data.dof_indices;
 
   // copy_data_face.cell_matrix.reinit(n_interface_dofs, n_interface_dofs);
 
@@ -864,7 +865,7 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential(
     joint_testfunc_indices.push_back({numbers::invalid_unsigned_int, ri});
   phi_test.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no, joint_testfunc_indices);
 
-  /// Each test function is 1-to-1 associated to a pressure dof except the
+  /// Each test function has 1-to-1 relation with a pressure dof except the
   /// constant pressure mode.
   const auto                           n_dofs_per_cell_p = cell_pressure->get_fe().dofs_per_cell;
   std::vector<types::global_dof_index> dof_indices_on_lcell_pressure(n_dofs_per_cell_p);
@@ -880,7 +881,7 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential(
   phi_ansatz.reinit(cell_stream, face_no, subface_no, ncell_stream, nface_no, nsubface_no);
 
   CopyData::FaceData & face_data =
-    copy_data.face_data.emplace_back(phi_test.n_dofs_per_cell,
+    copy_data.face_data.emplace_back(phi_test.n_current_interface_dofs(), /// ???
                                      phi_ansatz.n_current_interface_dofs());
 
   face_data.dof_indices = std::move(get_interface_dof_indices(joint_testfunc_indices,
@@ -889,9 +890,8 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential(
 
   face_data.dof_indices_column = std::move(phi_ansatz.get_interface_dof_indices());
 
-  // copy_data_face.cell_matrix.reinit(copy_data_face.joint_dof_indices_test.size(),
-  //                                   copy_data_face.joint_dof_indices_ansatz.size());
-  // copy_data_face.cell_rhs_test.reinit(copy_data_face.joint_dof_indices_test.size());
+  AssertDimension(face_data.matrix.m(), face_data.dof_indices.size());
+  AssertDimension(face_data.matrix.n(), face_data.dof_indices_column.size());
 
   const auto   h  = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
   const auto   nh = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nface_no]);

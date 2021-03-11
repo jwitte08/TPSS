@@ -46,6 +46,9 @@ compute_fractional_steps(const ReductionControl & solver_control)
   const int    n          = solver_control.last_step(); // number of iterations
   const double reduction  = solver_control.reduction(); // relative tolerance
 
+  if(n <= 1)
+    return std::make_pair(static_cast<double>(n), 0.);
+
   // *** average reduction: r_n = rho^n * r_0
   const double rho = std::pow(residual_n / residual_0, static_cast<double>(1. / n));
 
@@ -65,8 +68,8 @@ compute_fractional_steps(const ReductionControl & solver_control)
   /// if the reduction of the last step n is above average it might happen that
   /// n_frac is smaller than (n-1). the subsequent assert should warn us if
   /// n_frac is even smaller than (n-2).
-  if(n_frac < 50.)
-    AssertThrow((double)(n - 2) <= n_frac, ExcLowerRangeType(n_frac, (double)(n - 2)));
+  // if(n_frac < 50.)
+  //   AssertThrow((double)(n - 2) <= n_frac, ExcLowerRangeType(n_frac, (double)(n - 2)));
 
   return std::make_pair(n_frac, rho);
 }
@@ -279,8 +282,9 @@ public:
     const auto n_q_points = input_data.solution_values.size();
     for(auto q = 0U; q < n_q_points; ++q)
     {
-      AssertDimension(input_data.solution_values.size(), 1U);
-      AssertDimension(input_data.solution_values.size(), computed_quantities[q].size());
+      // AssertDimension(input_data.solution_values.size(), 1U);
+      // AssertDimension(input_data.solution_values.size(), computed_quantities[q].size());
+      AssertDimension(1U, computed_quantities[q].size());
       computed_quantities[q] = input_data.solution_values[q];
     }
   }
