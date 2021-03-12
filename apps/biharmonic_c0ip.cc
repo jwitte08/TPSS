@@ -268,8 +268,9 @@ main(int argc, char * argv[])
     std::fstream fout;
     const auto   filename = get_filename(prms, equation_data);
     fout.open(filename + ".log", std::ios_base::out);
-    auto pcout               = std::make_shared<ConditionalOStream>(fout, is_first_proc);
-    biharmonic_problem.pcout = pcout;
+    auto pcout = std::make_shared<ConditionalOStream>(std::cout /*fout*/, is_first_proc); // !!!
+    biharmonic_problem.pcout                 = pcout;
+    biharmonic_problem.stokes_problem->pcout = pcout;
 
     if(use_hierarchical_elements)
       biharmonic_problem.finite_element = std::make_shared<FE_Q_Hierarchical<dim>>(fe_degree);

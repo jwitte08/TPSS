@@ -130,8 +130,8 @@ using Biharmonic::Pressure::InterfaceHandler;
 
 template<int dim, typename CellIteratorType>
 std::pair<std::vector<unsigned int>, std::vector<types::global_dof_index>>
-get_interface_testfunc_indices_impl(const InterfaceHandler<dim> & interface_handler,
-                                    const CellIteratorType &      cell)
+get_active_interface_indices_impl(const InterfaceHandler<dim> & interface_handler,
+                                  const CellIteratorType &      cell)
 {
   std::pair<std::vector<unsigned int>, std::vector<types::global_dof_index>> indices;
   auto & [testfunc_indices, global_dof_indices_on_cell] = indices;
@@ -369,7 +369,7 @@ struct MatrixIntegrator
    * interface indices associated to the current cell @p cell.
    */
   std::pair<std::vector<unsigned int>, std::vector<types::global_dof_index>>
-  get_interface_testfunc_indices(const IteratorType & cell) const;
+  get_active_interface_indices(const IteratorType & cell) const;
 
   /**
    * From the global dof indices and its associated test function indices on the
@@ -377,7 +377,7 @@ struct MatrixIntegrator
    * to local pairs of cell dof indices on the left and right cell is computed.
    */
   std::pair<std::vector<std::array<unsigned int, 2>>, std::vector<types::global_dof_index>>
-  get_joint_testfunc_and_dof_indices(
+  make_joint_interface_indices(
     const std::vector<unsigned int> &            testfunc_indices_left,
     const std::vector<types::global_dof_index> & dof_indices_on_lcell,
     const std::vector<unsigned int> &            testfunc_indices_right,
@@ -533,10 +533,17 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
 {
   AssertDimension(copy_data.cell_data.size(), 0U);
 
-  auto [testfunc_indices, dof_indices_on_lcell] = get_interface_testfunc_indices(cell);
+  /// The InterfaceHandler determines for which "inflow" interfaces this cell is
+  /// the source cell (and in that sense we speak of "outflow" interfaces"): the
+  /// local face numbers and the global interface indices are given by the first
+  /// and second return value, respectively.
+  auto [active_test_function_indices, global_interface_indices] =
+    get_active_interface_indices(cell);
 
   auto & phi_test = scratch_data.test_values;
-  phi_test.reinit(cell, testfunc_indices);
+  /// Restricting TestFunction::Values to those test functions which are active
+  /// on associated "outflow" interfaces for this cell.
+  phi_test.reinit(cell, active_test_function_indices);
 
   auto & phi_ansatz = scratch_data.stream_values_ansatz;
   phi_ansatz.reinit(cell_stream);
@@ -546,13 +553,10 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
   auto & cell_data =
     copy_data.cell_data.emplace_back(phi_test.n_dofs_per_cell(), phi_ansatz.n_dofs_per_cell());
 
-  std::swap(cell_data.dof_indices, dof_indices_on_lcell);
+  std::swap(cell_data.dof_indices, global_interface_indices);
 
   cell_stream->get_active_or_mg_dof_indices(cell_data.dof_indices_column);
 
-  // copy_data.cell_matrix.reinit(copy_data.local_dof_indices_test.size(),
-  //                              copy_data.local_dof_indices_ansatz.size());
-  // copy_data.cell_rhs_test.reinit(copy_data.local_dof_indices_test.size());
   cell_worker_impl(phi_test, phi_ansatz, cell_data);
 
   AssertDimension(cell_data.matrix.n(), cell_data.dof_indices_column.size());
@@ -953,38 +957,41 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential_interface(
   ScratchData<dim, true> & scratch_data,
   CopyData &               copy_data) const
 {
-  InterfaceId        interface_id{cell->id(), ncell->id()};
-  const unsigned int interface_index       = interface_handler->get_interface_index(interface_id);
+  const InterfaceId interface_id{cell->id(), ncell->id()};
+  const auto        interface_index        = interface_handler->get_interface_index(interface_id);
   const bool this_interface_isnt_contained = interface_index == numbers::invalid_unsigned_int;
+
   if(this_interface_isnt_contained)
     return;
 
-  const auto & [testfunc_indices_left, dof_indices_on_lcell] = get_interface_testfunc_indices(cell);
-  const auto & [testfunc_indices_right, dof_indices_on_rcell] =
-    get_interface_testfunc_indices(ncell);
-
-  auto [joint_testfunc_indices, joint_dof_indices_test] = get_joint_testfunc_and_dof_indices(
-    testfunc_indices_left, dof_indices_on_lcell, testfunc_indices_right, dof_indices_on_rcell);
+  const auto & [active_test_function_indices_left, global_interface_indices_lcell] =
+    get_active_interface_indices(cell);
+  const auto & [active_test_function_indices_right, global_interface_indices_rcell] =
+    get_active_interface_indices(ncell);
+  /// TODO do test functions associated with other faces than this interface
+  /// contribute to the integral over this interface???
+  auto [active_interface_test_function_indices, joint_dof_indices_test] =
+    make_joint_interface_indices(active_test_function_indices_left,
+                                 global_interface_indices_lcell,
+                                 active_test_function_indices_right,
+                                 global_interface_indices_rcell);
 
   auto & phi_test = scratch_data.test_interface_values;
+  phi_test.reinit(cell, f, sf, ncell, nf, nsf, active_interface_test_function_indices);
+
   AssertDimension(phi_test.shape_to_test_functions_left.m(), GeometryInfo<dim>::faces_per_cell);
   AssertDimension(phi_test.shape_to_test_functions_right.m(), GeometryInfo<dim>::faces_per_cell);
-  phi_test.reinit(cell, f, sf, ncell, nf, nsf, joint_testfunc_indices);
 
   auto & phi_ansatz = scratch_data.stream_interface_values_ansatz;
   phi_ansatz.reinit(cell_stream, f, sf, ncell_stream, nf, nsf);
 
   CopyData::FaceData & face_data =
-    copy_data.face_data.emplace_back(joint_dof_indices_test.size(),
+    copy_data.face_data.emplace_back(phi_test.n_current_interface_dofs(),
                                      phi_ansatz.n_current_interface_dofs());
 
   std::swap(face_data.dof_indices, joint_dof_indices_test);
 
   face_data.dof_indices_column = phi_ansatz.get_interface_dof_indices();
-
-  // copy_data_face.cell_matrix.reinit(copy_data_face.joint_dof_indices_test.size(),
-  //                                   copy_data_face.joint_dof_indices_ansatz.size());
-  // copy_data_face.cell_rhs_test.reinit(copy_data_face.joint_dof_indices_test.size());
 
   const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
   const auto   nh        = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
@@ -1345,15 +1352,19 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential_interfa
   ScratchData<dim, true> & scratch_data,
   CopyData &               copy_data) const
 {
-  auto [testfunc_indices_left, dof_indices_on_lcell] = get_interface_testfunc_indices(cell);
-  std::vector<std::array<unsigned int, 2>> joint_testfunc_indices;
-  for(const auto li : testfunc_indices_left)
-    joint_testfunc_indices.push_back({li, numbers::invalid_unsigned_int});
+  auto [active_test_function_indices, global_interface_indices] =
+    get_active_interface_indices(cell);
+  std::vector<std::array<unsigned int, 2>> active_interface_test_function_indices;
+  for(const auto li : active_test_function_indices)
+    active_interface_test_function_indices.push_back({li, numbers::invalid_unsigned_int});
 
   auto & phi_test = scratch_data.test_interface_values;
+  /// Restricting TestFunction::InterfaceValues to those test functions which are active
+  /// on associated "outflow" interfaces for this cell.
+  phi_test.reinit(cell, face_no, active_interface_test_function_indices);
+
   AssertDimension(phi_test.shape_to_test_functions_left.m(), GeometryInfo<dim>::faces_per_cell);
   AssertDimension(phi_test.shape_to_test_functions_right.m(), GeometryInfo<dim>::faces_per_cell);
-  phi_test.reinit(cell, face_no, joint_testfunc_indices);
 
   auto & phi_ansatz = scratch_data.stream_interface_values_ansatz;
   phi_ansatz.reinit(cell_stream, face_no);
@@ -1362,15 +1373,11 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential_interfa
     copy_data.face_data.emplace_back(phi_test.n_current_interface_dofs(),
                                      phi_ansatz.n_current_interface_dofs());
 
-  std::swap(face_data.dof_indices, dof_indices_on_lcell);
+  face_data.dof_indices = std::move(global_interface_indices);
 
-  AssertDimension(face_data.dof_indices.size(), joint_testfunc_indices.size());
+  AssertDimension(face_data.dof_indices.size(), active_interface_test_function_indices.size());
 
   face_data.dof_indices_column = phi_ansatz.get_interface_dof_indices();
-
-  // copy_data_face.cell_matrix.reinit(copy_data_face.joint_dof_indices_test.size(),
-  //                                   copy_data_face.joint_dof_indices_ansatz.size());
-  // copy_data_face.cell_rhs_test.reinit(copy_data_face.joint_dof_indices_test.size());
 
   const auto   h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
   const auto   fe_degree    = phi_ansatz.get_fe().degree; // stream function degree !
@@ -1654,15 +1661,15 @@ MatrixIntegrator<dim, is_multigrid>::get_interface_dof_indices(
 
 template<int dim, bool is_multigrid>
 std::pair<std::vector<unsigned int>, std::vector<types::global_dof_index>>
-MatrixIntegrator<dim, is_multigrid>::get_interface_testfunc_indices(const IteratorType & cell) const
+MatrixIntegrator<dim, is_multigrid>::get_active_interface_indices(const IteratorType & cell) const
 {
-  return get_interface_testfunc_indices_impl(*interface_handler, cell);
+  return get_active_interface_indices_impl(*interface_handler, cell);
 }
 
 
 template<int dim, bool is_multigrid>
 std::pair<std::vector<std::array<unsigned int, 2>>, std::vector<types::global_dof_index>>
-MatrixIntegrator<dim, is_multigrid>::get_joint_testfunc_and_dof_indices(
+MatrixIntegrator<dim, is_multigrid>::make_joint_interface_indices(
   const std::vector<unsigned int> &            testfunc_indices_left,
   const std::vector<types::global_dof_index> & dof_indices_on_lcell,
   const std::vector<unsigned int> &            testfunc_indices_right,

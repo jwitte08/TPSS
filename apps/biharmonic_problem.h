@@ -1681,7 +1681,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
   SparseMatrix<double> constant_pressure_matrix;
   constant_pressure_matrix.reinit(sparsity_pattern);
-  Vector<double> right_hand_side(n_interface_nodes);
+  Vector<double> constant_pressure_rhs(n_interface_nodes);
 
   std::vector<types::global_dof_index> constant_pressure_dof_indices(n_interface_nodes);
   auto &                               discrete_pressure = stokes_problem->system_solution.block(1);
@@ -1963,7 +1963,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
       const auto distribute_local_to_global_impl = [&](const auto & cd) {
         constraints_on_interface.template distribute_local_to_global(cd.rhs,
                                                                      cd.dof_indices,
-                                                                     right_hand_side);
+                                                                     constant_pressure_rhs);
       };
 
       const auto copier = [&](const CopyData & copy_data) {
@@ -1992,8 +1992,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                           interface_update_flags_v,
                                           interface_update_flags_sf);
 
-      CopyData
-        copy_data; //(shape_to_test_functions_interface.m(), dof_handler.get_fe().dofs_per_cell);
+      CopyData copy_data;
 
       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
                             dof_handler_velocity.end(),
@@ -2050,7 +2049,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
         for(const auto & cdf : copy_data.face_data)
         {
           constraints_on_interface.template distribute_local_to_global<Vector<double>>(
-            cdf.cell_rhs_test, cdf.joint_dof_indices_test, right_hand_side);
+            cdf.cell_rhs_test, cdf.joint_dof_indices_test, constant_pressure_rhs);
 
           constraints_on_interface.template distribute_local_to_global<SparseMatrix<double>>(
             cdf.cell_matrix,
@@ -2061,10 +2060,12 @@ ModelProblem<dim, fe_degree>::solve_pressure()
         }
       };
 
-      const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
-      const UpdateFlags update_flags_pressure = update_default;
-      const UpdateFlags interface_update_flags =
+      const UpdateFlags update_flags_v =
+        update_values | update_quadrature_points | update_JxW_values;
+      const UpdateFlags interface_update_flags_v =
         update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+
+      const UpdateFlags update_flags_pressure = update_default;
       const UpdateFlags interface_update_flags_pressure =
         update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
 
@@ -2073,44 +2074,43 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                     dof_handler_pressure.get_fe(),
                                     n_q_points_1d,
                                     shape_to_test_functions_interface,
-                                    update_flags,
+                                    update_flags_v,
                                     update_flags_pressure,
-                                    interface_update_flags,
+                                    interface_update_flags_v,
                                     interface_update_flags_pressure);
 
       CopyData copy_data(GeometryInfo<dim>::faces_per_cell, 1U);
 
       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
                             dof_handler_velocity.end(),
-                            nullptr /*cell_worker*/,
+                            /*cell_worker*/ nullptr,
                             copier,
                             scratch_data,
                             copy_data,
-                            /*MeshWorker::assemble_own_cells |*/
                             MeshWorker::assemble_own_interior_faces_once,
-                            nullptr,
+                            /*boundary_worker*/ nullptr,
                             face_worker);
     }
 
-    constraints_on_interface.condense(constant_pressure_matrix, right_hand_side);
+    constraints_on_interface.condense(constant_pressure_matrix, constant_pressure_rhs);
 
     // // DEBUG
-    // right_hand_side.print(std::cout);
+    // constant_pressure_rhs.print(std::cout);
     // constant_pressure_matrix.print_formatted(std::cout);
 
     const auto     n_cells = constant_pressure_matrix.n();
-    Vector<double> constant_mode_solution(n_cells);
+    Vector<double> constant_pressure_solution(n_cells);
 
     SparseDirectUMFPACK A_direct;
     A_direct.template initialize<SparseMatrix<double>>(constant_pressure_matrix);
-    A_direct.vmult(constant_mode_solution, right_hand_side);
+    A_direct.vmult(constant_pressure_solution, constant_pressure_rhs);
 
-    constraints_on_interface.distribute(constant_mode_solution);
+    constraints_on_interface.distribute(constant_pressure_solution);
 
     for(auto cell_index = 0U; cell_index < n_cells; ++cell_index)
     {
       const auto dof_index         = constant_pressure_dof_indices[cell_index];
-      discrete_pressure(dof_index) = constant_mode_solution[cell_index];
+      discrete_pressure(dof_index) = constant_pressure_solution[cell_index];
     }
 
     stokes_problem->post_process_solution_vector();
