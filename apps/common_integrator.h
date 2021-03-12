@@ -1959,6 +1959,24 @@ compute_vvalue(const Values<dim> & phi, const unsigned int i, const unsigned int
 
 
 
+std::vector<std::vector<unsigned int>>
+make_test_to_active_shape_function_index_map(const FullMatrix<double> & trafomatrix)
+{
+  std::vector<std::vector<unsigned int>> map;
+  map.reserve(trafomatrix.m());
+  for(auto t = 0U; t < trafomatrix.m(); ++t)
+  {
+    std::vector<unsigned int> & active_indices = map.emplace_back();
+    for(auto s = 0U; s < trafomatrix.n(); ++s)
+      if(!has_nearly_zero_abs(trafomatrix(t, s)))
+        active_indices.emplace_back(s);
+  }
+  AssertDimension(map.size(), trafomatrix.m());
+  return map;
+}
+
+
+
 /**
  * A helper struct which provides a FEInterfaceValues-like interface for
  * arbitrary test functions. The test functions are determined by the basis
@@ -1991,8 +2009,41 @@ struct InterfaceValues
                           fe_interface_values_in.get_update_flags()),
       shape_to_test_functions_left(shape_to_test_functions_left_in),
       shape_to_test_functions_right(shape_to_test_functions_right_in),
+      test_to_active_shape_function_indices_left(
+        make_test_to_active_shape_function_index_map(shape_to_test_functions_left_in)),
+      test_to_active_shape_function_indices_right(
+        make_test_to_active_shape_function_index_map(shape_to_test_functions_right_in)),
+      active_shape_function_indices_left([&]() {
+        std::vector<unsigned int> all_indices;
+        for(const auto & active_indices : test_to_active_shape_function_indices_left)
+          std::copy(active_indices.cbegin(),
+                    active_indices.cend(),
+                    std::back_inserter(all_indices));
+        const auto unique_end = std::unique(all_indices.begin(), all_indices.end());
+        return std::vector<unsigned int>(all_indices.begin(), unique_end);
+      }()),
+      active_shape_function_indices_right([&]() {
+        std::vector<unsigned int> all_indices;
+        for(const auto & active_indices : test_to_active_shape_function_indices_right)
+          std::copy(active_indices.cbegin(),
+                    active_indices.cend(),
+                    std::back_inserter(all_indices));
+        const auto unique_end = std::unique(all_indices.begin(), all_indices.end());
+        return std::vector<unsigned int>(all_indices.begin(), unique_end);
+      }()),
       n_quadrature_points(fe_interface_values_in.n_quadrature_points)
   {
+    /// DEBUG
+    // std::cout << "left: " << shape_to_test_functions_left.m() << "x"
+    //           << shape_to_test_functions_left.n() << std::endl;
+    // shape_to_test_functions_left.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-12);
+    // for(const auto indices : test_to_active_shape_function_indices_left)
+    //   std::cout << vector_to_string(indices) << std::endl;
+    // std::cout << "right: " << shape_to_test_functions_right.m() << "x"
+    //           << shape_to_test_functions_right.n() << std::endl;
+    // shape_to_test_functions_right.print_formatted(std::cout, 3, true, 0, " ", 1., 1.e-12);
+    // for(const auto indices : test_to_active_shape_function_indices_right)
+    //   std::cout << vector_to_string(indices) << std::endl;
   }
 
   template<typename CellIteratorType>
@@ -2003,23 +2054,39 @@ struct InterfaceValues
          const CellIteratorType &                         ncell,
          const unsigned int                               nface_no,
          const unsigned int                               nsubface_no,
-         const std::vector<std::array<unsigned int, 2>> & joint_to_cell_dof_indices_in)
+         const std::vector<std::array<unsigned int, 2>> & joint_to_cell_dof_indices_in =
+           std::vector<std::array<unsigned int, 2>>{})
   {
     fe_interface_values.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no);
-    joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
 
-    // DEBUG
-    // std::cout << "TFInterface:";
-    // for(const auto liri : joint_to_cell_dof_indices_in)
-    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
-    // std::cout << std::endl;
-    // std::vector<std::array<unsigned int, 2>> jtc_rt;
-    // for(auto i = 0U; i < fe_interface_values.n_current_interface_dofs(); ++i)
-    //   jtc_rt.push_back(fe_interface_values.interface_dof_to_dof_indices(i));
-    // std::cout << "TFInterface::RT:";
-    // for(const auto liri : jtc_rt)
-    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
-    // std::cout << std::endl;
+    if(joint_to_cell_dof_indices_in.empty())
+    {
+      std::vector<types::global_dof_index> global_dof_indices_left(
+        shape_to_test_functions_left.n());
+      cell->get_active_or_mg_dof_indices(global_dof_indices_left);
+      std::vector<types::global_dof_index> global_dof_indices_right(
+        shape_to_test_functions_right.n());
+      ncell->get_active_or_mg_dof_indices(global_dof_indices_right);
+      const auto joint_to_cell_dof_indices =
+        make_joint_to_cell_dof_indices(global_dof_indices_left, global_dof_indices_right);
+
+      /// DEBUG
+      std::cout << "joint_to_cell_dof_indices: " << std::endl;
+      for(const auto & [li, ri] : joint_to_cell_dof_indices)
+        std::cout << " (" << li << "," << ri << ")";
+      std::cout << std::endl;
+    }
+
+    else
+    {
+      joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
+
+      /// DEBUG
+      std::cout << "joint_to_cell_dof_indices_in: " << std::endl;
+      for(const auto & [li, ri] : joint_to_cell_dof_indices_in)
+        std::cout << " (" << li << "," << ri << ")";
+      std::cout << std::endl;
+    }
   }
 
   template<typename CellIteratorType>
@@ -2030,12 +2097,6 @@ struct InterfaceValues
   {
     fe_interface_values.reinit(cell, face_no);
     joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
-
-    // DEBUG
-    // std::cout << "TFface:";
-    // for(const auto liri : joint_to_cell_dof_indices_in)
-    //   std::cout << " (" << liri[0] << "," << liri[1] << ")";
-    // std::cout << std::endl;
   }
 
   unsigned int
@@ -2203,10 +2264,125 @@ struct InterfaceValues
     return jump;
   }
 
+  /**
+   * For both cells (left and right) the test functions represented by this
+   * class are linear combinations of shape functions of the underlying finite
+   * element. We assume a test function is joint between cells if all involved
+   * shape functions are joint, that is the coefficients for both transformation
+   * matrices are nonzero???
+   */
+  /// TODO rename dof_indices -> test_indices
+  std::vector<std::array<unsigned int, 2>>
+  make_joint_to_cell_dof_indices(
+    const std::vector<types::global_dof_index> & global_dof_indices_left,
+    const std::vector<types::global_dof_index> & global_dof_indices_right) const
+  {
+    AssertDimension(shape_to_test_functions_left.n(), global_dof_indices_left.size());
+    AssertDimension(shape_to_test_functions_right.n(), global_dof_indices_right.size());
+
+    std::vector<std::array<unsigned int, 2>> map;
+
+    std::vector<types::global_dof_index> active_global_dof_indices_both;
+    std::transform(active_shape_function_indices_left.cbegin(),
+                   active_shape_function_indices_left.cend(),
+                   std::back_inserter(active_global_dof_indices_both),
+                   [&](const auto s) { return global_dof_indices_left[s]; });
+    std::transform(active_shape_function_indices_right.cbegin(),
+                   active_shape_function_indices_right.cend(),
+                   std::back_inserter(active_global_dof_indices_both),
+                   [&](const auto s) { return global_dof_indices_right[s]; });
+    std::sort(active_global_dof_indices_both.begin(), active_global_dof_indices_both.end());
+
+    const bool no_joint_dof_indices =
+      std::unique(active_global_dof_indices_both.begin(), active_global_dof_indices_both.end()) ==
+      active_global_dof_indices_both.end();
+
+    if(no_joint_dof_indices)
+    {
+      map.reserve(shape_to_test_functions_left.m() + shape_to_test_functions_right.m());
+      for(auto li = 0U; li < shape_to_test_functions_left.m(); ++li)
+        map.emplace_back(std::array<unsigned int, 2>{li, numbers::invalid_unsigned_int});
+      for(auto ri = 0U; ri < shape_to_test_functions_right.m(); ++ri)
+        map.emplace_back(std::array<unsigned int, 2>{numbers::invalid_unsigned_int, ri});
+    }
+
+    else
+    {
+      std::vector<std::array<unsigned int, 2>> joint_indices;
+      for(auto li = 0U; li < shape_to_test_functions_left.m(); ++li)
+      {
+        const auto & active_indices_left = test_to_active_shape_function_indices_left[li];
+        std::vector<types::global_dof_index> active_global_dof_indices_left;
+        std::transform(active_indices_left.cbegin(),
+                       active_indices_left.cend(),
+                       std::back_inserter(active_global_dof_indices_left),
+                       [&](const auto s) { return global_dof_indices_left[s]; });
+        std::sort(active_global_dof_indices_left.begin(), active_global_dof_indices_left.end());
+
+        for(auto ri = 0U; ri < shape_to_test_functions_right.m(); ++ri)
+        {
+          const auto & active_indices_right = test_to_active_shape_function_indices_right[ri];
+          std::vector<types::global_dof_index> active_global_dof_indices_right;
+          std::transform(active_indices_right.cbegin(),
+                         active_indices_right.cend(),
+                         std::back_inserter(active_global_dof_indices_right),
+                         [&](const auto s) { return global_dof_indices_right[s]; });
+          std::sort(active_global_dof_indices_right.begin(), active_global_dof_indices_right.end());
+
+          const bool is_joint = active_global_dof_indices_left == active_global_dof_indices_right;
+
+          if(is_joint)
+          {
+            joint_indices.emplace_back(std::array<unsigned int, 2>{li, ri});
+            break;
+          }
+        }
+      }
+
+      std::vector<unsigned int> joint_indices_left;
+      std::transform(joint_indices.cbegin(),
+                     joint_indices.cend(),
+                     std::back_inserter(joint_indices_left),
+                     [&](const auto & liri) { return liri[0]; });
+      std::sort(joint_indices_left.begin(), joint_indices_left.end());
+      Assert(std::unique(joint_indices_left.begin(), joint_indices_left.end()) ==
+               joint_indices_left.end(),
+             ExcMessage("Duplicates..."));
+
+      std::vector<unsigned int> joint_indices_right;
+      std::transform(joint_indices.cbegin(),
+                     joint_indices.cend(),
+                     std::back_inserter(joint_indices_right),
+                     [&](const auto & liri) { return liri[1]; });
+      std::sort(joint_indices_right.begin(), joint_indices_right.end());
+      Assert(std::unique(joint_indices_right.begin(), joint_indices_right.end()) ==
+               joint_indices_right.end(),
+             ExcMessage("Duplicates..."));
+
+      for(auto li = 0U; li < shape_to_test_functions_left.m(); ++li)
+        if(std::find(joint_indices_left.cbegin(), joint_indices_left.cend(), li) ==
+           joint_indices_left.cend())
+          map.emplace_back(std::array<unsigned int, 2>{li, numbers::invalid_unsigned_int});
+
+      std::copy(joint_indices.cbegin(), joint_indices.cend(), std::back_inserter(map));
+
+      for(auto ri = 0U; ri < shape_to_test_functions_right.m(); ++ri)
+        if(std::find(joint_indices_right.cbegin(), joint_indices_right.cend(), ri) ==
+           joint_indices_right.cend())
+          map.emplace_back(std::array<unsigned int, 2>{numbers::invalid_unsigned_int, ri});
+    }
+
+    return map;
+  }
+
   FEValues<dim>                            fe_values;
   FEInterfaceValues<dim>                   fe_interface_values;
   const FullMatrix<double> &               shape_to_test_functions_left;
   const FullMatrix<double> &               shape_to_test_functions_right;
+  std::vector<std::vector<unsigned int>>   test_to_active_shape_function_indices_left;
+  std::vector<std::vector<unsigned int>>   test_to_active_shape_function_indices_right;
+  std::vector<unsigned int>                active_shape_function_indices_left;
+  std::vector<unsigned int>                active_shape_function_indices_right;
   unsigned int                             n_quadrature_points;
   std::vector<std::array<unsigned int, 2>> joint_to_cell_dof_indices;
 };

@@ -1607,9 +1607,10 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 {
   print_parameter("Solving pressure system", "...");
 
-  AssertThrow(stokes_problem, ExcMessage("FEM for Stokes equations is uninitialized."));
+  AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1U,
+              ExcMessage("Not implemented in parallel."));
+  Assert(stokes_problem, ExcMessage("FEM for Stokes equations is uninitialized."));
 
-  // TODO !!! share triangulations as shared_ptr
   stokes_problem->triangulation = this->triangulation;
   stokes_problem->setup_system();
 
@@ -1627,7 +1628,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                                       trafomatrix_rt_to_gradp.n());
   shape_to_test_functions_interior = trafomatrix_rt_to_gradp;
 
-  // DEBUG
+  /// DEBUG
   // shape_to_test_functions_interior.print_formatted(std::cout);
   // trafomatrix_rt_to_gradp.print_formatted(std::cout);
 
@@ -1635,15 +1636,15 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                                        trafomatrix_rt_to_constp.n());
   shape_to_test_functions_interface = trafomatrix_rt_to_constp;
 
-  // DEBUG
+  /// DEBUG
   // shape_to_test_functions_interface.print_formatted(std::cout);
   // trafomatrix_rt_to_constp.print_formatted(std::cout);
 
   Pressure::InterfaceHandler<dim> interface_handler;
-  interface_handler.reinit(dof_handler_velocity);
+  interface_handler.reinit(dof_handler_velocity.get_triangulation());
   const auto n_interface_nodes = interface_handler.n_interfaces();
 
-  AssertThrow(
+  Assert(
     interface_handler.get_fixed_cell_index() == interface_handler.get_fixed_interface_index(),
     ExcMessage(
       "I am worried about the constraints in case the fixed cell and interface index do not coincide."));
@@ -1658,7 +1659,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   constraints_on_cell.close();
 
   DynamicSparsityPattern dsp(n_interface_nodes);
-  for(const auto & id : interface_handler.interface_ids)
+  for(const auto & id : interface_handler.cached_interface_ids)
   {
     const auto e                 = interface_handler.get_interface_index(id);
     const auto [K_left, K_right] = interface_handler.get_cell_index_pair(id);
@@ -1729,11 +1730,11 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     AssertThrow(
       is_dgq_legendre,
       ExcMessage(
-        "For this reconstruction method we assume that the pressure shape functions are of Legendre-type."));
+        "For this reconstruction method we assume that the pressure shape functions are of Legendre type."));
     AssertThrow(
       TPSS::get_dof_layout(dof_handler_velocity.get_fe()) == TPSS::DoFLayout::RT,
       ExcMessage(
-        "For this reconstruction method we assume that the velocity finite elements are of Raviart-Thomas-type."));
+        "For this reconstruction method we assume that the velocity finite elements are of Raviart-Thomas type."));
 
     using Stokes::Velocity::SIPG::MW::ScratchData;
 
@@ -1833,7 +1834,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                                               cd.dof_indices,
                                                               discrete_pressure);
 
-        /// Book-keeping the global dof index of the constant pressure mode
+        /// Book-keeping the global dof index for the constant pressure mode
         AssertDimension(cd.dof_indices_column.size(), 2U);
         const auto cell_index                     = cd.dof_indices_column.back();
         const auto global_dof_index               = cd.dof_indices_column.front();
@@ -1848,10 +1849,11 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
     const UpdateFlags update_flags_v =
       update_values | update_gradients | update_quadrature_points | update_JxW_values;
-    const UpdateFlags update_flags_sf          = update_flags_v | update_hessians;
     const UpdateFlags interface_update_flags_v = update_values | update_gradients |
                                                  update_quadrature_points | update_JxW_values |
                                                  update_normal_vectors;
+
+    const UpdateFlags update_flags_sf           = update_flags_v | update_hessians;
     const UpdateFlags interface_update_flags_sf = interface_update_flags_v | update_hessians;
 
     ScratchData<dim, true> scratch_data(mapping,

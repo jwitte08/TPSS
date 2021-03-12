@@ -480,6 +480,7 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker(const IteratorType &  
 
   auto & phi_test = scratch_data.test_values;
   phi_test.reinit(cell);
+
   auto & phi_ansatz = scratch_data.stream_values_ansatz;
   phi_ansatz.reinit(cell_stream);
 
@@ -488,12 +489,12 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker(const IteratorType &  
 
   AssertDimension(phi_test.n_dofs_per_cell(), cell_data.dof_indices.size());
 
-  std::vector<types::global_dof_index> local_dof_indices_pressure(cell_data.dof_indices.size() + 1);
-  cell_pressure->get_active_or_mg_dof_indices(local_dof_indices_pressure);
-  AssertDimension(local_dof_indices_pressure.size(), cell_data.dof_indices.size() + 1);
+  std::vector<types::global_dof_index> dof_indices_pressure(cell_data.dof_indices.size() + 1);
+  cell_pressure->get_active_or_mg_dof_indices(dof_indices_pressure);
+  AssertDimension(dof_indices_pressure.size(), cell_data.dof_indices.size() + 1);
   /// skipping the first pressure dof
-  std::copy(local_dof_indices_pressure.cbegin() + 1,
-            local_dof_indices_pressure.cend(),
+  std::copy(dof_indices_pressure.cbegin() + 1,
+            dof_indices_pressure.cend(),
             cell_data.dof_indices.begin());
 
   cell_stream->get_active_or_mg_dof_indices(cell_data.dof_indices_column);
@@ -501,19 +502,21 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker(const IteratorType &  
   cell_worker_impl(phi_test, phi_ansatz, cell_data);
 
   Assert(discrete_solution, ExcMessage("Stream function coefficients are not set."));
+
   Vector<double> dof_values(cell_data.dof_indices_column.size());
   std::transform(cell_data.dof_indices_column.cbegin(),
                  cell_data.dof_indices_column.cend(),
                  dof_values.begin(),
                  [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
 
+  /// computing residual
   Vector<double> Ax(cell_data.rhs.size());
   cell_data.matrix.vmult(Ax, dof_values); // Ax
   cell_data.rhs -= Ax;                    // f - Ax
 
   cell_data.dof_indices_column.resize(2U);
   /// book-keeping index of first pressure dof
-  cell_data.dof_indices_column.front() = local_dof_indices_pressure.front();
+  cell_data.dof_indices_column.front() = dof_indices_pressure.front();
   /// book-keeping custom cell index
   cell_data.dof_indices_column.back() = interface_handler->get_cell_index(cell->id());
 }
@@ -534,6 +537,7 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
 
   auto & phi_test = scratch_data.test_values;
   phi_test.reinit(cell, testfunc_indices);
+
   auto & phi_ansatz = scratch_data.stream_values_ansatz;
   phi_ansatz.reinit(cell_stream);
 
@@ -857,7 +861,7 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential(
   const unsigned int n_test_functions_right = phi_test.shape_to_test_functions_right.m();
 
   /// Test functions are a linear combination of shape functions belonging
-  /// to cell-interior dofs, thus, there exist no joint dofs on the interface.
+  /// to cell-interior dofs, thus there are no joint dofs.
   std::vector<std::array<unsigned int, 2>> joint_testfunc_indices;
   for(auto li = 0U; li < n_test_functions_left; ++li)
     joint_testfunc_indices.push_back({li, numbers::invalid_unsigned_int});
