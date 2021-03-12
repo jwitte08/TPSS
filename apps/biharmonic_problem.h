@@ -1833,7 +1833,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
         empty_constraints.template distribute_local_to_global(cd.rhs,
                                                               cd.dof_indices,
                                                               discrete_pressure);
-
         /// Book-keeping the global dof index for the constant pressure mode
         AssertDimension(cd.dof_indices_column.size(), 2U);
         const auto cell_index                     = cd.dof_indices_column.back();
@@ -1976,10 +1975,11 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
       const UpdateFlags update_flags_v =
         update_values | update_gradients | update_quadrature_points | update_JxW_values;
-      const UpdateFlags update_flags_sf          = update_flags_v | update_hessians;
       const UpdateFlags interface_update_flags_v = update_values | update_gradients |
                                                    update_quadrature_points | update_JxW_values |
                                                    update_normal_vectors;
+
+      const UpdateFlags update_flags_sf           = update_flags_v | update_hessians;
       const UpdateFlags interface_update_flags_sf = interface_update_flags_v | update_hessians;
 
       ScratchData<dim, true> scratch_data(mapping,

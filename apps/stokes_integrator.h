@@ -857,9 +857,9 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential(
 {
   auto & phi_test = scratch_data.test_interface_values;
 
+  /// TODO to be removed
   const unsigned int n_test_functions_left  = phi_test.shape_to_test_functions_left.m();
   const unsigned int n_test_functions_right = phi_test.shape_to_test_functions_right.m();
-
   /// Test functions are a linear combination of shape functions belonging
   /// to cell-interior dofs, thus there are no joint dofs.
   std::vector<std::array<unsigned int, 2>> joint_testfunc_indices;
@@ -867,30 +867,48 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential(
     joint_testfunc_indices.push_back({li, numbers::invalid_unsigned_int});
   for(auto ri = 0U; ri < n_test_functions_right; ++ri)
     joint_testfunc_indices.push_back({numbers::invalid_unsigned_int, ri});
-  phi_test.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no, joint_testfunc_indices);
+  // phi_test.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no,
+  // joint_testfunc_indices);
+  phi_test.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no);
 
-  /// Each test function has 1-to-1 relation with a pressure dof except the
-  /// constant pressure mode.
-  const auto                           n_dofs_per_cell_p = cell_pressure->get_fe().dofs_per_cell;
-  std::vector<types::global_dof_index> dof_indices_on_lcell_pressure(n_dofs_per_cell_p);
-  cell_pressure->get_active_or_mg_dof_indices(dof_indices_on_lcell_pressure);
-  dof_indices_on_lcell_pressure.erase(dof_indices_on_lcell_pressure.begin());
-  AssertDimension(dof_indices_on_lcell_pressure.size(), n_test_functions_left);
-  std::vector<types::global_dof_index> dof_indices_on_rcell_pressure(n_dofs_per_cell_p);
-  ncell_pressure->get_active_or_mg_dof_indices(dof_indices_on_rcell_pressure);
-  dof_indices_on_rcell_pressure.erase(dof_indices_on_rcell_pressure.begin());
-  AssertDimension(dof_indices_on_rcell_pressure.size(), n_test_functions_right);
+  /// DEBUG
+  // {
+  //   std::ostringstream oss;
+  //   oss << "auto: ";
+  //   for(const auto & [li, ri] : phi_test.get_interface_test_function_indices())
+  //     oss << " (" << li << "," << ri << ")";
+  //   oss << std::endl;
+  //   oss << "user: ";
+  //   for(const auto & [li, ri] : joint_testfunc_indices)
+  //     oss << " (" << li << "," << ri << ")";
+  //   oss << std::endl;
+  //   std::cout << oss.str() << std::endl;
+  //   Assert(phi_test.get_interface_test_function_indices() == joint_testfunc_indices,
+  //          ExcMessage("failed..."));
+  // }
 
   auto & phi_ansatz = scratch_data.stream_interface_values_ansatz;
   phi_ansatz.reinit(cell_stream, face_no, subface_no, ncell_stream, nface_no, nsubface_no);
 
   CopyData::FaceData & face_data =
-    copy_data.face_data.emplace_back(phi_test.n_current_interface_dofs(), /// ???
+    copy_data.face_data.emplace_back(phi_test.n_current_interface_dofs(),
                                      phi_ansatz.n_current_interface_dofs());
 
-  face_data.dof_indices = std::move(get_interface_dof_indices(joint_testfunc_indices,
-                                                              dof_indices_on_lcell_pressure,
-                                                              dof_indices_on_rcell_pressure));
+  /// Test functions are constructed such that they have a 1-to-1 relation with each pressure dof
+  /// except the constant pressure mode (which is the first for Legendre type finite elements).
+  const auto & make_dof_indices_skipping_first = [](const auto & cell) {
+    std::vector<types::global_dof_index> all(cell->get_fe().dofs_per_cell);
+    cell->get_active_or_mg_dof_indices(all);
+    return std::vector<types::global_dof_index>(all.begin() + 1, all.end());
+  };
+  const auto dof_indices_on_lcell_pressure =
+    std::move(make_dof_indices_skipping_first(cell_pressure));
+  const auto dof_indices_on_rcell_pressure =
+    std::move(make_dof_indices_skipping_first(ncell_pressure));
+  face_data.dof_indices =
+    std::move(get_interface_dof_indices(phi_test.get_interface_test_function_indices(),
+                                        dof_indices_on_lcell_pressure,
+                                        dof_indices_on_rcell_pressure));
 
   face_data.dof_indices_column = std::move(phi_ansatz.get_interface_dof_indices());
 
@@ -1266,10 +1284,11 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential(
 
   const unsigned int n_test_functions_left = phi_test.shape_to_test_functions_left.m();
 
-  std::vector<std::array<unsigned int, 2>> joint_testfunc_indices;
-  for(auto li = 0U; li < n_test_functions_left; ++li)
-    joint_testfunc_indices.push_back({li, numbers::invalid_unsigned_int});
-  phi_test.reinit(cell, face_no, joint_testfunc_indices);
+  // std::vector<std::array<unsigned int, 2>> joint_testfunc_indices;
+  // for(auto li = 0U; li < n_test_functions_left; ++li)
+  //   joint_testfunc_indices.push_back({li, numbers::invalid_unsigned_int});
+  // phi_test.reinit(cell, face_no, joint_testfunc_indices);
+  phi_test.reinit(cell, face_no);
 
   const auto                           n_dofs_per_cell_p = cell_pressure->get_fe().dofs_per_cell;
   std::vector<types::global_dof_index> dof_indices_on_lcell_pressure(n_dofs_per_cell_p);
@@ -1284,13 +1303,16 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential(
     copy_data.face_data.emplace_back(phi_test.n_current_interface_dofs(),
                                      phi_ansatz.n_current_interface_dofs());
 
-  std::swap(face_data.dof_indices, dof_indices_on_lcell_pressure);
+  /// Test functions are constructed such that they have a 1-to-1 relation with each pressure dof
+  /// except the constant pressure mode (which is the first for Legendre type finite elements).
+  const auto & make_dof_indices_skipping_first = [](const auto & cell) {
+    std::vector<types::global_dof_index> all(cell->get_fe().dofs_per_cell);
+    cell->get_active_or_mg_dof_indices(all);
+    return std::vector<types::global_dof_index>(all.begin() + 1, all.end());
+  };
+  face_data.dof_indices = std::move(make_dof_indices_skipping_first(cell_pressure));
 
   face_data.dof_indices_column = std::move(phi_ansatz.get_interface_dof_indices());
-
-  // copy_data_face.cell_matrix.reinit(copy_data_face.joint_dof_indices_test.size(),
-  //                                   face_data.dof_indices_column.size());
-  // copy_data_face.cell_rhs_test.reinit(copy_data_face.joint_dof_indices_test.size());
 
   const auto   h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
   const auto   fe_degree    = phi_ansatz.get_fe().degree; // stream function degree !

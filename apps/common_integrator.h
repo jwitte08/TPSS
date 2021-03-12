@@ -1866,27 +1866,28 @@ struct Values
   template<typename CellIteratorType>
   void
   reinit(const CellIteratorType &          cell,
-         const std::vector<unsigned int> & local_dof_indices_in = std::vector<unsigned int>{})
+         const std::vector<unsigned int> & test_function_indices_in = std::vector<unsigned int>{})
   {
     AssertDimension(shape_to_test_functions.n(), fe_values.dofs_per_cell);
 
     fe_values.reinit(cell);
-    if(local_dof_indices_in.empty())
+    if(test_function_indices_in.empty())
     {
-      local_dof_indices.resize(shape_to_test_functions.m());
-      std::iota(local_dof_indices.begin(), local_dof_indices.end(), 0U);
+      test_function_indices.resize(shape_to_test_functions.m());
+      std::iota(test_function_indices.begin(), test_function_indices.end(), 0U);
     }
     else
-      local_dof_indices = local_dof_indices_in;
+      test_function_indices = test_function_indices_in;
 
-    AssertIndexRange(*std::max_element(local_dof_indices.cbegin(), local_dof_indices.cend()),
+    AssertIndexRange(*std::max_element(test_function_indices.cbegin(),
+                                       test_function_indices.cend()),
                      shape_to_test_functions.m());
   }
 
   unsigned int
   n_dofs_per_cell() const
   {
-    return local_dof_indices.size();
+    return test_function_indices.size();
   }
 
   const FiniteElement<dim> &
@@ -1910,8 +1911,8 @@ struct Values
   double
   shape_value_component(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    AssertIndexRange(i, local_dof_indices.size());
-    const auto ii = local_dof_indices[i];
+    AssertIndexRange(i, test_function_indices.size());
+    const auto ii = test_function_indices[i];
 
     double value = 0.;
     for(auto j = 0U; j < shape_to_test_functions.n(); ++j)
@@ -1924,8 +1925,8 @@ struct Values
   Tensor<1, dim>
   shape_grad_component(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    AssertIndexRange(i, local_dof_indices.size());
-    const auto ii = local_dof_indices[i];
+    AssertIndexRange(i, test_function_indices.size());
+    const auto ii = test_function_indices[i];
 
     Tensor<1, dim> grad;
     for(auto j = 0U; j < shape_to_test_functions.n(); ++j)
@@ -1936,7 +1937,7 @@ struct Values
   FEValues<dim>              fe_values;
   const FullMatrix<double> & shape_to_test_functions;
   unsigned int               n_quadrature_points;
-  std::vector<unsigned int>  local_dof_indices;
+  std::vector<unsigned int>  test_function_indices;
 };
 
 
@@ -1986,8 +1987,8 @@ make_test_to_active_shape_function_index_map(const FullMatrix<double> & trafomat
  *
  * By passing the mapping of joint dof indices to the pair of indices on the
  * left and right cell, respectively, to the reinit() call it is possible to
- * activate only a subset of test functions. This mapping @p
- * joint_to_cell_dof_indices_in is mandatory and has to be passed by the user to
+ * activate only a subset of test functions. TODO This mapping @p
+ * interface_test_function_indices_in is mandatory and has to be passed by the user to
  * identify joint test functions.
  */
 template<int dim>
@@ -2054,12 +2055,12 @@ struct InterfaceValues
          const CellIteratorType &                         ncell,
          const unsigned int                               nface_no,
          const unsigned int                               nsubface_no,
-         const std::vector<std::array<unsigned int, 2>> & joint_to_cell_dof_indices_in =
+         const std::vector<std::array<unsigned int, 2>> & interface_test_function_indices_in =
            std::vector<std::array<unsigned int, 2>>{})
   {
     fe_interface_values.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no);
 
-    if(joint_to_cell_dof_indices_in.empty())
+    if(interface_test_function_indices_in.empty())
     {
       std::vector<types::global_dof_index> global_dof_indices_left(
         shape_to_test_functions_left.n());
@@ -2067,23 +2068,23 @@ struct InterfaceValues
       std::vector<types::global_dof_index> global_dof_indices_right(
         shape_to_test_functions_right.n());
       ncell->get_active_or_mg_dof_indices(global_dof_indices_right);
-      const auto joint_to_cell_dof_indices =
-        make_joint_to_cell_dof_indices(global_dof_indices_left, global_dof_indices_right);
+      interface_test_function_indices = std::move(
+        make_interface_test_function_indices(global_dof_indices_left, global_dof_indices_right));
 
       /// DEBUG
-      std::cout << "joint_to_cell_dof_indices: " << std::endl;
-      for(const auto & [li, ri] : joint_to_cell_dof_indices)
+      std::cout << "interface_test_function_indices: " << std::endl;
+      for(const auto & [li, ri] : interface_test_function_indices)
         std::cout << " (" << li << "," << ri << ")";
       std::cout << std::endl;
     }
 
     else
     {
-      joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
+      interface_test_function_indices = interface_test_function_indices_in;
 
       /// DEBUG
-      std::cout << "joint_to_cell_dof_indices_in: " << std::endl;
-      for(const auto & [li, ri] : joint_to_cell_dof_indices_in)
+      std::cout << "interface_test_function_indices_in: " << std::endl;
+      for(const auto & [li, ri] : interface_test_function_indices_in)
         std::cout << " (" << li << "," << ri << ")";
       std::cout << std::endl;
     }
@@ -2093,16 +2094,39 @@ struct InterfaceValues
   void
   reinit(const CellIteratorType &                         cell,
          const unsigned int                               face_no,
-         const std::vector<std::array<unsigned int, 2>> & joint_to_cell_dof_indices_in)
+         const std::vector<std::array<unsigned int, 2>> & interface_test_function_indices_in =
+           std::vector<std::array<unsigned int, 2>>{})
   {
     fe_interface_values.reinit(cell, face_no);
-    joint_to_cell_dof_indices = joint_to_cell_dof_indices_in;
+
+    if(interface_test_function_indices_in.empty())
+    {
+      interface_test_function_indices.clear();
+      interface_test_function_indices.reserve(shape_to_test_functions_left.m());
+      for(auto li = 0U; li < shape_to_test_functions_left.m(); ++li)
+        interface_test_function_indices.emplace_back(
+          std::array<unsigned int, 2>{li, numbers::invalid_unsigned_int});
+    }
+    else
+      interface_test_function_indices = interface_test_function_indices_in;
   }
 
   unsigned int
   n_current_interface_dofs() const
   {
-    return joint_to_cell_dof_indices.size();
+    return interface_test_function_indices.size();
+  }
+
+  const std::vector<std::array<unsigned int, 2>> &
+  get_interface_test_function_indices() const
+  {
+    return interface_test_function_indices;
+  }
+
+  std::vector<std::array<unsigned int, 2>> &
+  get_interface_test_function_indices()
+  {
+    return interface_test_function_indices;
   }
 
   const FiniteElement<dim> &
@@ -2198,8 +2222,8 @@ struct InterfaceValues
   double
   average(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    AssertIndexRange(i, joint_to_cell_dof_indices.size());
-    const auto [li, ri] = joint_to_cell_dof_indices[i];
+    AssertIndexRange(i, interface_test_function_indices.size());
+    const auto [li, ri] = interface_test_function_indices[i];
 
     if(fe_interface_values.at_boundary())
     {
@@ -2221,8 +2245,8 @@ struct InterfaceValues
   Tensor<1, dim>
   average_gradient(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    AssertIndexRange(i, joint_to_cell_dof_indices.size());
-    const auto [li, ri] = joint_to_cell_dof_indices[i];
+    AssertIndexRange(i, interface_test_function_indices.size());
+    const auto [li, ri] = interface_test_function_indices[i];
 
     if(fe_interface_values.at_boundary())
     {
@@ -2244,8 +2268,8 @@ struct InterfaceValues
   double
   jump(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    AssertIndexRange(i, joint_to_cell_dof_indices.size());
-    const auto [li, ri] = joint_to_cell_dof_indices[i];
+    AssertIndexRange(i, interface_test_function_indices.size());
+    const auto [li, ri] = interface_test_function_indices[i];
 
     if(fe_interface_values.at_boundary())
     {
@@ -2273,7 +2297,7 @@ struct InterfaceValues
    */
   /// TODO rename dof_indices -> test_indices
   std::vector<std::array<unsigned int, 2>>
-  make_joint_to_cell_dof_indices(
+  make_interface_test_function_indices(
     const std::vector<types::global_dof_index> & global_dof_indices_left,
     const std::vector<types::global_dof_index> & global_dof_indices_right) const
   {
@@ -2384,7 +2408,7 @@ struct InterfaceValues
   std::vector<unsigned int>                active_shape_function_indices_left;
   std::vector<unsigned int>                active_shape_function_indices_right;
   unsigned int                             n_quadrature_points;
-  std::vector<std::array<unsigned int, 2>> joint_to_cell_dof_indices;
+  std::vector<std::array<unsigned int, 2>> interface_test_function_indices;
 };
 
 
