@@ -459,6 +459,29 @@ vector_to_string(const std::vector<T> & vector)
 
 
 
+template<typename MatrixType>
+void
+remove_noise_from_matrix(MatrixType & matrix)
+{
+  for(auto i = 0U; i < matrix.m(); ++i)
+    for(auto j = 0U; j < matrix.n(); ++j)
+      if(has_nearly_zero_abs(matrix(i, j)))
+        matrix(i, j) = 0.;
+}
+
+
+
+template<typename VectorType>
+void
+remove_noise_from_vector(VectorType & vec)
+{
+  for(auto i = 0U; i < vec.size(); ++i)
+    if(has_nearly_zero_abs(vec[i]))
+      vec[i] = 0.;
+}
+
+
+
 template<typename E>
 std::vector<const E *>
 to_vector_of_ptrs(const std::vector<E> & vec)
