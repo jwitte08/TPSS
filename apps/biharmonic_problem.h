@@ -1406,30 +1406,30 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
 
   /// DEBUG
   /// Display RT shape functions in ParaView.
-  {
-    AssertDimension(n_dofs_per_cell_v, unit_dofh_v.n_dofs()); // one cell
-    for(auto i = 0U; i < n_dofs_per_cell_v; ++i)
-    {
-      Vector<double> phi_i(n_dofs_per_cell_v);
-      phi_i[i] = 1.;
+  // {
+  //   AssertDimension(n_dofs_per_cell_v, unit_dofh_v.n_dofs()); // one cell
+  //   for(auto i = 0U; i < n_dofs_per_cell_v; ++i)
+  //   {
+  //     Vector<double> phi_i(n_dofs_per_cell_v);
+  //     phi_i[i] = 1.;
 
-      std::vector<std::string> names(dim, "shape_function");
-      const std::string        prefix         = "RT";
-      const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
-      const auto               n_subdivisions = 10U;
-      std::vector<DataComponentInterpretation::DataComponentInterpretation>
-        data_component_interpretation(dim,
-                                      DataComponentInterpretation::component_is_part_of_vector);
-      visualize_dof_vector(unit_dofh_v,
-                           phi_i,
-                           names,
-                           prefix,
-                           suffix,
-                           n_subdivisions,
-                           data_component_interpretation,
-                           mapping);
-    }
-  }
+  //     std::vector<std::string> names(dim, "shape_function");
+  //     const std::string        prefix         = "RT";
+  //     const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
+  //     const auto               n_subdivisions = 10U;
+  //     std::vector<DataComponentInterpretation::DataComponentInterpretation>
+  //       data_component_interpretation(dim,
+  //                                     DataComponentInterpretation::component_is_part_of_vector);
+  //     visualize_dof_vector(unit_dofh_v,
+  //                          phi_i,
+  //                          names,
+  //                          prefix,
+  //                          suffix,
+  //                          n_subdivisions,
+  //                          data_component_interpretation,
+  //                          mapping);
+  //   }
+  // }
 
   trafomatrix_rt_to_gradp.reinit(n_interior_nodes_by_pressure, n_dofs_per_cell_v);
 
@@ -1487,9 +1487,9 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
       }
 
     /// DEBUG
-    std::cout << "node value weights (interior): " << std::endl;
-    remove_noise_from_matrix(node_value_weights);
-    node_value_weights.print_formatted(std::cout);
+    // std::cout << "node value weights (interior): " << std::endl;
+    // remove_noise_from_matrix(node_value_weights);
+    // node_value_weights.print_formatted(std::cout);
 
     const auto & [V, invSigma, UT] = compute_inverse_svd(node_value_weights);
     /// "Inverse" has to be understood in the sense of an inverse SVD.
@@ -1497,243 +1497,243 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
     inverse_node_value_weights.transpose(trafomatrix_rt_to_gradp);
 
     /// DEBUG
-    std::cout << "transformation matrix (interior): " << std::endl;
-    remove_noise_from_matrix(trafomatrix_rt_to_gradp);
-    trafomatrix_rt_to_gradp.print_formatted(std::cout);
+    // std::cout << "transformation matrix (interior): " << std::endl;
+    // remove_noise_from_matrix(trafomatrix_rt_to_gradp);
+    // trafomatrix_rt_to_gradp.print_formatted(std::cout);
 
     /// DEBUG
     /// Display the "new shape functions" \tilde{v}_i
-    for(auto i = 0U; i < n_interior_nodes_by_pressure; ++i)
+    //   for(auto i = 0U; i < n_interior_nodes_by_pressure; ++i)
+    //   {
+    //     Vector<double> phi_i(n_dofs_per_cell_v);
+    //     for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
+    //       phi_i(j) = trafomatrix_rt_to_gradp(i, j);
+
+    //     std::vector<std::string> names(dim, "shape_function");
+    //     const std::string        prefix         = "tildev_interior";
+    //     const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
+    //     const auto               n_subdivisions = 10U;
+    //     std::vector<DataComponentInterpretation::DataComponentInterpretation>
+    //       data_component_interpretation(dim,
+    //                                     DataComponentInterpretation::component_is_part_of_vector);
+    //     visualize_dof_vector(unit_dofh_v,
+    //                          phi_i,
+    //                          names,
+    //                          prefix,
+    //                          suffix,
+    //                          n_subdivisions,
+    //                          data_component_interpretation,
+    //                          mapping);
+    //   }
+    // }
+
+    trafomatrix_rt_to_constp.reinit(n_faces_per_cell, n_dofs_per_cell_v);
+
+    /**
+     * Compute the application of the given RT shape functions to the RT node
+     * functional associated to a given face, which is generated by the constant
+     * function.
+     */
     {
-      Vector<double> phi_i(n_dofs_per_cell_v);
-      for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
-        phi_i(j) = trafomatrix_rt_to_gradp(i, j);
+      QGauss<dim - 1>   quad(n_q_points_1d);
+      const UpdateFlags update_flags =
+        update_values | update_normal_vectors | update_quadrature_points | update_JxW_values;
 
-      std::vector<std::string> names(dim, "shape_function");
-      const std::string        prefix         = "tildev_interior";
-      const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
-      const auto               n_subdivisions = 10U;
-      std::vector<DataComponentInterpretation::DataComponentInterpretation>
-        data_component_interpretation(dim,
-                                      DataComponentInterpretation::component_is_part_of_vector);
-      visualize_dof_vector(unit_dofh_v,
-                           phi_i,
-                           names,
-                           prefix,
-                           suffix,
-                           n_subdivisions,
-                           data_component_interpretation,
-                           mapping);
-    }
-  }
+      FEFaceValues<dim> fe_values_v(mapping, fe_v, quad, update_flags);
 
-  trafomatrix_rt_to_constp.reinit(n_faces_per_cell, n_dofs_per_cell_v);
+      const auto face_node_functional = [&](const unsigned int face_no, const Vector<double> v) {
+        const auto & unit_cell = unit_dofh_v.begin_active(); // one reference cell
+        fe_values_v.reinit(unit_cell, face_no);
 
-  /**
-   * Compute the application of the given RT shape functions to the RT node
-   * functional associated to a given face, which is generated by the constant
-   * function.
-   */
-  {
-    QGauss<dim - 1>   quad(n_q_points_1d);
-    const UpdateFlags update_flags =
-      update_values | update_normal_vectors | update_quadrature_points | update_JxW_values;
+        const auto   n_q_points = fe_values_v.n_quadrature_points;
+        const auto & normals    = fe_values_v.get_normal_vectors();
+        AssertDimension(v.size(), fe_values_v.dofs_per_cell);
 
-    FEFaceValues<dim> fe_values_v(mapping, fe_v, quad, update_flags);
+        const auto & compute_v_q = [&](const unsigned int q) {
+          Tensor<1, dim> value;
+          for(unsigned int j = 0; j < n_dofs_per_cell_v; ++j)
+            value += v[j] * MW::compute_vvalue(fe_values_v, j, q);
+          return value;
+        };
 
-    const auto face_node_functional = [&](const unsigned int face_no, const Vector<double> v) {
-      const auto & unit_cell = unit_dofh_v.begin_active(); // one reference cell
-      fe_values_v.reinit(unit_cell, face_no);
+        double node_value = 0.;
+        for(unsigned int q = 0; q < n_q_points; ++q)
+        {
+          const double           orientation = GeometryInfo<dim>::unit_normal_orientation[face_no];
+          const Tensor<1, dim> & n_q         = orientation * normals[q];
+          const Tensor<1, dim> & v_q         = compute_v_q(q);
+          const auto &           dx          = fe_values_v.JxW(q);
 
-      const auto   n_q_points = fe_values_v.n_quadrature_points;
-      const auto & normals    = fe_values_v.get_normal_vectors();
-      AssertDimension(v.size(), fe_values_v.dofs_per_cell);
+          node_value += v_q * n_q * dx;
+        }
 
-      const auto & compute_v_q = [&](const unsigned int q) {
-        Tensor<1, dim> value;
-        for(unsigned int j = 0; j < n_dofs_per_cell_v; ++j)
-          value += v[j] * MW::compute_vvalue(fe_values_v, j, q);
-        return value;
+        return node_value;
       };
 
-      double node_value = 0.;
-      for(unsigned int q = 0; q < n_q_points; ++q)
-      {
-        const double           orientation = GeometryInfo<dim>::unit_normal_orientation[face_no];
-        const Tensor<1, dim> & n_q         = orientation * normals[q];
-        const Tensor<1, dim> & v_q         = compute_v_q(q);
-        const auto &           dx          = fe_values_v.JxW(q);
+      LAPACKFullMatrix<double> node_value_weights(n_faces_per_cell, n_dofs_per_cell_v);
+      for(auto i = 0U; i < node_value_weights.m(); ++i)   // node functionals
+        for(auto j = 0U; j < node_value_weights.n(); ++j) // face shape funcs
+        {
+          Vector<double> phi_j(n_dofs_per_cell_v);
+          phi_j[j]                 = 1.;
+          node_value_weights(i, j) = face_node_functional(/*face_no*/ i, phi_j);
+        }
 
-        node_value += v_q * n_q * dx;
-      }
+      const auto & [V, invSigma, UT]          = compute_inverse_svd(node_value_weights);
+      const auto & inverse_node_value_weights = merge_lapack_decomposition(V, invSigma, UT);
+      inverse_node_value_weights.transpose(trafomatrix_rt_to_constp);
 
-      return node_value;
-    };
+      /// DEBUG
+      /// Display the "new shape functions" \tilde{v}_i
+      // for(auto i = 0U; i < n_faces_per_cell; ++i)
+      // {
+      //   Vector<double> phi_i(n_dofs_per_cell_v);
+      //   for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
+      //     phi_i(j) = trafomatrix_rt_to_constp(i, j);
 
-    LAPACKFullMatrix<double> node_value_weights(n_faces_per_cell, n_dofs_per_cell_v);
-    for(auto i = 0U; i < node_value_weights.m(); ++i)   // node functionals
-      for(auto j = 0U; j < node_value_weights.n(); ++j) // face shape funcs
-      {
-        Vector<double> phi_j(n_dofs_per_cell_v);
-        phi_j[j]                 = 1.;
-        node_value_weights(i, j) = face_node_functional(/*face_no*/ i, phi_j);
-      }
-
-    const auto & [V, invSigma, UT]          = compute_inverse_svd(node_value_weights);
-    const auto & inverse_node_value_weights = merge_lapack_decomposition(V, invSigma, UT);
-    inverse_node_value_weights.transpose(trafomatrix_rt_to_constp);
+      //   std::vector<std::string> names(dim, "shape_function");
+      //   const std::string        prefix         = "tildev_face";
+      //   const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
+      //   const auto               n_subdivisions = 10U;
+      //   std::vector<DataComponentInterpretation::DataComponentInterpretation>
+      //     data_component_interpretation(dim,
+      //                                   DataComponentInterpretation::component_is_part_of_vector);
+      //   visualize_dof_vector(unit_dofh_v,
+      //                        phi_i,
+      //                        names,
+      //                        prefix,
+      //                        suffix,
+      //                        n_subdivisions,
+      //                        data_component_interpretation,
+      //                        mapping);
+      // }
+    }
 
     /// DEBUG
-    /// Display the "new shape functions" \tilde{v}_i
-    for(auto i = 0U; i < n_faces_per_cell; ++i)
-    {
-      Vector<double> phi_i(n_dofs_per_cell_v);
-      for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
-        phi_i(j) = trafomatrix_rt_to_constp(i, j);
+    // {
+    //   unit_triangulation.refine_global();
+    //   DoFHandler<dim> unit_dofh_v;
+    //   DoFHandler<dim> unit_dofh_p;
+    //   unit_dofh_v.initialize(unit_triangulation, fe_v);
+    //   unit_dofh_p.initialize(unit_triangulation, fe_p);
 
-      std::vector<std::string> names(dim, "shape_function");
-      const std::string        prefix         = "tildev_face";
-      const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
-      const auto               n_subdivisions = 10U;
-      std::vector<DataComponentInterpretation::DataComponentInterpretation>
-        data_component_interpretation(dim,
-                                      DataComponentInterpretation::component_is_part_of_vector);
-      visualize_dof_vector(unit_dofh_v,
-                           phi_i,
-                           names,
-                           prefix,
-                           suffix,
-                           n_subdivisions,
-                           data_component_interpretation,
-                           mapping);
-    }
-  }
+    //   std::vector<types::global_dof_index> global_dof_indices_v(n_dofs_per_cell_v);
+    //   Vector<double>                       phi_K_i(unit_dofh_v.n_dofs());
+    //   unsigned int                         Ki = 0; // global shape function index
+    //   for(const auto & cell : unit_dofh_v.active_cell_iterators())
+    //   {
+    //     cell->get_active_or_mg_dof_indices(global_dof_indices_v);
+    //     for(auto i = 0U; i < n_interior_nodes_by_pressure; ++i)
+    //     {
+    //       phi_K_i *= 0.;
+    //       for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
+    //         phi_K_i(global_dof_indices_v[j]) = trafomatrix_rt_to_gradp(i, j);
 
-  /// DEBUG
-  {
-    unit_triangulation.refine_global();
-    DoFHandler<dim> unit_dofh_v;
-    DoFHandler<dim> unit_dofh_p;
-    unit_dofh_v.initialize(unit_triangulation, fe_v);
-    unit_dofh_p.initialize(unit_triangulation, fe_p);
+    //       std::vector<std::string> names(dim, "shape_function");
+    //       const std::string        prefix         = "tildev_interior_global";
+    //       const std::string        suffix         = "phi" + Utilities::int_to_string(Ki++, 3);
+    //       const auto               n_subdivisions = 10U;
+    //       std::vector<DataComponentInterpretation::DataComponentInterpretation>
+    //         data_component_interpretation(dim,
+    //                                       DataComponentInterpretation::component_is_part_of_vector);
+    //       visualize_dof_vector(unit_dofh_v,
+    //                            phi_K_i,
+    //                            names,
+    //                            prefix,
+    //                            suffix,
+    //                            n_subdivisions,
+    //                            data_component_interpretation,
+    //                            mapping);
+    //     }
+    //   }
 
-    std::vector<types::global_dof_index> global_dof_indices_v(n_dofs_per_cell_v);
-    Vector<double>                       phi_K_i(unit_dofh_v.n_dofs());
-    unsigned int                         Ki = 0; // global shape function index
-    for(const auto & cell : unit_dofh_v.active_cell_iterators())
-    {
-      cell->get_active_or_mg_dof_indices(global_dof_indices_v);
-      for(auto i = 0U; i < n_interior_nodes_by_pressure; ++i)
-      {
-        phi_K_i *= 0.;
-        for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
-          phi_K_i(global_dof_indices_v[j]) = trafomatrix_rt_to_gradp(i, j);
+    //   {
+    //     Pressure::InterfaceHandler<dim> interface_handler;
+    //     interface_handler.reinit(unit_dofh_v.get_triangulation());
 
-        std::vector<std::string> names(dim, "shape_function");
-        const std::string        prefix         = "tildev_interior_global";
-        const std::string        suffix         = "phi" + Utilities::int_to_string(Ki++, 3);
-        const auto               n_subdivisions = 10U;
-        std::vector<DataComponentInterpretation::DataComponentInterpretation>
-          data_component_interpretation(dim,
-                                        DataComponentInterpretation::component_is_part_of_vector);
-        visualize_dof_vector(unit_dofh_v,
-                             phi_K_i,
-                             names,
-                             prefix,
-                             suffix,
-                             n_subdivisions,
-                             data_component_interpretation,
-                             mapping);
-      }
-    }
+    //     std::vector<types::global_dof_index> global_dof_indices(n_dofs_per_cell_v);
+    //     std::vector<types::global_dof_index> global_ndof_indices(n_dofs_per_cell_v);
+    //     Vector<double>                       phi_K_i(unit_dofh_v.n_dofs());
+    //     unsigned int                         Ki = 0; // global shape function index
+    //     for(const auto & cell : unit_dofh_v.active_cell_iterators())
+    //     {
+    //       cell->get_active_or_mg_dof_indices(global_dof_indices);
 
-    {
-      Pressure::InterfaceHandler<dim> interface_handler;
-      interface_handler.reinit(unit_dofh_v.get_triangulation());
+    //       for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
+    //       {
+    //         const bool there_is_no_neighbor = cell->neighbor_index(face_no) == -1;
 
-      std::vector<types::global_dof_index> global_dof_indices(n_dofs_per_cell_v);
-      std::vector<types::global_dof_index> global_ndof_indices(n_dofs_per_cell_v);
-      Vector<double>                       phi_K_i(unit_dofh_v.n_dofs());
-      unsigned int                         Ki = 0; // global shape function index
-      for(const auto & cell : unit_dofh_v.active_cell_iterators())
-      {
-        cell->get_active_or_mg_dof_indices(global_dof_indices);
+    //         if(there_is_no_neighbor)
+    //           continue;
 
-        for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
-        {
-          const bool there_is_no_neighbor = cell->neighbor_index(face_no) == -1;
+    //         const auto & ncell    = cell->neighbor(face_no);
+    //         const auto   nface_no = cell->neighbor_face_no(face_no);
 
-          if(there_is_no_neighbor)
-            continue;
+    //         const Pressure::InterfaceId interface_id{cell->id(), ncell->id()};
+    //         const bool                  this_interface_isnt_contained =
+    //           interface_handler.template get_interface_index<false>(interface_id) ==
+    //           numbers::invalid_unsigned_int;
 
-          const auto & ncell    = cell->neighbor(face_no);
-          const auto   nface_no = cell->neighbor_face_no(face_no);
+    //         if(this_interface_isnt_contained)
+    //           continue;
 
-          const Pressure::InterfaceId interface_id{cell->id(), ncell->id()};
-          const bool                  this_interface_isnt_contained =
-            interface_handler.template get_interface_index<false>(interface_id) ==
-            numbers::invalid_unsigned_int;
+    //         ncell->get_active_or_mg_dof_indices(global_ndof_indices);
 
-          if(this_interface_isnt_contained)
-            continue;
+    //         auto nonunique_dof_indices = global_dof_indices;
+    //         std::copy(global_ndof_indices.begin(),
+    //                   global_ndof_indices.end(),
+    //                   std::back_inserter(nonunique_dof_indices));
+    //         std::sort(nonunique_dof_indices.begin(), nonunique_dof_indices.end());
 
-          ncell->get_active_or_mg_dof_indices(global_ndof_indices);
+    //         std::vector<types::global_dof_index> unique_dof_indices;
+    //         std::unique_copy(nonunique_dof_indices.begin(),
+    //                          nonunique_dof_indices.end(),
+    //                          std::back_inserter(unique_dof_indices));
 
-          auto nonunique_dof_indices = global_dof_indices;
-          std::copy(global_ndof_indices.begin(),
-                    global_ndof_indices.end(),
-                    std::back_inserter(nonunique_dof_indices));
-          std::sort(nonunique_dof_indices.begin(), nonunique_dof_indices.end());
+    //         std::vector<unsigned int> counts;
+    //         std::transform(unique_dof_indices.begin(),
+    //                        unique_dof_indices.end(),
+    //                        std::back_inserter(counts),
+    //                        [&](const auto index) {
+    //                          return std::count(nonunique_dof_indices.begin(),
+    //                                            nonunique_dof_indices.end(),
+    //                                            index);
+    //                        });
 
-          std::vector<types::global_dof_index> unique_dof_indices;
-          std::unique_copy(nonunique_dof_indices.begin(),
-                           nonunique_dof_indices.end(),
-                           std::back_inserter(unique_dof_indices));
+    //         std::cout << vector_to_string(counts) << std::endl;
 
-          std::vector<unsigned int> counts;
-          std::transform(unique_dof_indices.begin(),
-                         unique_dof_indices.end(),
-                         std::back_inserter(counts),
-                         [&](const auto index) {
-                           return std::count(nonunique_dof_indices.begin(),
-                                             nonunique_dof_indices.end(),
-                                             index);
-                         });
+    //         std::map<types::global_dof_index, unsigned int> dof_index_to_count;
+    //         for(auto i = 0U; i < counts.size(); ++i)
+    //           dof_index_to_count.emplace(unique_dof_indices[i], counts[i]);
 
-          std::cout << vector_to_string(counts) << std::endl;
+    //         phi_K_i *= 0.;
+    //         for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
+    //           phi_K_i(global_dof_indices[j]) =
+    //             trafomatrix_rt_to_constp(face_no, j) /
+    //             static_cast<double>(dof_index_to_count[global_dof_indices[j]]);
+    //         for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
+    //           phi_K_i(global_ndof_indices[j]) =
+    //             trafomatrix_rt_to_constp(nface_no, j) /
+    //             static_cast<double>(dof_index_to_count[global_ndof_indices[j]]);
 
-          std::map<types::global_dof_index, unsigned int> dof_index_to_count;
-          for(auto i = 0U; i < counts.size(); ++i)
-            dof_index_to_count.emplace(unique_dof_indices[i], counts[i]);
-
-          phi_K_i *= 0.;
-          for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
-            phi_K_i(global_dof_indices[j]) =
-              trafomatrix_rt_to_constp(face_no, j) /
-              static_cast<double>(dof_index_to_count[global_dof_indices[j]]);
-          for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
-            phi_K_i(global_ndof_indices[j]) =
-              trafomatrix_rt_to_constp(nface_no, j) /
-              static_cast<double>(dof_index_to_count[global_ndof_indices[j]]);
-
-          std::vector<std::string> names(dim, "shape_function");
-          const std::string        prefix         = "tildev_face_global";
-          const std::string        suffix         = "phi" + Utilities::int_to_string(Ki++, 3);
-          const auto               n_subdivisions = 10U;
-          std::vector<DataComponentInterpretation::DataComponentInterpretation>
-            data_component_interpretation(dim,
-                                          DataComponentInterpretation::component_is_part_of_vector);
-          visualize_dof_vector(unit_dofh_v,
-                               phi_K_i,
-                               names,
-                               prefix,
-                               suffix,
-                               n_subdivisions,
-                               data_component_interpretation,
-                               mapping);
-        }
-      }
-    }
+    //         std::vector<std::string> names(dim, "shape_function");
+    //         const std::string        prefix         = "tildev_face_global";
+    //         const std::string        suffix         = "phi" + Utilities::int_to_string(Ki++, 3);
+    //         const auto               n_subdivisions = 10U;
+    //         std::vector<DataComponentInterpretation::DataComponentInterpretation>
+    //           data_component_interpretation(dim,
+    //                                         DataComponentInterpretation::component_is_part_of_vector);
+    //         visualize_dof_vector(unit_dofh_v,
+    //                              phi_K_i,
+    //                              names,
+    //                              prefix,
+    //                              suffix,
+    //                              n_subdivisions,
+    //                              data_component_interpretation,
+    //                              mapping);
+    //       }
+    //     }
+    //   }
   }
 
   return shape_function_weights;
@@ -2249,7 +2249,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     /// DEBUG
     remove_noise_from_vector(constant_pressure_rhs);
     constant_pressure_rhs.print(ofs);
-    constant_pressure_matrix.print_formatted(ofs);
+    // constant_pressure_matrix.print_formatted(ofs);
 
     const auto     n_cells = constant_pressure_matrix.n();
     Vector<double> constant_pressure_solution(n_cells);
@@ -2272,7 +2272,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     remove_noise_from_vector(discrete_pressure);
     discrete_pressure.print(ofs);
     ofs.close();
-    Assert(false, ExcMessage("stop..."));
+    // Assert(false, ExcMessage("stop..."));
   }
 }
 

@@ -1858,38 +1858,103 @@ struct Values
                 fe_values_in.get_quadrature(),
                 fe_values_in.get_update_flags()),
       shape_to_test_functions(shape_to_test_functions_in),
-      n_quadrature_points(fe_values_in.n_quadrature_points)
+      n_quadrature_points(fe_values_in.n_quadrature_points),
+      active_test_function_indices([&]() {
+        std::vector<unsigned int> all(shape_to_test_functions_in.m());
+        std::iota(all.begin(), all.end(), 0U);
+        return all;
+      }())
   {
     AssertDimension(shape_to_test_functions.n(), fe_values_in.dofs_per_cell);
   }
 
   template<typename CellIteratorType>
   void
-  reinit(const CellIteratorType & cell, const std::vector<unsigned int> & test_function_indices_in)
+  reinit(const CellIteratorType &    own_cell,
+         const CellIteratorType &    cell,
+         std::vector<unsigned int> & active_test_function_indices_in)
   {
-    AssertDimension(shape_to_test_functions.n(), fe_values.dofs_per_cell);
+    AssertIndexRange(*std::max_element(active_test_function_indices_in.cbegin(),
+                                       active_test_function_indices_in.cend()),
+                     shape_to_test_functions.m());
+
+    if(&active_test_function_indices != &active_test_function_indices_in)
+      std::swap(active_test_function_indices, active_test_function_indices_in);
+
+    const bool own_cell_is_cell =
+      cell->index() == own_cell->index() && cell->level() == own_cell->level();
 
     fe_values.reinit(cell);
-    test_function_indices = test_function_indices_in;
 
-    AssertIndexRange(*std::max_element(test_function_indices.cbegin(),
-                                       test_function_indices.cend()),
+    /// determine active shape functions if needed
+    if(own_cell_is_cell)
+    {
+      std::vector<unsigned int> all(shape_to_test_functions.n());
+      std::iota(all.begin(), all.end(), 0U);
+      std::swap(active_shape_function_indices, all);
+    }
+    else
+    {
+      std::vector<types::global_dof_index> own_dof_indices(shape_to_test_functions.n());
+      own_cell->get_active_or_mg_dof_indices(own_dof_indices);
+      std::vector<types::global_dof_index> dof_indices(fe_values.get_fe().dofs_per_cell);
+      cell->get_active_or_mg_dof_indices(dof_indices);
+
+      std::sort(dof_indices.begin(), dof_indices.end());
+
+      active_shape_function_indices.clear();
+
+      auto i         = 0U;
+      auto dof_index = own_dof_indices.cbegin();
+      for(; dof_index != own_dof_indices.cend(); ++i, ++dof_index)
+      {
+        const auto it = std::lower_bound(dof_indices.cbegin(), dof_indices.cend(), *dof_index);
+        if(it != dof_indices.cend() && *it == *dof_index)
+          active_shape_function_indices.push_back(i);
+      }
+
+      Assert(false, ExcMessage("TODO..."));
+    }
+
+    AssertIndexRange(active_shape_function_indices.size(), shape_to_test_functions.n() + 1);
+    AssertIndexRange(*std::max_element(active_test_function_indices.cbegin(),
+                                       active_test_function_indices.cend()),
                      shape_to_test_functions.m());
   }
 
   template<typename CellIteratorType>
   void
-  reinit(const CellIteratorType & cell)
+  reinit(const CellIteratorType & own_cell, const CellIteratorType & cell)
   {
-    std::vector<unsigned int> test_function_indices_in(shape_to_test_functions.m());
-    std::iota(test_function_indices_in.begin(), test_function_indices_in.end(), 0U);
-    reinit(cell, test_function_indices_in);
+    if(active_test_function_indices.size() == shape_to_test_functions.m())
+      reinit(own_cell, cell, active_test_function_indices);
+    else
+    {
+      std::vector<unsigned int> all(shape_to_test_functions.m());
+      std::iota(all.begin(), all.end(), 0U);
+      reinit(own_cell, cell, all);
+    }
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType &    own_cell,
+         std::vector<unsigned int> & active_test_function_indices_in)
+  {
+    reinit(own_cell, own_cell, active_test_function_indices_in);
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType & own_cell)
+  {
+    reinit(own_cell, own_cell);
   }
 
   unsigned int
   n_dofs_per_cell() const
   {
-    return test_function_indices.size();
+    return active_test_function_indices.size();
   }
 
   const FiniteElement<dim> &
@@ -1913,33 +1978,32 @@ struct Values
   double
   shape_value_component(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    AssertIndexRange(i, test_function_indices.size());
-    const auto ii = test_function_indices[i];
+    AssertIndexRange(i, active_test_function_indices.size());
+    const auto ii = active_test_function_indices[i];
 
     double value = 0.;
-    for(auto j = 0U; j < shape_to_test_functions.n(); ++j)
-    {
-      value += shape_to_test_functions(ii, j) * fe_values.shape_value_component(j, q, c);
-    }
+    for(const auto jj : active_shape_function_indices)
+      value += shape_to_test_functions(ii, jj) * fe_values.shape_value_component(jj, q, c);
     return value;
   }
 
   Tensor<1, dim>
   shape_grad_component(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    AssertIndexRange(i, test_function_indices.size());
-    const auto ii = test_function_indices[i];
+    AssertIndexRange(i, active_test_function_indices.size());
+    const auto ii = active_test_function_indices[i];
 
     Tensor<1, dim> grad;
-    for(auto j = 0U; j < shape_to_test_functions.n(); ++j)
-      grad += shape_to_test_functions(ii, j) * fe_values.shape_grad_component(j, q, c);
+    for(const auto jj : active_shape_function_indices)
+      grad += shape_to_test_functions(ii, jj) * fe_values.shape_grad_component(jj, q, c);
     return grad;
   }
 
   FEValues<dim>              fe_values;
   const FullMatrix<double> & shape_to_test_functions;
   unsigned int               n_quadrature_points;
-  std::vector<unsigned int>  test_function_indices;
+  std::vector<unsigned int>  active_test_function_indices;
+  std::vector<unsigned int>  active_shape_function_indices;
 };
 
 
