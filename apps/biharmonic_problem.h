@@ -278,7 +278,8 @@ public:
 
   unsigned int proc_no;
 
-private:
+  /// Expose private members for outside-of-class testing...
+  // private:
   void
   make_grid_impl(const MeshParameter & mesh_prms);
 

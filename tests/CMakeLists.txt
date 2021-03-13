@@ -41,6 +41,7 @@ set (src_files
   kroneckersvd.cc
   block_matrix_base.cc
   local_mesh_loop.cc
+  apps_biharmonic.cc
 )
 
 add_custom_target(setup_tests)
