@@ -531,6 +531,9 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
   ScratchData<dim, true> & scratch_data,
   CopyData &               copy_data) const
 {
+  /// DEBUG
+  // std::cout << "c" << cell->index() << "@b=" << cell->at_boundary() << std::endl;
+
   AssertDimension(copy_data.cell_data.size(), 0U);
 
   /// The InterfaceHandler determines for which "inflow" interfaces this cell is
@@ -544,6 +547,20 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
   /// Restricting TestFunction::Values to those test functions which are active
   /// on associated "outflow" interfaces for this cell.
   phi_test.reinit(cell, active_test_function_indices);
+
+  /// DEBUG
+  // std::cout << "verify phi_test: " << std::endl;
+  // std::cout << "shape_to_test_functions: " << std::endl;
+  // phi_test.shape_to_test_functions.print_formatted(std::cout);
+  // std::cout << "test_function_indices: " << vector_to_string(phi_test.test_function_indices)
+  //           << std::endl;
+  // for(auto i = 0U; i < phi_test.n_dofs_per_cell(); ++i)
+  // {
+  //   std::cout << "values of test_phi_" << i << ": " << std::endl;
+  //   for(auto q = 0U; q < phi_test.n_quadrature_points; ++q)
+  //     std::cout << compute_vvalue(phi_test, i, q) << "   ";
+  //   std::cout << std::endl;
+  // }
 
   auto & phi_ansatz = scratch_data.stream_values_ansatz;
   phi_ansatz.reinit(cell_stream);
@@ -567,10 +584,23 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
                  dof_values.begin(),
                  [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
 
+  /// DEBUG
+  // std::cout << "cell_data.matrix: " << std::endl;
+  // remove_noise_from_matrix(cell_data.matrix);
+  // cell_data.matrix.print_formatted(std::cout);
+  // std::cout << "cell_data.rhs: " << std::endl;
+  // remove_noise_from_vector(cell_data.rhs);
+  // cell_data.rhs.print(std::cout);
+
   AssertDimension(cell_data.matrix.m(), cell_data.rhs.size());
   Vector<double> Ax(cell_data.rhs.size());
   cell_data.matrix.vmult(Ax, dof_values); // Ax
   cell_data.rhs -= Ax;                    // f - Ax
+
+  /// DEBUG
+  // std::cout << "residual: " << std::endl;
+  // remove_noise_from_vector(cell_data.rhs);
+  // cell_data.rhs.print(std::cout);
 }
 
 
@@ -604,6 +634,20 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker_impl(const TestEvaluatorType & 
                      return value;
                    });
   }
+
+  /// DEBUG
+  // std::cout << "verify phi_test(inside cell_worker_impl): " << std::endl;
+  // for(auto i = 0U; i < phi_test.n_dofs_per_cell(); ++i)
+  // {
+  //   std::cout << "values of test_phi_" << i << ": " << std::endl;
+  //   for(auto q = 0U; q < phi_test.n_quadrature_points; ++q)
+  //     std::cout << compute_vvalue(phi_test, i, q) << "   ";
+  //   std::cout << std::endl;
+  // }
+  // std::cout << "very load_values: " << std::endl;
+  // for(auto q = 0U; q < load_values.size(); ++q)
+  //   std::cout << load_values[q] << "   ";
+  // std::cout << std::endl;
 
   for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
   {
@@ -1014,6 +1058,10 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential_interface(
   Vector<double> Ax(face_data.rhs.size());
   face_data.matrix.vmult(Ax, dof_values); // Ax
   face_data.rhs -= Ax;                    // f - Ax
+
+  /// DEBUG
+  // std::cout << "c" << cell->index() << "f" << f << ":c" << ncell->index() << "f" << nf <<
+  // std::endl; remove_noise_from_vector(face_data.rhs); face_data.rhs.print(std::cout);
 }
 
 
@@ -1398,6 +1446,11 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential_interfa
   Vector<double> Ax(face_data.rhs.size());
   face_data.matrix.vmult(Ax, dof_values); // Ax
   face_data.rhs -= Ax;                    // f - Ax
+
+  /// DEBUG
+  // std::cout << "c" << cell->index() << "b" << face_no << std::endl;
+  // remove_noise_from_vector(face_data.rhs);
+  // face_data.rhs.print(std::cout);
 }
 
 

@@ -230,6 +230,7 @@ public:
   std::shared_ptr<ConditionalOStream> pcout;
   mutable PostProcessData             pp_data;
   mutable PostProcessData             pp_data_stokes;
+  std::ofstream                       ofs;
 
   std::shared_ptr<parallel::distributed::Triangulation<dim>> triangulation;
   MappingQ<dim>                                              mapping;
@@ -547,11 +548,11 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
     stokes_problem = std::make_shared<StokesProblem>(options_stokes.prms, equation_data_stokes);
     stokes_problem->pcout = pcout;
     /// TODO !!! use FE_RaviartThomasNodal_new...
-    stokes_problem->fe =
-      std::make_shared<FESystem<dim>>(FE_RaviartThomas<dim>(StokesProblem::fe_degree_v),
-                                      1,
-                                      typename StokesProblem::fe_type_p(fe_degree_pressure),
-                                      1);
+    // stokes_problem->fe =
+    //   std::make_shared<FESystem<dim>>(FE_RaviartThomas<dim>(StokesProblem::fe_degree_v),
+    //                                   1,
+    //                                   typename StokesProblem::fe_type_p(fe_degree_pressure),
+    //                                   1);
   }
 
   else
@@ -1378,10 +1379,10 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
 
   AssertDimension(dim, 2U);
 
-  const auto & fe_v          = stokes_problem->dof_handler_velocity.get_fe();
-  const auto & fe_p          = stokes_problem->dof_handler_pressure.get_fe();
-  const auto & mapping       = stokes_problem->mapping;
-  const auto   n_q_points_1d = stokes_problem->n_q_points_1d;
+  const auto & fe_v    = stokes_problem->dof_handler_velocity.get_fe();
+  const auto & fe_p    = stokes_problem->dof_handler_pressure.get_fe();
+  const auto & mapping = stokes_problem->mapping;
+  // const auto   n_q_points_1d = stokes_problem->n_q_points_1d; // !!!
 
   const auto n_dofs_per_cell_v            = fe_v.dofs_per_cell;
   const auto n_dofs_per_cell_p            = fe_p.dofs_per_cell;
@@ -1403,31 +1404,32 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
   unit_dofh_v.initialize(unit_triangulation, fe_v);
   unit_dofh_p.initialize(unit_triangulation, fe_p);
 
-  // /// Display RT shape functions in ParaView.
-  // {
-  //   AssertDimension(n_dofs_per_cell_v, unit_dofh_v.n_dofs()); // one cell
-  //   for(auto i = 0U; i < n_dofs_per_cell_v; ++i)
-  //   {
-  //     Vector<double> phi_i(n_dofs_per_cell_v);
-  //     phi_i[i] = 1.;
+  /// DEBUG
+  /// Display RT shape functions in ParaView.
+  {
+    AssertDimension(n_dofs_per_cell_v, unit_dofh_v.n_dofs()); // one cell
+    for(auto i = 0U; i < n_dofs_per_cell_v; ++i)
+    {
+      Vector<double> phi_i(n_dofs_per_cell_v);
+      phi_i[i] = 1.;
 
-  //     std::vector<std::string> names(dim, "shape_function");
-  //     const std::string        prefix         = "RT";
-  //     const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
-  //     const auto               n_subdivisions = 10U;
-  //     std::vector<DataComponentInterpretation::DataComponentInterpretation>
-  //       data_component_interpretation(dim,
-  //                                     DataComponentInterpretation::component_is_part_of_vector);
-  //     visualize_dof_vector(unit_dofh_v,
-  //                          phi_i,
-  //                          names,
-  //                          prefix,
-  //                          suffix,
-  //                          n_subdivisions,
-  //                          data_component_interpretation,
-  //                          mapping);
-  //   }
-  // }
+      std::vector<std::string> names(dim, "shape_function");
+      const std::string        prefix         = "RT";
+      const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
+      const auto               n_subdivisions = 10U;
+      std::vector<DataComponentInterpretation::DataComponentInterpretation>
+        data_component_interpretation(dim,
+                                      DataComponentInterpretation::component_is_part_of_vector);
+      visualize_dof_vector(unit_dofh_v,
+                           phi_i,
+                           names,
+                           prefix,
+                           suffix,
+                           n_subdivisions,
+                           data_component_interpretation,
+                           mapping);
+    }
+  }
 
   trafomatrix_rt_to_gradp.reinit(n_interior_nodes_by_pressure, n_dofs_per_cell_v);
 
@@ -1480,16 +1482,26 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
       for(auto j = 0U; j < node_value_weights.n(); ++j) // RT shape funcs
       {
         Vector<double> phi_j(n_dofs_per_cell_v);
-        phi_j[j] = 1.;
-
+        phi_j[j]                 = 1.;
         node_value_weights(i, j) = interior_node_functional(i, phi_j);
       }
+
+    /// DEBUG
+    std::cout << "node value weights (interior): " << std::endl;
+    remove_noise_from_matrix(node_value_weights);
+    node_value_weights.print_formatted(std::cout);
 
     const auto & [V, invSigma, UT] = compute_inverse_svd(node_value_weights);
     /// "Inverse" has to be understood in the sense of an inverse SVD.
     const auto & inverse_node_value_weights = merge_lapack_decomposition(V, invSigma, UT);
     inverse_node_value_weights.transpose(trafomatrix_rt_to_gradp);
 
+    /// DEBUG
+    std::cout << "transformation matrix (interior): " << std::endl;
+    remove_noise_from_matrix(trafomatrix_rt_to_gradp);
+    trafomatrix_rt_to_gradp.print_formatted(std::cout);
+
+    /// DEBUG
     /// Display the "new shape functions" \tilde{v}_i
     for(auto i = 0U; i < n_interior_nodes_by_pressure; ++i)
     {
@@ -1571,6 +1583,7 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
     const auto & inverse_node_value_weights = merge_lapack_decomposition(V, invSigma, UT);
     inverse_node_value_weights.transpose(trafomatrix_rt_to_constp);
 
+    /// DEBUG
     /// Display the "new shape functions" \tilde{v}_i
     for(auto i = 0U; i < n_faces_per_cell; ++i)
     {
@@ -1596,6 +1609,133 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
     }
   }
 
+  /// DEBUG
+  {
+    unit_triangulation.refine_global();
+    DoFHandler<dim> unit_dofh_v;
+    DoFHandler<dim> unit_dofh_p;
+    unit_dofh_v.initialize(unit_triangulation, fe_v);
+    unit_dofh_p.initialize(unit_triangulation, fe_p);
+
+    std::vector<types::global_dof_index> global_dof_indices_v(n_dofs_per_cell_v);
+    Vector<double>                       phi_K_i(unit_dofh_v.n_dofs());
+    unsigned int                         Ki = 0; // global shape function index
+    for(const auto & cell : unit_dofh_v.active_cell_iterators())
+    {
+      cell->get_active_or_mg_dof_indices(global_dof_indices_v);
+      for(auto i = 0U; i < n_interior_nodes_by_pressure; ++i)
+      {
+        phi_K_i *= 0.;
+        for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
+          phi_K_i(global_dof_indices_v[j]) = trafomatrix_rt_to_gradp(i, j);
+
+        std::vector<std::string> names(dim, "shape_function");
+        const std::string        prefix         = "tildev_interior_global";
+        const std::string        suffix         = "phi" + Utilities::int_to_string(Ki++, 3);
+        const auto               n_subdivisions = 10U;
+        std::vector<DataComponentInterpretation::DataComponentInterpretation>
+          data_component_interpretation(dim,
+                                        DataComponentInterpretation::component_is_part_of_vector);
+        visualize_dof_vector(unit_dofh_v,
+                             phi_K_i,
+                             names,
+                             prefix,
+                             suffix,
+                             n_subdivisions,
+                             data_component_interpretation,
+                             mapping);
+      }
+    }
+
+    {
+      Pressure::InterfaceHandler<dim> interface_handler;
+      interface_handler.reinit(unit_dofh_v.get_triangulation());
+
+      std::vector<types::global_dof_index> global_dof_indices(n_dofs_per_cell_v);
+      std::vector<types::global_dof_index> global_ndof_indices(n_dofs_per_cell_v);
+      Vector<double>                       phi_K_i(unit_dofh_v.n_dofs());
+      unsigned int                         Ki = 0; // global shape function index
+      for(const auto & cell : unit_dofh_v.active_cell_iterators())
+      {
+        cell->get_active_or_mg_dof_indices(global_dof_indices);
+
+        for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
+        {
+          const bool there_is_no_neighbor = cell->neighbor_index(face_no) == -1;
+
+          if(there_is_no_neighbor)
+            continue;
+
+          const auto & ncell    = cell->neighbor(face_no);
+          const auto   nface_no = cell->neighbor_face_no(face_no);
+
+          const Pressure::InterfaceId interface_id{cell->id(), ncell->id()};
+          const bool                  this_interface_isnt_contained =
+            interface_handler.template get_interface_index<false>(interface_id) ==
+            numbers::invalid_unsigned_int;
+
+          if(this_interface_isnt_contained)
+            continue;
+
+          ncell->get_active_or_mg_dof_indices(global_ndof_indices);
+
+          auto nonunique_dof_indices = global_dof_indices;
+          std::copy(global_ndof_indices.begin(),
+                    global_ndof_indices.end(),
+                    std::back_inserter(nonunique_dof_indices));
+          std::sort(nonunique_dof_indices.begin(), nonunique_dof_indices.end());
+
+          std::vector<types::global_dof_index> unique_dof_indices;
+          std::unique_copy(nonunique_dof_indices.begin(),
+                           nonunique_dof_indices.end(),
+                           std::back_inserter(unique_dof_indices));
+
+          std::vector<unsigned int> counts;
+          std::transform(unique_dof_indices.begin(),
+                         unique_dof_indices.end(),
+                         std::back_inserter(counts),
+                         [&](const auto index) {
+                           return std::count(nonunique_dof_indices.begin(),
+                                             nonunique_dof_indices.end(),
+                                             index);
+                         });
+
+          std::cout << vector_to_string(counts) << std::endl;
+
+          std::map<types::global_dof_index, unsigned int> dof_index_to_count;
+          for(auto i = 0U; i < counts.size(); ++i)
+            dof_index_to_count.emplace(unique_dof_indices[i], counts[i]);
+
+          phi_K_i *= 0.;
+          for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
+            phi_K_i(global_dof_indices[j]) =
+              trafomatrix_rt_to_constp(face_no, j) /
+              static_cast<double>(dof_index_to_count[global_dof_indices[j]]);
+          for(auto j = 0U; j < n_dofs_per_cell_v; ++j)
+            phi_K_i(global_ndof_indices[j]) =
+              trafomatrix_rt_to_constp(nface_no, j) /
+              static_cast<double>(dof_index_to_count[global_ndof_indices[j]]);
+
+          std::vector<std::string> names(dim, "shape_function");
+          const std::string        prefix         = "tildev_face_global";
+          const std::string        suffix         = "phi" + Utilities::int_to_string(Ki++, 3);
+          const auto               n_subdivisions = 10U;
+          std::vector<DataComponentInterpretation::DataComponentInterpretation>
+            data_component_interpretation(dim,
+                                          DataComponentInterpretation::component_is_part_of_vector);
+          visualize_dof_vector(unit_dofh_v,
+                               phi_K_i,
+                               names,
+                               prefix,
+                               suffix,
+                               n_subdivisions,
+                               data_component_interpretation,
+                               mapping);
+        }
+      }
+    }
+  }
+
   return shape_function_weights;
 }
 
@@ -1606,6 +1746,14 @@ void
 ModelProblem<dim, fe_degree>::solve_pressure()
 {
   print_parameter("Solving pressure system", "...");
+
+  /// DEBUG
+  {
+    const bool         mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+    std::ostringstream oss;
+    oss << "debug_p" << mpi_rank << ".txt";
+    ofs.open(oss.str(), std::ios_base::out);
+  }
 
   AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1U,
               ExcMessage("Not implemented in parallel."));
@@ -1629,16 +1777,16 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   shape_to_test_functions_interior = trafomatrix_rt_to_gradp;
 
   /// DEBUG
-  // shape_to_test_functions_interior.print_formatted(std::cout);
-  // trafomatrix_rt_to_gradp.print_formatted(std::cout);
+  remove_noise_from_matrix(shape_to_test_functions_interior);
+  shape_to_test_functions_interior.print_formatted(ofs);
 
   FullMatrix<double> shape_to_test_functions_interface(trafomatrix_rt_to_constp.m(),
                                                        trafomatrix_rt_to_constp.n());
   shape_to_test_functions_interface = trafomatrix_rt_to_constp;
 
   /// DEBUG
-  // shape_to_test_functions_interface.print_formatted(std::cout);
-  // trafomatrix_rt_to_constp.print_formatted(std::cout);
+  remove_noise_from_matrix(shape_to_test_functions_interface);
+  shape_to_test_functions_interface.print_formatted(ofs);
 
   Pressure::InterfaceHandler<dim> interface_handler;
   interface_handler.reinit(dof_handler_velocity.get_triangulation());
@@ -1686,8 +1834,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   std::vector<types::global_dof_index> constant_pressure_dof_indices(n_interface_nodes);
   auto &                               discrete_pressure = stokes_problem->system_solution.block(1);
 
-  const auto n_q_points_1d = stokes_problem->n_q_points_1d;
-
   /**
    * First, we compute all pressure coefficients except the constant mode
    * coefficient. To this end, we construct a basis of cell-wise non-div-free
@@ -1699,7 +1845,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
    *
    * We see that the gradient of the constant pressure mode is zero and, thus,
    * not contributing to the basis of non-div-free test functions. The new basis
-   * functions vv_j are a linear combination of the RT basis v_k given, that is
+   * functions vv_j are a linear combination of the RT basis functions v_k, that is
    * vv_j = \sum_k \alpha_jk v_k. Equation (1) is converted one-to-one to the
    * reference cell and reference functions, thus, it suffices to compute the
    * transformation matrix A = (\alpha_jk)_jk, here @p
@@ -1714,10 +1860,11 @@ ModelProblem<dim, fe_degree>::solve_pressure()
    * vv_j and substituting \beta_j * p_j as pressure (\beta_j is the pressure
    * coefficient) results in
    *
-   *    -\beta_j * (grad p_j, vv_i) = (f, vv_i) + BDRY_i - a_h(u_h, vv_i),   (3)
+   *    -\beta_j * (grad p_j, vv_i) = (f, vv_i) + BDRY_i - a_h(u_h, vv_i).   (3)
    *
-   * where the LHS (grad p_j, vv_i) = N_j(vv_i) = \delta_ij by definition of
-   * vv_i, thus, the non-constant pressure coefficients are computed as follows
+   * For the LHS, holds (grad p_j, vv_i) = N_j(vv_i) = \delta_ij by definition
+   * of vv_i, thus, the non-constant pressure coefficients are computed as
+   * follows
    *
    *    -\beta_i = (f, vv_i) + BDRY_i - a_h(u_h, vv_i).   (4)
    *
@@ -1878,9 +2025,10 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                           boundary_worker,
                           face_worker);
 
-    // // DEBUG
-    // discrete_pressure.print(std::cout);
-    // std::cout << vector_to_string(constant_pressure_dof_indices) << std::endl;
+    /// DEBUG
+    remove_noise_from_vector(discrete_pressure);
+    discrete_pressure.print(ofs);
+    ofs << vector_to_string(constant_pressure_dof_indices) << std::endl;
   }
 
   /**
@@ -2004,6 +2152,10 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                               MeshWorker::assemble_own_interior_faces_once,
                             boundary_worker,
                             face_worker);
+
+      /// DEBUG
+      remove_noise_from_vector(constant_pressure_rhs);
+      constant_pressure_rhs.print(ofs);
     }
 
     {
@@ -2094,9 +2246,10 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
     constraints_on_interface.condense(constant_pressure_matrix, constant_pressure_rhs);
 
-    // // DEBUG
-    // constant_pressure_rhs.print(std::cout);
-    // constant_pressure_matrix.print_formatted(std::cout);
+    /// DEBUG
+    remove_noise_from_vector(constant_pressure_rhs);
+    constant_pressure_rhs.print(ofs);
+    constant_pressure_matrix.print_formatted(ofs);
 
     const auto     n_cells = constant_pressure_matrix.n();
     Vector<double> constant_pressure_solution(n_cells);
@@ -2114,6 +2267,12 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     }
 
     stokes_problem->post_process_solution_vector();
+
+    /// DEBUG
+    remove_noise_from_vector(discrete_pressure);
+    discrete_pressure.print(ofs);
+    ofs.close();
+    Assert(false, ExcMessage("stop..."));
   }
 }
 

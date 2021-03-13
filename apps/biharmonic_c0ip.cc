@@ -144,6 +144,7 @@ main(int argc, char * argv[])
     unsigned int local_solver_index        = 0; // exact
     unsigned int ksvd_rank                 = 1;
     unsigned int n_cycles                  = 3;
+    unsigned int fe_index                  = 0;
 
     //: parse arguments
     atoi_if(solver_index, 1);
@@ -152,12 +153,13 @@ main(int argc, char * argv[])
     atof_if(local_solver_index, 4);
     atof_if(ksvd_rank, 5);
     atoi_if(n_cycles, 6);
-    atoi_if(n_smoothing_steps, 7);
+    atoi_if(fe_index, 7);
     atof_if(ip_factor, 8);
     atoi_if(n_threads_max, 9);
     atoi_if(use_doubling_of_steps, 10);
     atoi_if(debug_depth, 11);
     atoi_if(use_hierarchical_elements, 12);
+    atoi_if(n_smoothing_steps, 13);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
@@ -271,6 +273,27 @@ main(int argc, char * argv[])
     auto pcout = std::make_shared<ConditionalOStream>(std::cout /*fout*/, is_first_proc); // !!!
     biharmonic_problem.pcout                 = pcout;
     biharmonic_problem.stokes_problem->pcout = pcout;
+
+    /// vary the Stokes finite element for the stream function formulation
+    {
+      using StokesProblem = std::decay_t<decltype(*(biharmonic_problem.stokes_problem))>;
+      constexpr auto fe_degree_velocity = StokesProblem::fe_degree_v;
+      constexpr auto fe_degree_pressure = StokesProblem::static_fe_degree_p;
+      if(fe_index == 0U)
+        biharmonic_problem.stokes_problem->fe =
+          std::make_shared<FESystem<dim>>(FE_RaviartThomas<dim>(fe_degree_velocity),
+                                          1,
+                                          typename StokesProblem::fe_type_p(fe_degree_pressure),
+                                          1);
+      else if(fe_index == 1U)
+        biharmonic_problem.stokes_problem->fe =
+          std::make_shared<FESystem<dim>>(FE_RaviartThomasNodal_new<dim>(fe_degree_velocity),
+                                          1,
+                                          typename StokesProblem::fe_type_p(fe_degree_pressure),
+                                          1);
+      else
+        AssertThrow(false, ExcMessage("Not valid."));
+    }
 
     if(use_hierarchical_elements)
       biharmonic_problem.finite_element = std::make_shared<FE_Q_Hierarchical<dim>>(fe_degree);

@@ -1865,23 +1865,25 @@ struct Values
 
   template<typename CellIteratorType>
   void
-  reinit(const CellIteratorType &          cell,
-         const std::vector<unsigned int> & test_function_indices_in = std::vector<unsigned int>{})
+  reinit(const CellIteratorType & cell, const std::vector<unsigned int> & test_function_indices_in)
   {
     AssertDimension(shape_to_test_functions.n(), fe_values.dofs_per_cell);
 
     fe_values.reinit(cell);
-    if(test_function_indices_in.empty())
-    {
-      test_function_indices.resize(shape_to_test_functions.m());
-      std::iota(test_function_indices.begin(), test_function_indices.end(), 0U);
-    }
-    else
-      test_function_indices = test_function_indices_in;
+    test_function_indices = test_function_indices_in;
 
     AssertIndexRange(*std::max_element(test_function_indices.cbegin(),
                                        test_function_indices.cend()),
                      shape_to_test_functions.m());
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType & cell)
+  {
+    std::vector<unsigned int> test_function_indices_in(shape_to_test_functions.m());
+    std::iota(test_function_indices_in.begin(), test_function_indices_in.end(), 0U);
+    reinit(cell, test_function_indices_in);
   }
 
   unsigned int
@@ -2072,10 +2074,10 @@ struct InterfaceValues
         make_interface_test_function_indices(global_dof_indices_left, global_dof_indices_right));
 
       /// DEBUG
-      std::cout << "interface_test_function_indices: " << std::endl;
-      for(const auto & [li, ri] : interface_test_function_indices)
-        std::cout << " (" << li << "," << ri << ")";
-      std::cout << std::endl;
+      // std::cout << "interface_test_function_indices: " << std::endl;
+      // for(const auto & [li, ri] : interface_test_function_indices)
+      //   std::cout << " (" << li << "," << ri << ")";
+      // std::cout << std::endl;
     }
 
     else
@@ -2083,10 +2085,10 @@ struct InterfaceValues
       interface_test_function_indices = interface_test_function_indices_in;
 
       /// DEBUG
-      std::cout << "interface_test_function_indices_in: " << std::endl;
-      for(const auto & [li, ri] : interface_test_function_indices_in)
-        std::cout << " (" << li << "," << ri << ")";
-      std::cout << std::endl;
+      // std::cout << "interface_test_function_indices_in: " << std::endl;
+      // for(const auto & [li, ri] : interface_test_function_indices_in)
+      //   std::cout << " (" << li << "," << ri << ")";
+      // std::cout << std::endl;
     }
   }
 

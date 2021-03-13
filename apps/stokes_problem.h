@@ -625,7 +625,8 @@ public:
   using Base::local_assembly;
   using vector_type = LinearAlgebra::distributed::BlockVector<double>;
 
-  static constexpr int fe_degree_v = Base::fe_degree_v;
+  static constexpr int static_fe_degree_p = fe_degree_p;
+  static constexpr int fe_degree_v        = Base::fe_degree_v;
   static constexpr int n_q_points_1d =
     fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
 
