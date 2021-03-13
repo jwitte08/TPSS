@@ -779,7 +779,7 @@ struct InterfaceHandler
     //   std::cout << interface_id << std::endl;
   }
 
-
+  template<bool do_flipped = true>
   std::vector<InterfaceId>::const_iterator
   get_interface_iterator(const InterfaceId & id) const
   {
@@ -789,20 +789,24 @@ struct InterfaceHandler
       std::binary_search(cached_interface_ids.cbegin(), cached_interface_ids.cend(), id);
     if(is_contained)
       return std::lower_bound(cached_interface_ids.cbegin(), cached_interface_ids.cend(), id);
-    const InterfaceId flipped_id = {id.second, id.first};
-    const bool        is_flipped =
-      std::binary_search(cached_interface_ids.cbegin(), cached_interface_ids.cend(), flipped_id);
-    if(is_flipped)
-      return std::lower_bound(cached_interface_ids.cbegin(),
-                              cached_interface_ids.cend(),
-                              flipped_id);
+    if(do_flipped)
+    {
+      const InterfaceId flipped_id = {id.second, id.first};
+      const bool        is_flipped =
+        std::binary_search(cached_interface_ids.cbegin(), cached_interface_ids.cend(), flipped_id);
+      if(is_flipped)
+        return std::lower_bound(cached_interface_ids.cbegin(),
+                                cached_interface_ids.cend(),
+                                flipped_id);
+    }
     return cached_interface_ids.cend();
   }
 
+  template<bool do_flipped = true>
   unsigned int
   get_interface_index(const InterfaceId & id) const
   {
-    const auto interface_iterator = get_interface_iterator(id);
+    const auto interface_iterator = get_interface_iterator<do_flipped>(id);
     const bool id_isnt_contained  = cached_interface_ids.cend() == interface_iterator;
     if(id_isnt_contained)
       return numbers::invalid_unsigned_int;
