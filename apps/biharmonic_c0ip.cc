@@ -291,6 +291,12 @@ main(int argc, char * argv[])
                                           1,
                                           typename StokesProblem::fe_type_p(fe_degree_pressure),
                                           1);
+      else if(fe_index == 2U)
+        biharmonic_problem.stokes_problem->fe =
+          std::make_shared<FESystem<dim>>(FE_RaviartThomas_new<dim>(fe_degree_velocity),
+                                          1,
+                                          typename StokesProblem::fe_type_p(fe_degree_pressure),
+                                          1);
       else
         AssertThrow(false, ExcMessage("Not valid."));
     }
