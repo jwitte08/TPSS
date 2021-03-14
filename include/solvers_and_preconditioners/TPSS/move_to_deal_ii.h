@@ -443,9 +443,11 @@ project_boundary_values_div_conforming(const DoFHandler<dim> &     dof_handler,
               {
                 const bool is_raviartthomas =
                   dynamic_cast<const FE_RaviartThomas<dim> *>(&cell->get_fe()) != nullptr;
+                const bool is_raviartthomas_new =
+                  dynamic_cast<const FE_RaviartThomas_new<dim> *>(&cell->get_fe()) != nullptr;
                 const bool is_raviartthomasnodal_new =
                   dynamic_cast<const FE_RaviartThomasNodal_new<dim> *>(&cell->get_fe()) != nullptr;
-                AssertThrow(is_raviartthomas || is_raviartthomasnodal_new,
+                AssertThrow(is_raviartthomas || is_raviartthomas_new || is_raviartthomasnodal_new,
                             typename FiniteElement<dim>::ExcInterpolationNotImplemented());
               }
 

@@ -28,7 +28,8 @@ DoFInfo<dim, Number>::initialize(
 
   //: fill the lexicographic-to-hierarchic-numbering map
   /// NOTE as of 2021/03/06 the documentation of lexicographic_numbering is
-  /// wrong: the mapping is lexicographic-to-hierarchical (l2h)
+  /// wrong: the mapping @p lexicographic_numbering is
+  /// lexicographic-to-hierarchical (l2h) and not vice versa as documented
   l2h = shape_info->lexicographic_numbering;
 
   /// Initialize a helper that handles the tensor structure for a regular patch

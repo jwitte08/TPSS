@@ -41,6 +41,10 @@ protected:
     is_quadratic  = fe_degree == 2;
     pcout_owned   = std::make_shared<ConditionalOStream>(ofs, is_first_proc);
 
+    rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+    rt_parameters.mesh.n_repetitions    = 1;
+    rt_parameters.mesh.n_refinements    = 0;
+
     rt_parameters.multigrid.pre_smoother.schwarz.patch_variant    = TPSS::PatchVariant::vertex;
     rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
     rt_parameters.multigrid.post_smoother.schwarz = rt_parameters.multigrid.pre_smoother.schwarz;
@@ -287,6 +291,60 @@ protected:
   }
 
 
+  void
+  debug_and_visualize_raviart_thomas()
+  {
+    equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
+
+    Biharmonic::ModelProblem<dim, fe_degree> biharmonic_problem(rt_parameters, equation_data);
+    biharmonic_problem.pcout = pcout_owned;
+    biharmonic_problem.make_grid();
+    biharmonic_problem.setup_system();
+
+    auto & stokes_problem        = *(biharmonic_problem.stokes_problem);
+    using StokesProblem          = typename std::decay_t<decltype(stokes_problem)>;
+    stokes_problem.pcout         = pcout_owned;
+    stokes_problem.triangulation = biharmonic_problem.triangulation;
+    if(fe_stokes)
+      stokes_problem.fe = fe_stokes;
+    stokes_problem.setup_system();
+
+    const auto & dofh_v  = stokes_problem.dof_handler_velocity;
+    const auto & fe_v    = dofh_v.get_fe();
+    const auto & mapping = stokes_problem.mapping;
+
+    const auto n_dofs_per_cell_v = fe_v.dofs_per_cell;
+
+    /// DEBUG
+    {
+      ASSERT_EQ(n_dofs_per_cell_v, dofh_v.n_dofs()) << "Not a single cell...";
+
+      /// Display RT shape functions in ParaView.
+      for(auto i = 0U; i < n_dofs_per_cell_v; ++i)
+      {
+        Vector<double> phi_i(n_dofs_per_cell_v);
+        phi_i[i] = 1.;
+
+        std::vector<std::string> names(dim, "shape_function");
+        const std::string prefix = "RT" + Utilities::int_to_string(StokesProblem::fe_degree_v, 1);
+        const std::string suffix = "phi" + Utilities::int_to_string(i, 3);
+        const auto        n_subdivisions = 10U;
+        std::vector<DataComponentInterpretation::DataComponentInterpretation>
+          data_component_interpretation(dim,
+                                        DataComponentInterpretation::component_is_part_of_vector);
+        visualize_dof_vector(dofh_v,
+                             phi_i,
+                             names,
+                             prefix,
+                             suffix,
+                             n_subdivisions,
+                             data_component_interpretation,
+                             mapping);
+      }
+    }
+  }
+
+
   template<typename VectorType>
   void
   compare_vector(const VectorType & vec, const VectorType & other) const
@@ -313,6 +371,8 @@ TYPED_TEST_SUITE_P(TestModelProblem);
 TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_RTmoments)
 {
   using Fixture = TestModelProblem<TypeParam>;
+
+  const auto & blub = FE_RaviartThomas_new<Fixture::dim>(Fixture::fe_degree - 1);
 
   Fixture::fe_stokes =
     std::make_shared<FESystem<Fixture::dim>>(FE_RaviartThomas<Fixture::dim>(Fixture::fe_degree - 1),
@@ -349,9 +409,24 @@ TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_RTnodal)
   Fixture::test_compute_nondivfree_shape_functions();
 }
 
+TYPED_TEST_P(TestModelProblem, debug_and_visualize_RTmoments)
+{
+  using Fixture = TestModelProblem<TypeParam>;
+
+  Fixture::fe_stokes =
+    std::make_shared<FESystem<Fixture::dim>>(FE_RaviartThomas_new<Fixture::dim>(Fixture::fe_degree -
+                                                                                1),
+                                             1,
+                                             FE_DGQLegendre<Fixture::dim>(Fixture::fe_degree - 1),
+                                             1);
+
+  Fixture::debug_and_visualize_raviart_thomas();
+}
+
 REGISTER_TYPED_TEST_SUITE_P(TestModelProblem,
                             compute_nondivfree_shape_functions_RTmoments,
-                            compute_nondivfree_shape_functions_RTnodal);
+                            compute_nondivfree_shape_functions_RTnodal,
+                            debug_and_visualize_RTmoments);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestModelProblem, TestParamsQuadratic);
 INSTANTIATE_TYPED_TEST_SUITE_P(Cubic2D, TestModelProblem, TestParamsCubic);
