@@ -310,7 +310,7 @@ protected:
 
 TYPED_TEST_SUITE_P(TestModelProblem);
 
-TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions)
+TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_RTmoments)
 {
   using Fixture = TestModelProblem<TypeParam>;
 
@@ -329,7 +329,7 @@ TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions)
   Fixture::test_compute_nondivfree_shape_functions();
 }
 
-TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_nodal)
+TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_RTnodal)
 {
   using Fixture = TestModelProblem<TypeParam>;
 
@@ -350,8 +350,8 @@ TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_nodal)
 }
 
 REGISTER_TYPED_TEST_SUITE_P(TestModelProblem,
-                            compute_nondivfree_shape_functions,
-                            compute_nondivfree_shape_functions_nodal);
+                            compute_nondivfree_shape_functions_RTmoments,
+                            compute_nondivfree_shape_functions_RTnodal);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestModelProblem, TestParamsQuadratic);
 INSTANTIATE_TYPED_TEST_SUITE_P(Cubic2D, TestModelProblem, TestParamsCubic);
