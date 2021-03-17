@@ -315,32 +315,67 @@ protected:
 
     const auto n_dofs_per_cell_v = fe_v.dofs_per_cell;
 
-    /// DEBUG
+    const auto fe_rt_old = std::make_shared<FE_RaviartThomas<dim>>(fe_degree - 1);
+
+    const auto * fe_rt_new = dynamic_cast<const FE_RaviartThomas_new<dim> *>(&fe_v);
+
+    if(fe_rt_new)
     {
-      ASSERT_EQ(n_dofs_per_cell_v, dofh_v.n_dofs()) << "Not a single cell...";
+      QGauss<1> quad_1d(fe_rt_new->degree + 1);
+      internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info;
+      fe_rt_new->fill_shape_info(shape_info, quad_1d);
 
-      /// Display RT shape functions in ParaView.
-      for(auto i = 0U; i < n_dofs_per_cell_v; ++i)
+      /// interior dofs/node functionals run faster over component than moment
+      /// of the node functional for FE_RaviartThomas. for FE_RaviartThomas_new
+      /// it is vice versa
+      const unsigned int n_face_dofs =
+        GeometryInfo<dim>::faces_per_cell * fe_rt_new->n_dofs_per_face();
+      const unsigned int        n_interior_dofs = fe_rt_new->n_dofs_per_cell() - n_face_dofs;
+      const unsigned int        n_interior_dofs_per_comp = n_interior_dofs / dim;
+      std::vector<unsigned int> o2n(n_interior_dofs);
+      for(auto i = 0U; i < n_interior_dofs_per_comp; ++i)
+        for(auto comp = 0U; comp < dim; ++comp)
+          o2n[i * dim + comp] = comp * n_interior_dofs_per_comp + i;
+
+      *pcout_owned << fe_rt_new->get_name() << " vs. " << fe_rt_old->get_name() << std::endl;
+      for(auto child = 0U; child < GeometryInfo<dim>::max_children_per_cell; ++child)
       {
-        Vector<double> phi_i(n_dofs_per_cell_v);
-        phi_i[i] = 1.;
-
-        std::vector<std::string> names(dim, "shape_function");
-        const std::string prefix = "RT" + Utilities::int_to_string(StokesProblem::fe_degree_v, 1);
-        const std::string suffix = "phi" + Utilities::int_to_string(i, 3);
-        const auto        n_subdivisions = 10U;
-        std::vector<DataComponentInterpretation::DataComponentInterpretation>
-          data_component_interpretation(dim,
-                                        DataComponentInterpretation::component_is_part_of_vector);
-        visualize_dof_vector(dofh_v,
-                             phi_i,
-                             names,
-                             prefix,
-                             suffix,
-                             n_subdivisions,
-                             data_component_interpretation,
-                             mapping);
+        const auto &       restriction_matrix     = fe_rt_new->get_restriction_matrix(child);
+        const auto &       restriction_matrix_old = fe_rt_old->get_restriction_matrix(child);
+        FullMatrix<double> ordered_rmatrix_old(restriction_matrix_old);
+        {
+          for(auto io = 0U; io < n_interior_dofs; ++io)
+            for(auto jo = 0U; jo < n_interior_dofs; ++jo)
+              ordered_rmatrix_old(n_face_dofs + o2n[io], n_face_dofs + o2n[jo]) =
+                restriction_matrix_old(n_face_dofs + io, n_face_dofs + jo);
+        }
+        compare_matrix(restriction_matrix, ordered_rmatrix_old);
       }
+    }
+
+    ASSERT_EQ(n_dofs_per_cell_v, dofh_v.n_dofs()) << "Not a single cell...";
+
+    /// Display RT shape functions in ParaView.
+    for(auto i = 0U; i < n_dofs_per_cell_v; ++i)
+    {
+      Vector<double> phi_i(n_dofs_per_cell_v);
+      phi_i[i] = 1.;
+
+      std::vector<std::string> names(dim, "shape_function");
+      const std::string prefix = "RT" + Utilities::int_to_string(StokesProblem::fe_degree_v, 1);
+      const std::string suffix = "phi" + Utilities::int_to_string(i, 3);
+      const auto        n_subdivisions = 10U;
+      std::vector<DataComponentInterpretation::DataComponentInterpretation>
+        data_component_interpretation(dim,
+                                      DataComponentInterpretation::component_is_part_of_vector);
+      visualize_dof_vector(dofh_v,
+                           phi_i,
+                           names,
+                           prefix,
+                           suffix,
+                           n_subdivisions,
+                           data_component_interpretation,
+                           mapping);
     }
   }
 
@@ -350,6 +385,13 @@ protected:
   compare_vector(const VectorType & vec, const VectorType & other) const
   {
     Util::compare_vector(vec, other, *pcout_owned);
+  }
+
+
+  void
+  compare_matrix(const FullMatrix<double> & matrix, const FullMatrix<double> & other) const
+  {
+    Util::compare_matrix(matrix, other, *pcout_owned);
   }
 
 
