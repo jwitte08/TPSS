@@ -315,44 +315,6 @@ protected:
 
     const auto n_dofs_per_cell_v = fe_v.dofs_per_cell;
 
-    const auto fe_rt_old = std::make_shared<FE_RaviartThomas<dim>>(fe_degree - 1);
-
-    const auto * fe_rt_new = dynamic_cast<const FE_RaviartThomas_new<dim> *>(&fe_v);
-
-    if(fe_rt_new)
-    {
-      QGauss<1> quad_1d(fe_rt_new->degree + 1);
-      internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info;
-      fe_rt_new->fill_shape_info(shape_info, quad_1d);
-
-      /// interior dofs/node functionals run faster over component than moment
-      /// of the node functional for FE_RaviartThomas. for FE_RaviartThomas_new
-      /// it is vice versa
-      const unsigned int n_face_dofs =
-        GeometryInfo<dim>::faces_per_cell * fe_rt_new->n_dofs_per_face();
-      const unsigned int        n_interior_dofs = fe_rt_new->n_dofs_per_cell() - n_face_dofs;
-      const unsigned int        n_interior_dofs_per_comp = n_interior_dofs / dim;
-      std::vector<unsigned int> o2n(n_interior_dofs);
-      for(auto i = 0U; i < n_interior_dofs_per_comp; ++i)
-        for(auto comp = 0U; comp < dim; ++comp)
-          o2n[i * dim + comp] = comp * n_interior_dofs_per_comp + i;
-
-      *pcout_owned << fe_rt_new->get_name() << " vs. " << fe_rt_old->get_name() << std::endl;
-      for(auto child = 0U; child < GeometryInfo<dim>::max_children_per_cell; ++child)
-      {
-        const auto &       restriction_matrix     = fe_rt_new->get_restriction_matrix(child);
-        const auto &       restriction_matrix_old = fe_rt_old->get_restriction_matrix(child);
-        FullMatrix<double> ordered_rmatrix_old(restriction_matrix_old);
-        {
-          for(auto io = 0U; io < n_interior_dofs; ++io)
-            for(auto jo = 0U; jo < n_interior_dofs; ++jo)
-              ordered_rmatrix_old(n_face_dofs + o2n[io], n_face_dofs + o2n[jo]) =
-                restriction_matrix_old(n_face_dofs + io, n_face_dofs + jo);
-        }
-        compare_matrix(restriction_matrix, ordered_rmatrix_old);
-      }
-    }
-
     ASSERT_EQ(n_dofs_per_cell_v, dofh_v.n_dofs()) << "Not a single cell...";
 
     /// Display RT shape functions in ParaView.
@@ -376,6 +338,136 @@ protected:
                            n_subdivisions,
                            data_component_interpretation,
                            mapping);
+    }
+  }
+
+
+  void
+  raviartthomas_compare_shape_data()
+  {
+    equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
+
+    const auto fe_rt_old = std::make_shared<FE_RaviartThomas<dim>>(fe_degree - 1);
+
+    const auto fe_rt_new = std::make_shared<FE_RaviartThomas_new<dim>>(fe_degree - 1);
+
+    const unsigned int n_q_points_1d = fe_degree + 1;
+
+    QGauss<1>                                        quad_1d(n_q_points_1d);
+    internal::MatrixFreeFunctions::ShapeInfo<double> shape_info;
+    fe_rt_new->fill_shape_info(shape_info, quad_1d);
+
+    /// interior dofs/node functionals run faster over component than moment
+    /// of the node functional for FE_RaviartThomas. for FE_RaviartThomas_new
+    /// it is vice versa
+    const unsigned int n_face_dofs =
+      GeometryInfo<dim>::faces_per_cell * fe_rt_new->n_dofs_per_face();
+    const unsigned int        n_interior_dofs          = fe_rt_new->n_dofs_per_cell() - n_face_dofs;
+    const unsigned int        n_interior_dofs_per_comp = n_interior_dofs / dim;
+    std::vector<unsigned int> o2n(n_interior_dofs);
+    for(auto i = 0U; i < n_interior_dofs_per_comp; ++i)
+      for(auto comp = 0U; comp < dim; ++comp)
+        o2n[i * dim + comp] = comp * n_interior_dofs_per_comp + i;
+
+    *pcout_owned << "(n_q x n_dofs) shape_value matrix:" << fe_rt_new->get_name() << " vs. "
+                 << fe_rt_old->get_name() << std::endl;
+
+    const unsigned int n_dofs_per_comp = fe_rt_new->n_dofs_per_cell() / dim;
+
+    QGauss<dim> quad(n_q_points_1d);
+
+    /// reference shape values
+    FullMatrix<double> dim_shape_values(quad.size(), fe_rt_new->n_dofs_per_cell());
+
+    for(auto comp = 0U; comp < dim; ++comp)
+      for(auto j = 0U; j < fe_rt_new->n_dofs_per_cell(); ++j)
+        for(auto q = 0U; q < quad.size(); ++q)
+          /// for each shape function only one vector component is non-zero
+          dim_shape_values(q, j) += fe_rt_new->shape_value_component(j, quad.point(q), comp);
+
+    const auto fill_shape_values = [&](const unsigned int d, const unsigned int c) {
+      const auto &       shape_data = shape_info.get_shape_data(d, c);
+      const auto         n          = shape_data.fe_degree + 1;
+      FullMatrix<double> shape_values(shape_data.n_q_points_1d, n);
+      for(auto q = 0U; q < shape_data.n_q_points_1d; ++q)
+        for(auto j = 0U; j < n; ++j)
+          shape_values(q, j) = shape_data.shape_values[j * shape_data.n_q_points_1d + q];
+      return shape_values;
+    };
+
+    /// shape values as tensor product
+    const auto & shape_values_kplus1 = fill_shape_values(0, 0);
+
+    const auto & shape_values_k = fill_shape_values(1, 0);
+
+    const auto & l2h = shape_info.lexicographic_numbering;
+
+    FullMatrix<double> tensor_shape_values(dim_shape_values.m(), dim_shape_values.n());
+
+    FullMatrix<double> one(IdentityMatrix(1U)); // dummy
+
+    for(auto comp = 0U; comp < dim; ++comp)
+    {
+      const unsigned int offset_comp = comp * n_dofs_per_comp;
+
+      const FullMatrix<double> & S_2 =
+        dim > 2 ? (comp == 2 ? shape_values_kplus1 : shape_values_k) : one;
+      const FullMatrix<double> & S_1 =
+        dim > 1 ? (comp == 1 ? shape_values_kplus1 : shape_values_k) : one;
+      const FullMatrix<double> & S_0 =
+        dim > 0 ? (comp == 0 ? shape_values_kplus1 : shape_values_k) : one;
+      const FullMatrix<double> & prod =
+        Tensors::kronecker_product(S_2, Tensors::kronecker_product(S_1, S_0));
+
+      for(auto q = 0U; q < quad.size(); ++q)
+        for(auto j = 0U; j < n_dofs_per_comp; ++j)
+          tensor_shape_values(q, l2h[offset_comp + j]) = prod(q, j);
+    }
+
+    compare_matrix(tensor_shape_values, dim_shape_values);
+  }
+
+
+  void
+  raviartthomas_compare_restriction()
+  {
+    const auto fe_rt_old = std::make_shared<FE_RaviartThomas<dim>>(fe_degree - 1);
+
+    const auto fe_rt_new = std::make_shared<FE_RaviartThomas_new<dim>>(fe_degree - 1);
+
+    const unsigned int                               n_q_points_1d = fe_degree + 1;
+    QGauss<1>                                        quad_1d(n_q_points_1d);
+    internal::MatrixFreeFunctions::ShapeInfo<double> shape_info;
+    fe_rt_new->fill_shape_info(shape_info, quad_1d);
+
+    /// interior dofs/node functionals run faster over component than moment
+    /// of the node functional for FE_RaviartThomas. for FE_RaviartThomas_new
+    /// it is vice versa
+    const unsigned int n_face_dofs =
+      GeometryInfo<dim>::faces_per_cell * fe_rt_new->n_dofs_per_face();
+    const unsigned int        n_interior_dofs          = fe_rt_new->n_dofs_per_cell() - n_face_dofs;
+    const unsigned int        n_interior_dofs_per_comp = n_interior_dofs / dim;
+    std::vector<unsigned int> o2n(n_interior_dofs);
+    for(auto i = 0U; i < n_interior_dofs_per_comp; ++i)
+      for(auto comp = 0U; comp < dim; ++comp)
+        o2n[i * dim + comp] = comp * n_interior_dofs_per_comp + i;
+
+    *pcout_owned << "comparing restriction matrices: " << fe_rt_new->get_name() << " vs. "
+                 << fe_rt_old->get_name() << std::endl;
+    for(auto child = 0U; child < GeometryInfo<dim>::max_children_per_cell; ++child)
+    {
+      const auto &       restriction_matrix     = fe_rt_new->get_restriction_matrix(child);
+      const auto &       restriction_matrix_old = fe_rt_old->get_restriction_matrix(child);
+      FullMatrix<double> ordered_rmatrix_old(restriction_matrix_old);
+      {
+        for(auto io = 0U; io < n_interior_dofs; ++io)
+          for(auto jo = 0U; jo < n_interior_dofs; ++jo)
+            ordered_rmatrix_old(n_face_dofs + o2n[io], n_face_dofs + o2n[jo]) =
+              restriction_matrix_old(n_face_dofs + io, n_face_dofs + jo);
+      }
+
+      *pcout_owned << "restriction for child " << child << ":" << std::endl;
+      compare_matrix(restriction_matrix, ordered_rmatrix_old);
     }
   }
 
@@ -410,6 +502,8 @@ protected:
 
 TYPED_TEST_SUITE_P(TestModelProblem);
 
+
+
 TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_RTmoments)
 {
   using Fixture = TestModelProblem<TypeParam>;
@@ -431,6 +525,8 @@ TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_RTmoments)
   Fixture::test_compute_nondivfree_shape_functions();
 }
 
+
+
 TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_RTnodal)
 {
   using Fixture = TestModelProblem<TypeParam>;
@@ -451,6 +547,8 @@ TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_RTnodal)
   Fixture::test_compute_nondivfree_shape_functions();
 }
 
+
+
 TYPED_TEST_P(TestModelProblem, debug_and_visualize_RTmoments)
 {
   using Fixture = TestModelProblem<TypeParam>;
@@ -465,10 +563,30 @@ TYPED_TEST_P(TestModelProblem, debug_and_visualize_RTmoments)
   Fixture::debug_and_visualize_raviart_thomas();
 }
 
+
+
+TYPED_TEST_P(TestModelProblem, raviartthomas_compare_shape_data)
+{
+  using Fixture = TestModelProblem<TypeParam>;
+  Fixture::raviartthomas_compare_shape_data();
+}
+
+
+
+TYPED_TEST_P(TestModelProblem, raviartthomas_compare_restriction)
+{
+  using Fixture = TestModelProblem<TypeParam>;
+  Fixture::raviartthomas_compare_restriction();
+}
+
+
+
 REGISTER_TYPED_TEST_SUITE_P(TestModelProblem,
                             compute_nondivfree_shape_functions_RTmoments,
                             compute_nondivfree_shape_functions_RTnodal,
-                            debug_and_visualize_RTmoments);
+                            debug_and_visualize_RTmoments,
+                            raviartthomas_compare_shape_data,
+                            raviartthomas_compare_restriction);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestModelProblem, TestParamsQuadratic);
 INSTANTIATE_TYPED_TEST_SUITE_P(Cubic2D, TestModelProblem, TestParamsCubic);
