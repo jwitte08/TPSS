@@ -292,6 +292,66 @@ protected:
 
 
   void
+  test_prolongation_sf_to_rt()
+  {
+    equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
+
+    Biharmonic::ModelProblem<dim, fe_degree> biharmonic_problem(rt_parameters, equation_data);
+    biharmonic_problem.pcout = pcout_owned;
+    biharmonic_problem.make_grid();
+    biharmonic_problem.setup_system();
+
+    auto & stokes_problem        = *(biharmonic_problem.stokes_problem);
+    stokes_problem.pcout         = pcout_owned;
+    stokes_problem.triangulation = biharmonic_problem.triangulation;
+    if(fe_stokes)
+      stokes_problem.fe = fe_stokes;
+    stokes_problem.setup_system();
+
+    biharmonic_problem.compute_prolongation_sf_to_velocity();
+  }
+
+
+  /// TODO
+  // void
+  // compare_rhs()
+  // {
+  //   equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
+
+  //   Biharmonic::ModelProblem<dim, fe_degree> biharmonic_problem(rt_parameters, equation_data);
+  //   biharmonic_problem.pcout = pcout_owned;
+  //   biharmonic_problem.make_grid();
+  //   biharmonic_problem.setup_system();
+  //   biharmonic_problem.assemble_system();
+
+  //   auto & stokes_problem        = *(biharmonic_problem.stokes_problem);
+  //   stokes_problem.pcout         = pcout_owned;
+  //   stokes_problem.triangulation = biharmonic_problem.triangulation;
+  //   if(fe_stokes)
+  //     stokes_problem.fe = fe_stokes;
+  //   stokes_problem.setup_system();
+  //   stokes_problem.assemble_system();
+
+  //   auto rhs_sf = biharmonic_problem.system_rhs;
+  //   rhs_sf *= 0.;
+  //   auto phi_sf = biharmonic_problem.system_u;
+  //   const auto & rhs_v = stokes_problem.system_rhs.block(0);
+  //   auto phi_v = stokes_problem.system_solution.block(0);
+  //   for (auto i = 0U; i < rhs_sf.size(); ++i)
+  //     {
+  //   	phi_sf *= 0.;
+  //   	phi_sf[i] = 1.;
+  //   	phi_v *= 0.;
+  //   	biharmonic_problem.prolongate_sf_to_velocity(phi_v, phi_sf);
+  //   	for (auto j = 0U; j < phi_v.size(); ++j)
+  //   	  rhs_sf[i] += phi_v[j] * rhs_v[j];
+  //     }
+
+  //   compare_vector(rhs_sf, biharmonic_problem.system_rhs);
+  // }
+
+
+  void
   debug_and_visualize_raviart_thomas()
   {
     equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
@@ -345,8 +405,6 @@ protected:
   void
   raviartthomas_compare_shape_data()
   {
-    equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
-
     const auto fe_rt_old = std::make_shared<FE_RaviartThomas<dim>>(fe_degree - 1);
 
     const auto fe_rt_new = std::make_shared<FE_RaviartThomas_new<dim>>(fe_degree - 1);
@@ -472,6 +530,51 @@ protected:
   }
 
 
+  void
+  raviartthomas_compare_generalized_support_points()
+  {
+    const auto fe_rt_old = std::make_shared<FE_RaviartThomas<dim>>(fe_degree - 1);
+
+    const auto fe_rt_new = std::make_shared<FE_RaviartThomas_new<dim>>(fe_degree - 1);
+
+    const auto & gsp_new = fe_rt_new->get_generalized_support_points();
+
+    const auto & gsp_old = fe_rt_old->get_generalized_support_points();
+
+    ASSERT_EQ(gsp_new, gsp_old);
+
+    for(auto q = 0U; q < gsp_new.size(); ++q)
+    {
+      const auto & point_new = gsp_new[q];
+      const auto & point_old = gsp_old[q];
+      *pcout_owned << q << " : " << point_new << " vs. " << point_old << std::endl;
+      EXPECT_TRUE(has_nearly_zero_abs(point_new.distance_square(point_old)))
+        << "point " << q << " mismatches";
+    }
+
+    const FullMatrix<double> M_new = FETools::compute_node_matrix(*fe_rt_new);
+    const FullMatrix<double> M_old = FETools::compute_node_matrix(*fe_rt_old);
+    compare_matrix(M_new, M_old);
+  }
+
+
+  void
+  raviartthomas_convert_generalized_support_point_values_to_dof_values()
+  {
+    const auto fe_rt_new = std::make_shared<FE_RaviartThomas_new<dim>>(fe_degree - 1);
+
+    /// Computing the node value matrix after initializing the finite element
+    /// has to result in the identity matrix. compute_node_matrix() makes us of
+    /// convert_generalized_support_point_values_to_dof_values() to compute the
+    /// node values... Of course we assume that the node values are correctly
+    /// computed during construction.
+    const FullMatrix<double> node_value_matrix = FETools::compute_node_matrix(*fe_rt_new);
+
+    FullMatrix<double> id(IdentityMatrix(node_value_matrix.n()));
+    compare_matrix(node_value_matrix, id);
+  }
+
+
   template<typename VectorType>
   void
   compare_vector(const VectorType & vec, const VectorType & other) const
@@ -549,6 +652,38 @@ TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_RTnodal)
 
 
 
+TYPED_TEST_P(TestModelProblem, compute_prolongation_sf_to_rt)
+{
+  using Fixture = TestModelProblem<TypeParam>;
+
+  Fixture::fe_stokes =
+    std::make_shared<FESystem<Fixture::dim>>(FE_RaviartThomas_new<Fixture::dim>(Fixture::fe_degree -
+                                                                                1),
+                                             1,
+                                             FE_DGQLegendre<Fixture::dim>(Fixture::fe_degree - 1),
+                                             1);
+
+  Fixture::test_prolongation_sf_to_rt();
+}
+
+
+
+TYPED_TEST_P(TestModelProblem, compare_rhs)
+{
+  using Fixture = TestModelProblem<TypeParam>;
+
+  Fixture::fe_stokes =
+    std::make_shared<FESystem<Fixture::dim>>(FE_RaviartThomas_new<Fixture::dim>(Fixture::fe_degree -
+                                                                                1),
+                                             1,
+                                             FE_DGQLegendre<Fixture::dim>(Fixture::fe_degree - 1),
+                                             1);
+
+  Fixture::compare_rhs();
+}
+
+
+
 TYPED_TEST_P(TestModelProblem, debug_and_visualize_RTmoments)
 {
   using Fixture = TestModelProblem<TypeParam>;
@@ -581,12 +716,31 @@ TYPED_TEST_P(TestModelProblem, raviartthomas_compare_restriction)
 
 
 
+TYPED_TEST_P(TestModelProblem, raviartthomas_compare_generalized_support_points)
+{
+  using Fixture = TestModelProblem<TypeParam>;
+  Fixture::raviartthomas_compare_generalized_support_points();
+}
+
+
+TYPED_TEST_P(TestModelProblem, raviartthomas_convert_generalized_support_point_values_to_dof_values)
+{
+  using Fixture = TestModelProblem<TypeParam>;
+  Fixture::raviartthomas_convert_generalized_support_point_values_to_dof_values();
+}
+
+
+
 REGISTER_TYPED_TEST_SUITE_P(TestModelProblem,
                             compute_nondivfree_shape_functions_RTmoments,
                             compute_nondivfree_shape_functions_RTnodal,
+                            compute_prolongation_sf_to_rt,
                             debug_and_visualize_RTmoments,
                             raviartthomas_compare_shape_data,
-                            raviartthomas_compare_restriction);
+                            raviartthomas_compare_restriction,
+                            raviartthomas_compare_generalized_support_points,
+                            raviartthomas_convert_generalized_support_point_values_to_dof_values,
+                            compare_rhs);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestModelProblem, TestParamsQuadratic);
 INSTANTIATE_TYPED_TEST_SUITE_P(Cubic2D, TestModelProblem, TestParamsCubic);
