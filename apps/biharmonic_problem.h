@@ -231,9 +231,9 @@ public:
   RT::Parameter                       rt_parameters;
   EquationData                        equation_data;
   std::shared_ptr<Function<dim>>      analytical_solution;
-  std::shared_ptr<Function<dim>>      analytical_velocity; // Stokes
+  // std::shared_ptr<Function<dim>>      analytical_velocity; // Stokes
   std::shared_ptr<Function<dim>>      load_function;
-  std::shared_ptr<Function<dim>>      load_function_stokes;
+  // std::shared_ptr<Function<dim>>      load_function_stokes;
   std::shared_ptr<ConditionalOStream> pcout;
   mutable PostProcessData             pp_data;
   mutable PostProcessData             pp_data_stokes;
@@ -277,11 +277,15 @@ public:
 
   std::shared_ptr<TrilinosWrappers::PreconditionBlockwiseDirect> preconditioner_blockdirect;
 
-  static constexpr unsigned int               fe_degree_pressure = fe_degree - 1;
-  Stokes::StokesFlow<dim, fe_degree_pressure> options_stokes;
+  /// Stream Function
+  static constexpr unsigned int fe_degree_pressure = fe_degree - 1;
+
+  using StokesProblem =
+    Stokes::ModelProblem<dim, fe_degree_pressure, Stokes::Method::RaviartThomas>;
+
+  RT::Parameter prms_stokes;
   Stokes::EquationData                        equation_data_stokes;
-  std::shared_ptr<Stokes::ModelProblem<dim, fe_degree_pressure, Stokes::Method::RaviartThomas>>
-    stokes_problem;
+  std::shared_ptr<StokesProblem>              stokes_problem;
 
   unsigned int proc_no;
 
@@ -440,26 +444,26 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
     }()),
-    analytical_velocity([&]() -> std::shared_ptr<Function<dim>> {
-      if(equation_data_in.variant == EquationData::Variant::ClampedHom)
-        return nullptr;
-      else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
-        return nullptr;
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
-        return std::make_shared<Stokes::DivergenceFree::NoSlip::SolutionVelocity<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip)
-        return std::make_shared<
-          Stokes::DivergenceFree::Poiseuille::NoSlip::SolutionVelocity<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
-        return std::make_shared<Stokes::DivergenceFree::NoSlipNormal::SolutionVelocity<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
-        return std::make_shared<Stokes::DivergenceFree::Poiseuille::Inhom::SolutionVelocity<dim>>();
-      else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
-        return nullptr;
-      else
-        AssertThrow(false, ExcMessage("Not supported..."));
-      return nullptr;
-    }()),
+    // analytical_velocity([&]() -> std::shared_ptr<Function<dim>> {
+    //   if(equation_data_in.variant == EquationData::Variant::ClampedHom)
+    //     return nullptr;
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
+    //     return nullptr;
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
+    //     return std::make_shared<Stokes::DivergenceFree::NoSlip::SolutionVelocity<dim>>();
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip)
+    //     return std::make_shared<
+    //       Stokes::DivergenceFree::Poiseuille::NoSlip::SolutionVelocity<dim>>();
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
+    //     return std::make_shared<Stokes::DivergenceFree::NoSlipNormal::SolutionVelocity<dim>>();
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
+    //     return std::make_shared<Stokes::DivergenceFree::Poiseuille::Inhom::SolutionVelocity<dim>>();
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
+    //     return nullptr;
+    //   else
+    //     AssertThrow(false, ExcMessage("Not supported..."));
+    //   return nullptr;
+    // }()),
     load_function([&]() -> std::shared_ptr<Function<dim>> {
       if(equation_data_in.variant == EquationData::Variant::ClampedHom)
         return std::make_shared<Clamped::Homogeneous::Load<dim>>();
@@ -479,29 +483,29 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
     }()),
-    load_function_stokes([&]() -> std::shared_ptr<Function<dim>> {
-      if(equation_data_in.variant == EquationData::Variant::ClampedHom)
-        return nullptr;
-      else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
-        return nullptr;
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
-        return std::make_shared<Stokes::ManufacturedLoad<dim>>(
-          std::make_shared<Stokes::DivergenceFree::NoSlip::Solution<dim>>());
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip)
-        return std::make_shared<Stokes::ManufacturedLoad<dim>>(
-          std::make_shared<Stokes::DivergenceFree::Poiseuille::NoSlip::Solution<dim>>());
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
-        return std::make_shared<Stokes::ManufacturedLoad<dim>>(
-          std::make_shared<Stokes::DivergenceFree::NoSlipNormal::Solution<dim>>());
-      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
-        return std::make_shared<Stokes::ManufacturedLoad<dim>>(
-          std::make_shared<Stokes::DivergenceFree::Poiseuille::Inhom::Solution<dim>>());
-      else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
-        return nullptr;
-      else
-        AssertThrow(false, ExcMessage("Not supported..."));
-      return nullptr;
-    }()),
+    // load_function_stokes([&]() -> std::shared_ptr<Function<dim>> {
+    //   if(equation_data_in.variant == EquationData::Variant::ClampedHom)
+    //     return nullptr;
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
+    //     return nullptr;
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
+    //     return std::make_shared<Stokes::ManufacturedLoad<dim>>(
+    //       std::make_shared<Stokes::DivergenceFree::NoSlip::Solution<dim>>());
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip)
+    //     return std::make_shared<Stokes::ManufacturedLoad<dim>>(
+    //       std::make_shared<Stokes::DivergenceFree::Poiseuille::NoSlip::Solution<dim>>());
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
+    //     return std::make_shared<Stokes::ManufacturedLoad<dim>>(
+    //       std::make_shared<Stokes::DivergenceFree::NoSlipNormal::Solution<dim>>());
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
+    //     return std::make_shared<Stokes::ManufacturedLoad<dim>>(
+    //       std::make_shared<Stokes::DivergenceFree::Poiseuille::Inhom::Solution<dim>>());
+    //   else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
+    //     return nullptr;
+    //   else
+    //     AssertThrow(false, ExcMessage("Not supported..."));
+    //   return nullptr;
+    // }()),
     pcout(
       std::make_shared<ConditionalOStream>(std::cout,
                                            Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
@@ -524,56 +528,46 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
       return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
     }()),
+    prms_stokes([&]() {
+      Stokes::StokesFlow<dim, fe_degree_pressure> options_stokes;
+      const auto damping = rt_parameters.multigrid.pre_smoother.schwarz.damping_factor;
+      options_stokes.setup(0U, damping);
+      options_stokes.prms.n_cycles = rt_parameters.n_cycles;
+      options_stokes.prms.mesh     = rt_parameters.mesh;
+      return options_stokes.prms;
+    }()),
+    equation_data_stokes([&]() {
+      std::map<EquationData::Variant, Stokes::EquationData::Variant> biharm_to_stokes_variant = {
+        {EquationData::Variant::ClampedStreamNoSlip, Stokes::EquationData::Variant::DivFreeNoSlip},
+        {EquationData::Variant::ClampedStreamPoiseuilleNoSlip,
+         Stokes::EquationData::Variant::DivFreePoiseuilleNoSlip},
+        {EquationData::Variant::ClampedStreamNoSlipNormal,
+         Stokes::EquationData::Variant::DivFreeNoSlipNormal},
+        {EquationData::Variant::ClampedStreamPoiseuilleInhom,
+         Stokes::EquationData::Variant::DivFreePoiseuilleInhom}};
+      Stokes::EquationData new_data;
+      new_data.variant           = biharm_to_stokes_variant.at(equation_data.variant);
+      new_data.use_cuthill_mckee = false;
+      if(prms_stokes.solver.variant == "GMRES_GMG" ||
+         prms_stokes.solver.variant == "CG_GMG")
+        new_data.local_kernel_size = 1U;
+      if(prms_stokes.solver.variant == "direct")
+        new_data.do_mean_value_constraint = true;
+      return new_data;
+    }()),
+    stokes_problem(equation_data.is_stream_function() ?
+                     [&]() {
+		     auto new_problem =
+                         std::make_shared<StokesProblem>(prms_stokes, equation_data_stokes);
+                       new_problem->pcout = pcout;
+                       return new_problem;
+                     }() :
+                     nullptr),
     proc_no(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD))
 {
   AssertThrow(rt_parameters.multigrid.pre_smoother.schwarz.patch_variant ==
                 TPSS::PatchVariant::vertex,
               ExcMessage("Model problem is designed for Schwarz methods on vertex patches."));
-
-  if(equation_data.is_stream_function())
-  {
-    Assert(load_function_stokes, ExcMessage("load_function_stokes is required."));
-
-    const auto damping = rt_parameters.multigrid.pre_smoother.schwarz.damping_factor;
-    options_stokes.setup(0U, damping);
-    options_stokes.prms.n_cycles = rt_parameters.n_cycles;
-    options_stokes.prms.mesh     = rt_parameters.mesh;
-
-    std::map<EquationData::Variant, Stokes::EquationData::Variant> biharm_to_stokes_variant = {
-      {EquationData::Variant::ClampedStreamNoSlip, Stokes::EquationData::Variant::DivFreeNoSlip},
-      {EquationData::Variant::ClampedStreamPoiseuilleNoSlip,
-       Stokes::EquationData::Variant::DivFreePoiseuilleNoSlip},
-      {EquationData::Variant::ClampedStreamNoSlipNormal,
-       Stokes::EquationData::Variant::DivFreeNoSlipNormal},
-      {EquationData::Variant::ClampedStreamPoiseuilleInhom,
-       Stokes::EquationData::Variant::DivFreePoiseuilleInhom}};
-
-    equation_data_stokes.variant           = biharm_to_stokes_variant.at(equation_data.variant);
-    equation_data_stokes.use_cuthill_mckee = false;
-    if(options_stokes.prms.solver.variant == "GMRES_GMG" ||
-       options_stokes.prms.solver.variant == "CG_GMG")
-      equation_data_stokes.local_kernel_size = 1U;
-    if(options_stokes.prms.solver.variant == "direct")
-      equation_data_stokes.do_mean_value_constraint = true;
-
-    using StokesProblem =
-      Stokes::ModelProblem<dim, fe_degree_pressure, Stokes::Method::RaviartThomas>;
-
-    stokes_problem = std::make_shared<StokesProblem>(options_stokes.prms, equation_data_stokes);
-    stokes_problem->pcout = pcout;
-    /// TODO !!! use FE_RaviartThomasNodal_new...
-    // stokes_problem->fe =
-    //   std::make_shared<FESystem<dim>>(FE_RaviartThomas<dim>(StokesProblem::fe_degree_v),
-    //                                   1,
-    //                                   typename StokesProblem::fe_type_p(fe_degree_pressure),
-    //                                   1);
-  }
-
-  else
-  {
-    Assert(load_function, ExcMessage("load_function is required."));
-    AssertDimension(load_function->n_components, 1U);
-  }
 }
 
 
@@ -714,16 +708,15 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
 {
   if(is_stream)
   {
-    // AssertThrow(false, ExcMessage("TODO MPI..."));
     using Stokes::Velocity::SIPG::MW::ScratchData;
 
     using Stokes::Velocity::SIPG::MW::CopyData;
 
     const auto                     velocity_components = std::make_pair<unsigned int>(0, dim);
-    Stokes::FunctionExtractor<dim> load_function_stream(load_function_stokes.get(),
+    Stokes::FunctionExtractor<dim> load_function_stream(stokes_problem->load_function.get()/*load_function_stokes.get()*/,
                                                         velocity_components);
 
-    Stokes::FunctionExtractor<dim> analytical_solution_velocity(analytical_velocity.get(),
+    Stokes::FunctionExtractor<dim> analytical_solution_velocity(stokes_problem->analytical_solution.get(),
                                                                 velocity_components);
 
     using MatrixIntegrator =
@@ -2422,8 +2415,13 @@ template<int dim, int fe_degree>
 double
 ModelProblem<dim, fe_degree>::compute_stream_function_error()
 {
-  AssertThrow(analytical_velocity, ExcMessage("analytical_velocity isn't initialized."));
-  AssertDimension(analytical_velocity->n_components, dim);
+  Assert(stokes_problem, ExcMessage("stokes_problem isn't initialized."));
+
+  const auto                     component_range = std::make_pair<unsigned int>(0, dim);
+  Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
+						     component_range);
+
+  AssertDimension(analytical_velocity.n_components, dim);
 
   using ::MW::ScratchData;
 
@@ -2448,10 +2446,10 @@ ModelProblem<dim, fe_degree>::compute_stream_function_error()
     std::transform(q_points.cbegin(),
                    q_points.cend(),
                    std::back_inserter(velocity_values),
-                   [this](const auto & x_q) {
+                   [&](const auto & x_q) {
                      Tensor<1, dim> u_q;
                      for(auto c = 0U; c < dim; ++c)
-                       u_q[c] = analytical_velocity->value(x_q, c);
+                       u_q[c] = analytical_velocity.value(x_q, c);
                      return u_q;
                    });
 
@@ -2708,6 +2706,7 @@ ModelProblem<dim, fe_degree>::prolongate_sf_to_velocity(
   LinearAlgebra::distributed::Vector<double> &       velocity,
   const LinearAlgebra::distributed::Vector<double> & stream) const
 {
+  AssertThrow(false, ExcMessage("TODO..."));
   const FullMatrix<double> & prolongation_matrix = compute_prolongation_sf_to_velocity();
 
   const auto & dofh_v = stokes_problem->dof_handler_velocity;
@@ -2818,7 +2817,7 @@ ModelProblem<dim, fe_degree>::compute_prolongation_sf_to_velocity() const
   DoFHandler<dim> unit_dofh_sf;
   unit_dofh_sf.initialize(unit_triangulation, fe_sf);
 
-  /// DEBUG Display prolongated/embedded unit stream functions in ParaView.
+  /// DEBUG Display unit stream functions in ParaView.
   {
     AssertDimension(n_dofs_per_cell_sf, unit_dofh_sf.n_dofs()); // one cell
     for(auto i = 0U; i < n_dofs_per_cell_sf; ++i)
@@ -2826,13 +2825,9 @@ ModelProblem<dim, fe_degree>::compute_prolongation_sf_to_velocity() const
       Vector<double> phi_i(n_dofs_per_cell_sf);
       phi_i[i] = 1.;
 
-      // std::vector<std::string> names(dim, "shape_function");
       const std::string prefix         = "streamfunction";
       const std::string suffix         = "phi" + Utilities::int_to_string(i, 3);
       const auto        n_subdivisions = 10U;
-      // std::vector<DataComponentInterpretation::DataComponentInterpretation>
-      //   data_component_interpretation(dim,
-      //                                 DataComponentInterpretation::component_is_part_of_vector);
 
       std::ostringstream oss;
       oss << prefix << "_"
