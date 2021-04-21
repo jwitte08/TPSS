@@ -228,12 +228,11 @@ public:
   void
   print_informations() const;
 
-  RT::Parameter                       rt_parameters;
-  EquationData                        equation_data;
-  std::shared_ptr<Function<dim>>      analytical_solution;
-  // std::shared_ptr<Function<dim>>      analytical_velocity; // Stokes
-  std::shared_ptr<Function<dim>>      load_function;
-  // std::shared_ptr<Function<dim>>      load_function_stokes;
+  RT::Parameter                  rt_parameters;
+  EquationData                   equation_data;
+  std::shared_ptr<Function<dim>> analytical_solution;
+  std::shared_ptr<Function<dim>> load_function;
+
   std::shared_ptr<ConditionalOStream> pcout;
   mutable PostProcessData             pp_data;
   mutable PostProcessData             pp_data_stokes;
@@ -277,15 +276,15 @@ public:
 
   std::shared_ptr<TrilinosWrappers::PreconditionBlockwiseDirect> preconditioner_blockdirect;
 
-  /// Stream Function
+  /// Stream Functions
   static constexpr unsigned int fe_degree_pressure = fe_degree - 1;
 
   using StokesProblem =
     Stokes::ModelProblem<dim, fe_degree_pressure, Stokes::Method::RaviartThomas>;
 
-  RT::Parameter prms_stokes;
-  Stokes::EquationData                        equation_data_stokes;
-  std::shared_ptr<StokesProblem>              stokes_problem;
+  RT::Parameter                  prms_stokes;
+  Stokes::EquationData           equation_data_stokes;
+  std::shared_ptr<StokesProblem> stokes_problem;
 
   unsigned int proc_no;
 
@@ -337,7 +336,7 @@ public:
 
 
 
-////////////////////////////// Defintions
+////////////////////////////// Definitions
 
 template<int dim, int fe_degree, typename Number>
 void
@@ -444,26 +443,6 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
     }()),
-    // analytical_velocity([&]() -> std::shared_ptr<Function<dim>> {
-    //   if(equation_data_in.variant == EquationData::Variant::ClampedHom)
-    //     return nullptr;
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
-    //     return nullptr;
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
-    //     return std::make_shared<Stokes::DivergenceFree::NoSlip::SolutionVelocity<dim>>();
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip)
-    //     return std::make_shared<
-    //       Stokes::DivergenceFree::Poiseuille::NoSlip::SolutionVelocity<dim>>();
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
-    //     return std::make_shared<Stokes::DivergenceFree::NoSlipNormal::SolutionVelocity<dim>>();
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
-    //     return std::make_shared<Stokes::DivergenceFree::Poiseuille::Inhom::SolutionVelocity<dim>>();
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
-    //     return nullptr;
-    //   else
-    //     AssertThrow(false, ExcMessage("Not supported..."));
-    //   return nullptr;
-    // }()),
     load_function([&]() -> std::shared_ptr<Function<dim>> {
       if(equation_data_in.variant == EquationData::Variant::ClampedHom)
         return std::make_shared<Clamped::Homogeneous::Load<dim>>();
@@ -483,29 +462,6 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
     }()),
-    // load_function_stokes([&]() -> std::shared_ptr<Function<dim>> {
-    //   if(equation_data_in.variant == EquationData::Variant::ClampedHom)
-    //     return nullptr;
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedBell)
-    //     return nullptr;
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlip)
-    //     return std::make_shared<Stokes::ManufacturedLoad<dim>>(
-    //       std::make_shared<Stokes::DivergenceFree::NoSlip::Solution<dim>>());
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip)
-    //     return std::make_shared<Stokes::ManufacturedLoad<dim>>(
-    //       std::make_shared<Stokes::DivergenceFree::Poiseuille::NoSlip::Solution<dim>>());
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipNormal)
-    //     return std::make_shared<Stokes::ManufacturedLoad<dim>>(
-    //       std::make_shared<Stokes::DivergenceFree::NoSlipNormal::Solution<dim>>());
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedStreamPoiseuilleInhom)
-    //     return std::make_shared<Stokes::ManufacturedLoad<dim>>(
-    //       std::make_shared<Stokes::DivergenceFree::Poiseuille::Inhom::Solution<dim>>());
-    //   else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
-    //     return nullptr;
-    //   else
-    //     AssertThrow(false, ExcMessage("Not supported..."));
-    //   return nullptr;
-    // }()),
     pcout(
       std::make_shared<ConditionalOStream>(std::cout,
                                            Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)),
@@ -531,7 +487,8 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
     prms_stokes([&]() {
       Stokes::StokesFlow<dim, fe_degree_pressure> options_stokes;
       const auto damping = rt_parameters.multigrid.pre_smoother.schwarz.damping_factor;
-      options_stokes.setup(0U, damping);
+      /// TODO
+      options_stokes.setup(5U, damping); // CG_GMG
       options_stokes.prms.n_cycles = rt_parameters.n_cycles;
       options_stokes.prms.mesh     = rt_parameters.mesh;
       return options_stokes.prms;
@@ -545,19 +502,20 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
          Stokes::EquationData::Variant::DivFreeNoSlipNormal},
         {EquationData::Variant::ClampedStreamPoiseuilleInhom,
          Stokes::EquationData::Variant::DivFreePoiseuilleInhom}};
+
       Stokes::EquationData new_data;
       new_data.variant           = biharm_to_stokes_variant.at(equation_data.variant);
       new_data.use_cuthill_mckee = false;
-      if(prms_stokes.solver.variant == "GMRES_GMG" ||
-         prms_stokes.solver.variant == "CG_GMG")
+      if(prms_stokes.solver.variant == "GMRES_GMG" || prms_stokes.solver.variant == "CG_GMG")
         new_data.local_kernel_size = 1U;
       if(prms_stokes.solver.variant == "direct")
         new_data.do_mean_value_constraint = true;
+      new_data.ip_factor = equation_data_in.ip_factor;
       return new_data;
     }()),
     stokes_problem(equation_data.is_stream_function() ?
                      [&]() {
-		     auto new_problem =
+                       auto new_problem =
                          std::make_shared<StokesProblem>(prms_stokes, equation_data_stokes);
                        new_problem->pcout = pcout;
                        return new_problem;
@@ -679,7 +637,6 @@ ModelProblem<dim, fe_degree>::setup_system()
   DoFTools::make_flux_sparsity_pattern(dof_handler, dsp, constraints, false);
   dsp.compress();
 
-  // system_matrix.initialize(build_mf_storage<double>(), equation_data);
   system_matrix.initialize(dsp,
                            locally_owned_dof_indices,
                            locally_relevant_dof_indices,
@@ -708,16 +665,22 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
 {
   if(is_stream)
   {
+    Assert(stokes_problem, ExcMessage("FEM for Stokes equations is uninitialized."));
+
+    stokes_problem->triangulation = this->triangulation;
+    stokes_problem->setup_system();
+    stokes_problem->assemble_system();
+
     using Stokes::Velocity::SIPG::MW::ScratchData;
 
     using Stokes::Velocity::SIPG::MW::CopyData;
 
     const auto                     velocity_components = std::make_pair<unsigned int>(0, dim);
-    Stokes::FunctionExtractor<dim> load_function_stream(stokes_problem->load_function.get()/*load_function_stokes.get()*/,
-                                                        velocity_components);
+    Stokes::FunctionExtractor<dim> load_function_stream(
+      stokes_problem->load_function.get() /*load_function_stokes.get()*/, velocity_components);
 
-    Stokes::FunctionExtractor<dim> analytical_solution_velocity(stokes_problem->analytical_solution.get(),
-                                                                velocity_components);
+    Stokes::FunctionExtractor<dim> analytical_solution_velocity(
+      stokes_problem->analytical_solution.get(), velocity_components);
 
     using MatrixIntegrator =
       typename Stokes::Velocity::SIPG::MW::MatrixIntegrator<dim, /*is_multigrid*/ false>;
@@ -1389,7 +1352,6 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions_old() const
   const auto & fe_v    = stokes_problem->dof_handler_velocity.get_fe();
   const auto & fe_p    = stokes_problem->dof_handler_pressure.get_fe();
   const auto & mapping = stokes_problem->mapping;
-  // const auto   n_q_points_1d = stokes_problem->n_q_points_1d; // !!!
 
   const auto n_dofs_per_cell_v            = fe_v.dofs_per_cell;
   const auto n_dofs_per_cell_p            = fe_p.dofs_per_cell;
@@ -1807,9 +1769,9 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
   inverse_node_value_weights.transpose(trafomatrix_all);
 
   /// DEBUG
-  std::cout << "transformation matrix (all): " << std::endl;
-  remove_noise_from_matrix(trafomatrix_all);
-  trafomatrix_all.print_formatted(std::cout);
+  // std::cout << "transformation matrix (all): " << std::endl;
+  // remove_noise_from_matrix(trafomatrix_all);
+  // trafomatrix_all.print_formatted(std::cout);
 
   std::array<FullMatrix<double>, 2> shape_function_weights;
   auto & [trafomatrix_rt_to_gradp, trafomatrix_rt_to_constp] = shape_function_weights;
@@ -1828,27 +1790,28 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
 
   /// DEBUG
   /// Display the "non-div-free test functions" \tilde{v}_i
-  for(auto i = 0U; i < trafomatrix_all.m(); ++i)
-  {
-    Vector<double> phi_i(trafomatrix_all.n());
-    for(auto j = 0U; j < trafomatrix_all.n(); ++j)
-      phi_i(j) = trafomatrix_all(i, j);
+  // for(auto i = 0U; i < trafomatrix_all.m(); ++i)
+  // {
+  //   Vector<double> phi_i(trafomatrix_all.n());
+  //   for(auto j = 0U; j < trafomatrix_all.n(); ++j)
+  //     phi_i(j) = trafomatrix_all(i, j);
 
-    std::vector<std::string> names(dim, "shape_function");
-    const std::string        prefix         = "unit_nondivfree_velocities";
-    const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
-    const auto               n_subdivisions = 10U;
-    std::vector<DataComponentInterpretation::DataComponentInterpretation>
-      data_component_interpretation(dim, DataComponentInterpretation::component_is_part_of_vector);
-    visualize_dof_vector(unit_dofh_v,
-                         phi_i,
-                         names,
-                         prefix,
-                         suffix,
-                         n_subdivisions,
-                         data_component_interpretation,
-                         mapping);
-  }
+  //   std::vector<std::string> names(dim, "shape_function");
+  //   const std::string        prefix         = "unit_nondivfree_velocities";
+  //   const std::string        suffix         = "phi" + Utilities::int_to_string(i, 3);
+  //   const auto               n_subdivisions = 10U;
+  //   std::vector<DataComponentInterpretation::DataComponentInterpretation>
+  //     data_component_interpretation(dim,
+  //     DataComponentInterpretation::component_is_part_of_vector);
+  //   visualize_dof_vector(unit_dofh_v,
+  //                        phi_i,
+  //                        names,
+  //                        prefix,
+  //                        suffix,
+  //                        n_subdivisions,
+  //                        data_component_interpretation,
+  //                        mapping);
+  // }
 
   /// DEBUG
   // const FullMatrix<double> & prolongation_matrix = compute_prolongation_sf_to_velocity();
@@ -1881,19 +1844,16 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   print_parameter("Solving pressure system", "...");
 
   /// DEBUG
-  {
-    const bool         mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
-    std::ostringstream oss;
-    oss << "debug_p" << mpi_rank << ".txt";
-    ofs.open(oss.str(), std::ios_base::out);
-  }
+  // {
+  //   const bool         mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+  //   std::ostringstream oss;
+  //   oss << "debug_p" << mpi_rank << ".txt";
+  //   ofs.open(oss.str(), std::ios_base::out);
+  // }
 
   AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1U,
               ExcMessage("Not implemented in parallel."));
   Assert(stokes_problem, ExcMessage("FEM for Stokes equations is uninitialized."));
-
-  stokes_problem->triangulation = this->triangulation;
-  stokes_problem->setup_system();
 
   const auto & dof_handler_velocity = stokes_problem->dof_handler_velocity;
   const auto & dof_handler_pressure = stokes_problem->dof_handler_pressure;
@@ -1910,16 +1870,16 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   shape_to_test_functions_interior = trafomatrix_rt_to_gradp;
 
   /// DEBUG
-  remove_noise_from_matrix(shape_to_test_functions_interior);
-  shape_to_test_functions_interior.print_formatted(ofs);
+  // remove_noise_from_matrix(shape_to_test_functions_interior);
+  // shape_to_test_functions_interior.print_formatted(ofs);
 
   FullMatrix<double> shape_to_test_functions_interface(trafomatrix_rt_to_constp.m(),
                                                        trafomatrix_rt_to_constp.n());
   shape_to_test_functions_interface = trafomatrix_rt_to_constp;
 
   /// DEBUG
-  remove_noise_from_matrix(shape_to_test_functions_interface);
-  shape_to_test_functions_interface.print_formatted(ofs);
+  // remove_noise_from_matrix(shape_to_test_functions_interface);
+  // shape_to_test_functions_interface.print_formatted(ofs);
 
   Pressure::InterfaceHandler<dim> interface_handler;
   interface_handler.reinit(dof_handler_velocity.get_triangulation());
@@ -1946,13 +1906,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     const auto [K_left, K_right] = interface_handler.get_cell_index_pair(id);
     dsp.add(e, K_left);
     dsp.add(e, K_right);
-
-    // DEBUG
-    // std::cout << "interface index (row): " << interface_handler.get_interface_index(id) << " ";
-    // const auto [left_index, right_index] = interface_handler.get_cell_index_pair(id);
-    // std::cout << "left cell index (column): " << left_index << " ";
-    // std::cout << "right cell index (column): " << right_index << " ";
-    // std::cout << std::endl;
   }
 
   constraints_on_interface.condense(dsp);
@@ -2159,9 +2112,9 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                           face_worker);
 
     /// DEBUG
-    remove_noise_from_vector(discrete_pressure);
-    discrete_pressure.print(ofs);
-    ofs << vector_to_string(constant_pressure_dof_indices) << std::endl;
+    // remove_noise_from_vector(discrete_pressure);
+    // discrete_pressure.print(ofs);
+    // ofs << vector_to_string(constant_pressure_dof_indices) << std::endl;
   }
 
   /**
@@ -2287,8 +2240,8 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                             face_worker);
 
       /// DEBUG
-      remove_noise_from_vector(constant_pressure_rhs);
-      constant_pressure_rhs.print(ofs);
+      // remove_noise_from_vector(constant_pressure_rhs);
+      // constant_pressure_rhs.print(ofs);
     }
 
     {
@@ -2380,8 +2333,8 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     constraints_on_interface.condense(constant_pressure_matrix, constant_pressure_rhs);
 
     /// DEBUG
-    remove_noise_from_vector(constant_pressure_rhs);
-    constant_pressure_rhs.print(ofs);
+    // remove_noise_from_vector(constant_pressure_rhs);
+    // constant_pressure_rhs.print(ofs);
     // constant_pressure_matrix.print_formatted(ofs);
 
     const auto     n_cells = constant_pressure_matrix.n();
@@ -2402,10 +2355,9 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     stokes_problem->post_process_solution_vector();
 
     /// DEBUG
-    remove_noise_from_vector(discrete_pressure);
-    discrete_pressure.print(ofs);
-    ofs.close();
-    // Assert(false, ExcMessage("stop..."));
+    // remove_noise_from_vector(discrete_pressure);
+    // discrete_pressure.print(ofs);
+    // ofs.close();
   }
 }
 
@@ -2419,7 +2371,7 @@ ModelProblem<dim, fe_degree>::compute_stream_function_error()
 
   const auto                     component_range = std::make_pair<unsigned int>(0, dim);
   Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
-						     component_range);
+                                                     component_range);
 
   AssertDimension(analytical_velocity.n_components, dim);
 

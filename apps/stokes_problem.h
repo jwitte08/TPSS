@@ -1394,8 +1394,8 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
                       lrdof_indices_foreach_block[1],
                       MPI_COMM_WORLD);
 
-      if(do_assemble_pressure_mass_matrix)
-        DoFTools::make_sparsity_pattern(dof_handler_pressure, this_dsp, constraints_pressure, true);
+      // if(do_assemble_pressure_mass_matrix)
+      DoFTools::make_sparsity_pattern(dof_handler_pressure, this_dsp, constraints_pressure, true);
     }
 
     /// velocity - pressure
@@ -1490,6 +1490,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
   /// Assemble the velocity block, here block(0,0).
   {
+    /// DEBUG
+    std::cout << "block(0,0)" << std::endl;
+
     using Velocity::SIPG::MW::CopyData;
 
     using Velocity::SIPG::MW::ScratchData;
@@ -1601,6 +1604,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
   /// Assemble the pressure block, here block(1,1).
   {
+    /// DEBUG
+    std::cout << "block(1,1)" << std::endl;
+
     using Pressure::MW::CopyData;
 
     using Pressure::MW::ScratchData;
@@ -1619,8 +1625,11 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
     const auto copier = [&](const CopyData & copy_data) {
       for(const auto & cd : copy_data.cell_data)
-        constraints_pressure.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
-          cd.matrix, cd.rhs, cd.dof_indices, system_matrix.block(1, 1), system_rhs.block(1));
+        constraints_pressure
+          .template distribute_local_to_global /*<TrilinosWrappers::SparseMatrix>*/ (
+            /*cd.matrix, */ cd.rhs,
+            cd.dof_indices /*, system_matrix.block(1, 1)*/,
+            system_rhs.block(1));
     };
 
     const UpdateFlags update_flags = update_values | update_quadrature_points | update_JxW_values;
@@ -1644,6 +1653,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
   /// from velocity space and ansatz functions from pressure space. The
   /// "flipped" pressure-velocity block is assembled as well.
   {
+    /// DEBUG
+    std::cout << "block(1,0)" << std::endl;
+
     using VelocityPressure::MW::Mixed::CopyData;
     using VelocityPressure::MW::Mixed::ScratchData;
     using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, false>;
@@ -1791,6 +1803,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     else
       AssertThrow(false, ExcMessage("This FEM is not supported."));
   }
+
+  /// DEBUG
+  std::cout << "before VectorOperation::add" << std::endl;
 
   system_matrix.compress(VectorOperation::add);
   system_rhs.compress(VectorOperation::add);
