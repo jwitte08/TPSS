@@ -1490,9 +1490,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
   /// Assemble the velocity block, here block(0,0).
   {
-    /// DEBUG
-    std::cout << "block(0,0)" << std::endl;
-
     using Velocity::SIPG::MW::CopyData;
 
     using Velocity::SIPG::MW::ScratchData;
@@ -1604,9 +1601,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
   /// Assemble the pressure block, here block(1,1).
   {
-    /// DEBUG
-    std::cout << "block(1,1)" << std::endl;
-
     using Pressure::MW::CopyData;
 
     using Pressure::MW::ScratchData;
@@ -1653,9 +1647,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
   /// from velocity space and ansatz functions from pressure space. The
   /// "flipped" pressure-velocity block is assembled as well.
   {
-    /// DEBUG
-    std::cout << "block(1,0)" << std::endl;
-
     using VelocityPressure::MW::Mixed::CopyData;
     using VelocityPressure::MW::Mixed::ScratchData;
     using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, false>;
@@ -1803,9 +1794,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
     else
       AssertThrow(false, ExcMessage("This FEM is not supported."));
   }
-
-  /// DEBUG
-  std::cout << "before VectorOperation::add" << std::endl;
 
   system_matrix.compress(VectorOperation::add);
   system_rhs.compress(VectorOperation::add);

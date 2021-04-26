@@ -327,6 +327,7 @@ public:
   std::array<FullMatrix<double>, 2>
   compute_nondivfree_shape_functions() const;
 
+  template<bool do_error = true>
   double
   compute_stream_function_error();
 
@@ -2364,6 +2365,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
 
 template<int dim, int fe_degree>
+template<bool do_error>
 double
 ModelProblem<dim, fe_degree>::compute_stream_function_error()
 {
@@ -2375,19 +2377,24 @@ ModelProblem<dim, fe_degree>::compute_stream_function_error()
 
   AssertDimension(analytical_velocity.n_components, dim);
 
-  using ::MW::ScratchData;
+  using ::MW::Mixed::ScratchData;
 
   using ::MW::CopyData;
 
   using ::MW::compute_vcurl;
 
+  using ::MW::compute_vvalue;
+
   AffineConstraints empty_constraints;
   empty_constraints.close();
+
+  const auto & dofh_v          = stokes_problem->dof_handler_velocity;
+  const auto & system_velocity = stokes_problem->system_solution.block(0);
 
   Vector<double> error_per_cell(triangulation->n_active_cells());
 
   auto cell_worker = [&](const auto & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
-    auto & phi = scratch_data.fe_values;
+    auto & phi = scratch_data.fe_values_test;
     phi.reinit(cell);
 
     const unsigned int n_dofs_per_cell = phi.get_fe().dofs_per_cell;
@@ -2395,15 +2402,51 @@ ModelProblem<dim, fe_degree>::compute_stream_function_error()
     const auto &       q_points        = phi.get_quadrature_points();
 
     std::vector<Tensor<1, dim>> velocity_values;
-    std::transform(q_points.cbegin(),
-                   q_points.cend(),
-                   std::back_inserter(velocity_values),
-                   [&](const auto & x_q) {
-                     Tensor<1, dim> u_q;
-                     for(auto c = 0U; c < dim; ++c)
-                       u_q[c] = analytical_velocity.value(x_q, c);
-                     return u_q;
-                   });
+    if(do_error)
+    {
+      std::transform(q_points.cbegin(),
+                     q_points.cend(),
+                     std::back_inserter(velocity_values),
+                     [&](const auto & x_q) {
+                       Tensor<1, dim> u_q;
+                       for(auto c = 0U; c < dim; ++c)
+                         u_q[c] = analytical_velocity.value(x_q, c);
+                       return u_q;
+                     });
+    }
+    else
+    {
+      typename DoFHandler<dim>::active_cell_iterator cell_v(&dofh_v.get_triangulation(),
+                                                            cell->level(),
+                                                            cell->index(),
+                                                            &dofh_v);
+
+      auto & phi_v = scratch_data.fe_values_ansatz;
+      phi_v.reinit(cell_v);
+
+      const unsigned int n_dofs_per_cell_v = phi_v.get_fe().dofs_per_cell;
+
+      std::vector<types::global_dof_index> local_dof_indices_v(n_dofs_per_cell_v);
+      cell_v->get_active_or_mg_dof_indices(local_dof_indices_v);
+
+      std::vector<double> velocity_dof_values;
+      std::transform(local_dof_indices_v.cbegin(),
+                     local_dof_indices_v.cend(),
+                     std::back_inserter(velocity_dof_values),
+                     [&](const auto & i) { return system_velocity(i); });
+
+      for(unsigned int q = 0; q < n_q_points; ++q)
+      {
+        Tensor<1, dim> uh_q;
+        for(unsigned int i = 0; i < n_dofs_per_cell_v; ++i)
+        {
+          const auto & alpha_i = velocity_dof_values[i];
+          const auto & phi_i   = compute_vvalue(phi_v, i, q);
+          uh_q += alpha_i * phi_i;
+        }
+        velocity_values.push_back(uh_q);
+      }
+    }
 
     std::vector<types::global_dof_index> local_dof_indices(n_dofs_per_cell);
     cell->get_active_or_mg_dof_indices(local_dof_indices);
@@ -2416,16 +2459,16 @@ ModelProblem<dim, fe_degree>::compute_stream_function_error()
     double local_error = 0.;
     for(unsigned int q = 0; q < n_q_points; ++q)
     {
-      Tensor<1, dim> uh_q;
+      Tensor<1, dim> wh_q;
       for(unsigned int i = 0; i < n_dofs_per_cell; ++i)
       {
         const auto & alpha_i    = stream_function_dof_values[i];
         const auto & curl_phi_i = compute_vcurl(phi, i, q);
-        uh_q += alpha_i * curl_phi_i;
+        wh_q += alpha_i * curl_phi_i;
       }
 
       const auto & u_q = velocity_values[q];
-      local_error += (uh_q - u_q) * (uh_q - u_q) * phi.JxW(q);
+      local_error += (wh_q - u_q) * (wh_q - u_q) * phi.JxW(q);
     }
 
     AssertDimension(copy_data.cell_rhs.size(), 1U);
@@ -2452,8 +2495,16 @@ ModelProblem<dim, fe_degree>::compute_stream_function_error()
   const UpdateFlags interface_update_flags  = update_default;
   const auto        n_error_values_per_cell = 1U;
 
-  ScratchData<dim> scratch_data(
-    mapping, dof_handler.get_fe(), n_gauss_points, update_flags, interface_update_flags);
+  const UpdateFlags update_flags_v = update_values | update_quadrature_points | update_JxW_values;
+
+  ScratchData<dim> scratch_data(mapping,
+                                dof_handler.get_fe(),
+                                dofh_v.get_fe(),
+                                n_gauss_points,
+                                update_flags,
+                                update_flags_v,
+                                interface_update_flags,
+                                interface_update_flags);
 
   CopyData copy_data(n_error_values_per_cell);
 
@@ -2658,7 +2709,8 @@ ModelProblem<dim, fe_degree>::prolongate_sf_to_velocity(
   LinearAlgebra::distributed::Vector<double> &       velocity,
   const LinearAlgebra::distributed::Vector<double> & stream) const
 {
-  AssertThrow(false, ExcMessage("TODO..."));
+  velocity *= 0.;
+
   const FullMatrix<double> & prolongation_matrix = compute_prolongation_sf_to_velocity();
 
   const auto & dofh_v = stokes_problem->dof_handler_velocity;
@@ -2671,11 +2723,17 @@ ModelProblem<dim, fe_degree>::prolongate_sf_to_velocity(
   std::vector<types::global_dof_index> dof_indices_sf(dof_handler.get_fe().dofs_per_cell);
   std::vector<types::global_dof_index> dof_indices_v(dofh_v.get_fe().dofs_per_cell);
 
+  AssertDimension(dof_indices_sf.size(), prolongation_matrix.n());
+  AssertDimension(dof_indices_v.size(), prolongation_matrix.m());
+
   const auto partitioner_v  = velocity.get_partitioner();
   const auto partitioner_sf = stream.get_partitioner();
 
   const auto locally_owned_cells =
     filter_iterators(dofh_v.active_cell_iterators(), IteratorFilters::LocallyOwnedCell());
+
+  /// TODO do not add redundant values !!!
+  std::vector<unsigned int> counts(partitioner_sf->local_size(), 0U);
 
   for(const auto & cell : locally_owned_cells)
   {
@@ -2686,7 +2744,31 @@ ModelProblem<dim, fe_degree>::prolongate_sf_to_velocity(
 
     cell->get_active_or_mg_dof_indices(dof_indices_v);
     cell_sf->get_active_or_mg_dof_indices(dof_indices_sf);
+
+    Vector<double> local_phi(prolongation_matrix.n());
+    for(auto i = 0U; i < local_phi.size(); ++i)
+    {
+      const types::global_dof_index dof_index        = dof_indices_sf[i];
+      const unsigned int            local_dof_index  = partitioner_sf->global_to_local(dof_index);
+      const bool                    is_locally_owned = partitioner_sf->in_local_range(dof_index);
+      const bool                    not_added_before = true /*counts[local_dof_index] == 0U*/;
+      if(is_locally_owned && not_added_before)
+      {
+        local_phi[i] = stream.local_element(local_dof_index);
+        ++counts[local_dof_index];
+      }
+      else
+        local_phi[i] = 0.;
+    }
+
+    Vector<double> local_curl_phi(prolongation_matrix.m());
+    prolongation_matrix.vmult(local_curl_phi, local_phi);
+
+    for(auto i = 0U; i < local_curl_phi.size(); ++i)
+      velocity[dof_indices_v[i]] = local_curl_phi[i];
   }
+
+  velocity.compress(VectorOperation::insert);
 }
 
 
@@ -2744,9 +2826,10 @@ ModelProblem<dim, fe_degree>::compute_prolongation_sf_to_velocity() const
     AssertDimension(n_dofs_per_cell_v, unit_dofh_v.n_dofs()); // one cell
     for(auto j = 0U; j < n_dofs_per_cell_sf; ++j)
     {
+      Vector<double> phi_j(n_dofs_per_cell_sf);
+      phi_j[j] = 1.;
       Vector<double> curl_phi_j(n_dofs_per_cell_v);
-      for(auto i = 0U; i < n_dofs_per_cell_v; ++i)
-        curl_phi_j[i] = node_value_matrix(i, j);
+      node_value_matrix.vmult(curl_phi_j, phi_j);
 
       std::vector<std::string> names(dim, "shape_function");
       const std::string        prefix         = "prolong_streamfunction";
