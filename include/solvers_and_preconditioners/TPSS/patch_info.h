@@ -56,6 +56,7 @@ public:
   PatchInfo<dim> &
   operator=(const PatchInfo<dim> &) = delete;
 
+  // TODO use triangulation instead of dof handler...
   void
   initialize(const dealii::DoFHandler<dim> * dof_handler, const AdditionalData additional_data);
 

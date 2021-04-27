@@ -451,7 +451,7 @@ struct MGCollectionVelocityPressure
   // using mg_transfer_type  = MGTransferBlockMatrixFree<dim, double>;
   using mg_transfer_type  = MGTransferBlockPrebuilt;
   using local_matrix_type = typename matrix_type::local_integrator_type::matrix_type;
-  using mg_smother_schwarz_type =
+  using mg_smoother_schwarz_type =
     MGSmootherSchwarz<dim, matrix_type, local_matrix_type, vector_type>;
 
   static constexpr int n_q_points_1d =
@@ -503,8 +503,8 @@ struct MGCollectionVelocityPressure
   std::vector<MGConstrainedDoFs>                         mgconstraineddofs;
   std::shared_ptr<const mg_transfer_type>                mg_transfer;
   MGLevelObject<matrix_type>                             mg_matrices;
-  std::shared_ptr<const mg_smother_schwarz_type>         mg_schwarz_smoother_pre;
-  std::shared_ptr<const mg_smother_schwarz_type>         mg_schwarz_smoother_post;
+  std::shared_ptr<const mg_smoother_schwarz_type>        mg_schwarz_smoother_pre;
+  std::shared_ptr<const mg_smoother_schwarz_type>        mg_schwarz_smoother_post;
   std::shared_ptr<const MGSmootherIdentity<vector_type>> mg_smoother_identity;
   const MGSmootherBase<vector_type> *                    mg_smoother_pre;
   const MGSmootherBase<vector_type> *                    mg_smoother_post;
@@ -3411,8 +3411,8 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
   //: pre-smoother
   {
-    const auto mgss = std::make_shared<mg_smother_schwarz_type>();
-    typename mg_smother_schwarz_type::AdditionalData additional_data;
+    const auto mgss = std::make_shared<mg_smoother_schwarz_type>();
+    typename mg_smoother_schwarz_type::AdditionalData additional_data;
     if(parameters.pre_smoother.schwarz.userdefined_coloring)
     {
       Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
@@ -3429,8 +3429,8 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
   //: post-smoother (so far only shallow copy!)
   {
-    const auto mgss_post = std::make_shared<mg_smother_schwarz_type>();
-    typename mg_smother_schwarz_type::AdditionalData additional_data;
+    const auto mgss_post = std::make_shared<mg_smoother_schwarz_type>();
+    typename mg_smoother_schwarz_type::AdditionalData additional_data;
     if(parameters.pre_smoother.schwarz.userdefined_coloring)
     {
       Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
