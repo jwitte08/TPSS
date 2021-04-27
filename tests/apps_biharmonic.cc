@@ -381,7 +381,8 @@ protected:
   {
     using namespace TPSS;
 
-    equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
+    // equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
+    equation_data.variant = EquationData::Variant::ClampedStreamNoSlip;
 
     constexpr unsigned int n_q_points_1d = fe_degree + 1;
     QGauss<1>              quad_1d(n_q_points_1d);
@@ -390,6 +391,7 @@ protected:
     biharmonic_problem.pcout = pcout_owned;
     biharmonic_problem.make_grid();
     biharmonic_problem.setup_system();
+    biharmonic_problem.assemble_system();
 
     PatchInfo<dim> patch_info;
     {
@@ -427,6 +429,7 @@ protected:
       stokes_problem.fe = fe_stokes;
     stokes_problem.setup_system();
     stokes_problem.dof_handler_velocity.distribute_mg_dofs();
+    stokes_problem.assemble_system();
 
     dealii::internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info_v;
     shape_info_v.reinit(quad_1d, stokes_problem.dof_handler_velocity.get_fe());
@@ -607,46 +610,30 @@ protected:
                   0.,
                   Util::numeric_eps<double>);
     }
+
+    /// Compare system right-hand sides.
+    {
+      if(pcout_owned->is_active())
+      {
+        biharmonic_problem.system_rhs.print(pcout_owned->get_stream());
+        stokes_problem.system_rhs.block(0).print(pcout_owned->get_stream());
+      }
+
+      const auto local_rhs_sf = patch_transfer_sf.gather(biharmonic_problem.system_rhs);
+
+      const auto local_rhs_v = patch_transfer_v.gather(stokes_problem.system_rhs.block(0));
+
+      AlignedVector<VectorizedArray<double>> restricted_local_rhs_v;
+      patch_transfer_sf.reinit_local_vector(restricted_local_rhs_v);
+      for(auto j = 0U; j < prolongation_matrix.n(); ++j)
+        for(auto i = 0U; i < prolongation_matrix.m(); ++i)
+          restricted_local_rhs_v[j] += prolongation_matrix(i, j) * local_rhs_v[i];
+
+      *pcout_owned << vector_to_string(alignedvector_to_vector(local_rhs_sf, lane)) << std::endl;
+      *pcout_owned << vector_to_string(alignedvector_to_vector(restricted_local_rhs_v, lane))
+                   << std::endl;
+    }
   }
-
-
-  /// TODO
-  // void
-  // compare_rhs()
-  // {
-  //   equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
-
-  //   Biharmonic::ModelProblem<dim, fe_degree> biharmonic_problem(rt_parameters, equation_data);
-  //   biharmonic_problem.pcout = pcout_owned;
-  //   biharmonic_problem.make_grid();
-  //   biharmonic_problem.setup_system();
-  //   biharmonic_problem.assemble_system();
-
-  //   auto & stokes_problem        = *(biharmonic_problem.stokes_problem);
-  //   stokes_problem.pcout         = pcout_owned;
-  //   stokes_problem.triangulation = biharmonic_problem.triangulation;
-  //   if(fe_stokes)
-  //     stokes_problem.fe = fe_stokes;
-  //   stokes_problem.setup_system();
-  //   stokes_problem.assemble_system();
-
-  //   auto rhs_sf = biharmonic_problem.system_rhs;
-  //   rhs_sf *= 0.;
-  //   auto phi_sf = biharmonic_problem.system_u;
-  //   const auto & rhs_v = stokes_problem.system_rhs.block(0);
-  //   auto phi_v = stokes_problem.system_solution.block(0);
-  //   for (auto i = 0U; i < rhs_sf.size(); ++i)
-  //     {
-  //   	phi_sf *= 0.;
-  //   	phi_sf[i] = 1.;
-  //   	phi_v *= 0.;
-  //   	biharmonic_problem.prolongate_sf_to_velocity(phi_v, phi_sf);
-  //   	for (auto j = 0U; j < phi_v.size(); ++j)
-  //   	  rhs_sf[i] += phi_v[j] * rhs_v[j];
-  //     }
-
-  //   compare_vector(rhs_sf, biharmonic_problem.system_rhs);
-  // }
 
 
   void

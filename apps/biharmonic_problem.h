@@ -668,6 +668,7 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
   {
     Assert(stokes_problem, ExcMessage("FEM for Stokes equations is uninitialized."));
 
+    stokes_problem->pcout         = pcout;
     stokes_problem->triangulation = this->triangulation;
     stokes_problem->setup_system();
     stokes_problem->assemble_system();
