@@ -376,6 +376,240 @@ protected:
   }
 
 
+  void
+  test_vpprolongation_sf_to_rt()
+  {
+    using namespace TPSS;
+
+    equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
+
+    constexpr unsigned int n_q_points_1d = fe_degree + 1;
+    QGauss<1>              quad_1d(n_q_points_1d);
+
+    Biharmonic::ModelProblem<dim, fe_degree> biharmonic_problem(rt_parameters, equation_data);
+    biharmonic_problem.pcout = pcout_owned;
+    biharmonic_problem.make_grid();
+    biharmonic_problem.setup_system();
+
+    PatchInfo<dim> patch_info;
+    {
+      using additional_data_type = typename PatchInfo<dim>::AdditionalData;
+      additional_data_type additional_data;
+      additional_data.patch_variant    = PatchVariant::vertex;
+      additional_data.smoother_variant = SmootherVariant::additive;
+      additional_data.level            = biharmonic_problem.max_level();
+      ASSERT_EQ(rt_parameters.multigrid.pre_smoother.schwarz.patch_variant, PatchVariant::vertex);
+      ASSERT_EQ(rt_parameters.multigrid.pre_smoother.schwarz.smoother_variant,
+                SmootherVariant::additive);
+      additional_data.coloring_func = std::ref(*biharmonic_problem.user_coloring);
+      patch_info.initialize(&biharmonic_problem.dof_handler, additional_data);
+      PatchWorker<dim, double>{patch_info};
+    }
+
+    dealii::internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info;
+    shape_info.reinit(quad_1d, biharmonic_problem.dof_handler.get_fe());
+
+    DoFInfo<dim, double> dof_info;
+    {
+      using additional_data_type = typename DoFInfo<dim, double>::AdditionalData;
+      additional_data_type additional_data;
+      additional_data.level = biharmonic_problem.max_level();
+      dof_info.initialize(&biharmonic_problem.dof_handler,
+                          &patch_info,
+                          &shape_info,
+                          additional_data);
+    }
+
+    auto & stokes_problem        = *(biharmonic_problem.stokes_problem);
+    stokes_problem.pcout         = pcout_owned;
+    stokes_problem.triangulation = biharmonic_problem.triangulation;
+    if(fe_stokes)
+      stokes_problem.fe = fe_stokes;
+    stokes_problem.setup_system();
+    stokes_problem.dof_handler_velocity.distribute_mg_dofs();
+
+    dealii::internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info_v;
+    shape_info_v.reinit(quad_1d, stokes_problem.dof_handler_velocity.get_fe());
+
+    DoFInfo<dim, double> dof_info_v;
+    {
+      using additional_data_type = typename DoFInfo<dim, double>::AdditionalData;
+      additional_data_type additional_data;
+      additional_data.level = stokes_problem.max_level();
+      dof_info_v.initialize(&stokes_problem.dof_handler_velocity,
+                            &patch_info,
+                            &shape_info_v,
+                            additional_data);
+    }
+
+    const auto & dofh_v  = stokes_problem.dof_handler_velocity;
+    const auto & dofh_sf = biharmonic_problem.dof_handler;
+
+    PatchTransfer<dim, double> patch_transfer_sf(dof_info);
+    PatchTransfer<dim, double> patch_transfer_v(dof_info_v);
+
+    const FullMatrix<double> & cell_prolongation_matrix =
+      biharmonic_problem.compute_prolongation_sf_to_velocity();
+
+    FullMatrix<double> prolongation_matrix;
+
+    unsigned int patch_index = 0;
+    unsigned int lane        = 0;
+
+    patch_transfer_sf.reinit(patch_index);
+    patch_transfer_v.reinit(patch_index);
+
+    const auto & g2l_sf = patch_transfer_sf.get_global_to_local_dof_indices(lane);
+    const auto & g2l_v  = patch_transfer_v.get_global_to_local_dof_indices(lane);
+
+    const auto g2l_if_impl = [&](const auto & map, const types::global_dof_index i) {
+      const auto it = map.find(i);
+      return it == map.end() ? numbers::invalid_unsigned_int : it->second;
+    };
+
+    const auto & g2l_if_sf = [&](const types::global_dof_index i) {
+      return g2l_if_impl(g2l_sf, i);
+    };
+
+    const auto & g2l_if_v = [&](const types::global_dof_index i) { return g2l_if_impl(g2l_v, i); };
+
+    const unsigned int n_patch_dofs_sf = g2l_sf.size();
+    const unsigned int n_patch_dofs_v  = g2l_v.size();
+
+    prolongation_matrix.reinit(n_patch_dofs_v, n_patch_dofs_sf);
+
+    const auto & cell_collection_sf =
+      patch_transfer_sf.get_patch_dof_worker().get_cell_collection(patch_index, lane);
+    const auto & cell_collection_v =
+      patch_transfer_v.get_patch_dof_worker().get_cell_collection(patch_index, lane);
+
+    std::vector<types::global_dof_index> global_dof_indices_sf(cell_prolongation_matrix.n());
+    std::vector<types::global_dof_index> global_dof_indices_v(cell_prolongation_matrix.m());
+
+    for(auto cell_no = 0U; cell_no < cell_collection_sf.size(); ++cell_no)
+    {
+      const auto & cell_sf = cell_collection_sf[cell_no];
+      const auto & cell_v  = cell_collection_v[cell_no];
+
+      cell_sf->get_active_or_mg_dof_indices(global_dof_indices_sf);
+      cell_v->get_active_or_mg_dof_indices(global_dof_indices_v);
+
+      for(auto cj = 0U; cj < global_dof_indices_sf.size(); ++cj)
+      {
+        const auto         j  = global_dof_indices_sf[cj];
+        const unsigned int jj = g2l_if_sf(j);
+        if(jj != numbers::invalid_unsigned_int)
+          for(auto ci = 0U; ci < global_dof_indices_v.size(); ++ci)
+          {
+            const auto         i  = global_dof_indices_v[ci];
+            const unsigned int ii = g2l_if_v(i);
+            if(ii != numbers::invalid_unsigned_int)
+              prolongation_matrix(ii, jj) = cell_prolongation_matrix(ci, cj);
+          }
+      }
+    }
+
+    auto & curl_phi_i = stokes_problem.system_solution.block(0);
+    auto & phi_i      = biharmonic_problem.system_u;
+
+    constexpr unsigned int n_subdivisions = 10;
+
+    const auto visualize_curl_phi = [&](const unsigned int i, const auto & phi_i) {
+      const std::string prefix = "curl_phi";
+      const std::string suffix = "phi" + Utilities::int_to_string(i, 3);
+
+      std::ostringstream oss;
+      oss << prefix << "_"
+          << "Q" << Utilities::int_to_string(dofh_sf.get_fe().degree) << "_" << suffix << ".vtu";
+
+      std::ofstream ofs(oss.str());
+
+      DataOut<dim> data_out;
+
+      StreamVelocityPP<dim> stream_velocity_pp;
+
+      data_out.attach_dof_handler(dofh_sf);
+
+      data_out.add_data_vector(phi_i, stream_velocity_pp);
+
+      data_out.build_patches(biharmonic_problem.mapping,
+                             n_subdivisions,
+                             DataOut<dim>::CurvedCellRegion::curved_inner_cells);
+
+      data_out.write_vtu(ofs);
+    };
+
+    for(auto i = 0U; i < n_patch_dofs_sf; ++i)
+    {
+      curl_phi_i *= 0.;
+      phi_i *= 0.;
+
+      AlignedVector<VectorizedArray<double>> local_phi_i;
+      patch_transfer_sf.reinit_local_vector(local_phi_i);
+      local_phi_i[i][lane] = 1.;
+
+      AlignedVector<VectorizedArray<double>> local_curl_phi_i;
+      patch_transfer_v.reinit_local_vector(local_curl_phi_i);
+
+      for(auto j = 0U; j < n_patch_dofs_v; ++j)
+        local_curl_phi_i[j][lane] = prolongation_matrix(j, i);
+
+      /// visualization as curl of stream function phi_i
+      patch_transfer_sf.scatter(phi_i, local_phi_i);
+      visualize_curl_phi(i, phi_i);
+
+      /// visualization as prolongation into velocity ansatz
+      std::vector<std::string> names(dim, "shape_function");
+      const std::string        prefix = "curl_phi_prolongated";
+      const std::string        suffix = "phi" + Utilities::int_to_string(i, 3);
+
+      patch_transfer_v.scatter(curl_phi_i, local_curl_phi_i);
+
+      std::vector<DataComponentInterpretation::DataComponentInterpretation>
+        data_component_interpretation(dim,
+                                      DataComponentInterpretation::component_is_part_of_vector);
+
+      visualize_dof_vector(dofh_v,
+                           curl_phi_i,
+                           names,
+                           prefix,
+                           suffix,
+                           n_subdivisions,
+                           data_component_interpretation,
+                           stokes_problem.mapping);
+
+      EXPECT_NEAR(biharmonic_problem.template compute_stream_function_error<false>(),
+                  0.,
+                  Util::numeric_eps<double>);
+    }
+
+    /// Prolongate the local coefficient vector phi = (1,2,3,...)^T.
+    {
+      curl_phi_i *= 0.;
+      phi_i *= 0.;
+
+      AlignedVector<VectorizedArray<double>> local_phi;
+      patch_transfer_sf.reinit_local_vector(local_phi);
+      for(auto i = 0U; i < n_patch_dofs_sf; ++i)
+        local_phi[i][lane] = static_cast<double>(i);
+
+      AlignedVector<VectorizedArray<double>> local_curl_phi;
+      patch_transfer_v.reinit_local_vector(local_curl_phi);
+
+      for(auto j = 0U; j < n_patch_dofs_v; ++j)
+        for(auto k = 0U; k < n_patch_dofs_sf; ++k)
+          local_curl_phi[j][lane] += local_phi[k][lane] * prolongation_matrix(j, k);
+
+      patch_transfer_sf.scatter(phi_i, local_phi);
+      patch_transfer_v.scatter(curl_phi_i, local_curl_phi);
+
+      EXPECT_NEAR(biharmonic_problem.template compute_stream_function_error<false>(),
+                  0.,
+                  Util::numeric_eps<double>);
+    }
+  }
+
+
   /// TODO
   // void
   // compare_rhs()
@@ -736,6 +970,26 @@ TYPED_TEST_P(TestModelProblem, compute_prolongation_sf_to_rt)
 
 
 
+TYPED_TEST_P(TestModelProblem, compute_vpprolongation_sf_to_rt)
+{
+  using Fixture = TestModelProblem<TypeParam>;
+
+  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::rt_parameters.mesh.n_repetitions    = 2;
+  Fixture::rt_parameters.mesh.n_refinements    = 0;
+
+  Fixture::fe_stokes =
+    std::make_shared<FESystem<Fixture::dim>>(FE_RaviartThomas_new<Fixture::dim>(Fixture::fe_degree -
+                                                                                1),
+                                             1,
+                                             FE_DGQLegendre<Fixture::dim>(Fixture::fe_degree - 1),
+                                             1);
+
+  Fixture::test_vpprolongation_sf_to_rt();
+}
+
+
+
 // TYPED_TEST_P(TestModelProblem, compare_rhs)
 // {
 //   using Fixture = TestModelProblem<TypeParam>;
@@ -804,6 +1058,7 @@ REGISTER_TYPED_TEST_SUITE_P(TestModelProblem,
                             compute_nondivfree_shape_functions_RTmoments,
                             compute_nondivfree_shape_functions_RTnodal,
                             compute_prolongation_sf_to_rt,
+                            compute_vpprolongation_sf_to_rt,
                             debug_and_visualize_RTmoments,
                             raviartthomas_compare_shape_data,
                             raviartthomas_compare_restriction,
