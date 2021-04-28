@@ -381,8 +381,15 @@ protected:
   {
     using namespace TPSS;
 
-    // equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
-    equation_data.variant = EquationData::Variant::ClampedStreamNoSlip;
+    rt_parameters.solver.variant              = "cg";
+    rt_parameters.solver.n_iterations_max     = 10000;
+    rt_parameters.solver.control_variant      = SolverParameter::ControlVariant::relative;
+    rt_parameters.solver.abs_tolerance        = 1.e-14;
+    rt_parameters.solver.rel_tolerance        = 1.e-08;
+    rt_parameters.solver.precondition_variant = SolverParameter::PreconditionVariant::None;
+
+    equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
+    // equation_data.variant = EquationData::Variant::ClampedStreamNoSlip;
 
     constexpr unsigned int n_q_points_1d = fe_degree + 1;
     QGauss<1>              quad_1d(n_q_points_1d);
@@ -392,6 +399,8 @@ protected:
     biharmonic_problem.make_grid();
     biharmonic_problem.setup_system();
     biharmonic_problem.assemble_system();
+    biharmonic_problem.solve();
+    biharmonic_problem.solve_pressure();
 
     PatchInfo<dim> patch_info;
     {
@@ -455,6 +464,8 @@ protected:
       biharmonic_problem.compute_prolongation_sf_to_velocity();
 
     FullMatrix<double> prolongation_matrix;
+    FullMatrix<double> prolongation_matrix_orth;
+    FullMatrix<double> prolongation_matrix_orth_face;
 
     unsigned int patch_index = 0;
     unsigned int lane        = 0;
@@ -478,8 +489,23 @@ protected:
 
     const unsigned int n_patch_dofs_sf = g2l_sf.size();
     const unsigned int n_patch_dofs_v  = g2l_v.size();
+    const unsigned int n_dofs_per_cell_p =
+      stokes_problem.dof_handler_pressure.get_fe().dofs_per_cell;
+
+    const auto & [rt_to_gradp, rt_to_constp] =
+      biharmonic_problem.compute_nondivfree_shape_functions();
+
+    Pressure::InterfaceHandler<dim> interface_handler;
+    interface_handler.reinit(dofh_v.get_triangulation());
+    AssertDimension(interface_handler.n_interfaces(), 1 << dim);
+
+    const auto get_active_interface_indices = [&](const auto & cell) {
+      return Stokes::Velocity::SIPG::MW::get_active_interface_indices_impl(interface_handler, cell);
+    };
 
     prolongation_matrix.reinit(n_patch_dofs_v, n_patch_dofs_sf);
+    prolongation_matrix_orth.reinit(n_patch_dofs_v, (n_dofs_per_cell_p - 1) * (1 << dim));
+    prolongation_matrix_orth_face.reinit(n_patch_dofs_v, interface_handler.n_interfaces());
 
     const auto & cell_collection_sf =
       patch_transfer_sf.get_patch_dof_worker().get_cell_collection(patch_index, lane);
@@ -497,18 +523,35 @@ protected:
       cell_sf->get_active_or_mg_dof_indices(global_dof_indices_sf);
       cell_v->get_active_or_mg_dof_indices(global_dof_indices_v);
 
-      for(auto cj = 0U; cj < global_dof_indices_sf.size(); ++cj)
+      const auto & [active_face_nos, global_face_nos] = get_active_interface_indices(cell_v);
+
+      for(auto ci = 0U; ci < global_dof_indices_v.size(); ++ci)
       {
-        const auto         j  = global_dof_indices_sf[cj];
-        const unsigned int jj = g2l_if_sf(j);
-        if(jj != numbers::invalid_unsigned_int)
-          for(auto ci = 0U; ci < global_dof_indices_v.size(); ++ci)
+        const auto         i  = global_dof_indices_v[ci];
+        const unsigned int ii = g2l_if_v(i);
+        if(ii != numbers::invalid_unsigned_int)
+        {
+          for(auto cj = 0U; cj < global_dof_indices_sf.size(); ++cj)
           {
-            const auto         i  = global_dof_indices_v[ci];
-            const unsigned int ii = g2l_if_v(i);
-            if(ii != numbers::invalid_unsigned_int)
+            const auto         j  = global_dof_indices_sf[cj];
+            const unsigned int jj = g2l_if_sf(j);
+            if(jj != numbers::invalid_unsigned_int)
               prolongation_matrix(ii, jj) = cell_prolongation_matrix(ci, cj);
           }
+
+          for(auto cj = 0U; cj < rt_to_gradp.m(); ++cj)
+          {
+            const unsigned int jj            = cell_no * rt_to_gradp.m() + cj;
+            prolongation_matrix_orth(ii, jj) = rt_to_gradp(cj, ci);
+          }
+
+          for(auto cj = 0U; cj < active_face_nos.size(); ++cj)
+          {
+            const unsigned int face_no            = active_face_nos[cj];
+            const unsigned int jj                 = global_face_nos[cj];
+            prolongation_matrix_orth_face(ii, jj) = rt_to_constp(face_no, ci);
+          }
+        }
       }
     }
 
@@ -629,8 +672,32 @@ protected:
         for(auto i = 0U; i < prolongation_matrix.m(); ++i)
           restricted_local_rhs_v[j] += prolongation_matrix(i, j) * local_rhs_v[i];
 
-      *pcout_owned << vector_to_string(alignedvector_to_vector(local_rhs_sf, lane)) << std::endl;
-      *pcout_owned << vector_to_string(alignedvector_to_vector(restricted_local_rhs_v, lane))
+      *pcout_owned << "stream: " << vector_to_string(alignedvector_to_vector(local_rhs_sf, lane))
+                   << std::endl;
+      *pcout_owned << "divfree: "
+                   << vector_to_string(alignedvector_to_vector(restricted_local_rhs_v, lane))
+                   << std::endl;
+
+      AlignedVector<VectorizedArray<double>> restricted_local_rhs_v_orth;
+      restricted_local_rhs_v_orth.resize(prolongation_matrix_orth.n());
+      for(auto j = 0U; j < prolongation_matrix_orth.n(); ++j)
+        for(auto i = 0U; i < prolongation_matrix_orth.m(); ++i)
+          restricted_local_rhs_v_orth[j] += prolongation_matrix_orth(i, j) * local_rhs_v[i];
+
+      *pcout_owned << "orthcirc: "
+                   << vector_to_string(alignedvector_to_vector(restricted_local_rhs_v_orth, lane))
+                   << std::endl;
+
+      AlignedVector<VectorizedArray<double>> restricted_local_rhs_v_orth_face;
+      restricted_local_rhs_v_orth_face.resize(prolongation_matrix_orth_face.n());
+      for(auto j = 0U; j < prolongation_matrix_orth_face.n(); ++j)
+        for(auto i = 0U; i < prolongation_matrix_orth_face.m(); ++i)
+          restricted_local_rhs_v_orth_face[j] +=
+            prolongation_matrix_orth_face(i, j) * local_rhs_v[i];
+
+      *pcout_owned << "orthface: "
+                   << vector_to_string(
+                        alignedvector_to_vector(restricted_local_rhs_v_orth_face, lane))
                    << std::endl;
     }
   }
