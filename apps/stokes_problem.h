@@ -598,8 +598,6 @@ struct ModelProblemBase<Method::RaviartThomas, dim, fe_degree_p>
   static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::RT;
   static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::DGQ;
   using fe_type_v                               = FE_RaviartThomas_new<dim>;
-  // using fe_type_v                               = FE_RaviartThomasNodal_new<dim>; // !!!
-  // using fe_type_v                               = FE_RaviartThomas<dim>; // !!!
   using fe_type_p                               = FE_DGQLegendre<dim>;
   static constexpr int           fe_degree_v    = fe_degree_p;
   static constexpr LocalAssembly local_assembly = LocalAssembly::LMW;

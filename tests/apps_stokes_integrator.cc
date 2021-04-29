@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 /// apps/
+#include "biharmonic_problem.h"
 #include "linelasticity_problem.h"
 #include "stokes.h"
 #include "stokes_problem.h"
@@ -524,7 +525,7 @@ protected:
 
 
   void
-  check_matrixintegratorlmwstream()
+  check_matrixintegratorstreamlmw()
   {
     equation_data.setup_stream_functions = true;
 
@@ -564,22 +565,60 @@ protected:
     const auto   patch_transfer_sf   = integrator.get_patch_transfer_stream(*subdomain_handler);
     const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
 
-    // // ASSERT_EQ(local_matrices.size(), local_matrices_cut.size());
-    // for(auto patch_index = 0U; patch_index < local_matrices.size(); ++patch_index)
-    // {
-    //   for(auto lane = 0U; lane < patch_dof_worker_v.n_lanes_filled(patch_index); ++lane)
-    //   {
-    //     auto & patch_matrix     = local_matrices[patch_index];
-    //     auto & patch_matrix_cut = local_matrices_cut[patch_index];
+    Biharmonic::EquationData equation_data_biharm;
+    equation_data_biharm.variant = Biharmonic::EquationData::Variant::ClampedStreamNoSlip;
+    ASSERT_NE(fe_degree_p, 0) << "Biharmonic model problem is not implemented for linear degree!";
+    constexpr int fe_degree_biharm = fe_degree_p > 0 ? fe_degree_p + 1 : 2;
+    Biharmonic::ModelProblem<dim, fe_degree_biharm> biharmonic_problem(options.prms,
+                                                                       equation_data_biharm);
+    biharmonic_problem.pcout         = pcout_owned;
+    biharmonic_problem.triangulation = stokes_problem->triangulation;
+    biharmonic_problem.make_grid();
+    biharmonic_problem.setup_system();
+    biharmonic_problem.assemble_system();
 
-    //     const auto & fullmatrix =
-    //       table_to_fullmatrix(patch_matrix.get_block(block_row, block_column).as_table(), lane);
-    //     const auto & fullmatrix_cut =
-    //       table_to_fullmatrix(patch_matrix_cut.get_block(block_row, block_column).as_table(),
-    //       lane);
-    //     compare_matrix(fullmatrix, fullmatrix_cut);
-    //   }
-    // }
+    const auto partitioner_biharm = biharmonic_problem.system_u.get_partitioner();
+
+    FullMatrix<double> locally_relevant_matrix;
+    locally_relevant_matrix = std::move(
+      Util::extract_locally_relevant_matrix(biharmonic_problem.system_matrix, partitioner_biharm));
+
+    const auto make_local_indices_impl =
+      [&](const std::vector<types::global_dof_index> &               indices,
+          const std::shared_ptr<const Utilities::MPI::Partitioner> & vector_partitioner) {
+        std::vector<unsigned int> local_dof_indices;
+        std::transform(indices.begin(),
+                       indices.end(),
+                       std::back_inserter(local_dof_indices),
+                       [&](const auto dof_index) {
+                         return vector_partitioner->global_to_local(dof_index);
+                       });
+        return local_dof_indices;
+      };
+
+    FullMatrix<double> fullmatrix_cut(patch_transfer_sf->n_dofs_per_patch(),
+                                      patch_transfer_sf->n_dofs_per_patch());
+
+    for(auto patch_index = 0U; patch_index < local_matrices.size(); ++patch_index)
+    {
+      patch_transfer_sf->reinit(patch_index);
+      for(auto lane = 0U; lane < patch_dof_worker_sf.n_lanes_filled(patch_index); ++lane)
+      {
+        auto &       patch_matrix = local_matrices[patch_index];
+        const auto & fullmatrix = table_to_fullmatrix(patch_matrix.solver_stream.as_table(), lane);
+
+        fullmatrix_cut *= 0.;
+        const std::vector<types::global_dof_index> dof_indices_on_patch =
+          std::move(patch_transfer_sf->get_global_dof_indices(lane));
+        const auto local_dof_indices_sf =
+          make_local_indices_impl(dof_indices_on_patch, partitioner_biharm);
+        fullmatrix_cut.extract_submatrix_from(locally_relevant_matrix,
+                                              local_dof_indices_sf,
+                                              local_dof_indices_sf);
+
+        compare_matrix(fullmatrix, fullmatrix_cut);
+      }
+    }
   }
 
 
@@ -861,13 +900,13 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_pressurevelocity_MPI)
 
 
 /// TODO MPI...
-TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwstream)
+TYPED_TEST_P(TestStokesIntegrator, matrixintegratorstreamlmw)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
   Fixture::setup_matrixintegratorlmw();
-  Fixture::check_matrixintegratorlmwstream();
+  Fixture::check_matrixintegratorstreamlmw();
   Fixture::options.prms.mesh.n_refinements = 2;
-  Fixture::check_matrixintegratorlmwstream();
+  Fixture::check_matrixintegratorstreamlmw();
 }
 
 
@@ -889,7 +928,7 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             matrixintegratorlmwRT_velocityvelocity_MPI,
                             matrixintegratorlmwRT_velocitypressure_MPI,
                             matrixintegratorlmwRT_pressurevelocity_MPI,
-                            matrixintegratorlmwstream);
+                            matrixintegratorstreamlmw);
 
 
 
