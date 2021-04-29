@@ -1423,7 +1423,8 @@ enum class LocalAssembly
 enum class LocalSolver
 {
   Exact,
-  Vdiag
+  Vdiag,
+  Stream
 };
 
 enum class Method
@@ -1471,7 +1472,7 @@ struct EquationData
   static std::string
   str_local_solver(const LocalSolver variant)
   {
-    std::string str[] = {"exact", "velocity (block diagonal)"};
+    std::string str[] = {"exact", "velocity (block diagonal)", "stream function"};
     return str[static_cast<int>(variant)];
   }
 

@@ -2149,7 +2149,8 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                               &analytical_velocity,
                                               &system_u,
                                               equation_data_stokes,
-                                              &interface_handler);
+                                              &interface_handler,
+                                              &stokes_problem->system_rhs.block(0));
 
       const auto cell_worker = [&](const CellIterator &     cell,
                                    ScratchData<dim, true> & scratch_data,
