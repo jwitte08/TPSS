@@ -597,58 +597,58 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
   const bool use_ras_boolean_weights = additional_data.use_ras_boolean_weights && is_additive;
 
   AssertThrow(!(use_ras_weights && use_ras_boolean_weights),
-              ExcMessage("It isn't possible to use more than one RAS option."))
+              ExcMessage("It isn't possible to use more than one RAS option."));
 
-    // *** apply local inverses for all subdomains of the given color
-    const auto apply_inverses_add =
-      [&](const SubdomainHandler<dim, value_type> &     data,
-          VectorType &                                  solution,
-          const VectorType &                            residual,
-          const std::pair<unsigned int, unsigned int> & subdomain_range) {
-        /// TODO use a mutex for thread safety?
+  // *** apply local inverses for all subdomains of the given color
+  const auto apply_inverses_add =
+    [&](const SubdomainHandler<dim, value_type> &     data,
+        VectorType &                                  solution,
+        const VectorType &                            residual,
+        const std::pair<unsigned int, unsigned int> & subdomain_range) {
+      /// TODO use a mutex for thread safety?
 
-        auto transfer = std::make_shared<typename OperatorType::transfer_type>(data);
-        AlignedVector<VectorizedArray<value_type>> local_residual;    // r_j
-        AlignedVector<VectorizedArray<value_type>> local_solution;    // u_j
-        AlignedVector<VectorizedArray<value_type>> local_ras_weights; // w_j
+      auto transfer = std::make_shared<typename OperatorType::transfer_type>(data);
+      AlignedVector<VectorizedArray<value_type>> local_residual;    // r_j
+      AlignedVector<VectorizedArray<value_type>> local_solution;    // u_j
+      AlignedVector<VectorizedArray<value_type>> local_ras_weights; // w_j
 
-        for(auto patch_id = subdomain_range.first; patch_id < subdomain_range.second; ++patch_id)
+      for(auto patch_id = subdomain_range.first; patch_id < subdomain_range.second; ++patch_id)
+      {
+        /// restrict global to local residual and initialize local solution u_j
+        transfer->reinit(patch_id);
+        local_residual = std::move(transfer->gather(residual));
+        transfer->reinit_local_vector(local_solution);
+
+        /// apply local solver u_j = A_loc^{-1} r_j
+        const ArrayView<const VectorizedArray<value_type>> local_residual_view =
+          make_array_view(local_residual.begin(), local_residual.end());
+        const ArrayView<VectorizedArray<value_type>> local_solution_view =
+          make_array_view(local_solution.begin(), local_solution.end());
+        const auto & inverse = (*subdomain_to_inverse)[patch_id];
+        inverse.apply_inverse(local_solution_view, local_residual_view);
+
+        /// apply local relaxation
+        if(additional_data.relaxation != 1.)
+          for(auto & elem : local_solution)
+            elem *= make_vectorized_array<value_type>(additional_data.relaxation);
+
+        /// apply weights if weighted RAS
+        if(use_ras_weights)
         {
-          /// restrict global to local residual and initialize local solution u_j
-          transfer->reinit(patch_id);
-          local_residual = std::move(transfer->gather(residual));
-          transfer->reinit_local_vector(local_solution);
-
-          /// apply local solver u_j = A_loc^{-1} r_j
-          const ArrayView<const VectorizedArray<value_type>> local_residual_view =
-            make_array_view(local_residual.begin(), local_residual.end());
-          const ArrayView<VectorizedArray<value_type>> local_solution_view =
-            make_array_view(local_solution.begin(), local_solution.end());
-          const auto & inverse = (*subdomain_to_inverse)[patch_id];
-          inverse.apply_inverse(local_solution_view, local_residual_view);
-
-          /// apply local relaxation
-          if(additional_data.relaxation != 1.)
-            for(auto & elem : local_solution)
-              elem *= make_vectorized_array<value_type>(additional_data.relaxation);
-
-          /// apply weights if weighted RAS
-          if(use_ras_weights)
-          {
-            local_ras_weights = std::move(transfer->gather(ras_weights));
-            for(auto i = 0U; i < local_solution.size(); ++i)
-              local_solution[i] /= local_ras_weights[i];
-          }
-
-          /// prolongate and add local solution u_j, that is u += R_j^T u_j. in
-          /// case of standard RAS the prolongation operator R_j^T satisfies a
-          /// partition of unity
-          if(use_ras_boolean_weights)
-            transfer->rscatter_add(solution, local_solution);
-          else
-            transfer->scatter_add(solution, local_solution);
+          local_ras_weights = std::move(transfer->gather(ras_weights));
+          for(auto i = 0U; i < local_solution.size(); ++i)
+            local_solution[i] /= local_ras_weights[i];
         }
-      };
+
+        /// prolongate and add local solution u_j, that is u += R_j^T u_j. in
+        /// case of standard RAS the prolongation operator R_j^T satisfies a
+        /// partition of unity
+        if(use_ras_boolean_weights)
+          transfer->rscatter_add(solution, local_solution);
+        else
+          transfer->scatter_add(solution, local_solution);
+      }
+    };
 
   subdomain_handler->template loop<const VectorType, VectorType>(std::ref(apply_inverses_add),
                                                                  *solution,

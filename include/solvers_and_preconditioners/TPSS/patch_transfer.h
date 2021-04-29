@@ -317,8 +317,8 @@ private:
  * Transfer of patch relevant dof values for block vectors. Transfer for each
  * block is provided by a PatchTransfer object, set to the according dof handler.
  *
- * TESTED This class is used with blocks associated to different finite elements
- * in tests regarding the (local) Stokes integrators.
+ * TESTED This class is used by (local) Stokes solvers with blocks associated to
+ * velocity and pressure, respectively.
  */
 template<int dim, typename Number>
 class PatchTransferBlock
@@ -401,7 +401,7 @@ public:
   n_dofs_per_patch(const unsigned int block_index) const;
 
   /**
-   * Set the size of a patch local vector @p vec with flattened block-structure.
+   * Set the size of a patch local vector @p vec with block-structure flattened.
    */
   void
   reinit_local_vector(AlignedVector<VectorizedArray<Number>> & vec) const;
