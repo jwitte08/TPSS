@@ -553,7 +553,6 @@ REGISTER_TYPED_TEST_SUITE_P(TestBiharmonicIntegrator,
                             CheckVertexPatchEigendecomp1D);
 
 using TestParamsQuadratic = testing::Types<Util::NonTypeParams<2, 2>>;
-// using TestParamsHighOrder = testing::Types<Util::NonTypeParams<2, 5>, Util::NonTypeParams<2, 7>>;
 using TestParamsHighOrder = testing::Types<Util::NonTypeParams<2, 3>, Util::NonTypeParams<2, 5>>;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(Quadratic2D, TestBiharmonicIntegrator, TestParamsQuadratic);

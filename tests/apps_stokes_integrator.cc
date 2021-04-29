@@ -45,14 +45,6 @@ protected:
     const bool is_higher_order = fe_degree_v > 2;
     pcout_owned = std::make_shared<ConditionalOStream>(ofs, !is_higher_order && is_first_proc);
 
-    // {
-    //   auto & pre_smoother                   = rt_parameters.multigrid.pre_smoother;
-    //   pre_smoother.variant                  = SmootherParameter::SmootherVariant::Schwarz;
-    //   pre_smoother.schwarz.patch_variant    = TPSS::PatchVariant::vertex;
-    //   pre_smoother.schwarz.smoother_variant = TPSS::SmootherVariant::additive;
-    //   rt_parameters.multigrid.post_smoother = pre_smoother;
-    // }
-
     {
       const auto patch_variant    = TPSS::PatchVariant::vertex;
       const auto smoother_variant = TPSS::SmootherVariant::additive;
@@ -73,7 +65,6 @@ protected:
   check_system_matrix_velocity()
   {
     *pcout_owned << "//////////   STOKES PROBLEM" << std::endl;
-    EquationData equation_data;
     using StokesProblem = ModelProblem<dim, fe_degree_p, Method::TaylorHoodDGQ>;
     std::shared_ptr<const StokesProblem> stokes_problem;
     auto new_problem   = std::make_shared<StokesProblem>(options.prms, equation_data);
@@ -116,7 +107,6 @@ protected:
       options.setup(/*GMRES_GMG + Schwarz*/ 4, damping, patch_variant, smoother_variant);
     }
 
-    EquationData equation_data;
     using StokesProblem = ModelProblem<dim, fe_degree_p, Method::TaylorHood>;
 
     *pcout_owned << "//////////   STOKES PROBLEM (step-56)" << std::endl;
@@ -178,8 +168,6 @@ protected:
     const auto damping          = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
     options.setup(/*FGMRES_GMGvelocity*/ 3, damping, patch_variant, smoother_variant);
 
-    EquationData equation_data;
-
     using StokesProblem = ModelProblem<dim, fe_degree_p, method>;
     std::shared_ptr<const StokesProblem> stokes_problem;
     auto new_problem   = std::make_shared<StokesProblem>(options.prms, equation_data);
@@ -213,7 +201,6 @@ protected:
       patch_worker.get_partition_data().get_patch_range());
 
     const TrilinosWrappers::SparseMatrix * system_matrix = &(mgc->mg_matrices[max_level]);
-    // AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1, ExcMessage("TODO..."));
 
     /// compare local matrices
     for(auto patch = 0U; patch < n_subdomains; ++patch)
@@ -276,8 +263,6 @@ protected:
       const auto damping = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
       options.setup(/*GMRES_GMG + Schwarz*/ 4, damping, patch_variant, smoother_variant);
     }
-
-    EquationData equation_data;
 
     /// TODO tensor product smoothers...
     using StokesProblem = ModelProblem<dim, fe_degree_p, Method::DGQkplus2_DGPk>;
@@ -442,31 +427,29 @@ protected:
   }
 
 
+  void
+  setup_matrixintegratorlmw()
+  {
+    const auto patch_variant    = TPSS::PatchVariant::vertex;
+    const auto smoother_variant = TPSS::SmootherVariant::additive;
+    const auto damping          = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
+    options.setup(/*CG_GMG*/ 5, damping, patch_variant, smoother_variant);
+
+    // if(method == Stokes::Method::RaviartThomas)
+    //   options.prms.mesh.do_colorization = true;
+    // if(options.prms.mesh.do_colorization)
+    //   for(types::boundary_id id = 0; id < GeometryInfo<dim>::faces_per_cell; ++id)
+    //     equation_data.dirichlet_boundary_ids_velocity.insert(id);
+  }
+
+
   template<Stokes::Method method>
   void
   check_matrixintegratorlmw(const std::array<unsigned int, 2> block_index)
   {
     const auto [block_row, block_column] = block_index;
-    // const bool do_velocity_velocity      = block_row == 0U && block_column == 0U;
-    // const bool do_velocity_pressure      = block_row == 0U && block_column == 1U;
-    // const bool do_pressure_velocity      = block_row == 1U && block_column == 0U;
-    const bool do_pressure_pressure = block_row == 1U && block_column == 1U;
-
+    const bool do_pressure_pressure      = block_row == 1U && block_column == 1U;
     ASSERT_FALSE(do_pressure_pressure) << "block is zero thus not implemented...";
-
-    /// TODO define parameters outside of this function ?
-    const auto patch_variant    = TPSS::PatchVariant::vertex;
-    const auto smoother_variant = TPSS::SmootherVariant::additive;
-    const auto damping          = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
-    options.setup(/*CG_GMG*/ 5, damping, patch_variant, smoother_variant);
-    if(method == Stokes::Method::RaviartThomas)
-      options.prms.mesh.do_colorization = true;
-
-    /// TODO define equation data outside of this function ?
-    EquationData equation_data;
-    if(options.prms.mesh.do_colorization)
-      for(types::boundary_id id = 0; id < GeometryInfo<dim>::faces_per_cell; ++id)
-        equation_data.dirichlet_boundary_ids_velocity.insert(id);
 
     using StokesProblem = ModelProblem<dim, fe_degree_p, method>;
 
@@ -541,6 +524,66 @@ protected:
 
 
   void
+  check_matrixintegratorlmwstream()
+  {
+    equation_data.setup_stream_functions = true;
+
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Stokes::Method::RaviartThomas>;
+
+    const auto stokes_problem = std::make_shared<StokesProblem>(options.prms, equation_data);
+    stokes_problem->pcout     = pcout_owned;
+    stokes_problem->make_grid();
+    stokes_problem->setup_system();
+    const auto mgc = stokes_problem->make_multigrid_velocity_pressure();
+    stokes_problem->print_informations();
+
+    ASSERT_EQ(StokesProblem::dof_layout_v, TPSS::DoFLayout::RT);
+    using MatrixIntegrator =
+      VelocityPressure::FD::MatrixIntegratorStreamLMW<dim, fe_degree_p, double>;
+
+    using local_matrix_type = typename MatrixIntegrator::matrix_type;
+
+    ASSERT_TRUE(mgc->mg_schwarz_smoother_pre) << "mg_smoother is not initialized.";
+
+    const auto   level             = stokes_problem->max_level();
+    const auto   mgss              = mgc->mg_schwarz_smoother_pre;
+    const auto   subdomain_handler = mgss->get_subdomain_handler(level);
+    const auto & partition_data    = subdomain_handler->get_partition_data();
+    const TrilinosWrappers::BlockSparseMatrix & level_matrix = mgc->mg_matrices[level];
+    const auto                                  n_subdomains = partition_data.n_subdomains();
+    std::vector<local_matrix_type>              local_matrices(n_subdomains);
+
+    MatrixIntegrator integrator;
+    integrator.initialize(equation_data);
+
+    integrator.assemble_subspace_inverses(*subdomain_handler,
+                                          local_matrices,
+                                          level_matrix,
+                                          partition_data.get_patch_range());
+
+    const auto   patch_transfer_sf   = integrator.get_patch_transfer_stream(*subdomain_handler);
+    const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
+
+    // // ASSERT_EQ(local_matrices.size(), local_matrices_cut.size());
+    // for(auto patch_index = 0U; patch_index < local_matrices.size(); ++patch_index)
+    // {
+    //   for(auto lane = 0U; lane < patch_dof_worker_v.n_lanes_filled(patch_index); ++lane)
+    //   {
+    //     auto & patch_matrix     = local_matrices[patch_index];
+    //     auto & patch_matrix_cut = local_matrices_cut[patch_index];
+
+    //     const auto & fullmatrix =
+    //       table_to_fullmatrix(patch_matrix.get_block(block_row, block_column).as_table(), lane);
+    //     const auto & fullmatrix_cut =
+    //       table_to_fullmatrix(patch_matrix_cut.get_block(block_row, block_column).as_table(),
+    //       lane);
+    //     compare_matrix(fullmatrix, fullmatrix_cut);
+    //   }
+    // }
+  }
+
+
+  void
   compare_matrix(const FullMatrix<double> & patch_matrix_full,
                  const FullMatrix<double> & other) const
   {
@@ -574,8 +617,8 @@ protected:
   std::ofstream                       ofs;
   std::shared_ptr<ConditionalOStream> pcout_owned;
 
-  StokesFlow<dim, fe_degree_p> options;
-  // RT::Parameter                                  options.prms;
+  StokesFlow<dim, fe_degree_p>                   options;
+  EquationData                                   equation_data;
   std::shared_ptr<const MatrixFree<dim, double>> mf_storage;
   std::shared_ptr<SubdomainHandler<dim, double>> subdomain_handler;
 };
@@ -693,7 +736,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_velocityvelocity_MPI)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 1;
@@ -706,7 +750,8 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_velocityvelocity_MPI)
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_velocitypressure_MPI)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 1;
@@ -719,7 +764,8 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_velocitypressure_MPI)
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_pressurevelocity_MPI)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 1;
@@ -732,12 +778,13 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_pressurevelocity_MPI)
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwDGQ_velocityvelocity_MPI)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 1;
   Fixture::template check_matrixintegratorlmw<Stokes::Method::DGQkplus2_DGPk>({0U, 0U});
-  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::options.prms.mesh.n_repetitions = 3;
   Fixture::template check_matrixintegratorlmw<Stokes::Method::DGQkplus2_DGPk>({0U, 0U});
 }
 
@@ -745,12 +792,13 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwDGQ_velocityvelocity_MPI)
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwDGQ_velocitypressure_MPI)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 1;
   Fixture::template check_matrixintegratorlmw<Stokes::Method::DGQkplus2_DGPk>({0U, 1U});
-  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::options.prms.mesh.n_repetitions = 3;
   Fixture::template check_matrixintegratorlmw<Stokes::Method::DGQkplus2_DGPk>({0U, 1U});
 }
 
@@ -758,12 +806,13 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwDGQ_velocitypressure_MPI)
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwDGQ_pressurevelocity_MPI)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 1;
   Fixture::template check_matrixintegratorlmw<Stokes::Method::DGQkplus2_DGPk>({1U, 0U});
-  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::options.prms.mesh.n_repetitions = 3;
   Fixture::template check_matrixintegratorlmw<Stokes::Method::DGQkplus2_DGPk>({1U, 0U});
 }
 
@@ -771,7 +820,8 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwDGQ_pressurevelocity_MPI)
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_velocityvelocity_MPI)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 1;
@@ -784,7 +834,8 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_velocityvelocity_MPI)
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_velocitypressure_MPI)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 1;
@@ -797,13 +848,26 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_velocitypressure_MPI)
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_pressurevelocity_MPI)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 1;
   Fixture::template check_matrixintegratorlmw<Stokes::Method::RaviartThomas>({1U, 0U});
   Fixture::options.prms.mesh.n_refinements = 2;
   Fixture::template check_matrixintegratorlmw<Stokes::Method::RaviartThomas>({1U, 0U});
+}
+
+
+
+/// TODO MPI...
+TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwstream)
+{
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
+  Fixture::check_matrixintegratorlmwstream();
+  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::check_matrixintegratorlmwstream();
 }
 
 
@@ -824,7 +888,8 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             matrixintegratorlmwDGQ_pressurevelocity_MPI,
                             matrixintegratorlmwRT_velocityvelocity_MPI,
                             matrixintegratorlmwRT_velocitypressure_MPI,
-                            matrixintegratorlmwRT_pressurevelocity_MPI);
+                            matrixintegratorlmwRT_pressurevelocity_MPI,
+                            matrixintegratorlmwstream);
 
 
 

@@ -1332,12 +1332,12 @@ MatrixIntegrator<dim, is_multigrid>::uniface_worker_stream(const IteratorType & 
                                                            ScratchData<dim> &   scratch_data,
                                                            CopyData &           copy_data) const
 {
-  auto & phi = scratch_data.stream_interface_values;
-  phi.reinit(cell, f, sf, cell, f, sf);
+  auto & stream_interface_values = scratch_data.stream_interface_values;
+  stream_interface_values.reinit(cell, f, sf, cell, f, sf);
 
-  const auto & phi_face = phi.get_face_values(0);
+  const auto & phi = stream_interface_values.get_face_values(0);
 
-  const unsigned int n_interface_dofs = phi_face.n_dofs_per_cell();
+  const unsigned int n_interface_dofs = phi.n_dofs_per_cell();
 
   CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_interface_dofs);
 
@@ -1349,7 +1349,7 @@ MatrixIntegrator<dim, is_multigrid>::uniface_worker_stream(const IteratorType & 
   /// here (on distributed triangulation this leads to a global communication of
   /// h and nh).
   const auto   nh        = h;
-  const auto   fe_degree = phi_face.get_fe().degree;
+  const auto   fe_degree = phi.get_fe().degree;
   const double gamma_over_h =
     equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
@@ -2219,7 +2219,7 @@ public:
   std::shared_ptr<transfer_type>
   get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
   {
-    return std::make_shared<transfer_type>(subdomain_handler);
+    return std::make_shared<transfer_type>(subdomain_handler, 0);
   }
 
   EquationData equation_data;
@@ -3086,7 +3086,10 @@ public:
   std::shared_ptr<transfer_type>
   get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
   {
-    return std::make_shared<transfer_type>(subdomain_handler);
+    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
+    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
+    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
+    return std::make_shared<transfer_type>(dofinfos);
   }
 
   EquationData equation_data;
@@ -3319,7 +3322,10 @@ public:
   std::shared_ptr<transfer_type>
   get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
   {
-    return std::make_shared<transfer_type>(subdomain_handler);
+    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
+    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
+    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
+    return std::make_shared<transfer_type>(dofinfos);
   }
 
   EquationData       equation_data;
@@ -3778,7 +3784,10 @@ public:
   std::shared_ptr<transfer_type>
   get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
   {
-    return std::make_shared<transfer_type>(subdomain_handler);
+    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
+    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
+    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
+    return std::make_shared<transfer_type>(dofinfos);
   }
 
   EquationData equation_data;
@@ -3822,10 +3831,11 @@ public:
   static constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
   static constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
 
-  using value_type    = Number;
-  using transfer_type = typename TPSS::PatchTransferBlock<dim, Number>; // TODO
-  using operator_type = TrilinosWrappers::BlockSparseMatrix;            // TODO
-  using matrix_type   = LocalSolverStream<Number>;                      // TODO
+  using value_type           = Number;
+  using transfer_type        = typename TPSS::PatchTransferBlock<dim, Number>; // TODO
+  using transfer_type_stream = TPSS::PatchTransfer<dim, Number>;
+  using operator_type        = TrilinosWrappers::BlockSparseMatrix; // TODO
+  using matrix_type          = LocalSolverStream<Number>;           // TODO
 
   void
   initialize(const EquationData & equation_data_in)
@@ -3848,8 +3858,8 @@ public:
     const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
 
     // TODO add stream functions to subdomain handler
-    const TPSS::PatchTransfer<dim, Number> patch_transfer_sf(subdomain_handler, 2);
-    const auto & patch_dof_worker_sf = patch_transfer->get_patch_dof_worker();
+    const auto   patch_transfer_sf   = get_patch_transfer_stream(subdomain_handler);
+    const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
 
     FullMatrix<double> tmp;
 
@@ -3857,19 +3867,18 @@ public:
     for(auto patch_index = begin; patch_index < end; ++patch_index)
     {
       patch_transfer->reinit(patch_index);
-      patch_transfer->reinit(patch_index);
+      const auto & patch_transfer_v = patch_transfer->get_patch_transfer(0);
+      const auto & patch_transfer_p = patch_transfer->get_patch_transfer(1);
+      patch_transfer_sf->reinit(patch_index);
 
       const auto n_dofs          = patch_transfer->n_dofs_per_patch();
       const auto n_dofs_velocity = patch_transfer->n_dofs_per_patch(0);
       const auto n_dofs_pressure = patch_transfer->n_dofs_per_patch(1);
       const auto n_dofs_stream   = patch_transfer_sf->n_dofs_per_patch();
 
-      const auto & patch_transfer_v = patch_transfer->get_patch_transfer(0);
-      const auto & patch_transfer_p = patch_transfer->get_patch_transfer(1);
-
       matrix_type & patch_matrix = local_matrices[patch_index];
-
       patch_matrix.solver_stream.as_table().reinit(n_dofs_stream, n_dofs_stream);
+
       tmp.reinit(n_dofs_stream, n_dofs_stream);
 
       for(auto lane = 0U; lane < patch_dof_worker_sf.n_lanes_filled(patch_index); ++lane)
@@ -3890,7 +3899,7 @@ public:
 
           const auto & local_cell_range = TPSS::make_local_cell_range(cell_collection);
 
-          const auto & g2l = patch_transfer_sf.get_global_to_local_dof_indices(lane);
+          const auto & g2l = patch_transfer_sf->get_global_to_local_dof_indices(lane);
 
           const auto distribute_local_to_patch_impl = [&](const auto & cd) {
             std::vector<unsigned int> local_dof_indices;
@@ -3996,6 +4005,12 @@ public:
     dofinfos.push_back(&subdomain_handler.get_dof_info(0));
     dofinfos.push_back(&subdomain_handler.get_dof_info(1));
     return std::make_shared<transfer_type>(dofinfos);
+  }
+
+  std::shared_ptr<transfer_type_stream>
+  get_patch_transfer_stream(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    return std::make_shared<transfer_type_stream>(subdomain_handler, 2);
   }
 
   EquationData equation_data;

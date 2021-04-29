@@ -1417,14 +1417,14 @@ enum class LocalAssembly
 {
   Tensor,
   Cut,
-  LMW
+  LMW,
+  StreamLMW
 };
 
 enum class LocalSolver
 {
   Exact,
-  Vdiag,
-  Stream
+  Vdiag
 };
 
 enum class Method
@@ -1472,7 +1472,7 @@ struct EquationData
   static std::string
   str_local_solver(const LocalSolver variant)
   {
-    std::string str[] = {"exact", "velocity (block diagonal)", "stream function"};
+    std::string str[] = {"exact", "velocity (block diagonal)"};
     return str[static_cast<int>(variant)];
   }
 
@@ -1499,6 +1499,7 @@ struct EquationData
   bool                         assemble_pressure_mass_matrix   = false;
   bool                         do_mean_value_constraint        = false;
   bool                         use_cuthill_mckee               = false;
+  bool                         setup_stream_functions          = false;
   unsigned int                 local_kernel_size               = numbers::invalid_unsigned_int;
   double                       local_kernel_threshold          = 0.;
   LocalSolver                  local_solver                    = LocalSolver::Exact;

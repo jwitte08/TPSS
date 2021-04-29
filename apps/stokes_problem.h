@@ -917,6 +917,9 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
     AssertThrow(equation_data_in.variant != EquationData::Variant::DivFreeBell,
                 ExcMessage(oss.str()));
   }
+
+  if(local_assembly == LocalAssembly::StreamLMW)
+    equation_data.setup_stream_functions = true;
 }
 
 
@@ -1907,7 +1910,7 @@ ModelProblem<dim, fe_degree_p, method>::make_multigrid_velocity_pressure()
 
   mgc_velocity_pressure->dof_handler_velocity = &dof_handler_velocity;
   mgc_velocity_pressure->dof_handler_pressure = &dof_handler_pressure;
-  if(equation_data.local_solver == LocalSolver::Stream)
+  if(equation_data.setup_stream_functions)
   {
     dof_handler_stream.initialize(*triangulation, *finite_element_stream);
     dof_handler_stream.distribute_mg_dofs();
@@ -3121,8 +3124,6 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     use_coarse_preconditioner(parameters.coarse_grid.solver_variant ==
                               CoarseGridParameter::SolverVariant::Iterative)
 {
-  if(equation_data_in.local_solver == LocalSolver::Stream)
-    Assert(local_assembly == LocalAssembly::LMW, ExcMessage("TODO..."));
 }
 
 
@@ -3452,10 +3453,9 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
       additional_data.coloring_func = std::ref(*user_coloring);
     }
     additional_data.parameters = parameters.pre_smoother;
-    additional_data.foreach_dofh.resize(2);
+    additional_data.foreach_dofh.resize(dof_handler_stream ? 3 : 2);
     additional_data.foreach_dofh[0].dirichlet_ids = equation_data.dirichlet_boundary_ids_velocity;
     additional_data.foreach_dofh[1].dirichlet_ids = equation_data.dirichlet_boundary_ids_pressure;
-    // additional_data.foreach_dofh[1].force_no_boundary_condition = true;
     mgss->initialize(mg_matrices, additional_data);
     mg_schwarz_smoother_pre = mgss;
   }
