@@ -1469,9 +1469,9 @@ struct CopyData
 namespace StreamFunction
 {
 /**
- * A helper struct which provides a FEValues-like interface for stream
- * functions. A stream function is the vector curl of scalar polynomial shape
- * functions in two space dimensions.
+ * A helper struct which provides a FEValues-like or FEFaceValues-like interface
+ * for stream functions. A stream function is the vector curl of scalar
+ * polynomial shape functions in two space dimensions.
  */
 template<int dim>
 struct ValuesBase
@@ -1514,6 +1514,12 @@ struct ValuesBase
   get_quadrature_points() const
   {
     return active_phi.get_quadrature_points();
+  }
+
+  const std::vector<Tensor<1, dim>> &
+  get_normal_vectors() const
+  {
+    return active_phi.get_normal_vectors();
   }
 
   double
@@ -1578,85 +1584,25 @@ struct Values : public ValuesBase<dim>
 
 
 
-// /**
-//  * A helper struct which provides a FEValues-like interface for stream
-//  * functions. A stream function is the vector curl of scalar polynomial shape
-//  * functions in two space dimensions.
-//  */
-// template<int dim>
-// struct Values
-// {
-//   static_assert(dim == 2, "Implemented for 2D only.");
+/**
+ * TODO...
+ */
+template<int dim>
+struct FaceValues : public ValuesBase<dim>
+{
+  static_assert(dim == 2, "Implemented for 2D only.");
 
-//   Values(const FEValues<dim> & fe_values_in)
-//     : fe_values(fe_values_in.get_mapping(),
-//                 fe_values_in.get_fe(),
-//                 fe_values_in.get_quadrature(),
-//                 fe_values_in.get_update_flags()),
-//       n_quadrature_points(fe_values_in.n_quadrature_points)
-//   {
-//   }
+  FaceValues(const FEFaceValues<dim> & fe_face_values_in) : ValuesBase<dim>(fe_face_values_in)
+  {
+  }
 
-//   template<typename CellIteratorType>
-//   void
-//   reinit(const CellIteratorType & cell)
-//   {
-//     fe_values.reinit(cell);
-//   }
-
-//   unsigned int
-//   n_dofs_per_cell() const
-//   {
-//     return get_fe().dofs_per_cell;
-//   }
-
-//   const FiniteElement<dim> &
-//   get_fe() const
-//   {
-//     return fe_values.get_fe();
-//   }
-
-//   const std::vector<Point<dim>> &
-//   get_quadrature_points() const
-//   {
-//     return fe_values.get_quadrature_points();
-//   }
-
-//   double
-//   JxW(const unsigned int q) const
-//   {
-//     return fe_values.JxW(q);
-//   }
-
-//   double
-//   shape_value_component(const unsigned int i, const unsigned int q, const unsigned int c) const
-//   {
-//     const auto & curl_phi_i = compute_vcurl(fe_values, i, q);
-//     return curl_phi_i[c];
-//   }
-
-//   Tensor<1, dim>
-//   shape_grad_component(const unsigned int i, const unsigned int q, const unsigned int c) const
-//   {
-//     AssertIndexRange(c, dim);
-//     const auto &   hess_phi_i = fe_values.shape_hessian(i, q);
-//     Tensor<1, dim> grad;
-//     if(c == 0U)
-//     {
-//       grad[0] = hess_phi_i[0][1];
-//       grad[1] = hess_phi_i[1][1];
-//     }
-//     else if(c == 1U)
-//     {
-//       grad[0] = -hess_phi_i[0][0];
-//       grad[1] = -hess_phi_i[1][0];
-//     }
-//     return grad;
-//   }
-
-//   FEValues<dim> fe_values;
-//   unsigned int  n_quadrature_points;
-// };
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType & cell, const unsigned int face_no)
+  {
+    this->fe_face_values->reinit(cell, face_no);
+  }
+};
 
 
 
@@ -1678,6 +1624,25 @@ compute_vvalue(const Values<dim> & phi, const unsigned int i, const unsigned int
 
 
 
+template<int dim>
+SymmetricTensor<2, dim>
+compute_symgrad(const FaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_symgrad_impl<dim, FaceValues<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
+Tensor<1, dim>
+compute_vvalue(const FaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_vvalue_impl<dim, FaceValues<dim>>(phi, i, q);
+}
+
+
+
+/// TODO use FaceValues for left and right shape values...
 /**
  * A helper struct which provides a FEInterfaceValues-like interface for
  * stream functions. A stream function is the vector curl of scalar polynomial
@@ -1701,6 +1666,10 @@ struct InterfaceValues
                           fe_values_in.get_fe(),
                           fe_interface_values_in.get_quadrature(),
                           fe_interface_values_in.get_update_flags()),
+      face_values_left(FEFaceValues<dim>(fe_values_in.get_mapping(),
+                                         fe_values_in.get_fe(),
+                                         fe_interface_values_in.get_quadrature(),
+                                         fe_interface_values_in.get_update_flags())),
       n_quadrature_points(fe_interface_values_in.n_quadrature_points)
   {
   }
@@ -1715,6 +1684,7 @@ struct InterfaceValues
          const unsigned int       nsubface_no)
   {
     fe_interface_values.reinit(cell, face_no, subface_no, ncell, nface_no, nsubface_no);
+    face_values_left.reinit(cell, face_no);
   }
 
   template<typename CellIteratorType>
@@ -1722,6 +1692,7 @@ struct InterfaceValues
   reinit(const CellIteratorType & cell, const unsigned int face_no)
   {
     fe_interface_values.reinit(cell, face_no);
+    face_values_left.reinit(cell, face_no);
   }
 
   unsigned int
@@ -1734,6 +1705,13 @@ struct InterfaceValues
   get_fe() const
   {
     return fe_values.get_fe();
+  }
+
+  const FaceValues<dim> &
+  get_face_values(const unsigned int cell_index)
+  {
+    AssertDimension(cell_index, 0U);
+    return face_values_left;
   }
 
   std::vector<types::global_dof_index>
@@ -1846,9 +1824,6 @@ struct InterfaceValues
       jump -= shape_value_component_right(ri, q, c);
 
     return jump;
-
-    // const auto & jump_curl_phi_i = ::MW::compute_jump_vcurl(fe_interface_values, i, q);
-    // return jump_curl_phi_i[c];
   }
 
   Tensor<1, dim>
@@ -1871,25 +1846,11 @@ struct InterfaceValues
       av_grad += 0.5 * shape_grad_component_right(ri, q, c);
 
     return av_grad;
-
-    // AssertIndexRange(c, dim);
-    // const auto &   av_hess_phi_i = fe_interface_values.average_hessian(i, q);
-    // Tensor<1, dim> grad;
-    // if(c == 0U)
-    // {
-    //   grad[0] = av_hess_phi_i[0][1];
-    //   grad[1] = av_hess_phi_i[1][1];
-    // }
-    // else if(c == 1U)
-    // {
-    //   grad[0] = -av_hess_phi_i[0][0];
-    //   grad[1] = -av_hess_phi_i[1][0];
-    // }
-    // return grad;
   }
 
   FEValues<dim>          fe_values;
   FEInterfaceValues<dim> fe_interface_values;
+  FaceValues<dim>        face_values_left;
   unsigned int           n_quadrature_points;
 };
 
