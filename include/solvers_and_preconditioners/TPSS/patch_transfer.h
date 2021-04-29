@@ -287,8 +287,8 @@ private:
 
   /**
    * An interface accessing dof-related patch information stored in PatchInfo
-   * and DoFInfo objects (which might be part of the subdomain_handler used for
-   * initialization).
+   * and DoFInfo objects (which might be part of the subdomain_handler used
+   * during initialization).
    */
   PatchDoFWorker<dim, Number> patch_dof_worker;
 
