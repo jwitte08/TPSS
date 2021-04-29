@@ -1323,6 +1323,13 @@ compute_vcurl(const FEFaceValuesBase<dim> & phi, const unsigned int i, const uns
   return compute_vcurl_impl<dim, FEFaceValuesBase<dim>>(phi, i, q);
 }
 
+template<int dim>
+Tensor<1, dim>
+compute_vcurl(const FEValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return compute_vcurl_impl<dim, FEValuesBase<dim>>(phi, i, q);
+}
+
 
 
 /**
@@ -1467,24 +1474,28 @@ namespace StreamFunction
  * functions in two space dimensions.
  */
 template<int dim>
-struct Values
+struct ValuesBase
 {
   static_assert(dim == 2, "Implemented for 2D only.");
 
-  Values(const FEValues<dim> & fe_values_in)
-    : fe_values(fe_values_in.get_mapping(),
-                fe_values_in.get_fe(),
-                fe_values_in.get_quadrature(),
-                fe_values_in.get_update_flags()),
-      n_quadrature_points(fe_values_in.n_quadrature_points)
+  ValuesBase(const FEValues<dim> & fe_values_in)
+    : fe_values(std::make_shared<FEValues<dim>>(fe_values_in.get_mapping(),
+                                                fe_values_in.get_fe(),
+                                                fe_values_in.get_quadrature(),
+                                                fe_values_in.get_update_flags())),
+      n_quadrature_points(fe_values_in.n_quadrature_points),
+      active_phi(*fe_values)
   {
   }
 
-  template<typename CellIteratorType>
-  void
-  reinit(const CellIteratorType & cell)
+  ValuesBase(const FEFaceValues<dim> & fe_face_values_in)
+    : fe_face_values(std::make_shared<FEFaceValues<dim>>(fe_face_values_in.get_mapping(),
+                                                         fe_face_values_in.get_fe(),
+                                                         fe_face_values_in.get_quadrature(),
+                                                         fe_face_values_in.get_update_flags())),
+      n_quadrature_points(fe_face_values_in.n_quadrature_points),
+      active_phi(*fe_face_values)
   {
-    fe_values.reinit(cell);
   }
 
   unsigned int
@@ -1496,25 +1507,25 @@ struct Values
   const FiniteElement<dim> &
   get_fe() const
   {
-    return fe_values.get_fe();
+    return active_phi.get_fe();
   }
 
   const std::vector<Point<dim>> &
   get_quadrature_points() const
   {
-    return fe_values.get_quadrature_points();
+    return active_phi.get_quadrature_points();
   }
 
   double
   JxW(const unsigned int q) const
   {
-    return fe_values.JxW(q);
+    return active_phi.JxW(q);
   }
 
   double
   shape_value_component(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
-    const auto & curl_phi_i = compute_vcurl(fe_values, i, q);
+    const auto & curl_phi_i = compute_vcurl(active_phi, i, q);
     return curl_phi_i[c];
   }
 
@@ -1522,7 +1533,7 @@ struct Values
   shape_grad_component(const unsigned int i, const unsigned int q, const unsigned int c) const
   {
     AssertIndexRange(c, dim);
-    const auto &   hess_phi_i = fe_values.shape_hessian(i, q);
+    const auto &   hess_phi_i = active_phi.shape_hessian(i, q);
     Tensor<1, dim> grad;
     if(c == 0U)
     {
@@ -1537,9 +1548,115 @@ struct Values
     return grad;
   }
 
-  FEValues<dim> fe_values;
-  unsigned int  n_quadrature_points;
+  std::shared_ptr<FEValues<dim>>     fe_values;
+  std::shared_ptr<FEFaceValues<dim>> fe_face_values;
+  unsigned int                       n_quadrature_points;
+  const FEValuesBase<dim> &          active_phi;
 };
+
+
+
+/**
+ * TODO...
+ */
+template<int dim>
+struct Values : public ValuesBase<dim>
+{
+  static_assert(dim == 2, "Implemented for 2D only.");
+
+  Values(const FEValues<dim> & fe_values_in) : ValuesBase<dim>(fe_values_in)
+  {
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType & cell)
+  {
+    this->fe_values->reinit(cell);
+  }
+};
+
+
+
+// /**
+//  * A helper struct which provides a FEValues-like interface for stream
+//  * functions. A stream function is the vector curl of scalar polynomial shape
+//  * functions in two space dimensions.
+//  */
+// template<int dim>
+// struct Values
+// {
+//   static_assert(dim == 2, "Implemented for 2D only.");
+
+//   Values(const FEValues<dim> & fe_values_in)
+//     : fe_values(fe_values_in.get_mapping(),
+//                 fe_values_in.get_fe(),
+//                 fe_values_in.get_quadrature(),
+//                 fe_values_in.get_update_flags()),
+//       n_quadrature_points(fe_values_in.n_quadrature_points)
+//   {
+//   }
+
+//   template<typename CellIteratorType>
+//   void
+//   reinit(const CellIteratorType & cell)
+//   {
+//     fe_values.reinit(cell);
+//   }
+
+//   unsigned int
+//   n_dofs_per_cell() const
+//   {
+//     return get_fe().dofs_per_cell;
+//   }
+
+//   const FiniteElement<dim> &
+//   get_fe() const
+//   {
+//     return fe_values.get_fe();
+//   }
+
+//   const std::vector<Point<dim>> &
+//   get_quadrature_points() const
+//   {
+//     return fe_values.get_quadrature_points();
+//   }
+
+//   double
+//   JxW(const unsigned int q) const
+//   {
+//     return fe_values.JxW(q);
+//   }
+
+//   double
+//   shape_value_component(const unsigned int i, const unsigned int q, const unsigned int c) const
+//   {
+//     const auto & curl_phi_i = compute_vcurl(fe_values, i, q);
+//     return curl_phi_i[c];
+//   }
+
+//   Tensor<1, dim>
+//   shape_grad_component(const unsigned int i, const unsigned int q, const unsigned int c) const
+//   {
+//     AssertIndexRange(c, dim);
+//     const auto &   hess_phi_i = fe_values.shape_hessian(i, q);
+//     Tensor<1, dim> grad;
+//     if(c == 0U)
+//     {
+//       grad[0] = hess_phi_i[0][1];
+//       grad[1] = hess_phi_i[1][1];
+//     }
+//     else if(c == 1U)
+//     {
+//       grad[0] = -hess_phi_i[0][0];
+//       grad[1] = -hess_phi_i[1][0];
+//     }
+//     return grad;
+//   }
+
+//   FEValues<dim> fe_values;
+//   unsigned int  n_quadrature_points;
+// };
 
 
 
