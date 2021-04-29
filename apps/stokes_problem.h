@@ -477,6 +477,7 @@ struct MGCollectionVelocityPressure
   /// Expose all members which have to be set by the user before initialization...
   const DoFHandler<dim> *      dof_handler_velocity;
   const DoFHandler<dim> *      dof_handler_pressure;
+  const DoFHandler<dim> *      dof_handler_stream;
   const Mapping<dim> *         mapping;
   Table<2, DoFTools::Coupling> cell_integrals_mask;
   Table<2, DoFTools::Coupling> face_integrals_mask;
@@ -492,7 +493,8 @@ struct MGCollectionVelocityPressure
   void
   assemble_multigrid(const unsigned int                level,
                      const AffineConstraints<double> & level_constraints_velocity,
-                     const AffineConstraints<double> & level_constraints_pressure);
+                     const AffineConstraints<double> & level_constraints_pressure,
+                     const AffineConstraints<double> & level_constraints_stream);
 
   MGParameter  parameters;
   EquationData equation_data;
@@ -715,6 +717,9 @@ public:
   DoFHandler<dim>                                            dof_handler_velocity;
   DoFHandler<dim>                                            dof_handler_pressure;
 
+  std::shared_ptr<FiniteElement<dim>> finite_element_stream;
+  DoFHandler<dim>                     dof_handler_stream;
+
   AffineConstraints<double> zero_constraints_velocity;
   AffineConstraints<double> constraints_velocity;
   AffineConstraints<double> constraints_pressure;
@@ -763,6 +768,9 @@ private:
    */
   std::shared_ptr<FiniteElement<dim>>
   make_finite_element() const;
+
+  std::shared_ptr<FiniteElement<dim>>
+  make_finite_element_stream() const;
 
   bool
   check_finite_element() const;
@@ -885,6 +893,7 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
     mapping(1),
     /// finite element for the velocity-pressure system
     fe(make_finite_element()),
+    finite_element_stream(make_finite_element_stream()),
     /// TODO !!! coloring depends on discrete pressure space as well
     user_coloring([&]() -> std::shared_ptr<ColoringBase<dim>> {
       if constexpr(dof_layout_v == TPSS::DoFLayout::Q)
@@ -983,6 +992,15 @@ ModelProblem<dim, fe_degree_p, method>::make_finite_element() const
                                            1,
                                            typename Base::fe_type_p(fe_degree_p),
                                            1);
+}
+
+
+
+template<int dim, int fe_degree_p, Method method>
+std::shared_ptr<FiniteElement<dim>>
+ModelProblem<dim, fe_degree_p, method>::make_finite_element_stream() const
+{
+  return std::make_shared<FE_Q<dim>>(fe_degree_v + 1);
 }
 
 
@@ -1889,9 +1907,15 @@ ModelProblem<dim, fe_degree_p, method>::make_multigrid_velocity_pressure()
 
   mgc_velocity_pressure->dof_handler_velocity = &dof_handler_velocity;
   mgc_velocity_pressure->dof_handler_pressure = &dof_handler_pressure;
-  mgc_velocity_pressure->mapping              = &mapping;
-  mgc_velocity_pressure->cell_integrals_mask  = cell_integrals_mask;
-  mgc_velocity_pressure->face_integrals_mask  = face_integrals_mask;
+  if(equation_data.local_solver == LocalSolver::Stream)
+  {
+    dof_handler_stream.initialize(*triangulation, *finite_element_stream);
+    dof_handler_stream.distribute_mg_dofs();
+    mgc_velocity_pressure->dof_handler_stream = &dof_handler_stream;
+  }
+  mgc_velocity_pressure->mapping             = &mapping;
+  mgc_velocity_pressure->cell_integrals_mask = cell_integrals_mask;
+  mgc_velocity_pressure->face_integrals_mask = face_integrals_mask;
   if(prms.coarse_grid.solver_variant == CoarseGridParameter::SolverVariant::Iterative)
     mgc_velocity_pressure->coarse_constant_pressure_mode =
       std::move(make_constant_pressure_mode(mg_level_min));
@@ -3088,6 +3112,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                const EquationData &  equation_data_in)
   : dof_handler_velocity(nullptr),
     dof_handler_pressure(nullptr),
+    dof_handler_stream(nullptr),
     mapping(nullptr),
     parameters(rt_parameters_in.multigrid),
     equation_data(equation_data_in),
@@ -3096,6 +3121,8 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     use_coarse_preconditioner(parameters.coarse_grid.solver_variant ==
                               CoarseGridParameter::SolverVariant::Iterative)
 {
+  if(equation_data_in.local_solver == LocalSolver::Stream)
+    Assert(local_assembly == LocalAssembly::LMW, ExcMessage("TODO..."));
 }
 
 
@@ -3138,7 +3165,8 @@ void
 MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
   assemble_multigrid(const unsigned int                level,
                      const AffineConstraints<double> & level_constraints_velocity,
-                     const AffineConstraints<double> & level_constraints_pressure)
+                     const AffineConstraints<double> & level_constraints_pressure,
+                     const AffineConstraints<double> & level_constraints_stream)
 {
   AssertDimension(mg_matrices.min_level(), parameters.coarse_level);
   Assert(dof_handler_velocity, ExcMessage("Did you set dof_handler_velocity?"));
@@ -3155,6 +3183,12 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
 
     std::vector<const AffineConstraints<double> *> constraints_foreach_block{
       &level_constraints_velocity, &level_constraints_pressure};
+
+    if(dof_handler_stream)
+    {
+      dofhandlers.push_back(dof_handler_stream);
+      constraints_foreach_block.push_back(&level_constraints_stream);
+    }
 
     QGauss<1> quadrature(n_q_points_1d);
 
@@ -3271,7 +3305,6 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
     MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, nullptr, equation_data);
-    const auto &     triangulation = dof_handler_pressure->get_triangulation();
     auto             cell_worker =
       [&](const LevelCellIterator & cell, ScratchData<dim> & scratch_data, CopyData & copy_data) {
         LevelCellIterator cell_ansatz(&dof_handler_pressure->get_triangulation(),
@@ -3493,6 +3526,11 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     DoFTools::extract_locally_relevant_level_dofs(*dof_handler_pressure,
                                                   level,
                                                   lrdof_indices_foreach_block.emplace_back());
+    IndexSet locally_relevant_dof_indices_stream;
+    if(dof_handler_stream)
+      DoFTools::extract_locally_relevant_level_dofs(*dof_handler_stream,
+                                                    level,
+                                                    locally_relevant_dof_indices_stream);
 
     AffineConstraints<double> level_constraints_velocity;
     level_constraints_velocity.reinit(lrdof_indices_foreach_block[0]);
@@ -3505,6 +3543,11 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
     AffineConstraints<double> level_constraints_pressure;
     level_constraints_pressure.reinit(lrdof_indices_foreach_block[1]);
     level_constraints_pressure.close();
+
+    /// TODO do we need stream function constraints?
+    AffineConstraints<double> level_constraints_stream;
+    level_constraints_stream.reinit(locally_relevant_dof_indices_stream);
+    level_constraints_stream.close();
 
     TrilinosWrappers::BlockSparsityPattern dsp(2U, 2U);
     {
@@ -3603,7 +3646,10 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                   MPI_COMM_WORLD);
 
     //: assemble the velocity-pressure matrix A_l on current level l.
-    assemble_multigrid(level, level_constraints_velocity, level_constraints_pressure);
+    assemble_multigrid(level,
+                       level_constraints_velocity,
+                       level_constraints_pressure,
+                       level_constraints_stream);
 
     /// DEBUG
     // Util::gather_distributed_blockmatrix(mg_matrices[level], level);
