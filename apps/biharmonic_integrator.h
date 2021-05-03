@@ -713,17 +713,28 @@ struct InterfaceHandler
   void
   reinit(const Triangulation<dim> & triangulation)
   {
+    reinit(triangulation.active_cell_iterators());
+  }
+
+  template<typename CellIteratorRange>
+  void
+  reinit(const CellIteratorRange & cell_range)
+  {
+    const std::size_t n_cells = std::distance(cell_range.begin(), cell_range.end());
+    if(n_cells == 0)
+      return;
+
     std::set<CellId> marked_cells;
 
     /// Choosing the first marked cell with fixed constant mode
-    const auto & first_cell = triangulation.begin_active();
+    const auto & first_cell = *cell_range.begin();
     fixed_cell_id           = first_cell->id();
     cached_interface_ids.emplace_back(first_cell->id(), first_cell->id());
     marked_cells.emplace(first_cell->id());
 
     /// Looping over all remaining cells until each cell has an "inflow" interface...
-    while(marked_cells.size() < triangulation.n_global_active_cells()) // TODO MPI...
-      for(auto & cell : triangulation.active_cell_iterators())
+    while(marked_cells.size() < n_cells) // TODO MPI...
+      for(auto & cell : cell_range)
       {
         const bool cell_is_marked = marked_cells.find(cell->id()) != marked_cells.cend();
 
@@ -766,7 +777,7 @@ struct InterfaceHandler
     /// this std::sort is not needed as the set is ordered !!!
     // std::sort(cached_cell_ids.begin(), cached_cell_ids.end());
 
-    AssertDimension(cached_cell_ids.size(), triangulation.n_global_active_cells());
+    AssertDimension(cached_cell_ids.size(), n_cells);
     AssertDimension(cached_cell_ids.size(), cached_interface_ids.size());
 
     // // DEBUG
