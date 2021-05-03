@@ -388,8 +388,8 @@ protected:
     rt_parameters.solver.rel_tolerance        = 1.e-08;
     rt_parameters.solver.precondition_variant = SolverParameter::PreconditionVariant::None;
 
-    equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
-    // equation_data.variant = EquationData::Variant::ClampedStreamNoSlip;
+    // equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
+    equation_data.variant = EquationData::Variant::ClampedStreamNoSlip;
 
     constexpr unsigned int n_q_points_1d = fe_degree + 1;
     QGauss<1>              quad_1d(n_q_points_1d);
@@ -654,6 +654,8 @@ protected:
                   Util::numeric_eps<double>);
     }
 
+    Stokes::ProlongationStream<dim, double> prolongation_stream(dofh_sf.get_fe(), dofh_v.get_fe());
+
     /// Compare system right-hand sides.
     {
       if(pcout_owned->is_active())
@@ -676,6 +678,12 @@ protected:
                    << std::endl;
       *pcout_owned << "divfree: "
                    << vector_to_string(alignedvector_to_vector(restricted_local_rhs_v, lane))
+                   << std::endl;
+
+      const auto new_restricted_local_rhs_v = prolongation_stream.dual_restrict(local_rhs_v);
+
+      *pcout_owned << "divfree(new): "
+                   << vector_to_string(alignedvector_to_vector(new_restricted_local_rhs_v, lane))
                    << std::endl;
 
       AlignedVector<VectorizedArray<double>> restricted_local_rhs_v_orth;
