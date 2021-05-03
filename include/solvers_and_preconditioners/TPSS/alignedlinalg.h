@@ -626,23 +626,19 @@ compute_inverse_svd(const Table<2, Number> & matrix)
 
 
 
-template<typename Number, bool transpose_mat, bool is_matvec>
+template<typename Number, bool transpose_mat>
 AlignedVector<Number>
 product_impl(const Table<2, Number> & mat, const AlignedVector<Number> & vec)
 {
-  /// is_matvec means mat*vec (otherwise transpose(vec)*mat is computed)
   const auto m = transpose_mat ? mat.size(1) : mat.size(0);
   const auto n = transpose_mat ? mat.size(0) : mat.size(1);
-  AssertDimension(is_matvec ? n : m, vec.size());
+  AssertDimension(n, vec.size());
 
-  AlignedVector<Number> prod(is_matvec ? m : n);
+  AlignedVector<Number> prod(m);
 
   for(auto i = 0U; i < m; ++i)
     for(auto j = 0U; j < n; ++j)
-      if(is_matvec) // mat*vec
-        prod[i] = (transpose_mat ? mat(j, i) : mat(i, j)) * vec[j];
-      else // vecT*mat
-        prod[j] = vec[i] * (transpose_mat ? mat(j, i) : mat(i, j));
+      prod[i] += (transpose_mat ? mat(j, i) : mat(i, j)) * vec[j];
 
   return prod;
 }
@@ -657,7 +653,7 @@ template<typename Number>
 AlignedVector<Number>
 product(const Table<2, Number> & A, const AlignedVector<Number> & v)
 {
-  return product_impl<Number, false, true>(A, v);
+  return product_impl<Number, false>(A, v);
 }
 
 
@@ -670,7 +666,7 @@ template<typename Number>
 AlignedVector<Number>
 Tproduct(const Table<2, Number> & A, const AlignedVector<Number> & v)
 {
-  return product_impl<Number, true, true>(A, v);
+  return product_impl<Number, true>(A, v);
 }
 
 
@@ -683,7 +679,7 @@ template<typename Number>
 AlignedVector<Number>
 product(const AlignedVector<Number> & v, const Table<2, Number> & A)
 {
-  return product_impl<Number, false, false>(A, v);
+  return product_impl<Number, true>(A, v);
 }
 
 
@@ -697,7 +693,7 @@ template<typename Number>
 AlignedVector<Number>
 productT(const AlignedVector<Number> & v, const Table<2, Number> & A)
 {
-  return product_impl<Number, true, false>(A, v);
+  return product_impl<Number, false>(A, v);
 }
 
 
