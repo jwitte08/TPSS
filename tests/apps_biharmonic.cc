@@ -656,6 +656,11 @@ protected:
 
     Stokes::ProlongationStream<dim, double> prolongation_stream(dofh_sf.get_fe(), dofh_v.get_fe());
 
+    prolongation_matrix.print_formatted(std::cout);
+    std::cout << std::endl;
+    table_to_fullmatrix(prolongation_stream.prolongation_matrix.as_table(), lane)
+      .print_formatted(std::cout);
+
     /// Compare system right-hand sides.
     {
       if(pcout_owned->is_active())
@@ -680,10 +685,16 @@ protected:
                    << vector_to_string(alignedvector_to_vector(restricted_local_rhs_v, lane))
                    << std::endl;
 
-      const auto new_restricted_local_rhs_v = prolongation_stream.dual_restrict(local_rhs_v);
+      AlignedVector<VectorizedArray<double>> other_restricted_local_rhs_v;
+      patch_transfer_sf.reinit_local_vector(other_restricted_local_rhs_v);
+      const ArrayView<const VectorizedArray<double>> view_local_rhs_v(local_rhs_v.begin(),
+                                                                      local_rhs_v.size());
+      const ArrayView<VectorizedArray<double>> view_other_v(other_restricted_local_rhs_v.begin(),
+                                                            other_restricted_local_rhs_v.size());
+      prolongation_stream.dual_restrict(view_other_v, view_local_rhs_v);
 
-      *pcout_owned << "divfree(new): "
-                   << vector_to_string(alignedvector_to_vector(new_restricted_local_rhs_v, lane))
+      *pcout_owned << "divfree(other): "
+                   << vector_to_string(alignedvector_to_vector(other_restricted_local_rhs_v, lane))
                    << std::endl;
 
       AlignedVector<VectorizedArray<double>> restricted_local_rhs_v_orth;

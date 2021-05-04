@@ -190,9 +190,9 @@ compute_divfreeorth_shape_functions(const FiniteElement<dim> & fe_v,
   inverse_node_values.transpose(trafomatrix_all);
 
   /// DEBUG
-  std::cout << "velocity to div-free orth.: " << std::endl;
-  remove_noise_from_matrix(trafomatrix_all);
-  trafomatrix_all.print_formatted(std::cout);
+  // std::cout << "velocity to div-free orth.: " << std::endl;
+  // remove_noise_from_matrix(trafomatrix_all);
+  // trafomatrix_all.print_formatted(std::cout);
 
   std::array<FullMatrix<double>, 2> shape_function_weights;
   auto & [trafomatrix_velocity_to_gradp, trafomatrix_velocity_to_constp] = shape_function_weights;
@@ -272,9 +272,9 @@ compute_unit_prolongation_stream(const FiniteElement<dim> & fe_sf, const FiniteE
   }
 
   /// DEBUG
-  std::cout << "unit prolongation: " << std::endl;
-  remove_noise_from_matrix(node_value_matrix);
-  node_value_matrix.print_formatted(std::cout);
+  // std::cout << "unit prolongation: " << std::endl;
+  // remove_noise_from_matrix(node_value_matrix);
+  // node_value_matrix.print_formatted(std::cout);
 
   return node_value_matrix;
 }
@@ -372,7 +372,8 @@ struct ProlongationStream
     const unsigned int n_patch_dofs_sf = g2l_sf.size();
     const unsigned int n_patch_dofs_v  = g2l_v.size();
 
-    prolongation_matrix.reinit(n_patch_dofs_v, n_patch_dofs_sf);
+    auto & this_matrix = prolongation_matrix.as_table();
+    this_matrix.reinit(n_patch_dofs_v, n_patch_dofs_sf);
 
     const auto & cell_collection_sf =
       patch_transfer_sf.get_patch_dof_worker().get_cell_collection(patch_index, lane);
@@ -401,26 +402,55 @@ struct ProlongationStream
             const auto         j  = global_dof_indices_sf[cj];
             const unsigned int jj = g2l_if_sf(j);
             if(jj != numbers::invalid_unsigned_int)
-              prolongation_matrix(ii, jj) = cell_prolongation_matrix(ci, cj);
+              this_matrix(ii, jj) = cell_prolongation_matrix(ci, cj);
           }
         }
       }
     }
   }
 
-  AlignedVector<VectorizedArray<Number>>
-  prolongate(const AlignedVector<VectorizedArray<Number>> & src) const
+  void
+  prolongate(const ArrayView<VectorizedArray<Number>> &       dst_view,
+             const ArrayView<const VectorizedArray<Number>> & src_view) const
   {
-    return LinAlg::product(prolongation_matrix, src);
+    return prolongation_matrix.vmult(dst_view, src_view);
   }
 
-  AlignedVector<VectorizedArray<Number>>
-  dual_restrict(const AlignedVector<VectorizedArray<Number>> & src) const
+  void
+  dual_restrict(const ArrayView<VectorizedArray<Number>> &       dst_view,
+                const ArrayView<const VectorizedArray<Number>> & src_view) const
   {
-    return LinAlg::Tproduct(prolongation_matrix, src);
+    return prolongation_matrix.Tvmult(dst_view, src_view);
   }
 
-  Table<2, VectorizedArray<Number>> prolongation_matrix;
+  MatrixAsTable<VectorizedArray<Number>> prolongation_matrix;
+};
+
+
+
+template<int dim, typename Number>
+struct ProlongationDivFreeOrth
+{
+  ProlongationDivFreeOrth(const FiniteElement<dim> & fe_v, const FiniteElement<dim> & fe_p)
+  {
+    using namespace TPSS;
+
+    const auto & [velocity_to_dual_gradp, velocity_to_dual_constp] =
+      compute_divfreeorth_shape_functions(fe_v, fe_p);
+
+    unit_prolongation_matrix.reinit(velocity_to_dual_gradp.n(), velocity_to_dual_gradp.m());
+    for(auto i = 0U; i < unit_prolongation_matrix.m(); ++i)
+      for(auto j = 0U; j < unit_prolongation_matrix.n(); ++j)
+        unit_prolongation_matrix(i, j) = velocity_to_dual_gradp(j, i);
+
+    unit_prolongation_matrix_faces.reinit(velocity_to_dual_constp.n(), velocity_to_dual_constp.m());
+    for(auto i = 0U; i < unit_prolongation_matrix_faces.m(); ++i)
+      for(auto j = 0U; j < unit_prolongation_matrix_faces.n(); ++j)
+        unit_prolongation_matrix_faces(i, j) = velocity_to_dual_constp(j, i);
+  }
+
+  Table<2, VectorizedArray<Number>> unit_prolongation_matrix;
+  Table<2, VectorizedArray<Number>> unit_prolongation_matrix_faces;
 };
 
 
@@ -4190,12 +4220,71 @@ public:
 
 
 
-template<typename Number>
+template<int dim, typename Number>
 struct LocalSolverStream
 {
-  using matrix_type = MatrixAsTable<VectorizedArray<Number>>; // TODO
+  using matrix_type          = MatrixAsTable<VectorizedArray<Number>>; // TODO
+  using value_type           = typename matrix_type::value_type;
+  using transfer_type        = typename TPSS::PatchTransferBlock<dim, Number>; // TODO
+  using transfer_type_stream = TPSS::PatchTransfer<dim, Number>;
 
-  matrix_type solver_stream;
+  const SubdomainHandler<dim, Number> * subdomain_handler = nullptr;
+  unsigned int                          patch_index       = numbers::invalid_unsigned_int;
+
+  matrix_type                                            solver_sf;
+  std::shared_ptr<const ProlongationStream<dim, Number>> prolongation_sf;
+
+  std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth;
+  std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth_faces;
+
+  void
+  apply_inverse(const ArrayView<value_type> &       dst_view,
+                const ArrayView<const value_type> & src_view) const
+  {
+    Assert(subdomain_handler, ExcMessage("subdomain_handler not initialized."));
+    const auto patch_transfer    = get_patch_transfer(*subdomain_handler);
+    const auto patch_transfer_sf = get_patch_transfer_stream(*subdomain_handler);
+
+    AssertDimension(src_view.size(), patch_transfer->n_dofs_per_patch());
+    AssertDimension(dst_view.size(), patch_transfer->n_dofs_per_patch());
+
+    const auto n_dofs_v  = patch_transfer->n_dofs_per_patch(0);
+    const auto n_dofs_p  = patch_transfer->n_dofs_per_patch(1);
+    const auto n_dofs_sf = patch_transfer_sf->n_dofs_per_patch();
+
+    const ArrayView<value_type> dst_v_view(dst_view.begin(), n_dofs_v);
+    const ArrayView<value_type> dst_p_view(dst_view.begin() + n_dofs_v, n_dofs_p);
+
+    const ArrayView<const value_type> src_v_view(src_view.begin(), n_dofs_v);
+    const ArrayView<const value_type> src_p_view(src_view.begin() + n_dofs_v, n_dofs_p);
+
+    AlignedVector<value_type>   solution_sf(n_dofs_sf);
+    const ArrayView<value_type> solution_sf_view(solution_sf.begin(), n_dofs_sf);
+
+    AlignedVector<value_type>   rhs_sf(n_dofs_sf);
+    const ArrayView<value_type> rhs_sf_view(rhs_sf.begin(), n_dofs_sf);
+
+    prolongation_sf->dual_restrict(rhs_sf_view, src_v_view);
+
+    solver_sf.apply_inverse(solution_sf_view, rhs_sf_view);
+
+    prolongation_sf->prolongate(dst_v_view, solution_sf_view);
+  }
+
+  std::shared_ptr<transfer_type>
+  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
+    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
+    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
+    return std::make_shared<transfer_type>(dofinfos);
+  }
+
+  std::shared_ptr<transfer_type_stream>
+  get_patch_transfer_stream(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    return std::make_shared<transfer_type_stream>(subdomain_handler, 2);
+  }
 };
 
 
@@ -4227,10 +4316,10 @@ public:
   static constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
 
   using value_type           = Number;
-  using transfer_type        = typename TPSS::PatchTransferBlock<dim, Number>; // TODO
-  using transfer_type_stream = TPSS::PatchTransfer<dim, Number>;
+  using matrix_type          = LocalSolverStream<dim, Number>; // TODO
+  using transfer_type        = typename matrix_type::transfer_type;
+  using transfer_type_stream = typename matrix_type::transfer_type_stream;
   using operator_type        = TrilinosWrappers::BlockSparseMatrix; // TODO
-  using matrix_type          = LocalSolverStream<Number>;           // TODO
 
   void
   initialize(const EquationData & equation_data_in)
@@ -4251,36 +4340,44 @@ public:
     const auto & dofh_p  = subdomain_handler.get_dof_handler(1);
     const auto & dofh_sf = subdomain_handler.get_dof_handler(2);
 
-    const auto & [shape_to_test_functions_interior, shape_to_test_functions_interface] =
-      compute_divfreeorth_shape_functions(dofh_v.get_fe(), dofh_p.get_fe());
-
-    ProlongationStream<dim, double> stream_to_velocity(dofh_sf.get_fe(), dofh_v.get_fe());
-
-    const auto   patch_transfer     = get_patch_transfer(subdomain_handler);
-    const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
-    const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
+    // const auto   patch_transfer     = get_patch_transfer(subdomain_handler);
+    // const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
+    // const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
 
     const auto   patch_transfer_sf   = get_patch_transfer_stream(subdomain_handler);
     const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
+
+    const auto & [shape_to_test_functions_interior, shape_to_test_functions_faces] =
+      compute_divfreeorth_shape_functions(dofh_v.get_fe(), dofh_p.get_fe());
+
+    const auto prolong_sf =
+      std::make_shared<const ProlongationStream<dim, Number>>(dofh_sf.get_fe(), dofh_v.get_fe());
+    const auto velocity_to_orth =
+      std::make_shared<const FullMatrix<Number>>(shape_to_test_functions_interior);
+    const auto velocity_to_orth_faces =
+      std::make_shared<const FullMatrix<Number>>(shape_to_test_functions_faces);
 
     FullMatrix<double> tmp;
 
     const auto [begin, end] = subdomain_range;
     for(auto patch_index = begin; patch_index < end; ++patch_index)
     {
-      patch_transfer->reinit(patch_index);
-      const auto & patch_transfer_v = patch_transfer->get_patch_transfer(0);
-      const auto & patch_transfer_p = patch_transfer->get_patch_transfer(1);
+      // patch_transfer->reinit(patch_index);
+      // const auto & patch_transfer_v = patch_transfer->get_patch_transfer(0);
+      // const auto & patch_transfer_p = patch_transfer->get_patch_transfer(1);
       patch_transfer_sf->reinit(patch_index);
 
-      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
-      const auto n_dofs_velocity = patch_transfer->n_dofs_per_patch(0);
-      const auto n_dofs_pressure = patch_transfer->n_dofs_per_patch(1);
-      const auto n_dofs_stream   = patch_transfer_sf->n_dofs_per_patch();
+      // const auto n_dofs          = patch_transfer->n_dofs_per_patch();
+      // const auto n_dofs_velocity = patch_transfer->n_dofs_per_patch(0);
+      // const auto n_dofs_pressure = patch_transfer->n_dofs_per_patch(1);
+      const auto n_dofs_stream = patch_transfer_sf->n_dofs_per_patch();
 
       matrix_type & patch_matrix = local_matrices[patch_index];
-      patch_matrix.solver_stream.as_table().reinit(n_dofs_stream, n_dofs_stream);
 
+      patch_matrix.subdomain_handler = &subdomain_handler;
+      patch_matrix.patch_index       = patch_index;
+
+      patch_matrix.solver_sf.as_table().reinit(n_dofs_stream, n_dofs_stream);
       tmp.reinit(n_dofs_stream, n_dofs_stream);
 
       for(auto lane = 0U; lane < patch_dof_worker_sf.n_lanes_filled(patch_index); ++lane)
@@ -4388,15 +4485,19 @@ public:
             });
         }
 
-        patch_matrix.solver_stream.fill_submatrix(tmp, 0U, 0U, lane);
+        patch_matrix.solver_sf.fill_submatrix(tmp, 0U, 0U, lane);
       }
 
-      AssertDimension(patch_matrix.solver_stream.m(), n_dofs_stream);
-      AssertDimension(patch_matrix.solver_stream.n(), n_dofs_stream);
+      AssertDimension(patch_matrix.solver_sf.m(), n_dofs_stream);
+      AssertDimension(patch_matrix.solver_sf.n(), n_dofs_stream);
 
-      patch_matrix.solver_stream.invert();
+      patch_matrix.solver_sf.invert();
+
+      patch_matrix.prolongation_sf = prolong_sf;
 
       /// TODO prepare pressure...
+      patch_matrix.trafomatrix_orth       = velocity_to_orth;
+      patch_matrix.trafomatrix_orth_faces = velocity_to_orth_faces;
     }
   }
 
