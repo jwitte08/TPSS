@@ -315,10 +315,23 @@ table_to_fullmatrix(const Table<2, Number> & table, const unsigned int dummy = 0
 
 template<typename Number>
 std::vector<typename ExtractScalarType<Number>::type>
-alignedvector_to_vector(const AlignedVector<Number> & avec, const unsigned int lane)
+alignedvector_to_vector(const AlignedVector<Number> & avec, const unsigned int lane = 0)
 {
   std::vector<typename ExtractScalarType<Number>::type> vec;
   std::transform(avec.begin(), avec.end(), std::back_inserter(vec), [lane](const auto & val) {
+    return scalar_value(val, lane);
+  });
+  return vec;
+}
+
+
+
+template<typename Number>
+dealii::Vector<typename ExtractScalarType<Number>::type>
+alignedvector_to_d2vector(const AlignedVector<Number> & avec, const unsigned int lane = 0)
+{
+  dealii::Vector<typename ExtractScalarType<Number>::type> vec(avec.size());
+  std::transform(avec.begin(), avec.end(), vec.begin(), [lane](const auto & val) {
     return scalar_value(val, lane);
   });
   return vec;
