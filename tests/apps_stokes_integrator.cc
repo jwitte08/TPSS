@@ -436,6 +436,8 @@ protected:
     const auto damping          = TPSS::lookup_damping_factor(patch_variant, smoother_variant, dim);
     options.setup(/*CG_GMG*/ 5, damping, patch_variant, smoother_variant);
 
+    equation_data.variant = EquationData::Variant::DivFreeNoSlip;
+
     // if(method == Stokes::Method::RaviartThomas)
     //   options.prms.mesh.do_colorization = true;
     // if(options.prms.mesh.do_colorization)
@@ -605,7 +607,7 @@ protected:
       for(auto lane = 0U; lane < patch_dof_worker_sf.n_lanes_filled(patch_index); ++lane)
       {
         auto &       patch_matrix = local_matrices[patch_index];
-        const auto & fullmatrix = table_to_fullmatrix(patch_matrix.solver_stream.as_table(), lane);
+        const auto & fullmatrix   = table_to_fullmatrix(patch_matrix.solver_sf.as_table(), lane);
 
         fullmatrix_cut *= 0.;
         const std::vector<types::global_dof_index> dof_indices_on_patch =
@@ -617,6 +619,112 @@ protected:
                                               local_dof_indices_sf);
 
         compare_matrix(fullmatrix, fullmatrix_cut);
+      }
+    }
+  }
+
+
+  void
+  check_localsolverstream()
+  {
+    equation_data.setup_stream_functions = true;
+    equation_data.variant                = EquationData::Variant::DivFreeNoSlip;
+
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Stokes::Method::RaviartThomas>;
+
+    const auto stokes_problem = std::make_shared<StokesProblem>(options.prms, equation_data);
+    stokes_problem->pcout     = pcout_owned;
+    stokes_problem->make_grid();
+    stokes_problem->setup_system();
+    stokes_problem->assemble_system();
+    const auto mgc = stokes_problem->make_multigrid_velocity_pressure();
+    stokes_problem->print_informations();
+
+    ASSERT_EQ(StokesProblem::dof_layout_v, TPSS::DoFLayout::RT);
+    using MatrixIntegrator =
+      VelocityPressure::FD::MatrixIntegratorStreamLMW<dim, fe_degree_p, double>;
+
+    using local_matrix_type = typename MatrixIntegrator::matrix_type;
+
+    ASSERT_TRUE(mgc->mg_schwarz_smoother_pre) << "mg_smoother is not initialized.";
+
+    const auto   level             = stokes_problem->max_level();
+    const auto   mgss              = mgc->mg_schwarz_smoother_pre;
+    const auto   subdomain_handler = mgss->get_subdomain_handler(level);
+    const auto & partition_data    = subdomain_handler->get_partition_data();
+    const TrilinosWrappers::BlockSparseMatrix & level_matrix = mgc->mg_matrices[level];
+    const auto                                  n_subdomains = partition_data.n_subdomains();
+    std::vector<local_matrix_type>              local_matrices(n_subdomains);
+
+    MatrixIntegrator integrator;
+    integrator.initialize(equation_data);
+
+    integrator.assemble_subspace_inverses(*subdomain_handler,
+                                          local_matrices,
+                                          level_matrix,
+                                          partition_data.get_patch_range());
+
+    const auto   patch_transfer      = integrator.get_patch_transfer(*subdomain_handler);
+    const auto   patch_transfer_sf   = integrator.get_patch_transfer_stream(*subdomain_handler);
+    const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
+
+    using OtherMatrixIntegrator = VelocityPressure::FD::
+      MatrixIntegratorLMW<dim, fe_degree_p, double, TPSS::DoFLayout::RT, fe_degree_p>;
+
+    using other_matrix_type = typename OtherMatrixIntegrator::matrix_type;
+
+    std::vector<other_matrix_type> other_matrices(n_subdomains);
+
+    OtherMatrixIntegrator other_integrator;
+    equation_data.local_kernel_size = 1U;
+    other_integrator.initialize(equation_data);
+
+    other_integrator.assemble_subspace_inverses(*subdomain_handler,
+                                                other_matrices,
+                                                level_matrix,
+                                                partition_data.get_patch_range());
+
+    for(auto patch_index = 0U; patch_index < local_matrices.size(); ++patch_index)
+    {
+      patch_transfer->reinit(patch_index);
+      patch_transfer_sf->reinit(patch_index);
+
+      const unsigned int n_dofs_v = patch_transfer->n_dofs_per_patch(0);
+      const unsigned int n_dofs_p = patch_transfer->n_dofs_per_patch(1);
+
+      AlignedVector<VectorizedArray<double>> local_rhs(n_dofs_v + n_dofs_p);
+      // std::fill_n(local_rhs.begin(), n_dofs_v, 1.);
+      local_rhs = patch_transfer->gather(stokes_problem->system_rhs);
+      const ArrayView<const VectorizedArray<double>> local_rhs_view(local_rhs.begin(),
+                                                                    local_rhs.size());
+
+      const auto & patch_matrix = local_matrices[patch_index];
+
+      AlignedVector<VectorizedArray<double>> local_solution;
+      patch_transfer->reinit_local_vector(local_solution);
+      const ArrayView<VectorizedArray<double>> local_solution_view(local_solution.begin(),
+                                                                   local_solution.size());
+
+      patch_matrix.apply_inverse(local_solution_view, local_rhs_view);
+
+      const auto & other_patch_matrix = other_matrices[patch_index];
+
+      AlignedVector<VectorizedArray<double>> other_solution;
+      patch_transfer->reinit_local_vector(other_solution);
+
+      const ArrayView<VectorizedArray<double>> other_solution_view(other_solution.begin(),
+                                                                   other_solution.size());
+      other_patch_matrix.apply_inverse(other_solution_view, local_rhs_view);
+      std::fill_n(other_solution.begin() + n_dofs_v, n_dofs_p, 0.);
+
+      for(auto lane = 0U; lane < patch_dof_worker_sf.n_lanes_filled(patch_index); ++lane)
+      {
+        *pcout_owned << "patch: " << patch_index << " , lane: " << lane << std::endl;
+        *pcout_owned << "system rhs: " << vector_to_string(alignedvector_to_vector(local_rhs, lane))
+                     << std::endl;
+        // std::cout << "patch: " << patch_index << " , lane: " << lane << std::endl;
+        compare_vector(alignedvector_to_d2vector(local_solution, lane),
+                       alignedvector_to_d2vector(other_solution, lane));
       }
     }
   }
@@ -911,6 +1019,20 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorstreamlmw)
 
 
 
+TYPED_TEST_P(TestStokesIntegrator, localsolverstream_velocity)
+{
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
+  Fixture::options.prms.mesh.n_repetitions = 3;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  Fixture::check_matrixintegratorstreamlmw();
+  Fixture::check_localsolverstream();
+  Fixture::options.prms.mesh.n_refinements = 1;
+  Fixture::check_localsolverstream();
+}
+
+
+
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckSystemMatrixVelocity,
                             CheckLocalSolversVelocityMPI,
@@ -928,7 +1050,8 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             matrixintegratorlmwRT_velocityvelocity_MPI,
                             matrixintegratorlmwRT_velocitypressure_MPI,
                             matrixintegratorlmwRT_pressurevelocity_MPI,
-                            matrixintegratorstreamlmw);
+                            matrixintegratorstreamlmw,
+                            localsolverstream_velocity);
 
 
 
