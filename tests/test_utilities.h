@@ -181,15 +181,11 @@ compare_vector(const Vector<Number> &     vector,
   else
     oss << "...printing is suppressed!\n";
 
-  for(auto i = 0U; i < vector.size(); ++i)
-  {
-    const auto value       = vector[i];
-    const auto other_value = other[i];
-    const auto diff        = std::abs(value - other_value);
-    const auto threshold   = numeric_eps<Number> * std::abs(other_value);
-    EXPECT_PRED_FORMAT2(testing::DoubleLE, diff, threshold)
-      << "diff " << diff << " exceeds threshold " << threshold << " at position " << i;
-  }
+  Vector<Number> diff(vector);
+  diff -= other;
+  const auto threshold = numeric_eps<Number> * other.l2_norm();
+  EXPECT_PRED_FORMAT2(testing::DoubleLE, diff.l2_norm(), threshold) << oss.str();
+
   pcout << oss.str();
 }
 
