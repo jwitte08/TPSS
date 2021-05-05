@@ -2260,43 +2260,91 @@ namespace TestFunction
  * to reinit() one might select a subset of those test functions.
  */
 template<int dim>
-struct Values
+struct ValuesBase
 {
   static_assert(dim == 2, "Implemented for 2D only.");
 
-  Values(const FEValues<dim> & fe_values_in, const FullMatrix<double> & shape_to_test_functions_in)
-    : fe_values(fe_values_in.get_mapping(),
-                fe_values_in.get_fe(),
-                fe_values_in.get_quadrature(),
-                fe_values_in.get_update_flags()),
+  ValuesBase(const FEValues<dim> &      fe_values_in,
+             const FullMatrix<double> & shape_to_test_functions_in)
+    : fe_values(std::make_shared<FEValues<dim>>(fe_values_in.get_mapping(),
+                                                fe_values_in.get_fe(),
+                                                fe_values_in.get_quadrature(),
+                                                fe_values_in.get_update_flags())),
       shape_to_test_functions(shape_to_test_functions_in),
       n_quadrature_points(fe_values_in.n_quadrature_points),
       active_test_function_indices([&]() {
         std::vector<unsigned int> all(shape_to_test_functions_in.m());
         std::iota(all.begin(), all.end(), 0U);
         return all;
-      }())
+      }()),
+      active_phi(*fe_values)
   {
-    AssertDimension(shape_to_test_functions.n(), fe_values_in.dofs_per_cell);
+    AssertDimension(shape_to_test_functions.n(), active_phi.dofs_per_cell);
+  }
+
+  unsigned int
+  n_dofs_per_cell() const
+  {
+    return active_test_function_indices.size();
+  }
+
+  const FiniteElement<dim> &
+  get_fe() const
+  {
+    return active_phi.get_fe();
+  }
+
+  const std::vector<Point<dim>> &
+  get_quadrature_points() const
+  {
+    return active_phi.get_quadrature_points();
+  }
+
+  double
+  JxW(const unsigned int q) const
+  {
+    return active_phi.JxW(q);
+  }
+
+  double
+  shape_value_component(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    AssertIndexRange(i, active_test_function_indices.size());
+    const auto ii = active_test_function_indices[i];
+
+    double value = 0.;
+    for(const auto jj : active_shape_function_indices)
+      value += shape_to_test_functions(ii, jj) * active_phi.shape_value_component(jj, q, c);
+    return value;
+  }
+
+  Tensor<1, dim>
+  shape_grad_component(const unsigned int i, const unsigned int q, const unsigned int c) const
+  {
+    AssertIndexRange(i, active_test_function_indices.size());
+    const auto ii = active_test_function_indices[i];
+
+    Tensor<1, dim> grad;
+    for(const auto jj : active_shape_function_indices)
+      grad += shape_to_test_functions(ii, jj) * active_phi.shape_grad_component(jj, q, c);
+    return grad;
   }
 
   template<typename CellIteratorType>
   void
-  reinit(const CellIteratorType &    own_cell,
-         const CellIteratorType &    cell,
-         std::vector<unsigned int> & active_test_function_indices_in)
+  reinit_active_function_indices_impl(const CellIteratorType &    own_cell,
+                                      const CellIteratorType &    cell,
+                                      std::vector<unsigned int> & active_test_function_indices_in)
   {
     AssertIndexRange(*std::max_element(active_test_function_indices_in.cbegin(),
                                        active_test_function_indices_in.cend()),
                      shape_to_test_functions.m());
 
     if(&active_test_function_indices != &active_test_function_indices_in)
-      std::swap(active_test_function_indices, active_test_function_indices_in);
+      active_test_function_indices = std::move(active_test_function_indices_in);
 
     const bool own_cell_is_cell =
       cell->index() == own_cell->index() && cell->level() == own_cell->level();
-
-    fe_values.reinit(cell);
 
     /// determine active shape functions if needed
     if(own_cell_is_cell)
@@ -2309,7 +2357,7 @@ struct Values
     {
       std::vector<types::global_dof_index> own_dof_indices(shape_to_test_functions.n());
       own_cell->get_active_or_mg_dof_indices(own_dof_indices);
-      std::vector<types::global_dof_index> dof_indices(fe_values.get_fe().dofs_per_cell);
+      std::vector<types::global_dof_index> dof_indices(active_phi.get_fe().dofs_per_cell);
       cell->get_active_or_mg_dof_indices(dof_indices);
 
       std::sort(dof_indices.begin(), dof_indices.end());
@@ -2334,15 +2382,44 @@ struct Values
                      shape_to_test_functions.m());
   }
 
+  std::shared_ptr<FEValues<dim>>     fe_values;
+  std::shared_ptr<FEFaceValues<dim>> fe_face_values;
+  const FullMatrix<double> &         shape_to_test_functions;
+  unsigned int                       n_quadrature_points;
+  std::vector<unsigned int>          active_test_function_indices;
+  std::vector<unsigned int>          active_shape_function_indices;
+  const FEValuesBase<dim> &          active_phi;
+};
+
+
+
+template<int dim>
+struct Values : public ValuesBase<dim>
+{
+  Values(const FEValues<dim> & fe_values_in, const FullMatrix<double> & shape_to_test_functions_in)
+    : ValuesBase<dim>(fe_values_in, shape_to_test_functions_in)
+  {
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType &    own_cell,
+         const CellIteratorType &    cell,
+         std::vector<unsigned int> & active_test_function_indices_in)
+  {
+    this->fe_values->reinit(cell);
+    this->reinit_active_function_indices_impl(own_cell, cell, active_test_function_indices_in);
+  }
+
   template<typename CellIteratorType>
   void
   reinit(const CellIteratorType & own_cell, const CellIteratorType & cell)
   {
-    if(active_test_function_indices.size() == shape_to_test_functions.m())
-      reinit(own_cell, cell, active_test_function_indices);
+    if(this->active_test_function_indices.size() == this->shape_to_test_functions.m())
+      reinit(own_cell, cell, this->active_test_function_indices);
     else
     {
-      std::vector<unsigned int> all(shape_to_test_functions.m());
+      std::vector<unsigned int> all(this->shape_to_test_functions.m());
       std::iota(all.begin(), all.end(), 0U);
       reinit(own_cell, cell, all);
     }
@@ -2362,78 +2439,24 @@ struct Values
   {
     reinit(own_cell, own_cell);
   }
-
-  unsigned int
-  n_dofs_per_cell() const
-  {
-    return active_test_function_indices.size();
-  }
-
-  const FiniteElement<dim> &
-  get_fe() const
-  {
-    return fe_values.get_fe();
-  }
-
-  const std::vector<Point<dim>> &
-  get_quadrature_points() const
-  {
-    return fe_values.get_quadrature_points();
-  }
-
-  double
-  JxW(const unsigned int q) const
-  {
-    return fe_values.JxW(q);
-  }
-
-  double
-  shape_value_component(const unsigned int i, const unsigned int q, const unsigned int c) const
-  {
-    AssertIndexRange(i, active_test_function_indices.size());
-    const auto ii = active_test_function_indices[i];
-
-    double value = 0.;
-    for(const auto jj : active_shape_function_indices)
-      value += shape_to_test_functions(ii, jj) * fe_values.shape_value_component(jj, q, c);
-    return value;
-  }
-
-  Tensor<1, dim>
-  shape_grad_component(const unsigned int i, const unsigned int q, const unsigned int c) const
-  {
-    AssertIndexRange(i, active_test_function_indices.size());
-    const auto ii = active_test_function_indices[i];
-
-    Tensor<1, dim> grad;
-    for(const auto jj : active_shape_function_indices)
-      grad += shape_to_test_functions(ii, jj) * fe_values.shape_grad_component(jj, q, c);
-    return grad;
-  }
-
-  FEValues<dim>              fe_values;
-  const FullMatrix<double> & shape_to_test_functions;
-  unsigned int               n_quadrature_points;
-  std::vector<unsigned int>  active_test_function_indices;
-  std::vector<unsigned int>  active_shape_function_indices;
 };
 
 
 
 template<int dim>
 SymmetricTensor<2, dim>
-compute_symgrad(const Values<dim> & phi, const unsigned int i, const unsigned int q)
+compute_symgrad(const ValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
 {
-  return ::MW::compute_symgrad_impl<dim, Values<dim>>(phi, i, q);
+  return ::MW::compute_symgrad_impl<dim, ValuesBase<dim>>(phi, i, q);
 }
 
 
 
 template<int dim>
 Tensor<1, dim>
-compute_vvalue(const Values<dim> & phi, const unsigned int i, const unsigned int q)
+compute_vvalue(const ValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
 {
-  return ::MW::compute_vvalue_impl<dim, Values<dim>>(phi, i, q);
+  return ::MW::compute_vvalue_impl<dim, ValuesBase<dim>>(phi, i, q);
 }
 
 
