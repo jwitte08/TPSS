@@ -201,7 +201,7 @@ protected:
 
       //: visualize "interface" non-div-free test functions
       {
-        Pressure::InterfaceHandler<dim> interface_handler;
+        InterfaceHandler<dim> interface_handler;
         interface_handler.reinit(dof_handler_velocity.get_triangulation());
 
         std::vector<types::global_dof_index> global_dof_indices(trafomatrix_rt_to_constp.n());
@@ -222,9 +222,9 @@ protected:
             const auto & ncell    = cell->neighbor(face_no);
             const auto   nface_no = cell->neighbor_face_no(face_no);
 
-            const Pressure::InterfaceId interface_id{cell->id(), ncell->id()};
-            const bool                  this_interface_isnt_contained =
-              interface_handler.template get_interface_index<false>(interface_id) ==
+            const InterfaceId interface_id{cell->id(), ncell->id()};
+            const bool        this_interface_isnt_contained =
+              interface_handler.get_interface_index_raw(interface_id) ==
               numbers::invalid_unsigned_int;
 
             if(this_interface_isnt_contained)
@@ -495,7 +495,7 @@ protected:
     const auto & [rt_to_gradp, rt_to_constp] =
       biharmonic_problem.compute_nondivfree_shape_functions();
 
-    Pressure::InterfaceHandler<dim> interface_handler;
+    InterfaceHandler<dim> interface_handler;
     interface_handler.reinit(dofh_v.get_triangulation());
     AssertDimension(interface_handler.n_interfaces(), 1 << dim);
 

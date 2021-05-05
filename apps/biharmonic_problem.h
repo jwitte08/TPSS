@@ -1883,7 +1883,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   // remove_noise_from_matrix(shape_to_test_functions_interface);
   // shape_to_test_functions_interface.print_formatted(ofs);
 
-  Pressure::InterfaceHandler<dim> interface_handler;
+  InterfaceHandler<dim> interface_handler;
   interface_handler.reinit(dof_handler_velocity.get_triangulation());
   const auto n_interface_nodes = interface_handler.n_interfaces();
 

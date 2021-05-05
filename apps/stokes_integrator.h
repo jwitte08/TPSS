@@ -549,10 +549,6 @@ using ::MW::TestFunction::compute_vvalue;
 
 
 
-using Biharmonic::Pressure::InterfaceId;
-
-using Biharmonic::Pressure::InterfaceHandler;
-
 template<int dim, typename CellIteratorType>
 std::pair<std::vector<unsigned int>, std::vector<types::global_dof_index>>
 get_active_interface_indices_impl(const InterfaceHandler<dim> & interface_handler,
@@ -4245,6 +4241,9 @@ struct LocalSolverStream
     const auto patch_transfer    = get_patch_transfer(*subdomain_handler);
     const auto patch_transfer_sf = get_patch_transfer_stream(*subdomain_handler);
 
+    patch_transfer->reinit(patch_index);
+    patch_transfer_sf->reinit(patch_index);
+
     AssertDimension(src_view.size(), patch_transfer->n_dofs_per_patch());
     AssertDimension(dst_view.size(), patch_transfer->n_dofs_per_patch());
 
@@ -4269,6 +4268,54 @@ struct LocalSolverStream
     solver_sf.apply_inverse(solution_sf_view, rhs_sf_view);
 
     prolongation_sf->prolongate(dst_v_view, solution_sf_view);
+
+    /// solve pressure
+    {
+      const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
+
+      for(auto lane = 0U; lane < patch_dof_worker_v.n_lanes_filled(patch_index); ++lane)
+      {
+        const auto & cells = patch_dof_worker_v.get_cell_collection(patch_index, lane);
+
+        LocalInterfaceHandler<dim> interface_handler;
+        interface_handler.reinit(cells);
+
+        AssertDimension(cells.size(), interface_handler.n_interfaces());
+
+        // Assert(
+        //   interface_handler.get_fixed_cell_index() ==
+        //   interface_handler.get_fixed_interface_index(), ExcMessage(
+        //     "I am worried about the constraints in case the fixed cell and interface index do not
+        //     coincide."));
+
+        // AffineConstraints constraints_on_interface;
+        // const auto interface_index_of_fixed_cell = interface_handler.get_fixed_interface_index();
+        // constraints_on_interface.add_line(interface_index_of_fixed_cell);
+        // constraints_on_interface.set_inhomogeneity(interface_index_of_fixed_cell, 1.);
+        // constraints_on_interface.close();
+
+        // AffineConstraints constraints_on_cell;
+        // constraints_on_cell.close();
+
+        // DynamicSparsityPattern dsp(interface_handler.n_interfaces());
+        // for(const auto & id : interface_handler.cached_interface_ids)
+        // {
+        //   const auto e                 = interface_handler.get_interface_index(id);
+        //   const auto [K_left, K_right] = interface_handler.get_cell_index_pair(id);
+        //   dsp.add(e, K_left);
+        //   dsp.add(e, K_right);
+        // }
+
+        // constraints_on_interface.condense(dsp);
+
+        // SparsityPattern sparsity_pattern;
+        // sparsity_pattern.copy_from(dsp);
+
+        // SparseMatrix<double> constant_pressure_matrix;
+        // constant_pressure_matrix.reinit(sparsity_pattern);
+        // Vector<double> constant_pressure_rhs(interface_handler.n_interfaces());
+      }
+    }
   }
 
   std::shared_ptr<transfer_type>

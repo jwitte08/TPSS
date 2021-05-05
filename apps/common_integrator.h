@@ -21,6 +21,321 @@
 
 
 
+using InterfaceId = typename std::pair<CellId, CellId>;
+
+/**
+ * Helper class that provides a unique numbering of "inflow" interfaces used
+ * to reconstruct Stokes pressure from a stream function formulation. "Inflow"
+ * interface means that the source cell (first member of InterfaceId) has a
+ * fixed constant pressure which determines the constant pressure on the
+ * destination cell (second member of InterfaceId).
+ *
+ * NOTE The InterfaceHandler assumes that the underlying triangulation is not
+ * distributed, i.e. a parallel::distributed::Triangulation object is feasible
+ * but restricted to one mpi process...
+ */
+template<int dim>
+struct InterfaceHandler
+{
+  void
+  reinit(const Triangulation<dim> & triangulation)
+  {
+    const auto cell_range = triangulation.active_cell_iterators();
+
+    cached_cell_ids.clear();
+    cached_interface_ids.clear();
+
+    const std::size_t n_cells =
+      std::count_if(cell_range.begin(), cell_range.end(), [](const auto &) { return true; });
+    if(n_cells == 0)
+      return;
+
+    std::set<CellId> marked_cells;
+
+    /// Choosing the first marked cell with fixed constant mode
+    const auto & first_cell = *cell_range.begin();
+    fixed_cell_id           = first_cell->id();
+    cached_interface_ids.emplace_back(first_cell->id(), first_cell->id());
+    marked_cells.emplace(first_cell->id());
+
+    /// Looping over all remaining cells until each cell has an "inflow" interface...
+    while(marked_cells.size() < n_cells) // TODO MPI...
+      for(auto & cell : cell_range)
+      {
+        const bool cell_is_marked = marked_cells.find(cell->id()) != marked_cells.cend();
+
+        for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
+        {
+          const bool there_is_no_neighbor = cell->neighbor_index(face_no) == -1;
+          if(there_is_no_neighbor)
+            continue;
+
+          const auto & ncell           = cell->neighbor(face_no);
+          const bool   ncell_is_marked = marked_cells.find(ncell->id()) != marked_cells.cend();
+
+          if(cell_is_marked && ncell_is_marked)
+            continue;
+
+          else if(cell_is_marked && !ncell_is_marked) // cell -> ncell
+          {
+            cached_interface_ids.emplace_back(cell->id(), ncell->id());
+            const auto & [dummy_, has_been_inserted] = marked_cells.emplace(ncell->id());
+            (void)dummy_, (void)has_been_inserted;
+            Assert(has_been_inserted, ExcMessage("Insertion failed."));
+          }
+
+          else if(!cell_is_marked && ncell_is_marked) // ncell -> cell
+          {
+            cached_interface_ids.emplace_back(ncell->id(), cell->id());
+            const auto & [dummy_, has_been_inserted] = marked_cells.emplace(cell->id());
+            (void)dummy_, (void)has_been_inserted;
+            Assert(has_been_inserted, ExcMessage("Insertion failed."));
+          }
+        }
+      } // end loop over cells
+
+    /// The second member of each interface id determines the new cell with
+    /// "inflow" interface. We use CellIds ordering to sort the interface ids.
+    std::sort(cached_interface_ids.begin(), cached_interface_ids.end());
+
+    /// TODO find an explicit way to convert CellId into a unique integer
+    std::copy(marked_cells.cbegin(), marked_cells.cend(), std::back_inserter(cached_cell_ids));
+    /// this std::sort is not needed as the set is ordered !!!
+    // std::sort(cached_cell_ids.begin(), cached_cell_ids.end());
+
+    AssertDimension(cached_cell_ids.size(), n_cells);
+    AssertDimension(cached_cell_ids.size(), cached_interface_ids.size());
+
+    // // DEBUG
+    // std::cout << "marked cells: " << std::endl;
+    // for(const auto & cell_id : cached_cell_ids)
+    //   std::cout << cell_id << " ";
+    // std::cout << std::endl;
+    // std::cout << "marked interfaces: " << std::endl;
+    // for(const auto & interface_id : cached_interface_ids)
+    //   std::cout << interface_id << std::endl;
+  }
+
+  template<bool do_flipped = true>
+  std::vector<InterfaceId>::const_iterator
+  get_interface_iterator(const InterfaceId & id) const
+  {
+    Assert(!cached_interface_ids.empty(),
+           ExcMessage("Have you initialized this interface handler?"));
+    const bool is_contained =
+      std::binary_search(cached_interface_ids.cbegin(), cached_interface_ids.cend(), id);
+    if(is_contained)
+      return std::lower_bound(cached_interface_ids.cbegin(), cached_interface_ids.cend(), id);
+    if(do_flipped)
+    {
+      const InterfaceId flipped_id = {id.second, id.first};
+      const bool        is_flipped =
+        std::binary_search(cached_interface_ids.cbegin(), cached_interface_ids.cend(), flipped_id);
+      if(is_flipped)
+        return std::lower_bound(cached_interface_ids.cbegin(),
+                                cached_interface_ids.cend(),
+                                flipped_id);
+    }
+    return cached_interface_ids.cend();
+  }
+
+  /**
+   * Considers flipped interfaces.
+   */
+  virtual unsigned int
+  get_interface_index(const InterfaceId & id) const
+  {
+    constexpr bool do_flipped         = true;
+    const auto     interface_iterator = get_interface_iterator<do_flipped>(id);
+    const bool     id_isnt_contained  = cached_interface_ids.cend() == interface_iterator;
+    if(id_isnt_contained)
+      return numbers::invalid_unsigned_int;
+    const auto index = std::distance(cached_interface_ids.cbegin(), interface_iterator);
+    AssertIndexRange(index, cached_interface_ids.size());
+    return index;
+  }
+
+  /**
+   * Does not consider flipped interfaces.
+   */
+  virtual unsigned int
+  get_interface_index_raw(const InterfaceId & id) const
+  {
+    constexpr bool do_flipped         = false;
+    const auto     interface_iterator = get_interface_iterator<do_flipped>(id);
+    const bool     id_isnt_contained  = cached_interface_ids.cend() == interface_iterator;
+    if(id_isnt_contained)
+      return numbers::invalid_unsigned_int;
+    const auto index = std::distance(cached_interface_ids.cbegin(), interface_iterator);
+    AssertIndexRange(index, cached_interface_ids.size());
+    return index;
+  }
+
+  virtual unsigned int
+  get_cell_index(const CellId & id) const
+  {
+    Assert(!cached_cell_ids.empty(), ExcMessage("Have you initialized this interface handler?"));
+    const auto it    = std::lower_bound(cached_cell_ids.cbegin(), cached_cell_ids.cend(), id);
+    const auto index = std::distance(cached_cell_ids.cbegin(), it);
+    AssertIndexRange(index, cached_cell_ids.size());
+    return index;
+  }
+
+  std::pair<unsigned int, unsigned int>
+  get_cell_index_pair(const InterfaceId & id) const
+  {
+    return {get_cell_index(id.first), get_cell_index(id.second)};
+  }
+
+  unsigned int
+  get_fixed_cell_index() const
+  {
+    const auto index = get_cell_index(fixed_cell_id);
+    Assert(index != numbers::invalid_unsigned_int, ExcMessage("Fixed cell isnt contained!?"));
+    return index;
+  }
+
+  unsigned int
+  get_fixed_interface_index() const
+  {
+    const auto index = get_interface_index({fixed_cell_id, fixed_cell_id});
+    Assert(index != numbers::invalid_unsigned_int, ExcMessage("Fixed cell isnt contained!?"));
+    return index;
+  }
+
+  unsigned int
+  n_interfaces() const
+  {
+    return cached_interface_ids.size();
+  }
+
+  std::vector<InterfaceId> cached_interface_ids; // sorted
+  std::vector<CellId>      cached_cell_ids;      // sorted
+  CellId                   fixed_cell_id;
+};
+
+
+
+template<int dim>
+struct LocalInterfaceHandler : public InterfaceHandler<dim>
+{
+  template<typename CellIterator>
+  void
+  reinit(const std::vector<CellIterator> & cells)
+  {
+    this->cached_cell_ids.clear();
+    this->cached_interface_ids.clear();
+    this->fixed_cell_id = CellId{};
+
+    const auto n_cells = cells.size();
+
+    if(n_cells == 0)
+      return;
+
+    for(auto & cell : cells)
+      this->cached_cell_ids.emplace_back(cell->id());
+
+    unsigned int fixed_cell_no     = 0;
+    this->fixed_cell_id            = cells[fixed_cell_no]->id();
+    const auto & [dummy_, success] = cell_id_to_cell_no.emplace(this->fixed_cell_id, fixed_cell_no);
+    Assert(success, ExcMessage("Insertion failed."));
+
+    this->cached_interface_ids.emplace_back(this->fixed_cell_id, this->fixed_cell_id);
+
+    /// Looping over remaining cells until each cell has an "inflow" interface.
+    while(cell_id_to_cell_no.size() < n_cells)
+      for(auto cell_no = 0U; cell_no < cells.size(); ++cell_no)
+      {
+        const auto cell = cells[cell_no];
+
+        const bool cell_is_marked =
+          cell_id_to_cell_no.find(cell->id()) != cell_id_to_cell_no.cend();
+
+        if(cell_is_marked)
+          continue;
+
+        for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
+        {
+          const bool there_is_no_neighbor = cell->neighbor_index(face_no) == -1;
+
+          if(there_is_no_neighbor)
+            continue;
+
+          const auto & ncell = cell->neighbor(face_no);
+
+          const bool ncell_is_marked =
+            cell_id_to_cell_no.find(ncell->id()) != cell_id_to_cell_no.end();
+
+          if(!ncell_is_marked)
+            continue;
+
+          Assert(!cell_is_marked && ncell_is_marked, ExcInternalError());
+
+          /// ncell -> cell
+          this->cached_interface_ids.emplace_back(ncell->id(), cell->id());
+          const auto & [dummy_, success] = cell_id_to_cell_no.emplace(cell->id(), cell_no);
+          Assert(success, ExcMessage("Insertion failed."));
+
+          break; // cell is marked now!
+        }
+      } // end loop over cells
+
+    AssertDimension(this->cached_interface_ids.size(), cell_id_to_cell_no.size());
+    AssertDimension(n_cells, cell_id_to_cell_no.size());
+
+    for(auto interface_no = 0U; interface_no < this->cached_interface_ids.size(); ++interface_no)
+      interface_id_to_interface_no[this->cached_interface_ids[interface_no]] = interface_no;
+
+    /// DEBUG
+    Assert(
+      [&]() {
+        std::vector<unsigned int> cell_nos;
+        for(const auto & id_and_no : cell_id_to_cell_no)
+          cell_nos.emplace_back(id_and_no.second);
+        const bool not_exceeding_n_cells = cell_nos.back() < n_cells;
+        std::sort(cell_nos.begin(), cell_nos.end());
+        const bool is_unique = std::unique(cell_nos.begin(), cell_nos.end()) == cell_nos.end();
+        return is_unique && not_exceeding_n_cells;
+      }(),
+      ExcMessage("The cell numbering is invalid."))
+
+    /// DEBUG
+    // std::cout << "marked cells: " << std::endl;
+    // for(const auto & cell : cell_id_to_cell_no)
+    //   std::cout << cell << " | ";
+    // std::cout << std::endl;
+    // std::cout << "marked interfaces: " << std::endl;
+    // for(const auto & interface : interface_id_to_interface_no)
+    //   std::cout << interface << " | " << std::endl;
+    // std::cout << std::endl;
+  }
+
+  virtual unsigned int
+  get_interface_index(const InterfaceId & id) const override
+  {
+    unsigned int index = numbers::invalid_unsigned_int;
+    const auto   it    = interface_id_to_interface_no.find(id);
+    if(it != interface_id_to_interface_no.end())
+      index = it->second;
+    return index;
+  }
+
+  virtual unsigned int
+  get_cell_index(const CellId & id) const override
+  {
+    unsigned int index = numbers::invalid_unsigned_int;
+    const auto   it    = cell_id_to_cell_no.find(id);
+    if(it != cell_id_to_cell_no.end())
+      index = it->second;
+    return index;
+  }
+
+  std::map<CellId, unsigned int>      cell_id_to_cell_no;
+  std::map<InterfaceId, unsigned int> interface_id_to_interface_no;
+};
+
+
+
 namespace dealii
 {
 namespace MeshWorker
