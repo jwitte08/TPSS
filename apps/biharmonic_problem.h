@@ -485,35 +485,42 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
         return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
       return std::make_shared<RedBlackColoring<dim>>(rt_parameters_in.mesh);
     }()),
-    prms_stokes([&]() {
-      Stokes::StokesFlow<dim, fe_degree_pressure> options_stokes;
-      const auto damping = rt_parameters.multigrid.pre_smoother.schwarz.damping_factor;
-      /// TODO
-      options_stokes.setup(5U, damping); // CG_GMG
-      options_stokes.prms.n_cycles = rt_parameters.n_cycles;
-      options_stokes.prms.mesh     = rt_parameters.mesh;
-      return options_stokes.prms;
-    }()),
-    equation_data_stokes([&]() {
-      std::map<EquationData::Variant, Stokes::EquationData::Variant> biharm_to_stokes_variant = {
-        {EquationData::Variant::ClampedStreamNoSlip, Stokes::EquationData::Variant::DivFreeNoSlip},
-        {EquationData::Variant::ClampedStreamPoiseuilleNoSlip,
-         Stokes::EquationData::Variant::DivFreePoiseuilleNoSlip},
-        {EquationData::Variant::ClampedStreamNoSlipNormal,
-         Stokes::EquationData::Variant::DivFreeNoSlipNormal},
-        {EquationData::Variant::ClampedStreamPoiseuilleInhom,
-         Stokes::EquationData::Variant::DivFreePoiseuilleInhom}};
+    prms_stokes(equation_data.is_stream_function() ?
+                  [&]() {
+                    Stokes::StokesFlow<dim, fe_degree_pressure> options_stokes;
+                    const auto                                  damping =
+                      rt_parameters.multigrid.pre_smoother.schwarz.damping_factor;
+                    /// TODO
+                    options_stokes.setup(5U, damping); // CG_GMG
+                    options_stokes.prms.n_cycles = rt_parameters.n_cycles;
+                    options_stokes.prms.mesh     = rt_parameters.mesh;
+                    return options_stokes.prms;
+                  }() :
+                  RT::Parameter{}),
+    equation_data_stokes(
+      equation_data.is_stream_function() ?
+        [&]() {
+          std::map<EquationData::Variant, Stokes::EquationData::Variant> biharm_to_stokes_variant =
+            {{EquationData::Variant::ClampedStreamNoSlip,
+              Stokes::EquationData::Variant::DivFreeNoSlip},
+             {EquationData::Variant::ClampedStreamPoiseuilleNoSlip,
+              Stokes::EquationData::Variant::DivFreePoiseuilleNoSlip},
+             {EquationData::Variant::ClampedStreamNoSlipNormal,
+              Stokes::EquationData::Variant::DivFreeNoSlipNormal},
+             {EquationData::Variant::ClampedStreamPoiseuilleInhom,
+              Stokes::EquationData::Variant::DivFreePoiseuilleInhom}};
 
-      Stokes::EquationData new_data;
-      new_data.variant           = biharm_to_stokes_variant.at(equation_data.variant);
-      new_data.use_cuthill_mckee = false;
-      if(prms_stokes.solver.variant == "GMRES_GMG" || prms_stokes.solver.variant == "CG_GMG")
-        new_data.local_kernel_size = 1U;
-      if(prms_stokes.solver.variant == "direct")
-        new_data.do_mean_value_constraint = true;
-      new_data.ip_factor = equation_data_in.ip_factor;
-      return new_data;
-    }()),
+          Stokes::EquationData new_data;
+          new_data.variant           = biharm_to_stokes_variant.at(equation_data.variant);
+          new_data.use_cuthill_mckee = false;
+          if(prms_stokes.solver.variant == "GMRES_GMG" || prms_stokes.solver.variant == "CG_GMG")
+            new_data.local_kernel_size = 1U;
+          if(prms_stokes.solver.variant == "direct")
+            new_data.do_mean_value_constraint = true;
+          new_data.ip_factor = equation_data_in.ip_factor;
+          return new_data;
+        }() :
+        Stokes::EquationData{}),
     stokes_problem(equation_data.is_stream_function() ?
                      [&]() {
                        auto new_problem =
@@ -1346,6 +1353,8 @@ template<int dim, int fe_degree>
 std::array<LAPACKFullMatrix<double>, 2>
 ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions_old() const
 {
+  Assert(stokes_problem, ExcMessage("stokes_problem is not initialized"));
+
   std::array<LAPACKFullMatrix<double>, 2> shape_function_weights;
   auto & [trafomatrix_rt_to_gradp, trafomatrix_rt_to_constp] = shape_function_weights;
 
@@ -1590,6 +1599,8 @@ template<int dim, int fe_degree>
 std::array<FullMatrix<double>, 2>
 ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
 {
+  Assert(stokes_problem, ExcMessage("stokes_problem is not initialized"));
+
   AssertDimension(dim, 2U);
 
   const auto & fe_v    = stokes_problem->dof_handler_velocity.get_fe();
@@ -2055,7 +2066,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                  cell->level(),
                                  cell->index(),
                                  &dof_handler_pressure);
-      matrix_integrator.boundary_residual_worker_tangential(
+      matrix_integrator.template boundary_or_uniface_residual_worker_tangential<false>(
         cell, cell_stream, cell_pressure, face_no, scratch_data, copy_data);
     };
 
@@ -2711,6 +2722,8 @@ ModelProblem<dim, fe_degree>::prolongate_sf_to_velocity(
   LinearAlgebra::distributed::Vector<double> &       velocity,
   const LinearAlgebra::distributed::Vector<double> & stream) const
 {
+  Assert(stokes_problem, ExcMessage("stokes_problem is not initialized"));
+
   velocity *= 0.;
 
   const FullMatrix<double> & prolongation_matrix = compute_prolongation_sf_to_velocity();
@@ -2779,6 +2792,8 @@ template<int dim, int fe_degree>
 FullMatrix<double>
 ModelProblem<dim, fe_degree>::compute_prolongation_sf_to_velocity() const
 {
+  Assert(stokes_problem, ExcMessage("stokes_problem is not initialized"));
+
   const auto & fe_v  = stokes_problem->dof_handler_velocity.get_fe();
   const auto & fe_sf = *finite_element;
 
@@ -2903,9 +2918,10 @@ ModelProblem<dim, fe_degree>::compute_discretization_errors()
 {
   if(equation_data.is_stream_function())
   {
+    Assert(stokes_problem, ExcMessage("stokes_problem is not initialized"));
+
     /// Velocity - L2
     {
-      Assert(stokes_problem, ExcMessage("stokes_problem isnt initialized"));
       const double l2_velocity_error = compute_stream_function_error();
       print_parameter("L2 velocity error (stream function):", l2_velocity_error);
       stokes_problem->pp_data.L2_error.push_back(l2_velocity_error);

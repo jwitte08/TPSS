@@ -271,10 +271,12 @@ main(int argc, char * argv[])
     const auto   filename = get_filename(prms, equation_data);
     fout.open(filename + ".log", std::ios_base::out);
     auto pcout = std::make_shared<ConditionalOStream>(std::cout /*fout*/, is_first_proc); // !!!
-    biharmonic_problem.pcout                 = pcout;
-    biharmonic_problem.stokes_problem->pcout = pcout;
+    biharmonic_problem.pcout = pcout;
+    if(biharmonic_problem.equation_data.is_stream_function())
+      biharmonic_problem.stokes_problem->pcout = pcout;
 
     /// vary the Stokes finite element for the stream function formulation
+    if(biharmonic_problem.equation_data.is_stream_function())
     {
       using StokesProblem = std::decay_t<decltype(*(biharmonic_problem.stokes_problem))>;
       constexpr auto fe_degree_velocity = StokesProblem::fe_degree_v;
