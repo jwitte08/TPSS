@@ -1475,13 +1475,27 @@ compute_vvalue(const FEValuesBase<dim> & phi, const unsigned int i, const unsign
 /**
  * The tangential vector field phit = phi - (phi*n) n is returned.
  */
+template<int dim, typename EvaluatorType>
+Tensor<1, dim>
+compute_vvalue_tangential_impl(const EvaluatorType & phi,
+                               const unsigned int    i,
+                               const unsigned int    q)
+{
+  const Tensor<1, dim> & n         = phi.normal_vector(q);
+  const Tensor<1, dim> & value_phi = compute_vvalue_impl<dim, EvaluatorType>(phi, i, q);
+  return value_phi - (value_phi * n) * n;
+}
+
+
+
+/**
+ * The tangential vector field phit = phi - (phi*n) n is returned.
+ */
 template<int dim>
 Tensor<1, dim>
 compute_vvalue_tangential(const FEValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
 {
-  const Tensor<1, dim> & n         = phi.normal_vector(q);
-  const Tensor<1, dim> & value_phi = compute_vvalue(phi, i, q);
-  return value_phi - (value_phi * n) * n;
+  return compute_vvalue_tangential_impl<dim, FEValuesBase<dim>>(phi, i, q);
 }
 
 
@@ -1837,6 +1851,12 @@ struct ValuesBase
     return active_phi.get_normal_vectors();
   }
 
+  const Tensor<1, dim> &
+  normal_vector(const unsigned int q) const
+  {
+    return active_phi.normal_vector(q);
+  }
+
   double
   JxW(const unsigned int q) const
   {
@@ -1923,36 +1943,30 @@ struct FaceValues : public ValuesBase<dim>
 
 template<int dim>
 SymmetricTensor<2, dim>
-compute_symgrad(const Values<dim> & phi, const unsigned int i, const unsigned int q)
+compute_symgrad(const ValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
 {
-  return ::MW::compute_symgrad_impl<dim, Values<dim>>(phi, i, q);
+  return ::MW::compute_symgrad_impl<dim, ValuesBase<dim>>(phi, i, q);
 }
 
 
 
 template<int dim>
 Tensor<1, dim>
-compute_vvalue(const Values<dim> & phi, const unsigned int i, const unsigned int q)
+compute_vvalue(const ValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
 {
-  return ::MW::compute_vvalue_impl<dim, Values<dim>>(phi, i, q);
+  return ::MW::compute_vvalue_impl<dim, ValuesBase<dim>>(phi, i, q);
 }
 
 
 
-template<int dim>
-SymmetricTensor<2, dim>
-compute_symgrad(const FaceValues<dim> & phi, const unsigned int i, const unsigned int q)
-{
-  return ::MW::compute_symgrad_impl<dim, FaceValues<dim>>(phi, i, q);
-}
-
-
-
+/**
+ * The tangential vector field phit = phi - (phi*n) n is returned.
+ */
 template<int dim>
 Tensor<1, dim>
-compute_vvalue(const FaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+compute_vvalue_tangential(const ValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
 {
-  return ::MW::compute_vvalue_impl<dim, FaceValues<dim>>(phi, i, q);
+  return compute_vvalue_tangential_impl<dim, ValuesBase<dim>>(phi, i, q);
 }
 
 
@@ -2282,6 +2296,24 @@ struct ValuesBase
     AssertDimension(shape_to_test_functions.n(), active_phi.dofs_per_cell);
   }
 
+  ValuesBase(const FEFaceValues<dim> &  fe_face_values_in,
+             const FullMatrix<double> & shape_to_test_functions_in)
+    : fe_face_values(std::make_shared<FEFaceValues<dim>>(fe_face_values_in.get_mapping(),
+                                                         fe_face_values_in.get_fe(),
+                                                         fe_face_values_in.get_quadrature(),
+                                                         fe_face_values_in.get_update_flags())),
+      shape_to_test_functions(shape_to_test_functions_in),
+      n_quadrature_points(fe_face_values_in.n_quadrature_points),
+      active_test_function_indices([&]() {
+        std::vector<unsigned int> all(shape_to_test_functions_in.m());
+        std::iota(all.begin(), all.end(), 0U);
+        return all;
+      }()),
+      active_phi(*fe_face_values)
+  {
+    AssertDimension(shape_to_test_functions.n(), active_phi.dofs_per_cell);
+  }
+
   unsigned int
   n_dofs_per_cell() const
   {
@@ -2298,6 +2330,18 @@ struct ValuesBase
   get_quadrature_points() const
   {
     return active_phi.get_quadrature_points();
+  }
+
+  const std::vector<Tensor<1, dim>> &
+  get_normal_vectors() const
+  {
+    return active_phi.get_normal_vectors();
+  }
+
+  const Tensor<1, dim> &
+  normal_vector(const unsigned int q) const
+  {
+    return active_phi.normal_vector(q);
   }
 
   double
@@ -2444,6 +2488,42 @@ struct Values : public ValuesBase<dim>
 
 
 template<int dim>
+struct FaceValues : public ValuesBase<dim>
+{
+  FaceValues(const FEFaceValues<dim> &  fe_face_values_in,
+             const FullMatrix<double> & shape_to_test_functions_in)
+    : ValuesBase<dim>(fe_face_values_in, shape_to_test_functions_in)
+  {
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType &    cell,
+         const unsigned int          face_no,
+         std::vector<unsigned int> & active_test_function_indices_in)
+  {
+    this->fe_face_values->reinit(cell, face_no);
+    this->reinit_active_function_indices_impl(cell, cell, active_test_function_indices_in);
+  }
+
+  template<typename CellIteratorType>
+  void
+  reinit(const CellIteratorType & cell, const unsigned int face_no)
+  {
+    if(this->active_test_function_indices.size() == this->shape_to_test_functions.m())
+      reinit(cell, face_no, this->active_test_function_indices);
+    else
+    {
+      std::vector<unsigned int> all(this->shape_to_test_functions.m());
+      std::iota(all.begin(), all.end(), 0U);
+      reinit(cell, face_no, all);
+    }
+  }
+};
+
+
+
+template<int dim>
 SymmetricTensor<2, dim>
 compute_symgrad(const ValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
 {
@@ -2457,6 +2537,18 @@ Tensor<1, dim>
 compute_vvalue(const ValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
 {
   return ::MW::compute_vvalue_impl<dim, ValuesBase<dim>>(phi, i, q);
+}
+
+
+
+/**
+ * The tangential vector field phit = phi - (phi*n) n is returned.
+ */
+template<int dim>
+Tensor<1, dim>
+compute_vvalue_tangential(const ValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_vvalue_tangential_impl<dim, ValuesBase<dim>>(phi, i, q);
 }
 
 
@@ -2511,6 +2603,11 @@ struct InterfaceValues
                           fe_interface_values_in.get_update_flags()),
       shape_to_test_functions_left(shape_to_test_functions_left_in),
       shape_to_test_functions_right(shape_to_test_functions_right_in),
+      face_values_left(FEFaceValues<dim>(fe_values_in.get_mapping(),
+                                         fe_values_in.get_fe(),
+                                         fe_interface_values_in.get_quadrature(),
+                                         fe_interface_values_in.get_update_flags()),
+                       shape_to_test_functions_left_in),
       test_to_active_shape_function_indices_left(
         make_test_to_active_shape_function_index_map(shape_to_test_functions_left_in)),
       test_to_active_shape_function_indices_right(
@@ -2602,6 +2699,8 @@ struct InterfaceValues
 
     if(interface_test_function_indices_in.empty())
     {
+      face_values_left.reinit(cell, face_no);
+
       interface_test_function_indices.clear();
       interface_test_function_indices.reserve(shape_to_test_functions_left.m());
       for(auto li = 0U; li < shape_to_test_functions_left.m(); ++li)
@@ -2609,13 +2708,28 @@ struct InterfaceValues
           std::array<unsigned int, 2>{li, numbers::invalid_unsigned_int});
     }
     else
+    {
+      std::vector<unsigned int> active_test_function_indices_left;
+      for(const auto & li_and_ri : interface_test_function_indices_in)
+        if(li_and_ri[0] != numbers::invalid_unsigned_int)
+          active_test_function_indices_left.push_back(li_and_ri[0]);
+      face_values_left.reinit(cell, face_no, active_test_function_indices_left);
+
       interface_test_function_indices = interface_test_function_indices_in;
+    }
   }
 
   unsigned int
   n_current_interface_dofs() const
   {
     return interface_test_function_indices.size();
+  }
+
+  const FaceValues<dim> &
+  get_face_values(const unsigned int cell_index)
+  {
+    AssertDimension(cell_index, 0U);
+    return face_values_left;
   }
 
   const std::vector<std::array<unsigned int, 2>> &
@@ -2904,6 +3018,7 @@ struct InterfaceValues
   FEInterfaceValues<dim>                   fe_interface_values;
   const FullMatrix<double> &               shape_to_test_functions_left;
   const FullMatrix<double> &               shape_to_test_functions_right;
+  FaceValues<dim>                          face_values_left;
   std::vector<std::vector<unsigned int>>   test_to_active_shape_function_indices_left;
   std::vector<std::vector<unsigned int>>   test_to_active_shape_function_indices_right;
   std::vector<unsigned int>                active_shape_function_indices_left;
