@@ -1481,8 +1481,8 @@ compute_vvalue_tangential_impl(const EvaluatorType & phi,
                                const unsigned int    i,
                                const unsigned int    q)
 {
-  const Tensor<1, dim> & n         = phi.normal_vector(q);
-  const Tensor<1, dim> & value_phi = compute_vvalue_impl<dim, EvaluatorType>(phi, i, q);
+  const Tensor<1, dim> & n = phi.normal_vector(q);
+  const Tensor<1, dim> & value_phi = compute_vvalue<dim>(phi, i, q);
   return value_phi - (value_phi * n) * n;
 }
 

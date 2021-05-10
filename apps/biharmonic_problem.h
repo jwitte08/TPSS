@@ -2019,31 +2019,31 @@ ModelProblem<dim, fe_degree>::solve_pressure()
         matrix_integrator.cell_residual_worker(
           cell, cell_stream_function, cell_pressure, scratch_data, copy_data);
         /// DEBUG
-        auto & cd = copy_data.cell_data.back();
-        ofs << "cell matrix" << cell->index() << ":" << std::endl;
-        remove_noise_from_matrix(cd.matrix);
-        cd.matrix.print_formatted(ofs);
-        std::vector<types::global_dof_index> dof_indices_sf(
-          cell_stream_function->get_fe().dofs_per_cell);
-        cell_stream_function->get_active_or_mg_dof_indices(dof_indices_sf);
-        Vector<double> local_stream(dof_indices_sf.size());
-        std::transform(dof_indices_sf.cbegin(),
-                       dof_indices_sf.cend(),
-                       local_stream.begin(),
-                       [&](const auto dof_index) { return (system_u)[dof_index]; });
-        Vector<double> Ax(cd.matrix.m());
-        ofs << "stream: ";
-        remove_noise_from_vector(local_stream);
-        local_stream.print(ofs);
-        cd.matrix.vmult(Ax, local_stream);
-        Vector<double> f(cd.rhs);
-        f += Ax;
-        ofs << "f: ";
-        remove_noise_from_vector(f);
-        f.print(ofs);
-        ofs << "Ax: ";
-        remove_noise_from_vector(Ax);
-        Ax.print(ofs);
+        // auto & cd = copy_data.cell_data.back();
+        // ofs << "cell matrix" << cell->index() << ":" << std::endl;
+        // remove_noise_from_matrix(cd.matrix);
+        // cd.matrix.print_formatted(ofs);
+        // std::vector<types::global_dof_index> dof_indices_sf(
+        //   cell_stream_function->get_fe().dofs_per_cell);
+        // cell_stream_function->get_active_or_mg_dof_indices(dof_indices_sf);
+        // Vector<double> local_stream(dof_indices_sf.size());
+        // std::transform(dof_indices_sf.cbegin(),
+        //                dof_indices_sf.cend(),
+        //                local_stream.begin(),
+        //                [&](const auto dof_index) { return (system_u)[dof_index]; });
+        // Vector<double> Ax(cd.matrix.m());
+        // ofs << "stream: ";
+        // remove_noise_from_vector(local_stream);
+        // local_stream.print(ofs);
+        // cd.matrix.vmult(Ax, local_stream);
+        // Vector<double> f(cd.rhs);
+        // f += Ax;
+        // ofs << "f: ";
+        // remove_noise_from_vector(f);
+        // f.print(ofs);
+        // ofs << "Ax: ";
+        // remove_noise_from_vector(Ax);
+        // Ax.print(ofs);
       };
 
     const auto face_worker = [&](const CellIterator &     cell,
@@ -2082,10 +2082,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                                         nsf,
                                                         scratch_data,
                                                         copy_data);
-      ofs << "face matrix" << cell->index() << ":" << f << "_" << ncell->index() << ":" << nf << ":"
-          << std::endl;
-      remove_noise_from_matrix(copy_data.face_data.back().matrix);
-      copy_data.face_data.back().matrix.print_formatted(ofs);
     };
 
     const auto boundary_worker = [&](const CellIterator &     cell,
@@ -2100,14 +2096,8 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                  cell->level(),
                                  cell->index(),
                                  &dof_handler_pressure);
-      // matrix_integrator.boundary_residual_worker_tangential_old(
-      //   cell, cell_stream, cell_pressure, face_no, scratch_data, copy_data);
       matrix_integrator.boundary_residual_worker_tangential(
         cell, cell_stream, cell_pressure, face_no, scratch_data, copy_data);
-
-      ofs << "bdry matrix" << cell->index() << ":" << face_no << ":" << std::endl;
-      remove_noise_from_matrix(copy_data.face_data.back().matrix);
-      copy_data.face_data.back().matrix.print_formatted(ofs);
     };
 
     AffineConstraints<double> empty_constraints;
@@ -2117,17 +2107,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     const auto   copier  = [&](const CopyData & copy_data) {
       for(const auto & cd : copy_data.cell_data)
       {
-        // /// computing residual
-        // Vector<double> Ax(cell_data.rhs.size());
-        // cell_data.matrix.vmult(Ax, dof_values); // Ax
-        // cell_data.rhs -= Ax;                    // f - Ax
-        /// DEBUG
-        ofs << "copy cell" << cell_no++ << std::endl;
-        auto copy_rhs = cd.rhs;
-        remove_noise_from_vector(copy_rhs);
-        ofs << "f_minus_Ax: ";
-        copy_rhs.print(ofs);
-
         empty_constraints.template distribute_local_to_global(cd.rhs,
                                                               cd.dof_indices,
                                                               discrete_pressure);
@@ -2140,12 +2119,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
       for(const auto & cdf : copy_data.face_data)
       {
-        unsigned int face_no = 0;
-        ofs << "copy face" << face_no++ << std::endl;
-        auto copy_rhs = cdf.rhs;
-        remove_noise_from_vector(copy_rhs);
-        ofs << "f_minus_Ax: ";
-        copy_rhs.print(ofs);
         empty_constraints.template distribute_local_to_global(cdf.rhs,
                                                               cdf.dof_indices,
                                                               discrete_pressure);
@@ -2186,8 +2159,8 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
     /// DEBUG
     // remove_noise_from_vector(discrete_pressure);
-    ofs << "discrete pressure: " << std::endl;
-    discrete_pressure.print(ofs);
+    // ofs << "discrete pressure: " << std::endl;
+    // discrete_pressure.print(ofs);
     // ofs << vector_to_string(constant_pressure_dof_indices) << std::endl;
   }
 
