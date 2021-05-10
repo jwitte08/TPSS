@@ -624,8 +624,16 @@ protected:
   }
 
 
+  enum lssVariant
+  {
+    Stream,
+    Gradp,
+    Constp
+  };
+
+
   void
-  check_localsolverstream()
+  check_localsolverstream(lssVariant lssvariant)
   {
     equation_data.setup_stream_functions = true;
     equation_data.variant                = EquationData::Variant::DivFreeNoSlip;
@@ -656,6 +664,8 @@ protected:
     const auto                                  n_subdomains = partition_data.n_subdomains();
     std::vector<local_matrix_type>              local_matrices(n_subdomains);
 
+    const auto & dofh_p = subdomain_handler->get_dof_handler(1);
+
     MatrixIntegrator integrator;
     integrator.initialize(equation_data);
 
@@ -684,6 +694,9 @@ protected:
                                                 level_matrix,
                                                 partition_data.get_patch_range());
 
+    const auto & patch_dof_worker_p =
+      patch_transfer->/*get_patch_transfer(1).*/ get_patch_dof_worker(1);
+
     for(auto patch_index = 0U; patch_index < local_matrices.size(); ++patch_index)
     {
       patch_transfer->reinit(patch_index);
@@ -692,9 +705,9 @@ protected:
       const unsigned int n_dofs_v = patch_transfer->n_dofs_per_patch(0);
       const unsigned int n_dofs_p = patch_transfer->n_dofs_per_patch(1);
 
-      AlignedVector<VectorizedArray<double>> local_rhs(n_dofs_v + n_dofs_p);
+      // AlignedVector<VectorizedArray<double>> local_rhs(n_dofs_v + n_dofs_p);
       // std::fill_n(local_rhs.begin(), n_dofs_v, 1.);
-      local_rhs = patch_transfer->gather(stokes_problem->system_rhs);
+      const auto local_rhs = patch_transfer->gather(stokes_problem->system_rhs);
       const ArrayView<const VectorizedArray<double>> local_rhs_view(local_rhs.begin(),
                                                                     local_rhs.size());
 
@@ -715,7 +728,34 @@ protected:
       const ArrayView<VectorizedArray<double>> other_solution_view(other_solution.begin(),
                                                                    other_solution.size());
       other_patch_matrix.apply_inverse(other_solution_view, local_rhs_view);
-      std::fill_n(other_solution.begin() + n_dofs_v, n_dofs_p, 0.);
+
+      if(lssvariant == lssVariant::Stream)
+      {
+        /// zero out pressure dofs
+        std::fill_n(local_solution.begin() + n_dofs_v, n_dofs_p, 0.);
+        std::fill_n(other_solution.begin() + n_dofs_v, n_dofs_p, 0.);
+      }
+      else if(lssvariant == lssVariant::Gradp)
+      {
+        /// zero out velocity dofs
+        std::fill_n(local_solution.begin(), n_dofs_v, 0.);
+        std::fill_n(other_solution.begin(), n_dofs_v, 0.);
+        /// zero out constant pressure dofs
+        const auto & cells = patch_dof_worker_p.get_cell_collection(patch_index, /*lane*/ 0);
+        const auto & zero_out_constant_pressure = [&](auto & view) {
+          const ArrayView<VectorizedArray<double>> view_p(view.begin() + n_dofs_v, n_dofs_p);
+          for(const auto & cell : cells)
+          {
+            std::vector<types::global_dof_index> dof_indices_p(cell->get_fe().dofs_per_cell);
+            cell->get_active_or_mg_dof_indices(dof_indices_p);
+            const auto g2l =
+              patch_transfer->get_patch_transfer(1).get_global_to_local_dof_indices(/*lane*/ 0);
+            view_p[g2l.at(dof_indices_p.front())] = 0.;
+          }
+        };
+        zero_out_constant_pressure(local_solution);
+        zero_out_constant_pressure(other_solution);
+      }
 
       for(auto lane = 0U; lane < patch_dof_worker_sf.n_lanes_filled(patch_index); ++lane)
       {
@@ -1023,12 +1063,34 @@ TYPED_TEST_P(TestStokesIntegrator, localsolverstream_velocity)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
   Fixture::setup_matrixintegratorlmw();
-  Fixture::options.prms.mesh.n_repetitions = 3;
+  Fixture::options.prms.mesh.n_repetitions = 2;
   Fixture::options.prms.mesh.n_refinements = 0;
   Fixture::check_matrixintegratorstreamlmw();
-  Fixture::check_localsolverstream();
+  Fixture::check_localsolverstream(Fixture::lssVariant::Stream);
+  Fixture::options.prms.mesh.n_repetitions = 3;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  Fixture::check_localsolverstream(Fixture::lssVariant::Stream);
   Fixture::options.prms.mesh.n_refinements = 1;
-  Fixture::check_localsolverstream();
+  Fixture::check_localsolverstream(Fixture::lssVariant::Stream);
+}
+
+
+
+TYPED_TEST_P(TestStokesIntegrator, localsolverstream_gradp)
+{
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
+  Fixture::options.prms.mesh.n_repetitions = 2;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  Fixture::check_matrixintegratorstreamlmw();
+  Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
+  Fixture::options.prms.mesh.n_repetitions = 3;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
+
+
+  // Fixture::options.prms.mesh.n_refinements = 1;
+  // Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
 }
 
 
@@ -1051,7 +1113,8 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             matrixintegratorlmwRT_velocitypressure_MPI,
                             matrixintegratorlmwRT_pressurevelocity_MPI,
                             matrixintegratorstreamlmw,
-                            localsolverstream_velocity);
+                            localsolverstream_velocity,
+                            localsolverstream_gradp);
 
 
 

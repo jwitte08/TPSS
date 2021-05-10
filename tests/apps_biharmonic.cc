@@ -291,89 +291,89 @@ protected:
   }
 
 
-  void
-  test_prolongation_sf_to_rt()
-  {
-    equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
+  // void
+  // test_prolongation_sf_to_rt()
+  // {
+  //   equation_data.variant = EquationData::Variant::ClampedStreamPoiseuilleNoSlip;
 
-    Biharmonic::ModelProblem<dim, fe_degree> biharmonic_problem(rt_parameters, equation_data);
-    biharmonic_problem.pcout = pcout_owned;
-    biharmonic_problem.make_grid();
-    biharmonic_problem.setup_system();
+  //   Biharmonic::ModelProblem<dim, fe_degree> biharmonic_problem(rt_parameters, equation_data);
+  //   biharmonic_problem.pcout = pcout_owned;
+  //   biharmonic_problem.make_grid();
+  //   biharmonic_problem.setup_system();
 
-    auto & stokes_problem        = *(biharmonic_problem.stokes_problem);
-    stokes_problem.pcout         = pcout_owned;
-    stokes_problem.triangulation = biharmonic_problem.triangulation;
-    if(fe_stokes)
-      stokes_problem.fe = fe_stokes;
-    stokes_problem.setup_system();
+  //   auto & stokes_problem        = *(biharmonic_problem.stokes_problem);
+  //   stokes_problem.pcout         = pcout_owned;
+  //   stokes_problem.triangulation = biharmonic_problem.triangulation;
+  //   if(fe_stokes)
+  //     stokes_problem.fe = fe_stokes;
+  //   stokes_problem.setup_system();
 
-    const auto & dofh_v  = stokes_problem.dof_handler_velocity;
-    const auto & dofh_sf = biharmonic_problem.dof_handler;
+  //   const auto & dofh_v  = stokes_problem.dof_handler_velocity;
+  //   const auto & dofh_sf = biharmonic_problem.dof_handler;
 
-    auto & curl_phi_i = stokes_problem.system_solution.block(0);
-    auto & phi_i      = biharmonic_problem.system_u;
+  //   auto & curl_phi_i = stokes_problem.system_solution.block(0);
+  //   auto & phi_i      = biharmonic_problem.system_u;
 
-    constexpr unsigned int n_subdivisions = 10;
+  //   constexpr unsigned int n_subdivisions = 10;
 
-    const auto visualize_curl_phi = [&](const unsigned int i, const auto & phi_i) {
-      const std::string prefix = "curl_phi";
-      const std::string suffix = "phi" + Utilities::int_to_string(i, 3);
+  //   const auto visualize_curl_phi = [&](const unsigned int i, const auto & phi_i) {
+  //     const std::string prefix = "curl_phi";
+  //     const std::string suffix = "phi" + Utilities::int_to_string(i, 3);
 
-      std::ostringstream oss;
-      oss << prefix << "_"
-          << "Q" << Utilities::int_to_string(dofh_sf.get_fe().degree) << "_" << suffix << ".vtu";
+  //     std::ostringstream oss;
+  //     oss << prefix << "_"
+  //         << "Q" << Utilities::int_to_string(dofh_sf.get_fe().degree) << "_" << suffix << ".vtu";
 
-      std::ofstream ofs(oss.str());
+  //     std::ofstream ofs(oss.str());
 
-      DataOut<dim> data_out;
+  //     DataOut<dim> data_out;
 
-      StreamVelocityPP<dim> stream_velocity_pp;
+  //     StreamVelocityPP<dim> stream_velocity_pp;
 
-      data_out.attach_dof_handler(dofh_sf);
+  //     data_out.attach_dof_handler(dofh_sf);
 
-      data_out.add_data_vector(phi_i, stream_velocity_pp);
+  //     data_out.add_data_vector(phi_i, stream_velocity_pp);
 
-      data_out.build_patches(biharmonic_problem.mapping,
-                             n_subdivisions,
-                             DataOut<dim>::CurvedCellRegion::curved_inner_cells);
+  //     data_out.build_patches(biharmonic_problem.mapping,
+  //                            n_subdivisions,
+  //                            DataOut<dim>::CurvedCellRegion::curved_inner_cells);
 
-      data_out.write_vtu(ofs);
-    };
+  //     data_out.write_vtu(ofs);
+  //   };
 
-    for(auto i = 0U; i < dofh_sf.get_fe().dofs_per_cell; ++i)
-    {
-      phi_i *= 0.;
-      phi_i[i] = 1.;
+  //   for(auto i = 0U; i < dofh_sf.get_fe().dofs_per_cell; ++i)
+  //   {
+  //     phi_i *= 0.;
+  //     phi_i[i] = 1.;
 
-      biharmonic_problem.prolongate_sf_to_velocity(curl_phi_i, phi_i);
+  //     biharmonic_problem.prolongate_sf_to_velocity(curl_phi_i, phi_i);
 
-      /// visualization as curl of stream function phi_i
-      visualize_curl_phi(i, phi_i);
+  //     /// visualization as curl of stream function phi_i
+  //     visualize_curl_phi(i, phi_i);
 
-      /// visualization as prolongation into velocity ansatz
-      std::vector<std::string> names(dim, "shape_function");
-      const std::string        prefix = "curl_phi_prolongated";
-      const std::string        suffix = "phi" + Utilities::int_to_string(i, 3);
+  //     /// visualization as prolongation into velocity ansatz
+  //     std::vector<std::string> names(dim, "shape_function");
+  //     const std::string        prefix = "curl_phi_prolongated";
+  //     const std::string        suffix = "phi" + Utilities::int_to_string(i, 3);
 
-      std::vector<DataComponentInterpretation::DataComponentInterpretation>
-        data_component_interpretation(dim,
-                                      DataComponentInterpretation::component_is_part_of_vector);
+  //     std::vector<DataComponentInterpretation::DataComponentInterpretation>
+  //       data_component_interpretation(dim,
+  //                                     DataComponentInterpretation::component_is_part_of_vector);
 
-      visualize_dof_vector(dofh_v,
-                           curl_phi_i,
-                           names,
-                           prefix,
-                           suffix,
-                           n_subdivisions,
-                           data_component_interpretation,
-                           stokes_problem.mapping);
+  //     visualize_dof_vector(dofh_v,
+  //                          curl_phi_i,
+  //                          names,
+  //                          prefix,
+  //                          suffix,
+  //                          n_subdivisions,
+  //                          data_component_interpretation,
+  //                          stokes_problem.mapping);
 
-      EXPECT_NEAR(biharmonic_problem.template compute_stream_function_error<false>(),
-                  0.,
-                  Util::numeric_eps<double>);
-    }
-  }
+  //     EXPECT_NEAR(biharmonic_problem.template compute_stream_function_error<false>(),
+  //                 0.,
+  //                 Util::numeric_eps<double>);
+  //   }
+  // }
 
 
   void
@@ -1023,23 +1023,24 @@ TYPED_TEST_P(TestModelProblem, compute_nondivfree_shape_functions_RTnodal)
 
 
 
-TYPED_TEST_P(TestModelProblem, compute_prolongation_sf_to_rt)
-{
-  using Fixture = TestModelProblem<TypeParam>;
+// TYPED_TEST_P(TestModelProblem, compute_prolongation_sf_to_rt)
+// {
+//   using Fixture = TestModelProblem<TypeParam>;
 
-  Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::rt_parameters.mesh.n_repetitions    = 2;
-  Fixture::rt_parameters.mesh.n_refinements    = 0;
+//   Fixture::rt_parameters.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+//   Fixture::rt_parameters.mesh.n_repetitions    = 2;
+//   Fixture::rt_parameters.mesh.n_refinements    = 0;
 
-  Fixture::fe_stokes =
-    std::make_shared<FESystem<Fixture::dim>>(FE_RaviartThomas_new<Fixture::dim>(Fixture::fe_degree -
-                                                                                1),
-                                             1,
-                                             FE_DGQLegendre<Fixture::dim>(Fixture::fe_degree - 1),
-                                             1);
+//   Fixture::fe_stokes =
+//     std::make_shared<FESystem<Fixture::dim>>(FE_RaviartThomas_new<Fixture::dim>(Fixture::fe_degree
+//     -
+//                                                                                 1),
+//                                              1,
+//                                              FE_DGQLegendre<Fixture::dim>(Fixture::fe_degree -
+//                                              1), 1);
 
-  Fixture::test_prolongation_sf_to_rt();
-}
+//   Fixture::test_prolongation_sf_to_rt();
+// }
 
 
 
@@ -1130,7 +1131,7 @@ TYPED_TEST_P(TestModelProblem, raviartthomas_convert_generalized_support_point_v
 REGISTER_TYPED_TEST_SUITE_P(TestModelProblem,
                             compute_nondivfree_shape_functions_RTmoments,
                             compute_nondivfree_shape_functions_RTnodal,
-                            compute_prolongation_sf_to_rt,
+                            // compute_prolongation_sf_to_rt,
                             compute_vpprolongation_sf_to_rt,
                             debug_and_visualize_RTmoments,
                             raviartthomas_compare_shape_data,
