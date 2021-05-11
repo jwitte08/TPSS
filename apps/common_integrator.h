@@ -313,11 +313,14 @@ struct LocalInterfaceHandler : public InterfaceHandler<dim>
   virtual unsigned int
   get_interface_index(const InterfaceId & id) const override
   {
-    unsigned int index = numbers::invalid_unsigned_int;
-    const auto   it    = interface_id_to_interface_no.find(id);
+    auto it = interface_id_to_interface_no.find(id);
     if(it != interface_id_to_interface_no.end())
-      index = it->second;
-    return index;
+      return it->second;
+    InterfaceId flipped_id = {id.second, id.first};
+    it                     = interface_id_to_interface_no.find(flipped_id);
+    if(it != interface_id_to_interface_no.end())
+      return it->second;
+    return numbers::invalid_unsigned_int;
   }
 
   virtual unsigned int
@@ -1481,7 +1484,7 @@ compute_vvalue_tangential_impl(const EvaluatorType & phi,
                                const unsigned int    i,
                                const unsigned int    q)
 {
-  const Tensor<1, dim> & n = phi.normal_vector(q);
+  const Tensor<1, dim> & n         = phi.normal_vector(q);
   const Tensor<1, dim> & value_phi = compute_vvalue<dim>(phi, i, q);
   return value_phi - (value_phi * n) * n;
 }
