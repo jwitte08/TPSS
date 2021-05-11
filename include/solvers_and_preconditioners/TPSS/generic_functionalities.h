@@ -407,41 +407,6 @@ fill_matrix_with_random_values(MatrixType &       matrix,
 
 
 
-template<typename Number>
-Vector<Number>
-array_view_to_vector(const ArrayView<const Number> & view, const unsigned int dummy = 0)
-{
-  (void)dummy;
-  return Vector<Number>(view.cbegin(), view.cend());
-}
-
-
-
-template<typename Number>
-Vector<Number>
-array_view_to_vector(const ArrayView<const VectorizedArray<Number>> & view,
-                     const unsigned int                               lane = 0)
-{
-  AssertIndexRange(lane, VectorizedArray<Number>::size());
-  Vector<Number> vec(view.size());
-  std::transform(view.cbegin(), view.cend(), vec.begin(), [lane](const auto & elem) {
-    return elem[lane];
-  });
-  return vec;
-}
-
-
-
-template<typename Number>
-Vector<Number>
-array_view_to_vector(const ArrayView<VectorizedArray<Number>> & view, const unsigned int lane = 0)
-{
-  ArrayView<const VectorizedArray<Number>> cview(view.begin(), view.size());
-  return array_view_to_vector(cview, lane);
-}
-
-
-
 template<typename T>
 std::string
 vector_to_string(const std::vector<T> & vector)
