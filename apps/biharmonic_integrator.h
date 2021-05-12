@@ -700,7 +700,7 @@ namespace MW
 {
 using ::MW::TestFunction::ScratchData;
 
-using ::MW::Mixed::CopyData;
+using ::MW::DoF::CopyData;
 
 
 
@@ -712,16 +712,19 @@ struct MatrixIntegrator
 
   /// This integrator assumes that the coefficients of the discrete pressure
   /// associated to the constant modes are set to zero!
-  MatrixIntegrator(const Function<dim> *                              load_function_in,
-                   const LinearAlgebra::distributed::Vector<double> * stream_function_solution,
-                   const LinearAlgebra::distributed::Vector<double> * pressure_solution,
-                   const InterfaceHandler<dim> *                      interface_handler_in,
-                   const Stokes::EquationData &                       equation_data_in)
-    : load_function(load_function_in),
-      discrete_velocity(stream_function_solution),
-      discrete_pressure(pressure_solution),
+  MatrixIntegrator(
+    const LinearAlgebra::distributed::Vector<double> *      pressure_solution,
+    const InterfaceHandler<dim> *                           interface_handler_in,
+    const Stokes::EquationData &                            equation_data_in,
+    const std::map<types::global_dof_index, unsigned int> * g2l_pressure_in         = nullptr,
+    const ArrayView<const VectorizedArray<double>> *        local_pressure_solution = nullptr,
+    const unsigned int                                      lane_in = numbers::invalid_unsigned_int)
+    : discrete_pressure(pressure_solution),
       interface_handler(interface_handler_in),
-      equation_data(equation_data_in)
+      equation_data(equation_data_in),
+      g2l_pressure(g2l_pressure_in),
+      local_discrete_pressure(local_pressure_solution),
+      lane(lane_in)
   {
   }
 
@@ -742,11 +745,30 @@ struct MatrixIntegrator
               ScratchData<dim> &   scratch_data,
               CopyData &           copy_data) const;
 
-  const Function<dim> *                              load_function;
-  const LinearAlgebra::distributed::Vector<double> * discrete_velocity;
-  const LinearAlgebra::distributed::Vector<double> * discrete_pressure;
-  const InterfaceHandler<dim> *                      interface_handler;
-  const Stokes::EquationData                         equation_data;
+  std::vector<double>
+  make_dof_values_p(const std::vector<types::global_dof_index> & dof_indices_p) const
+  {
+    std::vector<double> dof_values_p;
+    if(discrete_pressure)
+    {
+      for(const auto i : dof_indices_p)
+        dof_values_p.push_back((*discrete_pressure)(i));
+    }
+    else if(g2l_pressure && local_discrete_pressure && lane != numbers::invalid_unsigned_int)
+    {
+      for(const auto i : dof_indices_p)
+        dof_values_p.push_back((*local_discrete_pressure)[g2l_pressure->at(i)][lane]);
+    }
+    AssertDimension(dof_values_p.size(), dof_indices_p.size());
+    return dof_values_p;
+  }
+
+  const LinearAlgebra::distributed::Vector<double> *      discrete_pressure;
+  const InterfaceHandler<dim> *                           interface_handler;
+  const Stokes::EquationData                              equation_data;
+  const std::map<types::global_dof_index, unsigned int> * g2l_pressure;
+  const ArrayView<const VectorizedArray<double>> *        local_discrete_pressure;
+  const unsigned int                                      lane;
 };
 
 
@@ -757,8 +779,7 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
                                                  ScratchData<dim> &   scratch_data,
                                                  CopyData &           copy_data) const
 {
-  AssertDimension(copy_data.cell_rhs_test.size(), GeometryInfo<dim>::faces_per_cell);
-  copy_data.cell_rhs_test = 0.;
+  auto & cell_data = copy_data.cell_data.emplace_back(GeometryInfo<dim>::faces_per_cell);
 
   for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
   {
@@ -774,7 +795,7 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
     if(this_interface_isnt_contained)
       continue;
 
-    copy_data.local_dof_indices_test[face_no] = interface_index;
+    cell_data.dof_indices[face_no] = interface_index;
   }
 }
 
@@ -802,15 +823,8 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   const auto cell_index  = interface_handler->get_cell_index(cell->id());
   const auto ncell_index = interface_handler->get_cell_index(ncell->id());
 
-  copy_data.face_data.emplace_back();
-  CopyData::FaceData & copy_data_face = copy_data.face_data.back();
-
   FEInterfaceValues<dim> & phiP = scratch_data.fe_interface_values_ansatz;
   phiP.reinit(cellP, face_no, sface_no, ncellP, nface_no, nsface_no);
-
-  copy_data_face.joint_dof_indices_ansatz.resize(2, 0U);
-  copy_data_face.joint_dof_indices_ansatz[0U] = cell_index;
-  copy_data_face.joint_dof_indices_ansatz[1U] = ncell_index;
 
   std::vector<std::array<unsigned int, 2>> testfunc_indices;
   testfunc_indices.push_back({face_no, nface_no});
@@ -818,18 +832,17 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   auto & phiV = scratch_data.test_interface_values;
   phiV.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no, testfunc_indices);
 
-  const unsigned int n_interface_dofs_p  = phiP.n_current_interface_dofs();
-  const auto &       joint_dof_indices_p = phiP.get_interface_dof_indices();
+  const unsigned int n_interface_dofs_p      = phiP.n_current_interface_dofs();
+  const auto &       interface_dof_indices_p = phiP.get_interface_dof_indices();
 
-  copy_data_face.joint_dof_indices_test.resize(GeometryInfo<dim>::faces_per_cell, 0U);
-  copy_data_face.joint_dof_indices_test[face_no] = interface_index;
+  auto & face_data = copy_data.face_data.emplace_back(GeometryInfo<dim>::faces_per_cell, 2U);
 
-  copy_data_face.cell_matrix.reinit(GeometryInfo<dim>::faces_per_cell, 2U);
-  copy_data_face.cell_rhs_test.reinit(GeometryInfo<dim>::faces_per_cell);
+  face_data.dof_indices_column[0U] = cell_index;
+  face_data.dof_indices_column[1U] = ncell_index;
 
-  std::vector<double> joint_dof_values_p;
-  for(const auto i : joint_dof_indices_p)
-    joint_dof_values_p.push_back((*discrete_pressure)(i));
+  face_data.dof_indices[face_no] = interface_index;
+
+  const std::vector<double> & dof_values_p = make_dof_values_p(interface_dof_indices_p);
 
   /// As long as the constant pressure mode is set to zero looping over the
   /// whole set of dof indices is valid.
@@ -837,7 +850,7 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
     double               value = 0.;
     const Tensor<1, dim> n     = phiP.normal(q);
     for(auto j = 0U; j < n_interface_dofs_p; ++j) // constant mode is zero !
-      value += joint_dof_values_p[j] * phiP.jump(j, q);
+      value += dof_values_p[j] * phiP.jump(j, q);
     return value * n;
   };
 
@@ -858,79 +871,10 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
     alpha_right += -1. * n_right * v_face * dx;
   }
 
-  copy_data_face.cell_rhs_test[face_no] += pn_dot_v;
-  copy_data_face.cell_matrix(face_no, 0U) = alpha_left;
-  copy_data_face.cell_matrix(face_no, 1U) = alpha_right;
+  face_data.rhs[face_no] += pn_dot_v;
+  face_data.matrix(face_no, 0U) = alpha_left;
+  face_data.matrix(face_no, 1U) = alpha_right;
 }
-
-// InterfaceId        interface_id{cellP->id(), ncellP->id()};
-// const unsigned int interface_index       = interface_handler->get_interface_index(interface_id);
-// const bool this_interface_isnt_contained = interface_index == numbers::invalid_unsigned_int;
-// if(this_interface_isnt_contained)
-//   return;
-
-// const auto cell_index  = interface_handler->get_cell_index(cell->id());
-// const auto ncell_index = interface_handler->get_cell_index(ncell->id());
-
-// auto & face_data = copy_data.face_data.emplace_back(GeometryInfo<dim>::faces_per_cell, 1U);
-
-// FEInterfaceValues<dim> & phiP = scratch_data.fe_interface_values_ansatz;
-// phiP.reinit(cellP, face_no, sface_no, ncellP, nface_no, nsface_no);
-
-// face_data.dof_indices_column.resize(2, 0U);
-// face_data.dof_indices_column[0U] = cell_index;
-// face_data.dof_indices_column[1U] = ncell_index;
-
-// std::vector<std::array<unsigned int, 2>> testfunc_indices;
-// testfunc_indices.push_back({face_no, nface_no});
-
-// auto & phiV = scratch_data.test_interface_values;
-// phiV.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no, testfunc_indices);
-
-// const unsigned int n_interface_dofs_p  = phiP.n_current_interface_dofs();
-// const auto &       joint_dof_indices_p = phiP.get_interface_dof_indices();
-
-// face_data.dof_indices.resize(GeometryInfo<dim>::faces_per_cell, 0U);
-// face_data.dof_indices[face_no] = interface_index;
-
-// face_data.matrix.reinit(GeometryInfo<dim>::faces_per_cell, 2U);
-// face_data.rhs.reinit(GeometryInfo<dim>::faces_per_cell);
-
-// std::vector<double> joint_dof_values_p;
-// for(const auto i : joint_dof_indices_p)
-//   joint_dof_values_p.push_back((*discrete_pressure)(i));
-
-// /// As long as the constant pressure mode is set to zero looping over the
-// /// whole set of dof indices is valid.
-// const auto & compute_jump_pn = [&](const unsigned int q) {
-//   double               value = 0.;
-//   const Tensor<1, dim> n     = phiP.normal(q);
-//   for(auto j = 0U; j < n_interface_dofs_p; ++j) // constant mode is zero !
-//     value += joint_dof_values_p[j] * phiP.jump(j, q);
-//   return value * n;
-// };
-
-// double alpha_left  = 0.;
-// double alpha_right = 0.;
-// double pn_dot_v    = 0.;
-// for(unsigned int q = 0; q < phiP.n_quadrature_points; ++q)
-// {
-//   const auto &           dx      = phiV.JxW(q);
-//   const Tensor<1, dim> & v_face  = compute_vaverage(phiV, 0, q);
-//   const Tensor<1, dim> & jump_pn = compute_jump_pn(q);
-//   const Tensor<1, dim> & n_left  = phiP.normal(q);
-//   const Tensor<1, dim> & n_right = -n_left;
-
-//   pn_dot_v += jump_pn * v_face * dx;
-
-//   alpha_left += -1. * n_left * v_face * dx;
-//   alpha_right += -1. * n_right * v_face * dx;
-// }
-
-// face_data.rhs[face_no] += pn_dot_v;
-// face_data.matrix(face_no, 0U) = alpha_left;
-// face_data.matrix(face_no, 1U) = alpha_right;
-
 
 } // namespace MW
 

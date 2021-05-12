@@ -2103,8 +2103,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     AffineConstraints<double> empty_constraints;
     empty_constraints.close();
 
-    unsigned int cell_no = 0;
-    const auto   copier  = [&](const CopyData & copy_data) {
+    const auto copier = [&](const CopyData & copy_data) {
       for(const auto & cd : copy_data.cell_data)
       {
         empty_constraints.template distribute_local_to_global(cd.rhs,
@@ -2208,6 +2207,33 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                                          cell_stream_function,
                                                          scratch_data,
                                                          copy_data);
+        /// DEBUG
+        auto & cd = copy_data.cell_data.back();
+        ofs << "cell matrix" << cell->index() << ":" << std::endl;
+        remove_noise_from_matrix(cd.matrix);
+        cd.matrix.print_formatted(ofs);
+        std::vector<types::global_dof_index> dof_indices_sf(
+          cell_stream_function->get_fe().dofs_per_cell);
+        cell_stream_function->get_active_or_mg_dof_indices(dof_indices_sf);
+        Vector<double> local_stream(dof_indices_sf.size());
+        std::transform(dof_indices_sf.cbegin(),
+                       dof_indices_sf.cend(),
+                       local_stream.begin(),
+                       [&](const auto dof_index) { return (system_u)[dof_index]; });
+        Vector<double> Ax(cd.matrix.m());
+        ofs << "stream: ";
+        remove_noise_from_vector(local_stream);
+        local_stream.print(ofs);
+        cd.matrix.vmult(Ax, local_stream);
+        ofs << "interface indices: " << vector_to_string(cd.dof_indices) << std::endl;
+        Vector<double> f(cd.rhs);
+        f += Ax;
+        ofs << "f: ";
+        remove_noise_from_vector(f);
+        f.print(ofs);
+        ofs << "Ax: ";
+        remove_noise_from_vector(Ax);
+        Ax.print(ofs);
       };
 
       const auto face_worker = [&](const CellIterator &     cell,
@@ -2288,8 +2314,15 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                             face_worker);
 
       /// DEBUG
-      // remove_noise_from_vector(constant_pressure_rhs);
-      // constant_pressure_rhs.print(ofs);
+      ofs << "interfaces: " << vector_to_string(interface_handler.cached_interface_ids)
+          << std::endl;
+      std::vector<unsigned int> interface_indices;
+      for(const auto & id : interface_handler.cached_interface_ids)
+        interface_indices.push_back(interface_handler.get_interface_index(id));
+      ofs << "indices: " << vector_to_string(interface_indices) << std::endl;
+      remove_noise_from_vector(constant_pressure_rhs);
+      ofs << "constant_pressure_rhs: ";
+      constant_pressure_rhs.print(ofs);
     }
 
     {
@@ -2305,9 +2338,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
       Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
                                                             component_range);
 
-      MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
-                                              nullptr,
-                                              &discrete_pressure,
+      MatrixIntegrator<dim> matrix_integrator(&discrete_pressure,
                                               &interface_handler,
                                               equation_data_stokes);
 
@@ -2335,13 +2366,13 @@ ModelProblem<dim, fe_degree>::solve_pressure()
         for(const auto & cdf : copy_data.face_data)
         {
           constraints_on_interface.template distribute_local_to_global<Vector<double>>(
-            cdf.cell_rhs_test, cdf.joint_dof_indices_test, constant_pressure_rhs);
+            cdf.rhs, cdf.dof_indices, constant_pressure_rhs);
 
           constraints_on_interface.template distribute_local_to_global<SparseMatrix<double>>(
-            cdf.cell_matrix,
-            cdf.joint_dof_indices_test,
+            cdf.matrix,
+            cdf.dof_indices,
             constraints_on_cell,
-            cdf.joint_dof_indices_ansatz,
+            cdf.dof_indices_column,
             constant_pressure_matrix);
         }
       };
@@ -2365,7 +2396,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                     interface_update_flags_v,
                                     interface_update_flags_pressure);
 
-      CopyData copy_data(GeometryInfo<dim>::faces_per_cell, 1U);
+      CopyData copy_data;
 
       MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
                             dof_handler_velocity.end(),

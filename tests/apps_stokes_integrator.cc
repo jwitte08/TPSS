@@ -1084,11 +1084,11 @@ TYPED_TEST_P(TestStokesIntegrator, localsolverstream_gradp)
   Fixture::options.prms.mesh.n_refinements = 0;
   Fixture::check_matrixintegratorstreamlmw();
   Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
-  Fixture::options.prms.mesh.n_repetitions = 3;
-  Fixture::options.prms.mesh.n_refinements = 0;
-  Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
-  Fixture::options.prms.mesh.n_refinements = 1;
-  Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
+  // Fixture::options.prms.mesh.n_repetitions = 3;
+  // Fixture::options.prms.mesh.n_refinements = 0;
+  // Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
+  // Fixture::options.prms.mesh.n_refinements = 1;
+  // Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
 }
 
 

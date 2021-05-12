@@ -557,7 +557,7 @@ get_active_interface_indices_impl(const InterfaceHandler<dim> & interface_handle
                                   const CellIteratorType &      cell)
 {
   std::pair<std::vector<unsigned int>, std::vector<types::global_dof_index>> indices;
-  auto & [testfunc_indices, global_dof_indices_on_cell] = indices;
+  auto & [active_face_numbers, interface_indices] = indices;
 
   for(auto face_no = 0U; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
   {
@@ -573,11 +573,11 @@ get_active_interface_indices_impl(const InterfaceHandler<dim> & interface_handle
     if(this_interface_isnt_contained)
       continue;
 
-    testfunc_indices.push_back(face_no);
-    global_dof_indices_on_cell.push_back(interface_index);
+    active_face_numbers.push_back(face_no);
+    interface_indices.push_back(interface_index);
   }
 
-  AssertDimension(testfunc_indices.size(), global_dof_indices_on_cell.size());
+  AssertDimension(active_face_numbers.size(), interface_indices.size());
   return indices;
 }
 
@@ -712,6 +712,15 @@ struct MatrixIntegrator
                                                  ScratchData<dim, true> & scratch_data,
                                                  CopyData &               copy_data) const;
 
+  template<bool is_uniface>
+  void
+  boundary_or_uniface_residual_worker_tangential_interface(const IteratorType &     cell,
+                                                           const IteratorType &     cell_stream,
+                                                           const unsigned int &     face_no,
+                                                           const unsigned int &     sface_no,
+                                                           ScratchData<dim, true> & scratch_data,
+                                                           CopyData & copy_data) const;
+
   template<bool is_uniface, typename TestEvaluatorType, typename AnsatzEvaluatorType>
   void
   boundary_or_uniface_worker_tangential_impl(const TestEvaluatorType &   phi_test,
@@ -748,6 +757,14 @@ struct MatrixIntegrator
                                      const unsigned int &     sface_no,
                                      ScratchData<dim, true> & scratch_data,
                                      CopyData &               copy_data) const;
+
+  void
+  uniface_residual_worker_tangential_interface(const IteratorType &     cell,
+                                               const IteratorType &     cell_stream,
+                                               const unsigned int &     face_no,
+                                               const unsigned int &     sface_no,
+                                               ScratchData<dim, true> & scratch_data,
+                                               CopyData &               copy_data) const;
 
   template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
   void
@@ -990,10 +1007,8 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
 
   AssertDimension(copy_data.cell_data.size(), 0U);
 
-  /// The InterfaceHandler determines for which "inflow" interfaces this cell is
-  /// the source cell (and in that sense we speak of "outflow" interfaces"): the
-  /// local face numbers and the global interface indices are given by the first
-  /// and second return value, respectively.
+  /// We determine for which "outflow" interfaces this cell is the source cell:
+  /// local face numbers and global interface indices are returned.
   auto [active_test_function_indices, global_interface_indices] =
     get_active_interface_indices(cell);
 
@@ -1002,47 +1017,13 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
   /// on associated "outflow" interfaces for this cell.
   phi_test.reinit(cell, active_test_function_indices);
 
-  /// DEBUG
-  // std::cout << "verify phi_test: " << std::endl;
-  // std::cout << "shape_to_test_functions: " << std::endl;
-  // phi_test.shape_to_test_functions.print_formatted(std::cout);
-  // std::cout << "test_function_indices: " << vector_to_string(phi_test.test_function_indices)
-  //           << std::endl;
-  // for(auto i = 0U; i < phi_test.n_dofs_per_cell(); ++i)
-  // {
-  //   std::cout << "values of test_phi_" << i << ": " << std::endl;
-  //   for(auto q = 0U; q < phi_test.n_quadrature_points; ++q)
-  //     std::cout << compute_vvalue(phi_test, i, q) << "   ";
-  //   std::cout << std::endl;
-  // }
+  AssertDimension(phi_test.shape_to_test_functions.m(), GeometryInfo<dim>::faces_per_cell);
 
   auto & phi_ansatz = scratch_data.stream_values_ansatz;
   phi_ansatz.reinit(cell_stream);
 
-  AssertDimension(phi_test.shape_to_test_functions.m(), GeometryInfo<dim>::faces_per_cell);
-
   auto & cell_data =
     copy_data.cell_data.emplace_back(phi_test.n_dofs_per_cell(), phi_ansatz.n_dofs_per_cell());
-
-  /// DEBUG restrict rhs
-  // if(discrete_rhs)
-  // {
-  //   const unsigned int                   n_dofs_per_cell_v =
-  //   phi_test.shape_to_test_functions.n(); std::vector<types::global_dof_index>
-  //   dof_indices_v(n_dofs_per_cell_v); cell->get_active_or_mg_dof_indices(dof_indices_v);
-  //   Vector<double> local_rhs_v(n_dofs_per_cell_v);
-  //   for(auto i = 0U; i < local_rhs_v.size(); ++i)
-  //     local_rhs_v[i] = (*discrete_rhs)[dof_indices_v[i]];
-  //   Vector<double> local_rhs_v_orth(phi_test.n_dofs_per_cell());
-  //   AssertDimension(phi_test.n_dofs_per_cell(), phi_test.active_test_function_indices.size());
-  //   for(auto i = 0U; i < phi_test.n_dofs_per_cell(); ++i)
-  //   {
-  //     const unsigned int ii = phi_test.active_test_function_indices[i];
-  //     for(auto j = 0U; j < phi_test.shape_to_test_functions.n(); ++j)
-  //       local_rhs_v_orth[i] += phi_test.shape_to_test_functions(ii, j) * local_rhs_v(j);
-  //   }
-  //   local_rhs_v_orth.print(std::cout);
-  // }
 
   cell_data.dof_indices = std::move(global_interface_indices);
 
@@ -1051,30 +1032,20 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
   cell_worker_impl(phi_test, phi_ansatz, cell_data);
 
   AssertDimension(cell_data.matrix.n(), cell_data.dof_indices_column.size());
-  Assert(discrete_solution, ExcMessage("Stream function coefficients are not set."));
-  Vector<double> dof_values(cell_data.dof_indices_column.size());
-  std::transform(cell_data.dof_indices_column.cbegin(),
-                 cell_data.dof_indices_column.cend(),
-                 dof_values.begin(),
-                 [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
 
-  /// DEBUG
-  // std::cout << "cell_data.matrix: " << std::endl;
-  // remove_noise_from_matrix(cell_data.matrix);
-  // cell_data.matrix.print_formatted(std::cout);
-  // std::cout << "cell_data.rhs: " << std::endl;
-  // remove_noise_from_vector(cell_data.rhs);
-  // cell_data.rhs.print(std::cout);
+  if(discrete_solution)
+  {
+    Vector<double> dof_values(cell_data.dof_indices_column.size());
+    std::transform(cell_data.dof_indices_column.cbegin(),
+                   cell_data.dof_indices_column.cend(),
+                   dof_values.begin(),
+                   [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
 
-  AssertDimension(cell_data.matrix.m(), cell_data.rhs.size());
-  Vector<double> Ax(cell_data.rhs.size());
-  cell_data.matrix.vmult(Ax, dof_values); // Ax
-  cell_data.rhs -= Ax;                    // f - Ax
-
-  /// DEBUG
-  // std::cout << "residual: " << std::endl;
-  // remove_noise_from_vector(cell_data.rhs);
-  // cell_data.rhs.print(std::cout);
+    AssertDimension(cell_data.matrix.m(), cell_data.rhs.size());
+    Vector<double> Ax(cell_data.rhs.size());
+    cell_data.matrix.vmult(Ax, dof_values); // Ax
+    cell_data.rhs -= Ax;                    // f - Ax
+  }
 }
 
 
@@ -1440,53 +1411,55 @@ void
 MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential_interface(
   const IteratorType &     cell,
   const IteratorType &     cell_stream,
-  const unsigned int &     f,
-  const unsigned int &     sf,
+  const unsigned int &     face_no,
+  const unsigned int &     sface_no,
   const IteratorType &     ncell,
   const IteratorType &     ncell_stream,
-  const unsigned int &     nf,
-  const unsigned int &     nsf,
+  const unsigned int &     nface_no,
+  const unsigned int &     nsface_no,
   ScratchData<dim, true> & scratch_data,
   CopyData &               copy_data) const
 {
-  const InterfaceId interface_id{cell->id(), ncell->id()};
-  const auto        interface_index        = interface_handler->get_interface_index(interface_id);
-  const bool this_interface_isnt_contained = interface_index == numbers::invalid_unsigned_int;
+  // const InterfaceId interface_id{cell->id(), ncell->id()};
+  // const auto        interface_index        =
+  // interface_handler->get_interface_index(interface_id); const bool this_interface_isnt_contained
+  // = interface_index == numbers::invalid_unsigned_int;
 
-  if(this_interface_isnt_contained)
-    return;
+  // if(this_interface_isnt_contained)
+  //   return;
 
-  const auto & [active_test_function_indices_left, global_interface_indices_lcell] =
+  const auto & [active_test_function_indices_left, global_interface_indices_left] =
     get_active_interface_indices(cell);
-  const auto & [active_test_function_indices_right, global_interface_indices_rcell] =
+  const auto & [active_test_function_indices_right, global_interface_indices_right] =
     get_active_interface_indices(ncell);
-  /// TODO do test functions associated with other faces than this interface
-  /// contribute to the integral over this interface???
-  auto [active_interface_test_function_indices, joint_dof_indices_test] =
+
+  /// Determines the joint test function indices required by InterfaceValues and
+  /// caches the global interface indices.
+  auto [active_joint_indices, global_interface_indices] =
     make_joint_interface_indices(active_test_function_indices_left,
-                                 global_interface_indices_lcell,
+                                 global_interface_indices_left,
                                  active_test_function_indices_right,
-                                 global_interface_indices_rcell);
+                                 global_interface_indices_right);
 
   auto & phi_test = scratch_data.test_interface_values;
-  phi_test.reinit(cell, f, sf, ncell, nf, nsf, active_interface_test_function_indices);
+  phi_test.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no, active_joint_indices);
 
   AssertDimension(phi_test.shape_to_test_functions_left.m(), GeometryInfo<dim>::faces_per_cell);
   AssertDimension(phi_test.shape_to_test_functions_right.m(), GeometryInfo<dim>::faces_per_cell);
 
   auto & phi_ansatz = scratch_data.stream_interface_values_ansatz;
-  phi_ansatz.reinit(cell_stream, f, sf, ncell_stream, nf, nsf);
+  phi_ansatz.reinit(cell_stream, face_no, sface_no, ncell_stream, nface_no, nsface_no);
 
   CopyData::FaceData & face_data =
     copy_data.face_data.emplace_back(phi_test.n_current_interface_dofs(),
                                      phi_ansatz.n_current_interface_dofs());
 
-  std::swap(face_data.dof_indices, joint_dof_indices_test);
+  face_data.dof_indices = std::move(global_interface_indices);
 
   face_data.dof_indices_column = phi_ansatz.get_interface_dof_indices();
 
-  const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
-  const auto   nh        = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
+  const auto   h  = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  const auto   nh = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nface_no]);
   const auto   fe_degree = phi_ansatz.get_fe().degree; // stream function ansatz !
   const double gamma_over_h =
     equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
@@ -1496,16 +1469,18 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential_interface(
   AssertDimension(face_data.matrix.m(), face_data.rhs.size());
   AssertDimension(face_data.matrix.n(), face_data.dof_indices_column.size());
 
-  Assert(discrete_solution, ExcMessage("Stream function coefficients are not set."));
-  Vector<double> dof_values(face_data.dof_indices_column.size());
-  std::transform(face_data.dof_indices_column.cbegin(),
-                 face_data.dof_indices_column.cend(),
-                 dof_values.begin(),
-                 [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
+  if(discrete_solution)
+  {
+    Vector<double> dof_values(face_data.dof_indices_column.size());
+    std::transform(face_data.dof_indices_column.cbegin(),
+                   face_data.dof_indices_column.cend(),
+                   dof_values.begin(),
+                   [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
 
-  Vector<double> Ax(face_data.rhs.size());
-  face_data.matrix.vmult(Ax, dof_values); // Ax
-  face_data.rhs -= Ax;                    // f - Ax
+    Vector<double> Ax(face_data.rhs.size());
+    face_data.matrix.vmult(Ax, dof_values); // Ax
+    face_data.rhs -= Ax;                    // f - Ax
+  }
 
   /// DEBUG
   // std::cout << "c" << cell->index() << "f" << f << ":c" << ncell->index() << "f" << nf <<
@@ -1796,6 +1771,22 @@ MatrixIntegrator<dim, is_multigrid>::uniface_residual_worker_tangential(
 
 template<int dim, bool is_multigrid>
 void
+MatrixIntegrator<dim, is_multigrid>::uniface_residual_worker_tangential_interface(
+  const IteratorType &     cell,
+  const IteratorType &     cell_stream,
+  const unsigned int &     face_no,
+  const unsigned int &     sface_no,
+  ScratchData<dim, true> & scratch_data,
+  CopyData &               copy_data) const
+{
+  boundary_or_uniface_residual_worker_tangential_interface<true>(
+    cell, cell_stream, face_no, sface_no, scratch_data, copy_data);
+}
+
+
+
+template<int dim, bool is_multigrid>
+void
 MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential(const IteratorType & cell,
                                                                 const unsigned int & f,
                                                                 ScratchData<dim> &   scratch_data,
@@ -1888,6 +1879,84 @@ MatrixIntegrator<dim, is_multigrid>::boundary_or_uniface_residual_worker_tangent
 
 
 template<int dim, bool is_multigrid>
+template<bool is_uniface>
+void
+MatrixIntegrator<dim, is_multigrid>::boundary_or_uniface_residual_worker_tangential_interface(
+  const IteratorType &     cell,
+  const IteratorType &     cell_stream,
+  const unsigned int &     face_no,
+  const unsigned int &     sface_no,
+  ScratchData<dim, true> & scratch_data,
+  CopyData &               copy_data) const
+{
+  (void)sface_no;
+
+  auto [active_face_numbers_left, global_interface_indices_left] =
+    get_active_interface_indices(cell);
+
+  std::vector<std::array<unsigned int, 2>> active_joint_indices;
+  for(const auto li : active_face_numbers_left)
+    active_joint_indices.push_back({li, numbers::invalid_unsigned_int});
+
+  /// Restricting TestFunction::InterfaceValues to those test functions which are active
+  /// on associated "outflow" interfaces for this cell.
+  scratch_data.test_interface_values.reinit(cell, face_no, active_joint_indices);
+  ;
+  const auto & phi_test = scratch_data.test_interface_values.get_face_values(0);
+
+  AssertDimension(phi_test.shape_to_test_functions.m(), GeometryInfo<dim>::faces_per_cell);
+
+  scratch_data.stream_interface_values_ansatz.reinit(cell_stream, face_no);
+  const auto & phi_ansatz = scratch_data.stream_interface_values_ansatz.get_face_values(0);
+
+  const unsigned int n_dofs_test   = phi_test.n_dofs_per_cell();
+  const unsigned int n_dofs_ansatz = phi_ansatz.n_dofs_per_cell();
+
+  CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_dofs_test, n_dofs_ansatz);
+
+  face_data.dof_indices = std::move(global_interface_indices_left);
+
+  AssertDimension(face_data.dof_indices.size(), active_joint_indices.size());
+
+  cell_stream->get_active_or_mg_dof_indices(face_data.dof_indices_column);
+  // face_data.dof_indices_column = phi_ansatz.get_interface_dof_indices();
+
+  const auto   h  = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  const auto   nh = h;
+  const auto   fe_degree = phi_ansatz.get_fe().degree; // stream function degree !
+  const double gamma_over_h =
+    (is_uniface ? 0.5 : 1.0) * equation_data.ip_factor * compute_penalty_impl(fe_degree, h, nh);
+
+  boundary_or_uniface_worker_tangential_impl<is_uniface>(phi_test,
+                                                         phi_ansatz,
+                                                         gamma_over_h,
+                                                         face_data);
+
+  AssertDimension(face_data.matrix.m(), face_data.rhs.size());
+  AssertDimension(face_data.matrix.n(), face_data.dof_indices_column.size());
+
+  if(discrete_solution)
+  {
+    Vector<double> dof_values(face_data.dof_indices_column.size());
+    std::transform(face_data.dof_indices_column.cbegin(),
+                   face_data.dof_indices_column.cend(),
+                   dof_values.begin(),
+                   [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
+
+    Vector<double> Ax(face_data.rhs.size());
+    face_data.matrix.vmult(Ax, dof_values); // Ax
+    face_data.rhs -= Ax;                    // f - Ax
+  }
+
+  /// DEBUG
+  // std::cout << "c" << cell->index() << "b" << face_no << std::endl;
+  // remove_noise_from_vector(face_data.rhs);
+  // face_data.rhs.print(std::cout);
+}
+
+
+
+template<int dim, bool is_multigrid>
 void
 MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential(
   const IteratorType &     cell,
@@ -1917,57 +1986,67 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential_interfa
   ScratchData<dim, true> & scratch_data,
   CopyData &               copy_data) const
 {
-  auto [active_test_function_indices, global_interface_indices] =
-    get_active_interface_indices(cell);
-  std::vector<std::array<unsigned int, 2>> active_interface_test_function_indices;
-  for(const auto li : active_test_function_indices)
-    active_interface_test_function_indices.push_back({li, numbers::invalid_unsigned_int});
+  boundary_or_uniface_residual_worker_tangential_interface<false>(
+    cell, cell_stream, face_no, numbers::invalid_unsigned_int, scratch_data, copy_data);
 
-  auto & phi_test = scratch_data.test_interface_values;
-  /// Restricting TestFunction::InterfaceValues to those test functions which are active
-  /// on associated "outflow" interfaces for this cell.
-  phi_test.reinit(cell, face_no, active_interface_test_function_indices);
+  // auto [active_face_numbers_left, global_interface_indices_left] =
+  //   get_active_interface_indices(cell);
 
-  AssertDimension(phi_test.shape_to_test_functions_left.m(), GeometryInfo<dim>::faces_per_cell);
-  AssertDimension(phi_test.shape_to_test_functions_right.m(), GeometryInfo<dim>::faces_per_cell);
+  // std::vector<std::array<unsigned int, 2>> active_joint_indices;
+  // for(const auto li : active_face_numbers_left)
+  //   active_joint_indices.push_back({li, numbers::invalid_unsigned_int});
 
-  auto & phi_ansatz = scratch_data.stream_interface_values_ansatz;
-  phi_ansatz.reinit(cell_stream, face_no);
+  // auto & phi_test = scratch_data.test_interface_values;
+  // /// Restricting TestFunction::InterfaceValues to those test functions which are active
+  // /// on associated "outflow" interfaces for this cell.
+  // phi_test.reinit(cell, face_no, active_joint_indices);
 
-  CopyData::FaceData & face_data =
-    copy_data.face_data.emplace_back(phi_test.n_current_interface_dofs(),
-                                     phi_ansatz.n_current_interface_dofs());
+  // AssertDimension(phi_test.shape_to_test_functions_left.m(), GeometryInfo<dim>::faces_per_cell);
+  // AssertDimension(phi_test.shape_to_test_functions_right.m(), GeometryInfo<dim>::faces_per_cell);
 
-  face_data.dof_indices = std::move(global_interface_indices);
+  // auto & phi_ansatz = scratch_data.stream_interface_values_ansatz;
+  // phi_ansatz.reinit(cell_stream, face_no);
 
-  AssertDimension(face_data.dof_indices.size(), active_interface_test_function_indices.size());
+  // CopyData::FaceData & face_data =
+  //   copy_data.face_data.emplace_back(phi_test.n_current_interface_dofs(),
+  //                                    phi_ansatz.n_current_interface_dofs());
 
-  face_data.dof_indices_column = phi_ansatz.get_interface_dof_indices();
+  // face_data.dof_indices = std::move(global_interface_indices_left);
 
-  const auto   h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
-  const auto   fe_degree    = phi_ansatz.get_fe().degree; // stream function degree !
-  const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, h);
+  // AssertDimension(face_data.dof_indices.size(), active_joint_indices.size());
 
-  boundary_worker_tangential_impl</*do_rhs*/ true>(phi_test, phi_ansatz, gamma_over_h, face_data);
+  // face_data.dof_indices_column = phi_ansatz.get_interface_dof_indices();
 
-  AssertDimension(face_data.matrix.m(), face_data.rhs.size());
-  AssertDimension(face_data.matrix.n(), face_data.dof_indices_column.size());
+  // const auto   h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  // const auto   fe_degree    = phi_ansatz.get_fe().degree; // stream function degree !
+  // const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, h);
 
-  Assert(discrete_solution, ExcMessage("Stream function coefficients are not set."));
-  Vector<double> dof_values(face_data.dof_indices_column.size());
-  std::transform(face_data.dof_indices_column.cbegin(),
-                 face_data.dof_indices_column.cend(),
-                 dof_values.begin(),
-                 [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
+  // boundary_worker_tangential_impl</*do_rhs*/ !is_multigrid>(phi_test,
+  //                                                           phi_ansatz,
+  //                                                           gamma_over_h,
+  //                                                           face_data);
 
-  Vector<double> Ax(face_data.rhs.size());
-  face_data.matrix.vmult(Ax, dof_values); // Ax
-  face_data.rhs -= Ax;                    // f - Ax
+  // AssertDimension(face_data.matrix.m(), face_data.rhs.size());
+  // AssertDimension(face_data.matrix.n(), face_data.dof_indices_column.size());
 
-  /// DEBUG
-  // std::cout << "c" << cell->index() << "b" << face_no << std::endl;
-  // remove_noise_from_vector(face_data.rhs);
-  // face_data.rhs.print(std::cout);
+  // // Assert(discrete_solution, ExcMessage("Stream function coefficients are not set."));
+  // if(discrete_solution)
+  // {
+  //   Vector<double> dof_values(face_data.dof_indices_column.size());
+  //   std::transform(face_data.dof_indices_column.cbegin(),
+  //                  face_data.dof_indices_column.cend(),
+  //                  dof_values.begin(),
+  //                  [&](const auto dof_index) { return (*discrete_solution)[dof_index]; });
+
+  //   Vector<double> Ax(face_data.rhs.size());
+  //   face_data.matrix.vmult(Ax, dof_values); // Ax
+  //   face_data.rhs -= Ax;                    // f - Ax
+  // }
+
+  // /// DEBUG
+  // // std::cout << "c" << cell->index() << "b" << face_no << std::endl;
+  // // remove_noise_from_vector(face_data.rhs);
+  // // face_data.rhs.print(std::cout);
 }
 
 
@@ -4336,7 +4415,7 @@ struct LocalSolverStream
         AffineConstraints constraints_on_interface;
         const auto interface_index_of_fixed_cell = interface_handler.get_fixed_interface_index();
         constraints_on_interface.add_line(interface_index_of_fixed_cell);
-        constraints_on_interface.set_inhomogeneity(interface_index_of_fixed_cell, 1.);
+        constraints_on_interface.set_inhomogeneity(interface_index_of_fixed_cell, 0.);
         constraints_on_interface.close();
 
         AffineConstraints constraints_on_cell;
@@ -4358,9 +4437,23 @@ struct LocalSolverStream
 
         SparseMatrix<double> constant_pressure_matrix;
         constant_pressure_matrix.reinit(sparsity_pattern);
-        Vector<double> constant_pressure_rhs(interface_handler.n_interfaces());
+        Vector<double> local_rhs_constp(interface_handler.n_interfaces());
+
+        using CellIterator = typename DoFHandler<dim>::level_cell_iterator;
 
         std::vector<types::global_dof_index> constant_pressure_dof_indices(cells.size());
+
+        const TPSS::BelongsToCollection<CellIterator> belongs_to_collection(cells);
+
+        const auto & local_cell_range_v = TPSS::make_local_cell_range(cells);
+
+        const auto & g2l_v =
+          patch_transfer->get_patch_transfer(0).get_global_to_local_dof_indices(lane);
+
+        const auto & g2l_p =
+          patch_transfer->get_patch_transfer(1).get_global_to_local_dof_indices(lane);
+
+        const auto & g2l_sf = patch_transfer_sf->get_global_to_local_dof_indices(lane);
 
         /// non-constant pressure modes
         {
@@ -4370,25 +4463,11 @@ struct LocalSolverStream
 
           using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
 
-          using CellIterator = typename MatrixIntegrator<dim, true>::IteratorType;
-
           MatrixIntegrator<dim, true> matrix_integrator(
             nullptr, nullptr, nullptr, *equation_data, &interface_handler);
 
           AffineConstraints<double> empty_constraints;
           empty_constraints.close();
-
-          const TPSS::BelongsToCollection<CellIterator> belongs_to_collection(cells);
-
-          const auto & local_cell_range_v = TPSS::make_local_cell_range(cells);
-
-          const auto & g2l_v =
-            patch_transfer->get_patch_transfer(0).get_global_to_local_dof_indices(lane);
-
-          const auto & g2l_p =
-            patch_transfer->get_patch_transfer(1).get_global_to_local_dof_indices(lane);
-
-          const auto & g2l_sf = patch_transfer_sf->get_global_to_local_dof_indices(lane);
 
           const auto distribute_local_to_patch_impl = [&](const auto & cd) {
             std::vector<unsigned int> local_dof_indices_sf;
@@ -4577,12 +4656,430 @@ struct LocalSolverStream
 
         /// constant pressure modes
         {
+          /// assemble prolongation matrix
+          FullMatrix<Number> prolongation_matrix_interface;
+          prolongation_matrix_interface.reinit(n_dofs_v, cells.size());
+
+          const auto get_active_interface_indices = [&](const CellIterator & cell) {
+            return Stokes::Velocity::SIPG::MW::get_active_interface_indices_impl(interface_handler,
+                                                                                 cell);
+          };
+
+          for(const auto & cell : cells)
+          {
+            std::vector<types::global_dof_index> dof_indices_v(cell->get_fe().dofs_per_cell);
+            cell->get_active_or_mg_dof_indices(dof_indices_v);
+
+            std::vector<unsigned int> local_dof_indices_v;
+            std::transform(dof_indices_v.begin(),
+                           dof_indices_v.end(),
+                           std::back_inserter(local_dof_indices_v),
+                           [&](const auto dof_index) {
+                             const auto & local_index = g2l_v.find(dof_index);
+                             return local_index != g2l_v.cend() ? local_index->second :
+                                                                  numbers::invalid_unsigned_int;
+                           });
+
+            const auto & [active_face_nos, global_face_nos] = get_active_interface_indices(cell);
+
+            for(auto ci = 0U; ci < local_dof_indices_v.size(); ++ci)
+              if(local_dof_indices_v[ci] != numbers::invalid_unsigned_int)
+                for(auto cj = 0U; cj < active_face_nos.size(); ++cj)
+                  prolongation_matrix_interface(local_dof_indices_v[ci], global_face_nos[cj]) =
+                    (*trafomatrix_orth_faces)(active_face_nos[cj], ci);
+          }
+
+          /// compute local right-hand side (residual)
+          {
+            using Stokes::Velocity::SIPG::MW::ScratchData;
+
+            using Stokes::Velocity::SIPG::MW::CopyData;
+
+            using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
+
+            MatrixIntegrator<dim, true> matrix_integrator(
+              nullptr, nullptr, nullptr, *equation_data, &interface_handler);
+
+            const auto distribute_local_to_global_impl = [&](const auto & cd) {
+              std::vector<unsigned int> local_dof_indices_sf;
+              std::transform(cd.dof_indices_column.begin(),
+                             cd.dof_indices_column.end(),
+                             std::back_inserter(local_dof_indices_sf),
+                             [&](const auto dof_index) {
+                               const auto & local_index = g2l_sf.find(dof_index);
+                               return local_index != g2l_sf.cend() ? local_index->second :
+                                                                     numbers::invalid_unsigned_int;
+                             });
+
+              AssertDimension(local_dof_indices_sf.size(), cd.matrix.n());
+              Vector<Number> local_solution_sf(cd.matrix.n());
+              for(auto i = 0U; i < local_solution_sf.size(); ++i)
+                if(local_dof_indices_sf[i] != numbers::invalid_unsigned_int)
+                  local_solution_sf(i) = solution_sf[local_dof_indices_sf[i]][lane];
+
+              Vector<Number> Ax(cd.matrix.m());
+              cd.matrix.vmult(Ax, local_solution_sf);
+
+              constraints_on_interface.template distribute_local_to_global(Ax,
+                                                                           cd.dof_indices,
+                                                                           local_rhs_constp);
+            };
+
+            const auto local_copier = [&](const CopyData & copy_data) {
+              for(const auto & cd : copy_data.cell_data)
+                distribute_local_to_global_impl(cd);
+              for(const auto & cdf : copy_data.face_data)
+                distribute_local_to_global_impl(cdf);
+            };
+
+            const UpdateFlags update_flags_v =
+              update_values | update_gradients | update_quadrature_points | update_JxW_values;
+            const UpdateFlags interface_update_flags_v = update_values | update_gradients |
+                                                         update_quadrature_points |
+                                                         update_JxW_values | update_normal_vectors;
+
+            const UpdateFlags update_flags_sf = update_flags_v | update_hessians;
+            const UpdateFlags interface_update_flags_sf =
+              interface_update_flags_v | update_hessians;
+
+            ScratchData<dim, true> scratch_data(mapping,
+                                                dofh_v.get_fe(),
+                                                dofh_sf.get_fe(),
+                                                n_q_points_1d,
+                                                *trafomatrix_orth_faces,
+                                                update_flags_v,
+                                                update_flags_sf,
+                                                interface_update_flags_v,
+                                                interface_update_flags_sf);
+
+            CopyData copy_data;
+
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range_v,
+              [&](const CellIterator &     cell,
+                  ScratchData<dim, true> & scratch_data,
+                  CopyData &               copy_data) {
+                CellIterator cell_sf(&dofh_sf.get_triangulation(),
+                                     cell->level(),
+                                     cell->index(),
+                                     &dofh_sf);
+                /// compute local matrix A^\orth
+                matrix_integrator.cell_residual_worker_interface(cell,
+                                                                 cell_sf,
+                                                                 scratch_data,
+                                                                 copy_data);
+                /// DEBUG
+                // auto & cd = copy_data.cell_data.back();
+                // ofs << "cell matrix" << cell->index() << ":" << std::endl;
+                // remove_noise_from_matrix(cd.matrix);
+                // cd.matrix.print_formatted(ofs);
+                // std::vector<unsigned int> local_dof_indices_sf;
+                // std::transform(cd.dof_indices_column.begin(),
+                //                cd.dof_indices_column.end(),
+                //                std::back_inserter(local_dof_indices_sf),
+                //                [&](const auto dof_index) {
+                //                  const auto & local_index = g2l_sf.find(dof_index);
+                //                  return local_index != g2l_sf.cend() ?
+                //                           local_index->second :
+                //                           numbers::invalid_unsigned_int;
+                //                });
+                // AssertDimension(local_dof_indices_sf.size(), cd.matrix.n());
+                // Vector<Number> local_stream(cd.matrix.n());
+                // for(auto i = 0U; i < local_stream.size(); ++i)
+                //   if(local_dof_indices_sf[i] != numbers::invalid_unsigned_int)
+                //     local_stream(i) = solution_sf[local_dof_indices_sf[i]][lane];
+                // Vector<double> Ax(cd.matrix.m());
+                // ofs << "stream: ";
+                // remove_noise_from_vector(local_stream);
+                // local_stream.print(ofs);
+                // cd.matrix.vmult(Ax, local_stream);
+                // ofs << "interface indices: " << vector_to_string(cd.dof_indices) << std::endl;
+                // ofs << "Ax: ";
+                // remove_noise_from_vector(Ax);
+                // Ax.print(ofs);
+              },
+              local_copier,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells |
+                MeshWorker::assemble_boundary_faces | MeshWorker::assemble_own_interior_faces_both |
+                MeshWorker::assemble_ghost_faces_both,
+              /*assemble faces at ghosts?*/ true,
+              [&](const CellIterator &     cell,
+                  const unsigned int &     face_no,
+                  ScratchData<dim, true> & scratch_data,
+                  CopyData &               copy_data) {
+                CellIterator cell_sf(&dofh_sf.get_triangulation(),
+                                     cell->level(),
+                                     cell->index(),
+                                     &dofh_sf);
+                matrix_integrator.boundary_residual_worker_tangential_interface(
+                  cell, cell_sf, face_no, scratch_data, copy_data);
+                /// DEBUG
+                // auto & cd = copy_data.face_data.back();
+                // ofs << "bdry matrix" << cell->index() << ":" << face_no << std::endl;
+                // remove_noise_from_matrix(cd.matrix);
+                // cd.matrix.print_formatted(ofs);
+                // std::vector<unsigned int> local_dof_indices_sf;
+                // std::transform(cd.dof_indices_column.begin(),
+                //                cd.dof_indices_column.end(),
+                //                std::back_inserter(local_dof_indices_sf),
+                //                [&](const auto dof_index) {
+                //                  const auto & local_index = g2l_sf.find(dof_index);
+                //                  return local_index != g2l_sf.cend() ?
+                //                           local_index->second :
+                //                           numbers::invalid_unsigned_int;
+                //                });
+                // AssertDimension(local_dof_indices_sf.size(), cd.matrix.n());
+                // Vector<Number> local_stream(cd.matrix.n());
+                // for(auto i = 0U; i < local_stream.size(); ++i)
+                //   if(local_dof_indices_sf[i] != numbers::invalid_unsigned_int)
+                //     local_stream(i) = solution_sf[local_dof_indices_sf[i]][lane];
+                // Vector<double> Ax(cd.matrix.m());
+                // ofs << "stream: ";
+                // remove_noise_from_vector(local_stream);
+                // local_stream.print(ofs);
+                // cd.matrix.vmult(Ax, local_stream);
+                // ofs << "interface indices: " << vector_to_string(cd.dof_indices) << std::endl;
+                // ofs << "Ax: ";
+                // remove_noise_from_vector(Ax);
+                // Ax.print(ofs);
+              },
+              [&](const CellIterator &     cell,
+                  const unsigned int &     face_no,
+                  const unsigned int &     sface_no,
+                  const CellIterator &     ncell,
+                  const unsigned int &     nface_no,
+                  const unsigned int &     nsface_no,
+                  ScratchData<dim, true> & scratch_data,
+                  CopyData &               copy_data) {
+                CellIterator cell_sf(&dofh_sf.get_triangulation(),
+                                     cell->level(),
+                                     cell->index(),
+                                     &dofh_sf);
+                CellIterator ncell_sf(&dofh_sf.get_triangulation(),
+                                      ncell->level(),
+                                      ncell->index(),
+                                      &dofh_sf);
+                const bool   cell_belongs_to_collection  = belongs_to_collection(cell);
+                const bool   ncell_belongs_to_collection = belongs_to_collection(ncell);
+                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
+                if(is_interface)
+                {
+                  matrix_integrator.face_residual_worker_tangential_interface(cell,
+                                                                              cell_sf,
+                                                                              face_no,
+                                                                              sface_no,
+                                                                              ncell,
+                                                                              ncell_sf,
+                                                                              nface_no,
+                                                                              nsface_no,
+                                                                              scratch_data,
+                                                                              copy_data);
+                  /// DEBUG
+                  // auto & cd = copy_data.face_data.back();
+                  // ofs << "face matrix" << cell->index() << ":" << face_no << "_" <<
+                  // ncell->index()
+                  //     << ":" << nface_no << std::endl;
+                  // remove_noise_from_matrix(cd.matrix);
+                  // cd.matrix.print_formatted(ofs);
+                  // std::vector<unsigned int> local_dof_indices_sf;
+                  // std::transform(cd.dof_indices_column.begin(),
+                  //                cd.dof_indices_column.end(),
+                  //                std::back_inserter(local_dof_indices_sf),
+                  //                [&](const auto dof_index) {
+                  //                  const auto & local_index = g2l_sf.find(dof_index);
+                  //                  return local_index != g2l_sf.cend() ?
+                  //                           local_index->second :
+                  //                           numbers::invalid_unsigned_int;
+                  //                });
+                  // AssertDimension(local_dof_indices_sf.size(), cd.matrix.n());
+                  // Vector<Number> local_stream(cd.matrix.n());
+                  // for(auto i = 0U; i < local_stream.size(); ++i)
+                  //   if(local_dof_indices_sf[i] != numbers::invalid_unsigned_int)
+                  //     local_stream(i) = solution_sf[local_dof_indices_sf[i]][lane];
+                  // Vector<double> Ax(cd.matrix.m());
+                  // ofs << "stream: ";
+                  // remove_noise_from_vector(local_stream);
+                  // local_stream.print(ofs);
+                  // cd.matrix.vmult(Ax, local_stream);
+                  // ofs << "Ax: ";
+                  // remove_noise_from_vector(Ax);
+                  // Ax.print(ofs);
+
+                  /// interfaces are assembled from both sides
+                  copy_data.face_data.back().matrix *= 0.5;
+                  return;
+                }
+                if(cell_belongs_to_collection)
+                {
+                  matrix_integrator.uniface_residual_worker_tangential_interface(
+                    cell, cell_sf, face_no, sface_no, scratch_data, copy_data);
+                }
+              });
+
+            local_rhs_constp *= -1.; // -Ax
+
+            /// DEBUG
+            ofs << "interfaces: " << vector_to_string(interface_handler.cached_interface_ids)
+                << std::endl;
+            std::vector<unsigned int> interface_indices;
+            for(const auto & id : interface_handler.cached_interface_ids)
+              interface_indices.push_back(interface_handler.get_interface_index(id));
+            ofs << "indices: " << vector_to_string(interface_indices) << std::endl;
+            ofs << "-Ax: ";
+            remove_noise_from_vector(local_rhs_constp);
+            local_rhs_constp.print(ofs);
+
+            const auto local_rhs_v = array_view_to_vector(src_v_view, lane);
+            prolongation_matrix_interface.Tvmult_add(local_rhs_constp, local_rhs_v); // f - Ax
+
+            /// DEBUG
+            Vector<Number> local_rhs_v_orth(interface_handler.n_interfaces());
+            prolongation_matrix_interface.Tvmult(local_rhs_v_orth, local_rhs_v);
+            ofs << "f: ";
+            remove_noise_from_vector(local_rhs_v_orth);
+            local_rhs_v_orth.print(ofs);
+            ofs << "local_rhs_constp: ";
+            remove_noise_from_vector(local_rhs_constp);
+            local_rhs_constp.print(ofs);
+          }
+
+          /// assemble system matrix of cellwise pressure constants
+          {
+            using Biharmonic::Pressure::Interface::MW::ScratchData;
+
+            using Biharmonic::Pressure::Interface::MW::CopyData;
+
+            using Biharmonic::Pressure::Interface::MW::MatrixIntegrator;
+
+            ArrayView<const VectorizedArray<double>> dst_p_cview = make_array_view(dst_p_view);
+
+            MatrixIntegrator<dim, false> matrix_integrator(
+              nullptr, &interface_handler, *equation_data, &g2l_p, &dst_p_cview, lane);
+
+            const auto local_copier = [&](const CopyData & copy_data) {
+              for(const auto & cdf : copy_data.face_data)
+              {
+                constraints_on_interface.template distribute_local_to_global<Vector<double>>(
+                  cdf.rhs, cdf.dof_indices, local_rhs_constp);
+
+                constraints_on_interface.template distribute_local_to_global<SparseMatrix<double>>(
+                  cdf.matrix,
+                  cdf.dof_indices,
+                  constraints_on_cell,
+                  cdf.dof_indices_column,
+                  constant_pressure_matrix);
+              }
+            };
+
+            const UpdateFlags update_flags_v =
+              update_values | update_quadrature_points | update_JxW_values;
+            const UpdateFlags interface_update_flags_v = update_flags_v | update_normal_vectors;
+
+            const UpdateFlags update_flags_p = update_default;
+            const UpdateFlags interface_update_flags_p =
+              update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+
+            ScratchData<dim> scratch_data(mapping,
+                                          dofh_v.get_fe(),
+                                          dofh_p.get_fe(),
+                                          n_q_points_1d,
+                                          *trafomatrix_orth_faces,
+                                          update_flags_v,
+                                          update_flags_p,
+                                          interface_update_flags_v,
+                                          interface_update_flags_p);
+
+            CopyData copy_data;
+
+            // MeshWorker::mesh_loop(dof_handler_velocity.begin_active(),
+            //                       dof_handler_velocity.end(),
+            //                       /*cell_worker*/ nullptr,
+            //                       copier,
+            //                       scratch_data,
+            //                       copy_data,
+            //                       MeshWorker::assemble_own_interior_faces_once,
+            //                       /*boundary_worker*/ nullptr,
+            //                       face_worker);
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range_v,
+              /*cell_worker*/ nullptr,
+              local_copier,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_interior_faces_both | MeshWorker::assemble_ghost_faces_both,
+              /*assemble faces at ghosts?*/ true,
+              /*boundary_worker*/ nullptr,
+              [&](const auto & cell,
+                  const auto   face_no,
+                  const auto   sface_no,
+                  const auto & ncell,
+                  const auto   nface_no,
+                  const auto   nsface_no,
+                  auto &       scratch_data,
+                  auto &       copy_data) {
+                const bool cell_belongs_to_collection  = belongs_to_collection(cell);
+                const bool ncell_belongs_to_collection = belongs_to_collection(ncell);
+                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
+                if(is_interface)
+                {
+                  CellIterator cellP(&dofh_p.get_triangulation(),
+                                     cell->level(),
+                                     cell->index(),
+                                     &dofh_p);
+                  CellIterator ncellP(&dofh_p.get_triangulation(),
+                                      ncell->level(),
+                                      ncell->index(),
+                                      &dofh_p);
+                  matrix_integrator.face_worker(cell,
+                                                cellP,
+                                                face_no,
+                                                sface_no,
+                                                ncell,
+                                                ncellP,
+                                                nface_no,
+                                                nsface_no,
+                                                scratch_data,
+                                                copy_data);
+                  copy_data.face_data.back().matrix *= 0.5; /// both sides!
+                  copy_data.face_data.back().rhs *= 0.5;    /// both sides!
+                }
+              });
+
+            /// DEBUG
+            ofs << "local rhs: ";
+            remove_noise_from_vector(local_rhs_constp);
+            local_rhs_constp.print(ofs);
+          }
+
+          constraints_on_interface.condense(constant_pressure_matrix, local_rhs_constp);
+
+          Vector<double> constant_pressure_solution(cells.size());
+
+          /// DEBUG
+          ofs << "local rhs: ";
+          remove_noise_from_vector(local_rhs_constp);
+          local_rhs_constp.print(ofs);
+          ofs << "constant pressure matrix: " << std::endl;
+          constant_pressure_matrix.print_formatted(ofs);
+
+          SparseDirectUMFPACK A_direct;
+          A_direct.template initialize<SparseMatrix<double>>(constant_pressure_matrix);
+          A_direct.vmult(constant_pressure_solution, local_rhs_constp);
+
+          constraints_on_interface.distribute(constant_pressure_solution);
+
+          /// DEBUG
+          ofs << "constant pressure: ";
+          remove_noise_from_vector(constant_pressure_solution);
+          constant_pressure_solution.print(ofs);
         }
-      }
+      } // loop over lanes
     }
 
-    ofs << "pressure: " << std::endl;
-    array_view_to_vector(dst_p_view, 0).print(ofs);
+    // ofs << "pressure: " << std::endl;
+    // array_view_to_vector(dst_p_view, 0).print(ofs);
 
     ofs.close();
   }
@@ -4601,7 +5098,7 @@ struct LocalSolverStream
   {
     return std::make_shared<transfer_type_stream>(subdomain_handler, 2);
   }
-};
+}; // namespace FD
 
 
 
@@ -4905,7 +5402,7 @@ using MatrixIntegrator = typename MatrixIntegratorSelector<local_assembly,
                                                            dof_layout_v,
                                                            fe_degree_v>::type;
 
-} // end namespace FD
+} // namespace FD
 
 } // namespace VelocityPressure
 
