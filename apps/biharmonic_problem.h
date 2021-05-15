@@ -1856,18 +1856,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 {
   print_parameter("Solving pressure system", "...");
 
-  std::ofstream ofs;
-  ofs.open("debug_solve_pressure.txt");
-
-  /// DEBUG
-  // {
-  //   const bool         mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
-  //   std::ostringstream oss;
-  //   oss << "debug_p" << mpi_rank << ".txt";
-  //   ofs.close();
-  //   ofs.open(oss.str(), std::ios_base::out);
-  // }
-
   AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1U,
               ExcMessage("Not implemented in parallel."));
   Assert(stokes_problem, ExcMessage("FEM for Stokes equations is uninitialized."));
@@ -1886,17 +1874,9 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                                       trafomatrix_rt_to_gradp.n());
   shape_to_test_functions_interior = trafomatrix_rt_to_gradp;
 
-  /// DEBUG
-  // remove_noise_from_matrix(shape_to_test_functions_interior);
-  // shape_to_test_functions_interior.print_formatted(ofs);
-
   FullMatrix<double> shape_to_test_functions_interface(trafomatrix_rt_to_constp.m(),
                                                        trafomatrix_rt_to_constp.n());
   shape_to_test_functions_interface = trafomatrix_rt_to_constp;
-
-  /// DEBUG
-  // remove_noise_from_matrix(shape_to_test_functions_interface);
-  // shape_to_test_functions_interface.print_formatted(ofs);
 
   InterfaceHandler<dim> interface_handler;
   interface_handler.reinit(dof_handler_velocity.get_triangulation());
@@ -1910,7 +1890,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
   AffineConstraints constraints_on_interface;
   const auto        interface_index_of_fixed_cell = interface_handler.get_fixed_interface_index();
   constraints_on_interface.add_line(interface_index_of_fixed_cell);
-  constraints_on_interface.set_inhomogeneity(interface_index_of_fixed_cell, 1.);
+  constraints_on_interface.set_inhomogeneity(interface_index_of_fixed_cell, 0.);
   constraints_on_interface.close();
 
   AffineConstraints constraints_on_cell;
@@ -2018,32 +1998,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                    &dof_handler_pressure);
         matrix_integrator.cell_residual_worker(
           cell, cell_stream_function, cell_pressure, scratch_data, copy_data);
-        /// DEBUG
-        // auto & cd = copy_data.cell_data.back();
-        // ofs << "cell matrix" << cell->index() << ":" << std::endl;
-        // remove_noise_from_matrix(cd.matrix);
-        // cd.matrix.print_formatted(ofs);
-        // std::vector<types::global_dof_index> dof_indices_sf(
-        //   cell_stream_function->get_fe().dofs_per_cell);
-        // cell_stream_function->get_active_or_mg_dof_indices(dof_indices_sf);
-        // Vector<double> local_stream(dof_indices_sf.size());
-        // std::transform(dof_indices_sf.cbegin(),
-        //                dof_indices_sf.cend(),
-        //                local_stream.begin(),
-        //                [&](const auto dof_index) { return (system_u)[dof_index]; });
-        // Vector<double> Ax(cd.matrix.m());
-        // ofs << "stream: ";
-        // remove_noise_from_vector(local_stream);
-        // local_stream.print(ofs);
-        // cd.matrix.vmult(Ax, local_stream);
-        // Vector<double> f(cd.rhs);
-        // f += Ax;
-        // ofs << "f: ";
-        // remove_noise_from_vector(f);
-        // f.print(ofs);
-        // ofs << "Ax: ";
-        // remove_noise_from_vector(Ax);
-        // Ax.print(ofs);
       };
 
     const auto face_worker = [&](const CellIterator &     cell,
@@ -2155,12 +2109,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                             MeshWorker::assemble_own_interior_faces_once,
                           boundary_worker,
                           face_worker);
-
-    /// DEBUG
-    // remove_noise_from_vector(discrete_pressure);
-    // ofs << "discrete pressure: " << std::endl;
-    // discrete_pressure.print(ofs);
-    // ofs << vector_to_string(constant_pressure_dof_indices) << std::endl;
   }
 
   /**
@@ -2193,8 +2141,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                               &analytical_velocity,
                                               &system_u,
                                               equation_data_stokes,
-                                              &interface_handler,
-                                              &stokes_problem->system_rhs.block(0));
+                                              &interface_handler);
 
       const auto cell_worker = [&](const CellIterator &     cell,
                                    ScratchData<dim, true> & scratch_data,
@@ -2207,41 +2154,14 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                                          cell_stream_function,
                                                          scratch_data,
                                                          copy_data);
-        /// DEBUG
-        auto & cd = copy_data.cell_data.back();
-        ofs << "cell matrix" << cell->index() << ":" << std::endl;
-        remove_noise_from_matrix(cd.matrix);
-        cd.matrix.print_formatted(ofs);
-        std::vector<types::global_dof_index> dof_indices_sf(
-          cell_stream_function->get_fe().dofs_per_cell);
-        cell_stream_function->get_active_or_mg_dof_indices(dof_indices_sf);
-        Vector<double> local_stream(dof_indices_sf.size());
-        std::transform(dof_indices_sf.cbegin(),
-                       dof_indices_sf.cend(),
-                       local_stream.begin(),
-                       [&](const auto dof_index) { return (system_u)[dof_index]; });
-        Vector<double> Ax(cd.matrix.m());
-        ofs << "stream: ";
-        remove_noise_from_vector(local_stream);
-        local_stream.print(ofs);
-        cd.matrix.vmult(Ax, local_stream);
-        ofs << "interface indices: " << vector_to_string(cd.dof_indices) << std::endl;
-        Vector<double> f(cd.rhs);
-        f += Ax;
-        ofs << "f: ";
-        remove_noise_from_vector(f);
-        f.print(ofs);
-        ofs << "Ax: ";
-        remove_noise_from_vector(Ax);
-        Ax.print(ofs);
       };
 
       const auto face_worker = [&](const CellIterator &     cell,
-                                   const unsigned int &     f,
-                                   const unsigned int &     sf,
+                                   const unsigned int &     face_no,
+                                   const unsigned int &     sface_no,
                                    const CellIterator &     ncell,
-                                   const unsigned int &     nf,
-                                   const unsigned int &     nsf,
+                                   const unsigned int &     nface_no,
+                                   const unsigned int &     nsface_no,
                                    ScratchData<dim, true> & scratch_data,
                                    CopyData &               copy_data) {
         CellIterator cell_stream(&dof_handler.get_triangulation(),
@@ -2252,8 +2172,16 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                                   ncell->level(),
                                   ncell->index(),
                                   &dof_handler);
-        matrix_integrator.face_residual_worker_tangential_interface(
-          cell, cell_stream, f, sf, ncell, ncell_stream, nf, nsf, scratch_data, copy_data);
+        matrix_integrator.face_residual_worker_tangential_interface(cell,
+                                                                    cell_stream,
+                                                                    face_no,
+                                                                    sface_no,
+                                                                    ncell,
+                                                                    ncell_stream,
+                                                                    nface_no,
+                                                                    nsface_no,
+                                                                    scratch_data,
+                                                                    copy_data);
       };
 
       const auto boundary_worker = [&](const CellIterator &     cell,
@@ -2312,17 +2240,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
                               MeshWorker::assemble_own_interior_faces_once,
                             boundary_worker,
                             face_worker);
-
-      /// DEBUG
-      ofs << "interfaces: " << vector_to_string(interface_handler.cached_interface_ids)
-          << std::endl;
-      std::vector<unsigned int> interface_indices;
-      for(const auto & id : interface_handler.cached_interface_ids)
-        interface_indices.push_back(interface_handler.get_interface_index(id));
-      ofs << "indices: " << vector_to_string(interface_indices) << std::endl;
-      remove_noise_from_vector(constant_pressure_rhs);
-      ofs << "constant_pressure_rhs: ";
-      constant_pressure_rhs.print(ofs);
     }
 
     {
@@ -2412,9 +2329,6 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     constraints_on_interface.condense(constant_pressure_matrix, constant_pressure_rhs);
 
     /// DEBUG
-    // remove_noise_from_vector(constant_pressure_rhs);
-    // constant_pressure_rhs.print(ofs);
-    // constant_pressure_matrix.print_formatted(ofs);
 
     const auto     n_cells = constant_pressure_matrix.n();
     Vector<double> constant_pressure_solution(n_cells);
@@ -2432,13 +2346,7 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     }
 
     stokes_problem->post_process_solution_vector();
-
-    /// DEBUG
-    // remove_noise_from_vector(discrete_pressure);
-    // discrete_pressure.print(ofs);
-    // ofs.close();
   }
-  ofs.close();
 }
 
 

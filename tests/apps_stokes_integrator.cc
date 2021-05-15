@@ -628,7 +628,7 @@ protected:
   {
     Stream,
     Gradp,
-    Constp
+    Pressure
   };
 
 
@@ -694,8 +694,7 @@ protected:
                                                 level_matrix,
                                                 partition_data.get_patch_range());
 
-    const auto & patch_dof_worker_p =
-      patch_transfer->/*get_patch_transfer(1).*/ get_patch_dof_worker(1);
+    const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
 
     for(auto patch_index = 0U; patch_index < local_matrices.size(); ++patch_index)
     {
@@ -755,6 +754,109 @@ protected:
         };
         zero_out_constant_pressure(local_solution);
         zero_out_constant_pressure(other_solution);
+      }
+      else if(lssvariant == lssVariant::Pressure)
+      {
+        /// zero out velocity dofs
+        std::fill_n(local_solution.begin(), n_dofs_v, 0.);
+        std::fill_n(other_solution.begin(), n_dofs_v, 0.);
+
+        /// post-process other pressure solution
+        for(auto lane = 0U; lane < patch_dof_worker_p.n_lanes_filled(patch_index); ++lane)
+        {
+          using ::MW::ScratchData;
+          using ::MW::Cell::CopyData;
+
+          const auto g2l_p =
+            patch_transfer->get_patch_transfer(1).get_global_to_local_dof_indices(lane);
+
+          const ArrayView<VectorizedArray<double>> other_solution_p_view(other_solution.begin() +
+                                                                           n_dofs_v,
+                                                                         n_dofs_p);
+
+          const auto & cells_p = patch_dof_worker_p.get_cell_collection(patch_index, lane);
+
+          const auto & local_cell_range_p = TPSS::make_local_cell_range(cells_p);
+
+          double mean_value = 0.;
+          double volume     = 0.;
+
+          const auto local_copier = [&](const CopyData & copy_data) {
+            for(const auto & cd : copy_data.cell_data)
+            {
+              mean_value += cd.values(0);
+              volume += cd.values(1);
+            }
+          };
+
+          const UpdateFlags update_flags_p =
+            update_values | update_quadrature_points | update_JxW_values;
+
+          ScratchData<dim> scratch_data(subdomain_handler->get_mapping(),
+                                        dofh_p.get_fe(),
+                                        /*n_q_points_1d*/ fe_degree_p + 2,
+                                        update_flags_p);
+
+          CopyData copy_data;
+
+          MeshWorker::m2d2::mesh_loop(
+            local_cell_range_p,
+            [&](const auto & cell, auto & scratch_data, auto & copy_data) {
+              auto & phi = scratch_data.fe_values;
+              phi.reinit(cell);
+
+              const unsigned int n_dofs = cell->get_fe().dofs_per_cell;
+
+              std::vector<types::global_dof_index> dof_indices(n_dofs);
+              cell->get_active_or_mg_dof_indices(dof_indices);
+
+              std::vector<unsigned int> local_dof_indices;
+              std::transform(dof_indices.begin(),
+                             dof_indices.end(),
+                             std::back_inserter(local_dof_indices),
+                             [&](const auto dof_index) {
+                               const auto & local_index = g2l_p.find(dof_index);
+                               return local_index != g2l_p.cend() ? local_index->second :
+                                                                    numbers::invalid_unsigned_int;
+                             });
+
+              Vector<double> dof_values(n_dofs);
+              for(auto i = 0U; i < n_dofs; ++i)
+                if(local_dof_indices[i] != numbers::invalid_unsigned_int)
+                  dof_values(i) = other_solution_p_view[local_dof_indices[i]][lane];
+
+              const auto & compute_value = [&](const unsigned int q) {
+                double value = 0.;
+                for(auto j = 0U; j < n_dofs; ++j)
+                  value += dof_values[j] * phi.shape_value(j, q);
+                return value;
+              };
+
+              auto & cd = copy_data.cell_data.emplace_back(2U);
+
+              for(auto q = 0U; q < phi.n_quadrature_points; ++q)
+              {
+                const auto & dx      = phi.JxW(q);
+                const auto & value_p = compute_value(q);
+                cd.values(0) += value_p * dx;
+                cd.values(1) += dx;
+              }
+            },
+            local_copier,
+            scratch_data,
+            copy_data,
+            MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
+
+          /// make local pressure solution mean-value-free
+          {
+            std::vector<types::global_dof_index> dof_indices(dofh_p.get_fe().dofs_per_cell);
+            for(const auto & cell_p : cells_p)
+            {
+              cell_p->get_active_or_mg_dof_indices(dof_indices);
+              other_solution_p_view[g2l_p.at(dof_indices.front())][lane] -= mean_value / volume;
+            }
+          }
+        }
       }
 
       for(auto lane = 0U; lane < patch_dof_worker_sf.n_lanes_filled(patch_index); ++lane)
@@ -1084,11 +1186,28 @@ TYPED_TEST_P(TestStokesIntegrator, localsolverstream_gradp)
   Fixture::options.prms.mesh.n_refinements = 0;
   Fixture::check_matrixintegratorstreamlmw();
   Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
-  // Fixture::options.prms.mesh.n_repetitions = 3;
-  // Fixture::options.prms.mesh.n_refinements = 0;
-  // Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
-  // Fixture::options.prms.mesh.n_refinements = 1;
-  // Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
+  Fixture::options.prms.mesh.n_repetitions = 3;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
+  Fixture::options.prms.mesh.n_refinements = 1;
+  Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
+}
+
+
+
+TYPED_TEST_P(TestStokesIntegrator, localsolverstream_pressure)
+{
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
+  Fixture::options.prms.mesh.n_repetitions = 2;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  Fixture::check_matrixintegratorstreamlmw();
+  Fixture::check_localsolverstream(Fixture::lssVariant::Pressure);
+  Fixture::options.prms.mesh.n_repetitions = 3;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  Fixture::check_localsolverstream(Fixture::lssVariant::Pressure);
+  Fixture::options.prms.mesh.n_refinements = 1;
+  Fixture::check_localsolverstream(Fixture::lssVariant::Pressure);
 }
 
 
@@ -1112,7 +1231,8 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             matrixintegratorlmwRT_pressurevelocity_MPI,
                             matrixintegratorstreamlmw,
                             localsolverstream_velocity,
-                            localsolverstream_gradp);
+                            localsolverstream_gradp,
+                            localsolverstream_pressure);
 
 
 

@@ -709,13 +709,12 @@ struct MatrixIntegrator
 {
   using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
 
-
   /// This integrator assumes that the coefficients of the discrete pressure
   /// associated to the constant modes are set to zero!
   MatrixIntegrator(
-    const LinearAlgebra::distributed::Vector<double> *      pressure_solution,
-    const InterfaceHandler<dim> *                           interface_handler_in,
-    const Stokes::EquationData &                            equation_data_in,
+    const LinearAlgebra::distributed::Vector<double> * pressure_solution,
+    const InterfaceHandler<dim> *                      interface_handler_in,
+    const Stokes::EquationData &                       equation_data_in = Stokes::EquationData{},
     const std::map<types::global_dof_index, unsigned int> * g2l_pressure_in         = nullptr,
     const ArrayView<const VectorizedArray<double>> *        local_pressure_solution = nullptr,
     const unsigned int                                      lane_in = numbers::invalid_unsigned_int)
@@ -733,7 +732,7 @@ struct MatrixIntegrator
               ScratchData<dim> &   scratch_data,
               CopyData &           copy_data) const;
 
-  void
+  bool
   face_worker(const IteratorType & cell,
               const IteratorType & cellP,
               const unsigned int & face_no,
@@ -802,7 +801,7 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
 
 
 template<int dim, bool is_multigrid>
-void
+bool
 MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
                                                  const IteratorType & cellP,
                                                  const unsigned int & face_no,
@@ -818,7 +817,7 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   const unsigned int interface_index       = interface_handler->get_interface_index(interface_id);
   const bool this_interface_isnt_contained = interface_index == numbers::invalid_unsigned_int;
   if(this_interface_isnt_contained)
-    return;
+    return false;
 
   const auto cell_index  = interface_handler->get_cell_index(cell->id());
   const auto ncell_index = interface_handler->get_cell_index(ncell->id());
@@ -874,6 +873,8 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   face_data.rhs[face_no] += pn_dot_v;
   face_data.matrix(face_no, 0U) = alpha_left;
   face_data.matrix(face_no, 1U) = alpha_right;
+
+  return true;
 }
 
 } // namespace MW
