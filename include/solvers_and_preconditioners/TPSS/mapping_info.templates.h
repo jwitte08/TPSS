@@ -247,7 +247,7 @@ MappingInfo<dim, number>::initialize_storage(const PatchInfo<dim> &             
 {
   using namespace dealii;
 
-  const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
+  const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(patch_info.get_communicator()) > 1);
   if(is_mpi_parallel && patch_info.empty())
     return;
   else

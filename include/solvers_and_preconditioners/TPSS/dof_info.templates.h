@@ -172,10 +172,12 @@ DoFInfo<dim, Number>::initialize_impl()
 
     /// Initialize vector partitioner based on locally owned and ghosted dof indices.
     const auto partitioner =
-      std::make_shared<Utilities::MPI::Partitioner>(owned_dof_indices, MPI_COMM_WORLD);
+      std::make_shared<Utilities::MPI::Partitioner>(owned_dof_indices,
+                                                    patch_info->get_communicator());
     partitioner->set_ghost_indices(ghost_dof_indices);
-    this->vector_partitioner   = partitioner;
-    const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1); // !!!
+    this->vector_partitioner = partitioner;
+    const bool is_mpi_parallel =
+      (Utilities::MPI::n_mpi_processes(patch_info->get_communicator()) > 1); // !!!
     if(!is_mpi_parallel)
       AssertDimension(dof_handler->n_dofs(additional_data.level), vector_partitioner->size());
 
@@ -229,11 +231,13 @@ template<int dim, typename Number>
 void
 DoFInfo<dim, Number>::compute_restricted_dofs_impl()
 {
-  const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
+  AssertThrow(patch_info, ExcMessage("patch_info isn't set."));
+
+  const bool is_mpi_parallel =
+    (Utilities::MPI::n_mpi_processes(patch_info->get_communicator()) > 1);
   AssertThrow(!is_mpi_parallel, ExcMessage("MPI is not supported."));
 
   const auto n_components = shape_info->n_components;
-  AssertThrow(patch_info, ExcMessage("patch_info isn't set."));
   AssertThrow(shape_info, ExcMessage("shape_info isn't set."));
   AssertThrow(dof_handler, ExcMessage("dof_handler isn't set."));
   if(!patch_info->empty())

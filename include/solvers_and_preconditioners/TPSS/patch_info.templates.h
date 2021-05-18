@@ -14,10 +14,13 @@ PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
          ExcMessage("Implemented for level cell iterators!"));
   AssertIndexRange(additional_data_in.level, dof_handler->get_triangulation().n_global_levels());
 
-  // *** submit additional data
-  additional_data           = additional_data_in;
-  internal_data.level       = additional_data.level;
+  // *** prepare internal data
+  additional_data             = additional_data_in;
+  internal_data.level         = additional_data.level;
+  internal_data.triangulation = &(dof_handler->get_triangulation());
+  // TODO we should not need to store the dof handler
   internal_data.dof_handler = dof_handler;
+  mpi_communicator          = get_communicator();
 
   // *** extract and colorize subdomains depending on the patch variant
   if(additional_data.patch_variant == TPSS::PatchVariant::cell)
@@ -30,10 +33,6 @@ PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
   (void)n_cells_stored_after_init;
 
   // *** store internal data
-  internal_data.triangulation = &(dof_handler->get_triangulation());
-  // TODO we should not need to store the dof handler
-  internal_data.dof_handler = dof_handler;
-
   internal_data.cell_iterators.shrink_to_fit();
   internal_data.cell_level_and_index_pairs.clear();
   std::transform(internal_data.cell_iterators.cbegin(),
@@ -48,8 +47,8 @@ PatchInfo<dim>::initialize(const DoFHandler<dim> * dof_handler,
 
   /// check validity
   AssertDimension(n_cells_stored_after_init, n_cells_plain());
-  const auto n_colors_mpimin = Utilities::MPI::min(internal_data.n_colors(), MPI_COMM_WORLD);
-  const auto n_colors_mpimax = Utilities::MPI::max(internal_data.n_colors(), MPI_COMM_WORLD);
+  const auto n_colors_mpimin = Utilities::MPI::min(internal_data.n_colors(), mpi_communicator);
+  const auto n_colors_mpimax = Utilities::MPI::max(internal_data.n_colors(), mpi_communicator);
   (void)n_colors_mpimin, (void)n_colors_mpimax;
   Assert(n_colors_mpimin == n_colors_mpimax,
          ExcMessage("No unified number of colors between mpi-procs."));
@@ -115,7 +114,7 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
     const bool do_graph_coloring = !additional_data.coloring_func;
     if(do_graph_coloring) // graph coloring
     {
-      const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
+      const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(mpi_communicator) > 1);
       AssertThrow(!is_mpi_parallel,
                   ExcMessage("Graph coloring is not compatible with distributed triangulations."));
       colored_iterators = std::move(GraphColoring::make_graph_coloring(cell_collections.cbegin(),
@@ -158,19 +157,20 @@ PatchInfo<dim>::initialize_cell_patches(const dealii::DoFHandler<dim> * dof_hand
   if(additional_data.visualize_coloring)
     additional_data.visualize_coloring(*dof_handler, colored_iterators, "cp_");
 
-  // *** print detailed information
-  if(additional_data.print_details)
-  {
-    print_row_variable(pcout, 45, "Coloring on level:", additional_data.level);
-    print_row_variable(
-      pcout, 5, "", 10, "color:", 30, "# of interior patches:", 30, "# of boundary patches:");
-    const auto n_colors       = internal_data.subdomain_quantities.size();
-    auto       subdomain_data = internal_data.subdomain_quantities.cbegin();
-    for(unsigned c = 0; c < n_colors; ++c, ++subdomain_data)
-      print_row_variable(
-        pcout, 5, "", 10, c, 30, subdomain_data->n_interior, 30, subdomain_data->n_boundary);
-    pcout << std::endl;
-  }
+  /// TODO initialize pcout...
+  // // *** print detailed information
+  // if(additional_data.print_details)
+  // {
+  //   print_row_variable(pcout, 45, "Coloring on level:", additional_data.level);
+  //   print_row_variable(
+  //     pcout, 5, "", 10, "color:", 30, "# of interior patches:", 30, "# of boundary patches:");
+  //   const auto n_colors       = internal_data.subdomain_quantities.size();
+  //   auto       subdomain_data = internal_data.subdomain_quantities.cbegin();
+  //   for(unsigned c = 0; c < n_colors; ++c, ++subdomain_data)
+  //     print_row_variable(
+  //       pcout, 5, "", 10, c, 30, subdomain_data->n_interior, 30, subdomain_data->n_boundary);
+  //   pcout << std::endl;
+  // }
 }
 
 
@@ -476,7 +476,7 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
     {
       if(!additional_data.coloring_func) // graph coloring
       {
-        const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
+        const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(mpi_communicator) > 1);
         AssertThrow(!is_mpi_parallel,
                     ExcMessage(
                       "Graph coloring is not compatible with distributed triangulations."));
@@ -538,20 +538,21 @@ PatchInfo<dim>::initialize_vertex_patches(const dealii::DoFHandler<dim> * dof_ha
   (void)n_physical_subdomains;
   AssertDimension(n_physical_subdomains, internal_data.cell_iterators.size() / regular_vpatch_size);
 
-  if(additional_data.print_details && color_scheme != TPSS::SmootherVariant::additive)
-  {
-    print_row_variable(pcout, 2, "", 43, oss.str(), additional_data.level);
-    pcout << std::endl;
+  /// TODO initialize pcout...
+  // if(additional_data.print_details && color_scheme != TPSS::SmootherVariant::additive)
+  // {
+  //   print_row_variable(pcout, 2, "", 43, oss.str(), additional_data.level);
+  //   pcout << std::endl;
 
-    print_row_variable(
-      pcout, 5, "", 10, "color:", 30, "# of interior patches:", 30, "# of boundary patches:");
-    const auto n_colors       = internal_data.subdomain_quantities.size();
-    auto       subdomain_data = internal_data.subdomain_quantities.cbegin();
-    for(unsigned c = 0; c < n_colors; ++c, ++subdomain_data)
-      print_row_variable(
-        pcout, 5, "", 10, c, 30, subdomain_data->n_interior, 30, subdomain_data->n_boundary);
-    pcout << std::endl;
-  }
+  //   print_row_variable(
+  //     pcout, 5, "", 10, "color:", 30, "# of interior patches:", 30, "# of boundary patches:");
+  //   const auto n_colors       = internal_data.subdomain_quantities.size();
+  //   auto       subdomain_data = internal_data.subdomain_quantities.cbegin();
+  //   for(unsigned c = 0; c < n_colors; ++c, ++subdomain_data)
+  //     print_row_variable(
+  //       pcout, 5, "", 10, c, 30, subdomain_data->n_interior, 30, subdomain_data->n_boundary);
+  //   pcout << std::endl;
+  // }
 }
 
 
@@ -649,7 +650,7 @@ PatchInfo<dim>::submit_patches(const std::vector<PatchIterator> & patch_iterator
   // subsequently subdomains with ghosts. Each group is separated
   // into interior (first) and boundary (second) subdomains,
   // respectively.
-  const auto   my_subdomain_id   = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+  const auto   my_subdomain_id   = Utilities::MPI::this_mpi_process(mpi_communicator);
   const auto & is_ghost_on_level = [my_subdomain_id](const auto & cell) {
     const bool is_owned      = cell->level_subdomain_id() == my_subdomain_id;
     const bool is_artificial = cell->level_subdomain_id() == numbers::artificial_subdomain_id;
@@ -666,7 +667,7 @@ PatchInfo<dim>::submit_patches(const std::vector<PatchIterator> & patch_iterator
   }
   AssertDimension(owned_patch_iterators.size() + ghost_patch_iterators.size(),
                   patch_iterators.size());
-  const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) > 1);
+  const bool is_mpi_parallel = (Utilities::MPI::n_mpi_processes(mpi_communicator) > 1);
   if(!is_mpi_parallel)
     AssertDimension(ghost_patch_iterators.size(), 0);
 

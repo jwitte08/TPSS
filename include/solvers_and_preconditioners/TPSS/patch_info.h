@@ -87,6 +87,9 @@ public:
   const Triangulation<dim> &
   get_triangulation() const;
 
+  MPI_Comm
+  get_communicator() const;
+
   unsigned int
   n_cells_plain() const;
 
@@ -155,7 +158,8 @@ private:
   void
   submit_patches(const std::vector<PatchIterator> & patch_iterators);
 
-  ConditionalOStream pcout{std::cout, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0};
+  /// TODO initialize pcout...
+  // ConditionalOStream pcout{std::cout, Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0};
 
   /**
    * A struct storing CellIterators shaping patches
@@ -166,6 +170,8 @@ private:
    * Specific information like coloring schemes, etc.
    */
   AdditionalData additional_data;
+
+  MPI_Comm mpi_communicator;
 
   bool iterator_is_cached        = false;
   bool level_and_index_is_cached = false;
@@ -322,6 +328,9 @@ struct PatchInfo<dim>::InternalData
 
   bool
   empty_on_all() const;
+
+  MPI_Comm
+  get_communicator() const;
 
   unsigned int
   n_cells_plain() const;
@@ -627,9 +636,16 @@ template<int dim>
 inline const Triangulation<dim> &
 PatchInfo<dim>::get_triangulation() const
 {
-  const auto tria = get_internal_data()->triangulation;
-  Assert(tria, ExcMessage("Triangulation not set."));
-  return *tria;
+  Assert(internal_data.triangulation, ExcMessage("Triangulation is not set."));
+  return *internal_data.triangulation;
+}
+
+
+template<int dim>
+inline MPI_Comm
+PatchInfo<dim>::get_communicator() const
+{
+  return internal_data.get_communicator();
 }
 
 
@@ -804,6 +820,18 @@ PatchInfo<dim>::InternalData::clear()
 
 
 template<int dim>
+inline MPI_Comm
+PatchInfo<dim>::InternalData::get_communicator() const
+{
+  Assert(triangulation, ExcMessage("Triangulation is not initialized."));
+  auto parallel_tria = dynamic_cast<const parallel::TriangulationBase<dim> *>(triangulation);
+  if(parallel_tria)
+    return parallel_tria->get_communicator();
+  return MPI_COMM_SELF;
+}
+
+
+template<int dim>
 inline bool
 PatchInfo<dim>::InternalData::empty() const
 {
@@ -815,7 +843,7 @@ template<int dim>
 inline bool
 PatchInfo<dim>::InternalData::empty_on_all() const
 {
-  const auto n_cells_plain_mpimax = Utilities::MPI::max(n_cells_plain(), MPI_COMM_WORLD);
+  const auto n_cells_plain_mpimax = Utilities::MPI::max(n_cells_plain(), get_communicator());
   return n_cells_plain_mpimax == 0;
 }
 
