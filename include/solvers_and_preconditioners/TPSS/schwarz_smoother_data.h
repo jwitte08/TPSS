@@ -33,6 +33,7 @@ struct SchwarzSmootherData
       caching_strategy(TPSS::CachingStrategy::Cached),
       use_ras_weights(false),
       use_ras_boolean_weights(false),
+      n_active_blocks(numbers::invalid_unsigned_int),
       print_details(false)
   {
   }
@@ -57,6 +58,8 @@ struct SchwarzSmootherData
     print_parameter(pcout, "Schwarz operator", str_schwarz_operator);
     // print_parameter(pcout, "Number of smoothing steps", number_of_smoothing_steps);
     print_parameter(pcout, "Damping factor", damping_factor);
+    if(n_active_blocks != numbers::invalid_unsigned_int)
+      print_parameter(pcout, "Number of active blocks", n_active_blocks);
 
     print_parameter(pcout, "User-defined coloring", userdefined_coloring);
     print_parameter(pcout, "Symmetrized Schwarz operator", symmetrize_smoothing);
@@ -94,6 +97,7 @@ struct SchwarzSmootherData
     is_equal &= use_ras_boolean_weights == other.use_ras_boolean_weights;
     is_equal &= print_details == other.print_details;
     is_equal &= caching_strategy == other.caching_strategy;
+    is_equal &= n_active_blocks == other.n_active_blocks;
     return is_equal;
   }
 
@@ -137,6 +141,9 @@ struct SchwarzSmootherData
 
   // use restricted additive schwarz (boolean partition of unity)
   bool use_ras_boolean_weights;
+
+  // TODO ...
+  unsigned int n_active_blocks;
 
   // print detailed information regarding the patch distribution, etc.
   bool print_details;
