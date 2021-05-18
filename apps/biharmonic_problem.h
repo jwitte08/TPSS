@@ -671,6 +671,9 @@ template<bool is_stream>
 void
 ModelProblem<dim, fe_degree>::assemble_system_impl()
 {
+  system_u.update_ghost_values();
+  system_rhs.zero_out_ghosts();
+
   if(is_stream)
   {
     Assert(stokes_problem, ExcMessage("FEM for Stokes equations is uninitialized."));
@@ -685,8 +688,8 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
     using Stokes::Velocity::SIPG::MW::CopyData;
 
     const auto                     velocity_components = std::make_pair<unsigned int>(0, dim);
-    Stokes::FunctionExtractor<dim> load_function_stream(
-      stokes_problem->load_function.get() /*load_function_stokes.get()*/, velocity_components);
+    Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
+                                                          velocity_components);
 
     Stokes::FunctionExtractor<dim> analytical_solution_velocity(
       stokes_problem->analytical_solution.get(), velocity_components);
@@ -694,7 +697,7 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
     using MatrixIntegrator =
       typename Stokes::Velocity::SIPG::MW::MatrixIntegrator<dim, /*is_multigrid*/ false>;
 
-    MatrixIntegrator matrix_integrator(&load_function_stream,
+    MatrixIntegrator matrix_integrator(&load_function_velocity,
                                        &analytical_solution_velocity,
                                        &system_u,
                                        equation_data_stokes);
@@ -765,7 +768,8 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
                           scratch_data,
                           copy_data,
                           MeshWorker::assemble_own_cells | MeshWorker::assemble_boundary_faces |
-                            MeshWorker::assemble_own_interior_faces_once,
+                            MeshWorker::assemble_own_interior_faces_once |
+                            MeshWorker::assemble_ghost_faces_once,
                           boundary_worker,
                           face_worker);
   }
@@ -778,9 +782,6 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
 
     using MatrixIntegrator =
       typename C0IP::MW::MatrixIntegrator<dim, /*multigrid?*/ false, /*stream function?*/ false>;
-
-    system_u.update_ghost_values();
-    system_rhs.zero_out_ghosts();
 
     MatrixIntegrator matrix_integrator(load_function.get(),
                                        analytical_solution.get(),
@@ -852,10 +853,10 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
                             MeshWorker::assemble_ghost_faces_once,
                           boundary_worker,
                           face_worker);
-
-    system_matrix.compress(VectorOperation::add);
-    system_rhs.compress(VectorOperation::add);
   }
+
+  system_matrix.compress(VectorOperation::add);
+  system_rhs.compress(VectorOperation::add);
 }
 
 

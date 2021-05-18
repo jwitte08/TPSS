@@ -863,7 +863,6 @@ protected:
         *pcout_owned << "patch: " << patch_index << " , lane: " << lane << std::endl;
         *pcout_owned << "system rhs: " << vector_to_string(alignedvector_to_vector(local_rhs, lane))
                      << std::endl;
-        // std::cout << "patch: " << patch_index << " , lane: " << lane << std::endl;
         compare_vector(alignedvector_to_d2vector(local_solution, lane),
                        alignedvector_to_d2vector(other_solution, lane));
       }
@@ -920,7 +919,7 @@ TYPED_TEST_SUITE_P(TestStokesIntegrator);
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrixVelocity)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
-  ASSERT_TRUE(false) << "TODO...";
+  ASSERT_TRUE(false) << "TODO needs to be revised for more than one mpi proc...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -933,7 +932,8 @@ TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrixVelocity)
 
 TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityMPI)
 {
-  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  ASSERT_TRUE(false) << "TODO needs to be revised for more than one mpi proc...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -949,7 +949,7 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityMPI)
 TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversDGVelocity)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
-  ASSERT_TRUE(false) << "TODO...";
+  ASSERT_TRUE(false) << "TODO needs to be revised for more than one mpi proc...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -965,7 +965,7 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversDGVelocity)
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrix)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
-  ASSERT_TRUE(false) << "TODO...";
+  ASSERT_TRUE(false) << "TODO needs to be revised for more than one mpi proc...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -981,7 +981,7 @@ TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrix)
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemRHS)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
-  ASSERT_TRUE(false) << "TODO...";
+  ASSERT_TRUE(false) << "TODO needs to be revised for more than one mpi proc...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -995,7 +995,7 @@ TYPED_TEST_P(TestStokesIntegrator, CheckSystemRHS)
 TYPED_TEST_P(TestStokesIntegrator, CheckLevelMatrixVelocityPressure)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
-  ASSERT_TRUE(false) << "TODO...";
+  ASSERT_TRUE(false) << "TODO needs to be revised for more than one mpi proc...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -1009,7 +1009,7 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLevelMatrixVelocityPressure)
 TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
-  ASSERT_TRUE(false) << "TODO...";
+  ASSERT_TRUE(false) << "TODO needs to be revised for more than one mpi proc...";
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
@@ -1148,8 +1148,7 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_pressurevelocity_MPI)
 
 
 
-/// TODO MPI...
-TYPED_TEST_P(TestStokesIntegrator, matrixintegratorstreamlmw)
+TYPED_TEST_P(TestStokesIntegrator, matrixintegratorstreamlmw_MPI)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
   Fixture::setup_matrixintegratorlmw();
@@ -1183,7 +1182,7 @@ TYPED_TEST_P(TestStokesIntegrator, localsolverstream_gradp)
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.n_repetitions = 2;
   Fixture::options.prms.mesh.n_refinements = 0;
-  Fixture::check_matrixintegratorstreamlmw();
+  // Fixture::check_matrixintegratorstreamlmw();
   Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
   Fixture::options.prms.mesh.n_repetitions = 3;
   Fixture::options.prms.mesh.n_refinements = 0;
@@ -1200,7 +1199,7 @@ TYPED_TEST_P(TestStokesIntegrator, localsolverstream_pressure)
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.n_repetitions = 2;
   Fixture::options.prms.mesh.n_refinements = 0;
-  Fixture::check_matrixintegratorstreamlmw();
+  // Fixture::check_matrixintegratorstreamlmw();
   Fixture::check_localsolverstream(Fixture::lssVariant::Pressure);
   Fixture::options.prms.mesh.n_repetitions = 3;
   Fixture::options.prms.mesh.n_refinements = 0;
@@ -1228,7 +1227,7 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             matrixintegratorlmwRT_velocityvelocity_MPI,
                             matrixintegratorlmwRT_velocitypressure_MPI,
                             matrixintegratorlmwRT_pressurevelocity_MPI,
-                            matrixintegratorstreamlmw,
+                            matrixintegratorstreamlmw_MPI,
                             localsolverstream_velocity,
                             localsolverstream_gradp,
                             localsolverstream_pressure);
