@@ -830,86 +830,93 @@ public:
     return patch_storage;
   }
 
+
   // TODO const 'mg_matrices' prevented by current initialize of SchwarzPreconditioner
-  void
-  initialize(MGLevelObject<MatrixType> & mg_matrices, const AdditionalData & additional_data)
+  std::pair<typename preconditioner_type::AdditionalData, typename smoother_type::AdditionalData>
+  internal_initialize(MGLevelObject<MatrixType> & mg_matrices_in,
+                      const AdditionalData &      additional_data_in)
   {
-    const auto & prms = additional_data.parameters;
+    const auto & prms = additional_data_in.parameters;
     AssertThrow(prms.variant == SmootherParameter::SmootherVariant::Schwarz,
                 ExcMessage("Invalid SmootherVariant."));
 
-    const auto &                                 schwarz_data = prms.schwarz;
     typename preconditioner_type::AdditionalData precondition_data;
-    precondition_data.relaxation              = schwarz_data.damping_factor;
-    precondition_data.symmetrized             = schwarz_data.symmetrize_smoothing;
-    precondition_data.reverse                 = schwarz_data.reverse_smoothing;
-    precondition_data.use_ras_weights         = schwarz_data.use_ras_weights;
-    precondition_data.use_ras_boolean_weights = schwarz_data.use_ras_boolean_weights;
+    precondition_data.relaxation              = prms.schwarz.damping_factor;
+    precondition_data.symmetrized             = prms.schwarz.symmetrize_smoothing;
+    precondition_data.reverse                 = prms.schwarz.reverse_smoothing;
+    precondition_data.use_ras_weights         = prms.schwarz.use_ras_weights;
+    precondition_data.use_ras_boolean_weights = prms.schwarz.use_ras_boolean_weights;
+    precondition_data.n_active_blocks         = prms.schwarz.n_active_blocks;
 
     typename smoother_type::AdditionalData smoother_data;
     smoother_data.number_of_smoothing_steps = prms.n_smoothing_steps;
 
-    this->set_variable(prms.use_doubling_of_steps);
+    Base::set_variable(prms.use_doubling_of_steps);
 
     /// Initialize mg matrices within MGSmootherRelaxation (smoothers have
     /// to be set in an extra step)
-    this->mg_matrices = &mg_matrices;
-    Base::initialize(mg_matrices, smoother_data);
+    Base::initialize(mg_matrices_in, smoother_data);
+
+    mg_matrices = &mg_matrices_in; // book-keeping
+
+    return {precondition_data, smoother_data};
+  }
+
+
+  // TODO const 'mg_matrices' prevented by current initialize of SchwarzPreconditioner
+  void
+  initialize(MGLevelObject<MatrixType> & mg_matrices_in, const AdditionalData & additional_data_in)
+  {
+    const auto & [precondition_data, smoother_data] =
+      internal_initialize(mg_matrices_in, additional_data_in);
 
     /// Initialize the smoothers within MGSmootherRelaxation
-    const unsigned int mg_level_min = mg_matrices.min_level();
-    const unsigned int mg_level_max = mg_matrices.max_level();
+    const unsigned int mg_level_min = mg_matrices_in.min_level();
+    const unsigned int mg_level_max = mg_matrices_in.max_level();
     mg_schwarz_precondition.resize(mg_level_min, mg_level_max);
     for(unsigned int level = mg_level_min; level <= mg_level_max; ++level)
     {
-      const auto mf_storage_on_level = mg_matrices[level].get_matrix_free();
+      const auto mf_storage_on_level = mg_matrices_in[level].get_matrix_free();
       const auto patch_storage =
         build_patch_storage<typename MatrixType::value_type>(level,
                                                              mf_storage_on_level,
-                                                             additional_data);
+                                                             additional_data_in);
 
       // *** setup Schwarz preconditioner
       const auto schwarz_preconditioner = std::make_shared<preconditioner_type>();
-      schwarz_preconditioner->initialize(patch_storage, mg_matrices[level], precondition_data);
+      schwarz_preconditioner->initialize(patch_storage, mg_matrices_in[level], precondition_data);
       mg_schwarz_precondition[level] = schwarz_preconditioner; // book-keeping
 
       // *** setup Schwarz smoother
-      Base::smoothers[level].initialize(mg_matrices[level], schwarz_preconditioner, smoother_data);
+      Base::smoothers[level].initialize(mg_matrices_in[level],
+                                        schwarz_preconditioner,
+                                        smoother_data);
     }
   }
 
+
   void
   initialize(const MGSmootherSchwarz<dim, MatrixType, PatchMatrixType, VectorType> & other,
-             const AdditionalData & additional_data)
+             const AdditionalData & additional_data_in)
   {
-    const auto & prms = additional_data.parameters;
-    AssertThrow(prms.variant == SmootherParameter::SmootherVariant::Schwarz,
-                ExcMessage("Invalid SmootherVariant."));
-
-    const auto &                                 schwarz_data = prms.schwarz;
-    typename preconditioner_type::AdditionalData precondition_data;
-    precondition_data.relaxation  = schwarz_data.damping_factor;
-    precondition_data.symmetrized = schwarz_data.symmetrize_smoothing;
-    precondition_data.reverse     = schwarz_data.reverse_smoothing;
-    typename smoother_type::AdditionalData smoother_data;
-    smoother_data.number_of_smoothing_steps = prms.n_smoothing_steps;
-
-    /// initialize the mg matrices within MGSmootherRelaxation (smoothers have
-    /// to be set in an extra step)
-    this->mg_matrices = other.mg_matrices;
-    Base::initialize(*mg_matrices, smoother_data);
+    const auto & [precondition_data, smoother_data] =
+      internal_initialize(*other.mg_matrices, additional_data_in);
 
     /// check if shallow copyable
+    Assert(mg_matrices, ExcInternalError());
     const unsigned int mg_level_min = other.min_level();
+    AssertDimension(mg_matrices->min_level(), mg_level_min);
     const unsigned int mg_level_max = other.max_level();
+    AssertDimension(mg_matrices->max_level(), mg_level_max);
     typename SubdomainHandler<dim, typename MatrixType::value_type>::AdditionalData sd_handler_data;
-    fill_schwarz_smoother_data<dim, typename MatrixType::value_type>(sd_handler_data, schwarz_data);
+    fill_schwarz_smoother_data<dim, typename MatrixType::value_type>(
+      sd_handler_data, additional_data_in.parameters.schwarz);
     for(unsigned level = mg_level_min; level <= mg_level_max; ++level)
     {
       sd_handler_data.level = level;
-      if(prms.schwarz.userdefined_coloring)
-        sd_handler_data.coloring_func = additional_data.coloring_func;
-      sd_handler_data.use_tbb = additional_data.use_tbb;
+      if(additional_data_in.parameters.schwarz.userdefined_coloring)
+        sd_handler_data.coloring_func = additional_data_in.coloring_func;
+      sd_handler_data.use_tbb = additional_data_in.use_tbb;
       AssertThrow(other.get_preconditioner(level)->is_shallow_copyable(sd_handler_data),
                   ExcMessage("Is not shallow copyable. Check the SchwarzSmootherData settings."));
     }
