@@ -62,7 +62,7 @@ public:
   n_physical_subdomains() const;
 
   /**
-   * Returns the number of DoFHandlers (not necessarily unique).
+   * Returns the number of non-unique DoFHandlers.
    */
   unsigned int
   n_dof_handlers() const;

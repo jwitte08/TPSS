@@ -114,6 +114,8 @@ public:
   PatchTransfer(const SubdomainHandler<dim, Number> & subdomain_handler,
                 const unsigned int                    dofh_index = 0);
 
+  PatchTransfer(const std::vector<const TPSS::DoFInfo<dim, Number> *> & dof_infos);
+
   ~PatchTransfer() = default;
 
   PatchTransfer(const PatchTransfer & other) = delete;
@@ -584,6 +586,15 @@ inline PatchTransfer<dim, Number>::PatchTransfer(
   const unsigned int                    dofh_index_in)
   : PatchTransfer<dim, Number>(subdomain_handler_in.get_dof_info(dofh_index_in))
 {
+}
+
+
+template<int dim, typename Number>
+inline PatchTransfer<dim, Number>::PatchTransfer(
+  const std::vector<const TPSS::DoFInfo<dim, Number> *> & dof_infos)
+  : PatchTransfer<dim, Number>(*(dof_infos.front()))
+{
+  AssertDimension(dof_infos.size(), 1U);
 }
 
 

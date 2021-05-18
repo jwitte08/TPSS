@@ -234,6 +234,7 @@ template<typename BlockVectorType>
 AlignedVector<VectorizedArray<Number>>
 PatchTransferBlock<dim, Number>::gather(const BlockVectorType & src) const
 {
+  AssertDimension(n_blocks, src.n_blocks());
   AlignedVector<VectorizedArray<Number>> dst;
   reinit_local_vector(dst);
   auto begin = dst.begin();
@@ -256,6 +257,7 @@ void
 PatchTransferBlock<dim, Number>::gather_add(AlignedVector<VectorizedArray<Number>> & dst,
                                             const BlockVectorType &                  src) const
 {
+  AssertDimension(n_blocks, src.n_blocks());
   AssertDimension(dst.size(), n_dofs_per_patch());
   const auto & src_local = gather(src);
   std::transform(dst.begin(),
@@ -296,6 +298,7 @@ PatchTransferBlock<dim, Number>::scatter_add_impl(
   BlockVectorType &                              dst,
   const AlignedVector<VectorizedArray<Number>> & src) const
 {
+  AssertDimension(n_blocks, dst.n_blocks());
   auto begin = src.begin();
   for(std::size_t b = 0; b < n_blocks; ++b)
   {
