@@ -3260,211 +3260,6 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cellU,
 
 
 
-namespace FD
-{
-/**
- * Assembles the (exact) local matrices/solvers by exploiting the tensor
- * structure of each scalar-valued shape function, that is each block of a
- * patch matrix involving a component of the velocity vector-field and/or a
- * pressure function have a low-rank Kronecker product decomposition (representation?).
- *
- * However, each block matrix itself has no low-rank Kronecker decomposition
- * (representation?), thus, local matrices are stored and inverted in a
- * standard (vectorized) fashion.
- */
-template<int dim,
-         int fe_degree_p,
-         typename Number              = double,
-         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
-         int             fe_degree_v  = fe_degree_p + 1>
-class MatrixIntegratorTensor
-{
-public:
-  using This = MatrixIntegratorTensor<dim, fe_degree_p, Number>;
-
-  static constexpr int n_q_points_1d =
-    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
-
-  using value_type              = Number;
-  using transfer_type           = typename TPSS::PatchTransferBlock<dim, Number>;
-  using matrix_type_1d          = Table<2, VectorizedArray<Number>>;
-  using matrix_type             = MatrixAsTable<VectorizedArray<Number>>;
-  using matrix_type_mixed       = Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, -1>;
-  using velocity_evaluator_type = FDEvaluation<dim, fe_degree_v, n_q_points_1d, Number>;
-  using pressure_evaluator_type = FDEvaluation<dim, fe_degree_p, n_q_points_1d, Number>;
-
-  void
-  initialize(const EquationData & equation_data_in)
-  {
-    equation_data = equation_data_in;
-  }
-
-  template<typename OperatorType>
-  void
-  assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       subdomain_handler,
-                             std::vector<matrix_type> &                  local_matrices,
-                             const OperatorType &                        dummy_operator,
-                             const std::pair<unsigned int, unsigned int> subdomain_range) const
-  {
-    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
-
-    using MatrixIntegratorVelocity =
-      Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree_v, Number, dof_layout_v>;
-    static_assert(std::is_same<typename MatrixIntegratorVelocity::evaluator_type,
-                               velocity_evaluator_type>::value,
-                  "Velocity evaluator types mismatch.");
-    using matrix_type_velocity = typename MatrixIntegratorVelocity::matrix_type;
-
-    /// Assemble local matrices for the local velocity-velocity block.
-    std::vector<matrix_type_velocity> local_matrices_velocity(local_matrices.size());
-    {
-      MatrixIntegratorVelocity matrix_integrator;
-      matrix_integrator.initialize(equation_data);
-
-      matrix_integrator.template assemble_subspace_inverses<OperatorType>(subdomain_handler,
-                                                                          local_matrices_velocity,
-                                                                          dummy_operator,
-                                                                          subdomain_range);
-    }
-
-    /// Assemble local matrices for the local pressure-pressure block
-    {
-      /// This block is zero.
-    }
-
-    /// Assemble local matrices for the local velocity-pressure block
-    std::vector<matrix_type_mixed> local_matrices_velocity_pressure(local_matrices.size());
-    {
-      assemble_mixed_subspace_inverses<OperatorType>(subdomain_handler,
-                                                     local_matrices_velocity_pressure,
-                                                     dummy_operator,
-                                                     subdomain_range);
-    }
-
-    AssertDimension(local_matrices_velocity.size(), local_matrices.size());
-    const auto patch_transfer = get_patch_transfer(subdomain_handler);
-    for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
-        ++patch_index)
-    {
-      const auto & local_block_velocity          = local_matrices_velocity[patch_index];
-      const auto & local_block_velocity_pressure = local_matrices_velocity_pressure[patch_index];
-
-      patch_transfer->reinit(patch_index);
-      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
-      const auto n_dofs_velocity = local_block_velocity.m();
-      const auto n_dofs_pressure = local_block_velocity_pressure.n();
-      AssertDimension(patch_transfer->n_dofs_per_patch(0), n_dofs_velocity);
-      (void)n_dofs_pressure;
-      AssertDimension(patch_transfer->n_dofs_per_patch(1), n_dofs_pressure);
-
-      auto & local_matrix = local_matrices[patch_index];
-      local_matrix.as_table().reinit(n_dofs, n_dofs);
-
-      /// velocity-velocity
-      local_matrix.fill_submatrix(local_block_velocity.as_table(), 0U, 0U);
-
-      /// velocity-pressure
-      local_matrix.fill_submatrix(local_block_velocity_pressure.as_table(), 0U, n_dofs_velocity);
-
-      /// pressure-velocity
-      local_matrix.template fill_submatrix<true>(local_block_velocity_pressure.as_table(),
-                                                 n_dofs_velocity,
-                                                 0U);
-
-      local_matrix.invert({equation_data.local_kernel_size, equation_data.local_kernel_threshold});
-    }
-  }
-
-  template<typename OperatorType>
-  void
-  assemble_mixed_subspace_inverses(
-    const SubdomainHandler<dim, Number> & subdomain_handler,
-    std::vector<matrix_type_mixed> &      local_matrices,
-    const OperatorType &,
-    const std::pair<unsigned int, unsigned int> subdomain_range) const
-  {
-    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
-
-    for(auto compU = 0U; compU < dim; ++compU)
-    {
-      velocity_evaluator_type eval_velocity(subdomain_handler, /*dofh_index*/ 0, compU);
-      pressure_evaluator_type eval_pressure(subdomain_handler, /*dofh_index*/ 1, /*component*/ 0);
-
-      for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
-      {
-        auto & velocity_pressure_matrix = local_matrices[patch];
-        if(velocity_pressure_matrix.n_block_rows() == 0 &&
-           velocity_pressure_matrix.n_block_cols() == 0)
-          velocity_pressure_matrix.resize(dim, 1);
-
-        eval_velocity.reinit(patch);
-        eval_pressure.reinit(patch);
-
-        const auto mass_matrices =
-          assemble_mass_tensor(/*test*/ eval_velocity, /*ansatz*/ eval_pressure);
-        /// Note that we have flipped ansatz and test functions roles. The
-        /// divergence of the velocity test functions is obtained by
-        /// transposing gradient matrices.
-        const auto gradient_matrices =
-          assemble_gradient_tensor(/*test*/ eval_pressure, /*ansatz*/ eval_velocity);
-
-        const auto & MxMxGT = [&](const unsigned int direction_of_div) {
-          /// For example, we obtain MxMxGT for direction_of_div = 0 (dimension
-          /// 0 is rightmost!)
-          std::array<matrix_type_1d, dim> kronecker_tensor;
-          for(auto d = 0U; d < dim; ++d)
-            kronecker_tensor[d] = d == direction_of_div ?
-                                    -1. * LinAlg::transpose(gradient_matrices[direction_of_div]) :
-                                    mass_matrices[d];
-          return kronecker_tensor;
-        };
-
-        std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
-        rank1_tensors.emplace_back(MxMxGT(compU));
-        velocity_pressure_matrix.get_block(compU, 0).reinit(rank1_tensors);
-      }
-    }
-  }
-
-  std::array<matrix_type_1d, dim>
-  assemble_mass_tensor(velocity_evaluator_type & eval_test,
-                       pressure_evaluator_type & eval_ansatz) const
-  {
-    using CellMass = ::FD::L2::CellOperation<dim, fe_degree_v, n_q_points_1d, Number, fe_degree_p>;
-    return eval_test.patch_action(eval_ansatz, CellMass{});
-  }
-
-  /**
-   * We remark that the velocity takes the ansatz function role here
-   * (Gradient::CellOperation derives the ansatz function) although in
-   * assemble_mixed_subspace_inverses() we require the divergence of the
-   * velocity test functions. Therefore, we transpose the returned tensor of
-   * matrices.
-   */
-  std::array<matrix_type_1d, dim>
-  assemble_gradient_tensor(pressure_evaluator_type & eval_test,
-                           velocity_evaluator_type & eval_ansatz) const
-  {
-    using CellGradient =
-      ::FD::Gradient::CellOperation<dim, fe_degree_p, n_q_points_1d, Number, fe_degree_v>;
-    CellGradient cell_gradient;
-    return eval_test.patch_action(eval_ansatz, cell_gradient);
-  }
-
-  std::shared_ptr<transfer_type>
-  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
-  {
-    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
-    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
-    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
-    return std::make_shared<transfer_type>(dofinfos);
-  }
-
-  EquationData equation_data;
-};
-
-
-
 /**
  * This class is actual not an "integration-type" struct for local matrices. It
  * simply uses PatchTransferBlock w.r.t. the velocity-pressure block system to
@@ -3702,6 +3497,215 @@ public:
 
 
 
+namespace FD
+{
+/**
+ * Assembles the (exact) local matrices/solvers by exploiting the tensor
+ * structure of each scalar-valued shape function, that is each block of a
+ * patch matrix involving a component of the velocity vector-field and/or a
+ * pressure function have a low-rank Kronecker product decomposition (representation?).
+ *
+ * However, each block matrix itself has no low-rank Kronecker decomposition
+ * (representation?), thus, local matrices are stored and inverted in a
+ * standard (vectorized) fashion.
+ */
+template<int dim,
+         int fe_degree_p,
+         typename Number              = double,
+         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
+         int             fe_degree_v  = fe_degree_p + 1>
+class MatrixIntegrator
+{
+public:
+  using This = MatrixIntegrator<dim, fe_degree_p, Number>;
+
+  static constexpr int n_q_points_1d =
+    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
+
+  using value_type              = Number;
+  using transfer_type           = typename TPSS::PatchTransferBlock<dim, Number>;
+  using matrix_type_1d          = Table<2, VectorizedArray<Number>>;
+  using matrix_type             = MatrixAsTable<VectorizedArray<Number>>;
+  using matrix_type_mixed       = Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, -1>;
+  using velocity_evaluator_type = FDEvaluation<dim, fe_degree_v, n_q_points_1d, Number>;
+  using pressure_evaluator_type = FDEvaluation<dim, fe_degree_p, n_q_points_1d, Number>;
+
+  void
+  initialize(const EquationData & equation_data_in)
+  {
+    equation_data = equation_data_in;
+  }
+
+  template<typename OperatorType>
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       subdomain_handler,
+                             std::vector<matrix_type> &                  local_matrices,
+                             const OperatorType &                        dummy_operator,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+
+    using MatrixIntegratorVelocity =
+      Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree_v, Number, dof_layout_v>;
+    static_assert(std::is_same<typename MatrixIntegratorVelocity::evaluator_type,
+                               velocity_evaluator_type>::value,
+                  "Velocity evaluator types mismatch.");
+    using matrix_type_velocity = typename MatrixIntegratorVelocity::matrix_type;
+
+    /// Assemble local matrices for the local velocity-velocity block.
+    std::vector<matrix_type_velocity> local_matrices_velocity(local_matrices.size());
+    {
+      MatrixIntegratorVelocity matrix_integrator;
+      matrix_integrator.initialize(equation_data);
+
+      matrix_integrator.template assemble_subspace_inverses<OperatorType>(subdomain_handler,
+                                                                          local_matrices_velocity,
+                                                                          dummy_operator,
+                                                                          subdomain_range);
+    }
+
+    /// Assemble local matrices for the local pressure-pressure block
+    {
+      /// This block is zero.
+    }
+
+    /// Assemble local matrices for the local velocity-pressure block
+    std::vector<matrix_type_mixed> local_matrices_velocity_pressure(local_matrices.size());
+    {
+      assemble_mixed_subspace_inverses<OperatorType>(subdomain_handler,
+                                                     local_matrices_velocity_pressure,
+                                                     dummy_operator,
+                                                     subdomain_range);
+    }
+
+    AssertDimension(local_matrices_velocity.size(), local_matrices.size());
+    const auto patch_transfer = get_patch_transfer(subdomain_handler);
+    for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
+        ++patch_index)
+    {
+      const auto & local_block_velocity          = local_matrices_velocity[patch_index];
+      const auto & local_block_velocity_pressure = local_matrices_velocity_pressure[patch_index];
+
+      patch_transfer->reinit(patch_index);
+      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
+      const auto n_dofs_velocity = local_block_velocity.m();
+      const auto n_dofs_pressure = local_block_velocity_pressure.n();
+      AssertDimension(patch_transfer->n_dofs_per_patch(0), n_dofs_velocity);
+      (void)n_dofs_pressure;
+      AssertDimension(patch_transfer->n_dofs_per_patch(1), n_dofs_pressure);
+
+      auto & local_matrix = local_matrices[patch_index];
+      local_matrix.as_table().reinit(n_dofs, n_dofs);
+
+      /// velocity-velocity
+      local_matrix.fill_submatrix(local_block_velocity.as_table(), 0U, 0U);
+
+      /// velocity-pressure
+      local_matrix.fill_submatrix(local_block_velocity_pressure.as_table(), 0U, n_dofs_velocity);
+
+      /// pressure-velocity
+      local_matrix.template fill_submatrix<true>(local_block_velocity_pressure.as_table(),
+                                                 n_dofs_velocity,
+                                                 0U);
+
+      local_matrix.invert({equation_data.local_kernel_size, equation_data.local_kernel_threshold});
+    }
+  }
+
+  template<typename OperatorType>
+  void
+  assemble_mixed_subspace_inverses(
+    const SubdomainHandler<dim, Number> & subdomain_handler,
+    std::vector<matrix_type_mixed> &      local_matrices,
+    const OperatorType &,
+    const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+
+    for(auto compU = 0U; compU < dim; ++compU)
+    {
+      velocity_evaluator_type eval_velocity(subdomain_handler, /*dofh_index*/ 0, compU);
+      pressure_evaluator_type eval_pressure(subdomain_handler, /*dofh_index*/ 1, /*component*/ 0);
+
+      for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
+      {
+        auto & velocity_pressure_matrix = local_matrices[patch];
+        if(velocity_pressure_matrix.n_block_rows() == 0 &&
+           velocity_pressure_matrix.n_block_cols() == 0)
+          velocity_pressure_matrix.resize(dim, 1);
+
+        eval_velocity.reinit(patch);
+        eval_pressure.reinit(patch);
+
+        const auto mass_matrices =
+          assemble_mass_tensor(/*test*/ eval_velocity, /*ansatz*/ eval_pressure);
+        /// Note that we have flipped ansatz and test functions roles. The
+        /// divergence of the velocity test functions is obtained by
+        /// transposing gradient matrices.
+        const auto gradient_matrices =
+          assemble_gradient_tensor(/*test*/ eval_pressure, /*ansatz*/ eval_velocity);
+
+        const auto & MxMxGT = [&](const unsigned int direction_of_div) {
+          /// For example, we obtain MxMxGT for direction_of_div = 0 (dimension
+          /// 0 is rightmost!)
+          std::array<matrix_type_1d, dim> kronecker_tensor;
+          for(auto d = 0U; d < dim; ++d)
+            kronecker_tensor[d] = d == direction_of_div ?
+                                    -1. * LinAlg::transpose(gradient_matrices[direction_of_div]) :
+                                    mass_matrices[d];
+          return kronecker_tensor;
+        };
+
+        std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
+        rank1_tensors.emplace_back(MxMxGT(compU));
+        velocity_pressure_matrix.get_block(compU, 0).reinit(rank1_tensors);
+      }
+    }
+  }
+
+  std::array<matrix_type_1d, dim>
+  assemble_mass_tensor(velocity_evaluator_type & eval_test,
+                       pressure_evaluator_type & eval_ansatz) const
+  {
+    using CellMass = ::FD::L2::CellOperation<dim, fe_degree_v, n_q_points_1d, Number, fe_degree_p>;
+    return eval_test.patch_action(eval_ansatz, CellMass{});
+  }
+
+  /**
+   * We remark that the velocity takes the ansatz function role here
+   * (Gradient::CellOperation derives the ansatz function) although in
+   * assemble_mixed_subspace_inverses() we require the divergence of the
+   * velocity test functions. Therefore, we transpose the returned tensor of
+   * matrices.
+   */
+  std::array<matrix_type_1d, dim>
+  assemble_gradient_tensor(pressure_evaluator_type & eval_test,
+                           velocity_evaluator_type & eval_ansatz) const
+  {
+    using CellGradient =
+      ::FD::Gradient::CellOperation<dim, fe_degree_p, n_q_points_1d, Number, fe_degree_v>;
+    CellGradient cell_gradient;
+    return eval_test.patch_action(eval_ansatz, cell_gradient);
+  }
+
+  std::shared_ptr<transfer_type>
+  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
+    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
+    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
+    return std::make_shared<transfer_type>(dofinfos);
+  }
+
+  EquationData equation_data;
+};
+
+} // namespace FD
+
+
+
+namespace LMW
+{
 /**
  * This class actually makes no use of fast diagonalization but simply uses the
  * MeshWorker framework to assemble local matrices. Nevertheless
@@ -3716,10 +3720,10 @@ template<int dim,
          typename Number              = double,
          TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
          int             fe_degree_v  = fe_degree_p + 1>
-class MatrixIntegratorLMW
+class MatrixIntegrator
 {
 public:
-  using This = MatrixIntegratorLMW<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
+  using This = MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
 
   static constexpr int n_q_points_1d =
     fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
@@ -4889,7 +4893,7 @@ struct LocalSolverStream
   {
     return std::make_shared<transfer_type_stream>(subdomain_handler, 2);
   }
-}; // namespace FD
+};
 
 
 
@@ -4906,10 +4910,10 @@ struct LocalSolverStream
  * is without exploiting any tensor structure.
  */
 template<int dim, int fe_degree_p, typename Number = double>
-class MatrixIntegratorStreamLMW
+class MatrixIntegratorStream
 {
 public:
-  using This = MatrixIntegratorStreamLMW<dim, fe_degree_p, Number>;
+  using This = MatrixIntegratorStream<dim, fe_degree_p, Number>;
 
   static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::RT;
   static constexpr int             fe_degree_v  = fe_degree_p;
@@ -5116,11 +5120,13 @@ public:
   EquationData equation_data;
 };
 
+} // namespace LMW
+
 
 
 /**
- * Selects the MatrixIntegrator at compile time w.r.t. the LocalAssembly
- * template. Hence, the generic class is empty and we select by template
+ * Selects the MatrixIntegrator at compile time w.r.t. the template parameter @p
+ * local_assembly. Hence, the generic class is empty and we select by template
  * specialization.
  */
 template<LocalAssembly local_assembly,
@@ -5141,7 +5147,7 @@ struct MatrixIntegratorSelector<LocalAssembly::Tensor,
                                 dof_layout_v,
                                 fe_degree_v>
 {
-  using type = MatrixIntegratorTensor<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
+  using type = FD::MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
 };
 
 template<int dim, int fe_degree_p, typename Number, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
@@ -5163,7 +5169,7 @@ struct MatrixIntegratorSelector<LocalAssembly::LMW,
                                 dof_layout_v,
                                 fe_degree_v>
 {
-  using type = MatrixIntegratorLMW<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
+  using type = LMW::MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
 };
 
 template<int dim, int fe_degree_p, typename Number, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
@@ -5176,7 +5182,7 @@ struct MatrixIntegratorSelector<LocalAssembly::StreamLMW,
 {
   static_assert(dof_layout_v == TPSS::DoFLayout::RT, "Implemented for Raviart-Thomas.");
   static_assert(fe_degree_p == fe_degree_v, "Mismatching finite element degrees.");
-  using type = MatrixIntegratorStreamLMW<dim, fe_degree_p, Number>;
+  using type = LMW::MatrixIntegratorStream<dim, fe_degree_p, Number>;
 };
 
 
@@ -5196,8 +5202,6 @@ using MatrixIntegrator = typename MatrixIntegratorSelector<local_assembly,
                                                            Number,
                                                            dof_layout_v,
                                                            fe_degree_v>::type;
-
-} // namespace FD
 
 } // namespace VelocityPressure
 

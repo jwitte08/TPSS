@@ -124,7 +124,7 @@ template<int dim,
          LocalAssembly   local_assembly>
 class BlockSparseMatrixAugmented
   : public TrilinosWrappers::BlockSparseMatrix,
-    public VelocityPressure::FD::
+    public VelocityPressure::
       MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>
 {
   static_assert(std::is_same<Number, double>::value,
@@ -133,7 +133,7 @@ class BlockSparseMatrixAugmented
 public:
   using value_type            = Number;
   using matrix_type           = TrilinosWrappers::BlockSparseMatrix;
-  using local_integrator_type = VelocityPressure::FD::
+  using local_integrator_type = VelocityPressure::
     MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>;
 
   void

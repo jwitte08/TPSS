@@ -463,11 +463,11 @@ protected:
     const auto mgc = stokes_problem->make_multigrid_velocity_pressure();
     stokes_problem->print_informations();
 
-    using MatrixIntegrator  = VelocityPressure::FD::MatrixIntegratorLMW<dim,
-                                                                       fe_degree_p,
-                                                                       double,
-                                                                       StokesProblem::dof_layout_v,
-                                                                       StokesProblem::fe_degree_v>;
+    using MatrixIntegrator  = VelocityPressure::LMW::MatrixIntegrator<dim,
+                                                                     fe_degree_p,
+                                                                     double,
+                                                                     StokesProblem::dof_layout_v,
+                                                                     StokesProblem::fe_degree_v>;
     using local_matrix_type = typename MatrixIntegrator::matrix_type;
 
     ASSERT_TRUE(mgc->mg_schwarz_smoother_pre) << "mg_smoother is not initialized.";
@@ -488,12 +488,11 @@ protected:
                                           level_matrix,
                                           partition_data.get_patch_range());
 
-    using MatrixIntegratorCut =
-      VelocityPressure::FD::MatrixIntegratorCut<dim,
-                                                fe_degree_p,
-                                                double,
-                                                StokesProblem::dof_layout_v,
-                                                StokesProblem::fe_degree_v>;
+    using MatrixIntegratorCut = VelocityPressure::MatrixIntegratorCut<dim,
+                                                                      fe_degree_p,
+                                                                      double,
+                                                                      StokesProblem::dof_layout_v,
+                                                                      StokesProblem::fe_degree_v>;
 
     std::vector<local_matrix_type> local_matrices_cut(n_subdomains);
 
@@ -542,7 +541,7 @@ protected:
 
     ASSERT_EQ(StokesProblem::dof_layout_v, TPSS::DoFLayout::RT);
     using MatrixIntegrator =
-      VelocityPressure::FD::MatrixIntegratorStreamLMW<dim, fe_degree_p, double>;
+      VelocityPressure::LMW::MatrixIntegratorStream<dim, fe_degree_p, double>;
 
     using local_matrix_type = typename MatrixIntegrator::matrix_type;
 
@@ -650,7 +649,7 @@ protected:
 
     ASSERT_EQ(StokesProblem::dof_layout_v, TPSS::DoFLayout::RT);
     using MatrixIntegrator =
-      VelocityPressure::FD::MatrixIntegratorStreamLMW<dim, fe_degree_p, double>;
+      VelocityPressure::LMW::MatrixIntegratorStream<dim, fe_degree_p, double>;
 
     using local_matrix_type = typename MatrixIntegrator::matrix_type;
 
@@ -678,8 +677,8 @@ protected:
     const auto   patch_transfer_sf   = integrator.get_patch_transfer_stream(*subdomain_handler);
     const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
 
-    using OtherMatrixIntegrator = VelocityPressure::FD::
-      MatrixIntegratorLMW<dim, fe_degree_p, double, TPSS::DoFLayout::RT, fe_degree_p>;
+    using OtherMatrixIntegrator = VelocityPressure::LMW::
+      MatrixIntegrator<dim, fe_degree_p, double, TPSS::DoFLayout::RT, fe_degree_p>;
 
     using other_matrix_type = typename OtherMatrixIntegrator::matrix_type;
 
