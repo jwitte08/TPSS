@@ -1,11 +1,11 @@
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
-SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::internal_initialize(
   const std::shared_ptr<const SubdomainHandler<
     dim,
     typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type>>
                          subdomain_handler_in,
-  OperatorType &         operator_in,
+  OperatorType &         linear_operator_in,
   const AdditionalData & additional_data_in)
 {
   // *** assert that each process has the same number of colors
@@ -18,7 +18,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   // *** reset members to uninitialized state
   clear();
 
-  // *** set time information
+  // *** reset storage for timings
   time_data = {{0., "[SchwarzPrecond] Update residuals:", "[s]", 0},
                {0., "[SchwarzPrecond] Apply inverses:", "[s]", 0},
                {0., "[SchwarzPrecond] Compute inverses:", "[s]", 0},
@@ -27,63 +27,91 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
 
   // *** initialization of members
   subdomain_handler = subdomain_handler_in;
-  linear_operator   = &operator_in;
+  linear_operator   = &linear_operator_in;
   additional_data   = additional_data_in;
   Assert(additional_data.relaxation > 0., ExcInvalidState());
 
-  const auto & sh_data = subdomain_handler->get_additional_data();
-  level                = sh_data.level;
-  Assert(level != static_cast<unsigned int>(-1), ExcNotImplemented());
-  patch_variant    = sh_data.patch_variant;
-  smoother_variant = sh_data.smoother_variant;
+  const auto & subdomain_handler_data = subdomain_handler->get_additional_data();
+
+  level = subdomain_handler_data.level;
+  Assert(level != numbers::invalid_unsigned_int, ExcNotImplemented());
+  patch_variant    = subdomain_handler_data.patch_variant;
+  smoother_variant = subdomain_handler_data.smoother_variant;
   Assert(patch_variant == TPSS::PatchVariant::vertex || patch_variant == TPSS::PatchVariant::cell,
          dealii::ExcNotImplemented());
-
-  // *** compute subproblem inverses
-  Timer timer;
-  timer.restart();
-  compute_inverses();
-  time_data[2].add_time(timer.wall_time());
-
-  if(additional_data.use_ras_weights)
-    compute_ras_weights();
+  if(additional_data.use_ras_boolean_weights)
+    Assert(subdomain_handler_data.compute_ras_boolean_weights,
+           ExcMessage("Missing boolean RAS weights."));
 
   /// instantiate ghosted vectors (initialization is postponed to the actual
   /// smoothing step)
   solution_ghosted = std::make_shared<VectorType>();
   residual_ghosted = std::make_shared<VectorType>();
 
-  // *** storing SubdomainHandler's timings
-  const auto & sh_time_data = subdomain_handler->get_time_data();
-  for(const auto & info : sh_time_data)
-    time_data.emplace_back(info.time, info.description, info.unit);
+  // *** caching SubdomainHandler's timings
+  {
+    const auto & timings = subdomain_handler->get_time_data();
+    for(const auto & info : timings)
+      time_data.emplace_back(info.time, info.description, info.unit);
+  }
 }
+
 
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
-  const SchwarzPreconditioner & schwarz_preconditioner_in,
+  const std::shared_ptr<const SubdomainHandler<
+    dim,
+    typename SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::value_type>>
+                         subdomain_handler_in,
+  OperatorType &         linear_operator_in,
+  const AdditionalData & additional_data_in)
+{
+  internal_initialize(subdomain_handler_in, linear_operator_in, additional_data_in);
+
+  // *** assemble local solvers
+  Timer timer;
+  timer.restart();
+  compute_inverses();
+  time_data[2].add_time(timer.wall_time());
+
+  // *** computes RAS weights
+  if(additional_data.use_ras_weights)
+    compute_ras_weights();
+}
+
+
+
+template<int dim, class OperatorType, typename VectorType, typename MatrixType>
+void
+SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
+  const SchwarzPreconditioner & other,
   const AdditionalData &        additional_data_in)
 {
-  // *** reset members to uninitialized state
-  clear();
+  internal_initialize(other.subdomain_handler, *other.linear_operator, additional_data_in);
 
-  // *** initialization of members
-  time_data            = schwarz_preconditioner_in.time_data;
-  subdomain_handler    = schwarz_preconditioner_in.subdomain_handler;
-  linear_operator      = schwarz_preconditioner_in.linear_operator;
-  subdomain_to_inverse = schwarz_preconditioner_in.subdomain_to_inverse;
-  additional_data      = additional_data_in;
-  level                = schwarz_preconditioner_in.level;
-  patch_variant        = schwarz_preconditioner_in.patch_variant;
-  smoother_variant     = schwarz_preconditioner_in.smoother_variant;
-  solution_ghosted     = schwarz_preconditioner_in.solution_ghosted;
-  residual_ghosted     = schwarz_preconditioner_in.residual_ghosted;
-  Assert(additional_data.relaxation > 0., ExcMessage("Invalid relaxation factor."));
-  Assert(patch_variant == TPSS::PatchVariant::vertex || patch_variant == TPSS::PatchVariant::cell,
-         ExcMessage("Invalid patch variant."));
+  /// shallow copy of local solvers
+  subdomain_to_inverse = other.subdomain_to_inverse;
+
+  /// shallow copy of ghosted vectors
+  solution_ghosted = other.solution_ghosted;
+  residual_ghosted = other.residual_ghosted;
+
+  if(additional_data_in.use_ras_weights)
+  {
+    /// shallow copy of RAS weights
+    if(other.additional_data.use_ras_weights)
+      ras_weights = other.ras_weights;
+    /// compute RAS weights
+    else
+    {
+      Assert(false, ExcMessage("TODO this functionality is untested..."));
+      compute_ras_weights();
+    }
+  }
 }
+
 
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
@@ -96,6 +124,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::initialize(
   (void)linear_operator;
   (void)additional_data;
 }
+
 
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
@@ -134,6 +163,8 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::compute_ras_we
            const VectorType &                            dummy2,
            const std::pair<unsigned int, unsigned int> & subdomain_range) {
       (void)dummy2;
+      /// TODO ...
+      AssertDimension(additional_data.n_active_blocks, numbers::invalid_unsigned_int);
       auto transfer = std::make_shared<typename OperatorType::transfer_type>(data);
       AlignedVector<VectorizedArray<value_type>> local_one;
       for(auto patch_id = subdomain_range.first; patch_id < subdomain_range.second; ++patch_id)
@@ -146,22 +177,23 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::compute_ras_we
       }
     };
 
-  initialize_ghosted_vector_if_needed(ras_weights);
+  ras_weights = std::make_shared<VectorType>();
+  initialize_ghosted_vector_if_needed(*ras_weights);
 
   const auto & partition_data = subdomain_handler->get_partition_data();
   const auto   n_colors       = partition_data.n_colors();
   for(unsigned int color = 0; color < n_colors; ++color)
   {
-    TPSS::internal::zero_out_ghosts_if_needed(ras_weights);
+    TPSS::internal::zero_out_ghosts_if_needed(*ras_weights); // write to
     subdomain_handler->template loop<const VectorType, VectorType>(std::ref(count_appearances),
-                                                                   ras_weights,
-                                                                   ras_weights,
+                                                                   *ras_weights,
+                                                                   *ras_weights,
                                                                    color);
     /// transfer ghost values to their owners
-    ras_weights.compress(VectorOperation::add);
+    ras_weights->compress(VectorOperation::add);
   }
 
-  ras_weights.update_ghost_values();
+  ras_weights->update_ghost_values(); // read from
 }
 
 
@@ -179,6 +211,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::clear()
   subdomain_to_inverse.reset();
   linear_operator = nullptr;
   subdomain_handler.reset();
+  ras_weights.reset();
 }
 
 
@@ -295,13 +328,11 @@ bool
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::is_globally_compatible(
   const LinearAlgebra::distributed::BlockVector<value_type> & vec) const
 {
-  bool         is_compatible = true;
-  const auto & partitioners  = subdomain_handler->get_vector_partitioners();
-  AssertDimension(partitioners.size(), vec.n_blocks());
-  for(unsigned int b = 0; b < partitioners.size(); ++b)
+  bool is_compatible = true;
+  for(unsigned int b = 0; b < vec.n_blocks(); ++b)
   {
-    is_compatible =
-      is_compatible && vec.block(b).partitioners_are_globally_compatible(*(partitioners[b]));
+    const auto & partitioner = *(subdomain_handler->get_vector_partitioner(b));
+    is_compatible &= vec.block(b).partitioners_are_globally_compatible(partitioner);
   }
   return is_compatible;
 }
@@ -337,24 +368,28 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
   initialize_ghosted_vector_if_needed(
     LinearAlgebra::distributed::BlockVector<value_type> & vec) const
 {
-  const auto & partitioners = subdomain_handler->get_vector_partitioners();
-  if(vec.n_blocks() == partitioners.size())
-  {
-    bool is_compatible = true;
-    for(unsigned int b = 0; b < vec.n_blocks(); ++b)
-      is_compatible &= vec.block(b).partitioners_are_compatible(*(partitioners[b]));
-    if(is_compatible)
-      return; //: skip initialization
-  }
+  const unsigned int n_blocks = additional_data.n_active_blocks == numbers::invalid_unsigned_int ?
+                                  subdomain_handler->n_dof_handlers() :
+                                  additional_data.n_active_blocks;
 
-  //: initialize ghosted vector
-  const unsigned int n_components = partitioners.size();
-  vec.reinit(n_components, /*block_size*/ 0, /*omit_zeroing_entries*/ false);
-  for(unsigned int b = 0; b < n_components; ++b)
-    vec.block(b).reinit(partitioners[b]);
-  /// since the 'block size' has not been set in the reinit() call we have to
-  /// finalize the initialization by updating the intrinsic block sizes,
-  /// calling collect_sizes()
+  bool is_compatible = n_blocks == vec.n_blocks();
+  if(is_compatible)
+    for(unsigned int b = 0; b < vec.n_blocks(); ++b)
+    {
+      const auto & partitioner = *(subdomain_handler->get_vector_partitioner(b));
+      is_compatible &= vec.block(b).partitioners_are_compatible(partitioner);
+    }
+
+  if(is_compatible)
+    return; //: skip initialization
+
+  //: initialize ghosteget_dof_info1get_dof_infod vector
+  vec.reinit(n_blocks);
+  for(unsigned int b = 0; b < vec.n_blocks(); ++b)
+  {
+    const auto & partitioner = subdomain_handler->get_vector_partitioner(b);
+    vec.block(b).reinit(partitioner);
+  }
   vec.collect_sizes();
 }
 
@@ -378,11 +413,16 @@ void
 SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
   initialize_ghosted_vector_if_needed(BlockVector<value_type> & vec) const
 {
-  const auto & partitioners = subdomain_handler->get_vector_partitioners();
-  AssertDimension(vec.n_blocks(), partitioners.size());
+  const unsigned int n_blocks = additional_data.n_active_blocks == numbers::invalid_unsigned_int ?
+                                  subdomain_handler->n_dof_handlers() :
+                                  additional_data.n_active_blocks;
+
   std::vector<types::global_dof_index> size_foreach_block;
-  for(const auto & p : partitioners)
-    size_foreach_block.push_back(p->size());
+  for(auto b = 0U; b < n_blocks; ++b)
+  {
+    const auto & partitioner = *(subdomain_handler->get_vector_partitioner(b));
+    size_foreach_block.push_back(partitioner.size());
+  }
   vec.reinit(size_foreach_block);
 }
 
@@ -607,7 +647,17 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
         const std::pair<unsigned int, unsigned int> & subdomain_range) {
       /// TODO use a mutex for thread safety?
 
-      auto transfer = std::make_shared<typename OperatorType::transfer_type>(data);
+      std::shared_ptr<typename OperatorType::transfer_type> transfer;
+      if(additional_data.n_active_blocks == numbers::invalid_unsigned_int)
+        transfer = std::make_shared<typename OperatorType::transfer_type>(data);
+      else
+      {
+        std::vector<const TPSS::DoFInfo<dim, value_type> *> active_dof_infos;
+        for(auto b = 0U; b < additional_data.n_active_blocks; ++b)
+          active_dof_infos.push_back(&data.get_dof_info(b));
+        transfer = std::make_shared<typename OperatorType::transfer_type>(active_dof_infos);
+      }
+
       AlignedVector<VectorizedArray<value_type>> local_residual;    // r_j
       AlignedVector<VectorizedArray<value_type>> local_solution;    // u_j
       AlignedVector<VectorizedArray<value_type>> local_ras_weights; // w_j
@@ -635,7 +685,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::apply_local_so
         /// apply weights if weighted RAS
         if(use_ras_weights)
         {
-          local_ras_weights = std::move(transfer->gather(ras_weights));
+          local_ras_weights = std::move(transfer->gather(*ras_weights));
           for(auto i = 0U; i < local_solution.size(); ++i)
             local_solution[i] /= local_ras_weights[i];
         }

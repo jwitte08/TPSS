@@ -104,32 +104,44 @@ public:
   void
   clear();
 
-  /*
-   * Computes the local solvers (local inverse problems) based on the domain decomposition given by
-   * @p subdomain_handler and the finite element discretization represented by @p linear
-   * operator. In addition, the linear operator must describe the (global) forward problem required
-   * to compute residuals.
+  /**
+   * Computes local solvers (local inverse problems) based on the domain
+   * decomposition given by @p subdomain_handler_in and the finite element
+   * discretization represented by @p linear_operator_in. The linear operator
+   * must describe the action of the finite element matrix on the current level,
+   * which is required to compute residuals (in particular for multiplicative
+   * algorithms).
    */
   void
-  initialize(const std::shared_ptr<const SubdomainHandler<dim, value_type>> subdomain_handler,
-             /*TODO const?*/ OperatorType &                                 linear_operator,
-             const AdditionalData &                                         additional_data);
+  initialize(const std::shared_ptr<const SubdomainHandler<dim, value_type>> subdomain_handler_in,
+             /*TODO const?*/ OperatorType &                                 linear_operator_in,
+             const AdditionalData &                                         additional_data_in);
 
-  /*
-   * Performs a shallow copy of the local solvers provided by @p schwarz_preconditioner_in. For
-   * example, if another Schwarz preconditioner with a different color sequence, e.g. due to
-   * symmetry reasons, is needed but the set of local solvers is the same. This type of
-   * modifications are handled by @p additional_data.
+  /**
+   * Uses a shallow copy of the local solvers provided by @p other. For example,
+   * if this Schwarz preconditioner applies local solvers simply in a different
+   * order compared to @p other, but still processes the same set of local
+   * solvers, we can save the recomputation of local solvers. Different
+   * preconditioner options are passed by @p additional_data.
    */
   void
-  initialize(const SchwarzPreconditioner & schwarz_preconditioner_in,
-             const AdditionalData &        additional_data);
+  initialize(const SchwarzPreconditioner & other, const AdditionalData & additional_data_in);
 
   /*
    * Does nothing. Satisfies MGSmootherPrecondition interface.
    */
   void
   initialize(const OperatorType & linear_operator, const AdditionalData & additional_data);
+
+  /**
+   * Takes ownership of @p subdomain_handler_in and setups all data members
+   * which are needed by all initialize() methods.
+   */
+  void
+  internal_initialize(
+    const std::shared_ptr<const SubdomainHandler<dim, value_type>> subdomain_handler_in,
+    /*TODO const?*/ OperatorType &                                 linear_operator_in,
+    const AdditionalData &                                         additional_data_in);
 
   const AdditionalData &
   get_additional_data() const;
@@ -152,6 +164,7 @@ public:
   {
     const auto & sdhandler   = get_subdomain_handler()->get_additional_data();
     bool         is_copyable = true;
+
     is_copyable &= sdhandler.level == other_data.level;
     is_copyable &= sdhandler.patch_variant == other_data.patch_variant;
     is_copyable &= sdhandler.smoother_variant == other_data.smoother_variant;
@@ -487,7 +500,7 @@ private:
 
   mutable std::vector<TimeInfo> time_data;
 
-  mutable VectorType ras_weights;
+  /*mutable*/ std::shared_ptr<VectorType> ras_weights;
 };
 
 
@@ -495,11 +508,12 @@ private:
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 struct SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::AdditionalData
 {
-  double relaxation              = 1.;
-  bool   reverse                 = false;
-  bool   symmetrized             = false;
-  bool   use_ras_weights         = false;
-  bool   use_ras_boolean_weights = false;
+  double       relaxation              = 1.;
+  bool         reverse                 = false;
+  bool         symmetrized             = false;
+  bool         use_ras_weights         = false;
+  bool         use_ras_boolean_weights = false;
+  unsigned int n_active_blocks         = numbers::invalid_unsigned_int;
 
   bool
   operator==(const AdditionalData & other_data) const
@@ -510,6 +524,7 @@ struct SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::Additio
     is_equal &= symmetrized == other_data.symmetrized;
     is_equal &= use_ras_weights == other_data.use_ras_weights;
     is_equal &= use_ras_boolean_weights == other_data.use_ras_boolean_weights;
+    is_equal &= n_active_blocks == other_data.n_active_blocks;
     return is_equal;
   }
 };
@@ -527,6 +542,8 @@ inline const typename SchwarzPreconditioner<dim, OperatorType, VectorType, Matri
 {
   return additional_data;
 }
+
+
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 inline std::vector<unsigned int>
@@ -566,6 +583,8 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::get_color_sequ
   return color_sequence;
 }
 
+
+
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
 inline std::shared_ptr<const SubdomainHandler<
   dim,
@@ -574,6 +593,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::get_subdomain_
 {
   return subdomain_handler;
 }
+
 
 
 template<int dim, class OperatorType, typename VectorType, typename MatrixType>
