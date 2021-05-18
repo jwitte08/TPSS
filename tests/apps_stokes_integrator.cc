@@ -695,6 +695,8 @@ protected:
 
     const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
 
+    stokes_problem->system_rhs.update_ghost_values();
+
     for(auto patch_index = 0U; patch_index < local_matrices.size(); ++patch_index)
     {
       patch_transfer->reinit(patch_index);
@@ -1159,7 +1161,7 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorstreamlmw_MPI)
 
 
 
-TYPED_TEST_P(TestStokesIntegrator, localsolverstream_velocity)
+TYPED_TEST_P(TestStokesIntegrator, localsolverstream_velocity_MPI)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
   Fixture::setup_matrixintegratorlmw();
@@ -1176,7 +1178,7 @@ TYPED_TEST_P(TestStokesIntegrator, localsolverstream_velocity)
 
 
 
-TYPED_TEST_P(TestStokesIntegrator, localsolverstream_gradp)
+TYPED_TEST_P(TestStokesIntegrator, localsolverstream_gradp_MPI)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
   Fixture::setup_matrixintegratorlmw();
@@ -1193,7 +1195,7 @@ TYPED_TEST_P(TestStokesIntegrator, localsolverstream_gradp)
 
 
 
-TYPED_TEST_P(TestStokesIntegrator, localsolverstream_pressure)
+TYPED_TEST_P(TestStokesIntegrator, localsolverstream_pressure_MPI)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
   Fixture::setup_matrixintegratorlmw();
@@ -1228,9 +1230,9 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             matrixintegratorlmwRT_velocitypressure_MPI,
                             matrixintegratorlmwRT_pressurevelocity_MPI,
                             matrixintegratorstreamlmw_MPI,
-                            localsolverstream_velocity,
-                            localsolverstream_gradp,
-                            localsolverstream_pressure);
+                            localsolverstream_velocity_MPI,
+                            localsolverstream_gradp_MPI,
+                            localsolverstream_pressure_MPI);
 
 
 

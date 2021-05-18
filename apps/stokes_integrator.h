@@ -4732,7 +4732,7 @@ struct LocalSolverStream
               scratch_data,
               copy_data,
               MeshWorker::assemble_own_interior_faces_both | MeshWorker::assemble_ghost_faces_both,
-              /*assemble faces at ghosts?*/ false,
+              /*assemble faces at ghosts?*/ true,
               /*boundary_worker*/ nullptr,
               [&](const auto & cell,
                   const auto   face_no,
