@@ -813,7 +813,7 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
                                                  ScratchData<dim> &   scratch_data,
                                                  CopyData &           copy_data) const
 {
-  InterfaceId        interface_id{cellP->id(), ncellP->id()};
+  InterfaceId        interface_id{cell->id(), ncell->id()};
   const unsigned int interface_index       = interface_handler->get_interface_index(interface_id);
   const bool this_interface_isnt_contained = interface_index == numbers::invalid_unsigned_int;
   if(this_interface_isnt_contained)

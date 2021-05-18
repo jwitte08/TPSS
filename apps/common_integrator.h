@@ -2042,6 +2042,7 @@ struct InterfaceValues
   const FaceValues<dim> &
   get_face_values(const unsigned int cell_index)
   {
+    (void)cell_index; // TODO
     AssertDimension(cell_index, 0U);
     return face_values_left;
   }
