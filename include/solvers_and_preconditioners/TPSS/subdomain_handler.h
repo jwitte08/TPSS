@@ -132,6 +132,9 @@ public:
   std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>>
   get_vector_partitioners() const;
 
+  MPI_Comm
+  get_communicator() const;
+
   unsigned int
   guess_grain_size(const unsigned int n_subdomain_batches) const;
 
@@ -450,6 +453,14 @@ SubdomainHandler<dim, Number>::get_vector_partitioners() const
   for(auto dofh_index = 0U; dofh_index < n_dof_handlers(); ++dofh_index)
     partitioners.push_back(get_vector_partitioner(dofh_index));
   return partitioners;
+}
+
+
+template<int dim, typename Number>
+inline MPI_Comm
+SubdomainHandler<dim, Number>::get_communicator() const
+{
+  return patch_info.get_communicator();
 }
 
 #include "subdomain_handler.templates.h"

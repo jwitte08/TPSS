@@ -9,9 +9,10 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::internal_initi
   const AdditionalData & additional_data_in)
 {
   // *** assert that each process has the same number of colors
-  const unsigned int n_colors     = subdomain_handler_in->get_partition_data().n_colors();
-  const unsigned int n_colors_max = Utilities::MPI::max(n_colors, MPI_COMM_WORLD);
-  const unsigned int n_colors_min = Utilities::MPI::min(n_colors, MPI_COMM_WORLD);
+  const unsigned int n_colors         = subdomain_handler_in->get_partition_data().n_colors();
+  const auto         mpi_communicator = subdomain_handler_in->get_communicator();
+  const unsigned int n_colors_max     = Utilities::MPI::max(n_colors, mpi_communicator);
+  const unsigned int n_colors_min     = Utilities::MPI::min(n_colors, mpi_communicator);
   (void)n_colors_max, (void)n_colors_min;
   Assert(n_colors_max == n_colors_min, ExcMessage("Not the same number of colors on each proc."));
 
