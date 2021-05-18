@@ -151,11 +151,13 @@ gather_distributed_blockmatrix(const TrilinosWrappers::BlockSparseMatrix & distr
 {
   using local_matrix_type = Tensors::BlockMatrixBasic<MatrixAsTable<double>>;
 
+  const auto mpi_communicator = distributed_blockmatrix.get_mpi_communicator();
+
   AssertDimension(distributed_blockmatrix.m(), distributed_blockmatrix.n());
   AssertDimension(distributed_blockmatrix.n_block_rows(), distributed_blockmatrix.n_block_cols());
   const auto n_blocks = distributed_blockmatrix.n_block_rows();
 
-  const auto this_mpi_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+  const auto this_mpi_rank = Utilities::MPI::this_mpi_process(mpi_communicator);
 
   (void)level;
   /// DEBUG
@@ -181,7 +183,7 @@ gather_distributed_blockmatrix(const TrilinosWrappers::BlockSparseMatrix & distr
     n_locally_owned_indices += this_matrix.local_size();
   }
 
-  AssertDimension(Utilities::MPI::sum(n_locally_owned_indices, MPI_COMM_WORLD),
+  AssertDimension(Utilities::MPI::sum(n_locally_owned_indices, mpi_communicator),
                   distributed_blockmatrix.m());
   AssertDimension(global_ranges.size(), n_blocks);
   AssertDimension(local_ranges.size(), n_blocks);
@@ -189,9 +191,9 @@ gather_distributed_blockmatrix(const TrilinosWrappers::BlockSparseMatrix & distr
   auto master_mpi_rank = 0U;
   if(!force_zero_rank_master)
   {
-    const auto n_loi_max = Utilities::MPI::max(n_locally_owned_indices, MPI_COMM_WORLD);
+    const auto n_loi_max = Utilities::MPI::max(n_locally_owned_indices, mpi_communicator);
     master_mpi_rank = Utilities::MPI::max(n_locally_owned_indices == n_loi_max ? this_mpi_rank : 0U,
-                                          MPI_COMM_WORLD);
+                                          mpi_communicator);
   }
 
   const bool is_master_proc = this_mpi_rank == master_mpi_rank;
@@ -199,7 +201,7 @@ gather_distributed_blockmatrix(const TrilinosWrappers::BlockSparseMatrix & distr
   std::vector<std::shared_ptr<const Utilities::MPI::Partitioner>> partitioners;
   for(auto b = 0U; b < n_blocks; ++b)
     partitioners.emplace_back(std::make_shared<const Utilities::MPI::Partitioner>(
-      local_ranges[b], is_master_proc ? global_ranges[b] : local_ranges[b], MPI_COMM_WORLD));
+      local_ranges[b], is_master_proc ? global_ranges[b] : local_ranges[b], mpi_communicator));
 
   const auto locally_relevant_blockmatrix = std::make_shared<local_matrix_type>();
   locally_relevant_blockmatrix->resize(n_blocks, n_blocks);
