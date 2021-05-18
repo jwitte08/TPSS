@@ -4683,7 +4683,7 @@ struct LocalSolverStream
 
             ArrayView<const VectorizedArray<double>> dst_p_cview = make_array_view(dst_p_view);
 
-            MatrixIntegrator<dim, false> matrix_integrator(
+            MatrixIntegrator<dim, true> matrix_integrator(
               nullptr, &interface_handler, *equation_data, &g2l_p, &dst_p_cview, lane);
 
             const auto local_copier = [&](const CopyData & copy_data) {
@@ -4728,7 +4728,7 @@ struct LocalSolverStream
               scratch_data,
               copy_data,
               MeshWorker::assemble_own_interior_faces_both | MeshWorker::assemble_ghost_faces_both,
-              /*assemble faces at ghosts?*/ true,
+              /*assemble faces at ghosts?*/ false,
               /*boundary_worker*/ nullptr,
               [&](const auto & cell,
                   const auto   face_no,
@@ -4751,16 +4751,17 @@ struct LocalSolverStream
                                       ncell->level(),
                                       ncell->index(),
                                       &dofh_p);
-                  if(matrix_integrator.face_worker(cell,
-                                                   cellP,
-                                                   face_no,
-                                                   sface_no,
-                                                   ncell,
-                                                   ncellP,
-                                                   nface_no,
-                                                   nsface_no,
-                                                   scratch_data,
-                                                   copy_data))
+                  const bool   was_assembled = matrix_integrator.face_worker(cell,
+                                                                           cellP,
+                                                                           face_no,
+                                                                           sface_no,
+                                                                           ncell,
+                                                                           ncellP,
+                                                                           nface_no,
+                                                                           nsface_no,
+                                                                           scratch_data,
+                                                                           copy_data);
+                  if(was_assembled)
                   {
                     copy_data.face_data.back().matrix *= 0.5; /// both sides!
                     copy_data.face_data.back().rhs *= 0.5;    /// both sides!
@@ -5163,6 +5164,19 @@ struct MatrixIntegratorSelector<LocalAssembly::LMW,
                                 fe_degree_v>
 {
   using type = MatrixIntegratorLMW<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
+};
+
+template<int dim, int fe_degree_p, typename Number, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
+struct MatrixIntegratorSelector<LocalAssembly::StreamLMW,
+                                dim,
+                                fe_degree_p,
+                                Number,
+                                dof_layout_v,
+                                fe_degree_v>
+{
+  static_assert(dof_layout_v == TPSS::DoFLayout::RT, "Implemented for Raviart-Thomas.");
+  static_assert(fe_degree_p == fe_degree_v, "Mismatching finite element degrees.");
+  using type = MatrixIntegratorStreamLMW<dim, fe_degree_p, Number>;
 };
 
 

@@ -1433,7 +1433,8 @@ enum class Method
   /*only for testing*/ TaylorHoodDGQ,
   Qkplus2_DGPk,
   DGQkplus2_DGPk,
-  RaviartThomas
+  RaviartThomas,
+  RaviartThomasStream
 };
 
 

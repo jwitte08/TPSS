@@ -603,6 +603,17 @@ struct ModelProblemBase<Method::RaviartThomas, dim, fe_degree_p>
   static constexpr LocalAssembly local_assembly = LocalAssembly::LMW;
 };
 
+template<int dim, int fe_degree_p>
+struct ModelProblemBase<Method::RaviartThomasStream, dim, fe_degree_p>
+{
+  static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::RT;
+  static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::DGQ;
+  using fe_type_v                               = FE_RaviartThomas_new<dim>;
+  using fe_type_p                               = FE_DGQLegendre<dim>;
+  static constexpr int           fe_degree_v    = fe_degree_p;
+  static constexpr LocalAssembly local_assembly = LocalAssembly::StreamLMW;
+};
+
 
 
 /**
@@ -875,7 +886,6 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlip)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
-      // return std::make_shared<DivergenceFree::NoSlip::Load<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuilleInhom)
         return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
       else
@@ -889,7 +899,6 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
       Triangulation<dim>::limit_level_difference_at_vertices,
       parallel::distributed::Triangulation<dim>::construct_multigrid_hierarchy)),
     mapping(1),
-    /// finite element for the velocity-pressure system
     fe(make_finite_element()),
     finite_element_stream(make_finite_element_stream()),
     /// TODO !!! coloring depends on discrete pressure space as well
@@ -964,6 +973,7 @@ ModelProblem<dim, fe_degree_p, method>::get_finite_element_velocity() const
   const auto & fe_velocity = fe->get_sub_fe(velocity_mask);
   return fe_velocity;
 }
+
 
 
 template<int dim, int fe_degree_p, Method method>
@@ -1212,7 +1222,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     return locally_relevant_dof_indices;
   };
 
-  //: set up velocity system
+  //: setup velocity system
   {
     dof_handler_velocity.initialize(*triangulation, get_finite_element_velocity());
     AssertThrow(!equation_data.use_cuthill_mckee, ExcMessage("TODO MPI..."));
@@ -1281,7 +1291,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
     constraints_velocity.close();
   }
 
-  //: set up pressure system
+  //: setup pressure system
   {
     dof_handler_pressure.initialize(*triangulation, get_finite_element_pressure());
     AssertThrow(!equation_data.use_cuthill_mckee, ExcMessage("TODO MPI..."));
@@ -1373,7 +1383,7 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
   TrilinosWrappers::BlockSparsityPattern dsp(2U, 2U);
 
-  //: set up sparsity pattern of system matrix
+  //: setup sparsity pattern of system matrix
   {
     /// velocity - velocity
     {
@@ -1453,7 +1463,6 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
                       lodof_indices_foreach_block[0],
                       lrdof_indices_foreach_block[1],
                       MPI_COMM_WORLD);
-      // Tools::make_sparsity_pattern(dof_handler_pressure, dof_handler_velocity, this_dsp);
       Tools::make_flux_sparsity_pattern(dof_handler_pressure,
                                         dof_handler_velocity,
                                         this_dsp,
@@ -1729,7 +1738,6 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
       else
         AssertThrow(false, ExcMessage("This FEM is not supported."));
     };
-
 
     const auto & distribute_local_to_global_impl = [&](const auto & cd, const auto & cd_flipped) {
       zero_constraints_velocity.template distribute_local_to_global<TrilinosWrappers::SparseMatrix>(
@@ -2013,40 +2021,30 @@ template<int dim, int fe_degree_p, Method method>
 void
 ModelProblem<dim, fe_degree_p, method>::solve()
 {
-  // This is used to pass whether or not we want to solve for A inside
-  // the preconditioner.  One could change this to false to see if
-  // there is still convergence and if so does the program then run
-  // faster or slower
-  const bool use_expensive = true;
-
   if(rt_parameters.solver.variant == "direct")
   {
-    AssertThrow(false, ExcMessage("trilinoswrappers don't support block-vectors/matrices"));
-    /// NOTE see former git versions for references...
+    AssertThrow(
+      false,
+      ExcMessage(
+        "Trilinoswrappers don't support block vectors/matrices. Check previous git commits for more details..."));
   }
 
   if(rt_parameters.solver.variant == "FGMRES_ILU")
   {
-    AssertThrow(false, ExcMessage("TODO MPI..."));
-    //     SparseILU<double> A_preconditioner;
-    //     A_preconditioner.initialize(system_matrix.block(0, 0));
-
-    //     SparseILU<double> S_preconditioner;
-    //     S_preconditioner.initialize(pressure_mass_matrix);
-
-    //     const BlockSchurPreconditionerStep56<typename
-    //     std::decay<decltype(A_preconditioner)>::type,
-    //                                    typename std::decay<decltype(S_preconditioner)>::type>
-    //       preconditioner(
-    //         system_matrix, pressure_mass_matrix, A_preconditioner, S_preconditioner,
-    //         use_expensive);
-
-    //     iterative_solve_impl(preconditioner, "fgmres");
-    //     *pcout << preconditioner.get_summary() << std::endl;
+    AssertThrow(
+      false,
+      ExcMessage(
+        "This variant was available in a serial version of this code. Check previous git commits for more details..."));
   }
 
   else if(rt_parameters.solver.variant == "FGMRES_GMGvelocity")
   {
+    // This is used to pass whether or not we want to solve for A inside
+    // the preconditioner.  One could change this to false to see if
+    // there is still convergence and if so does the program then run
+    // faster or slower
+    const bool use_expensive = true;
+
     const auto mgc_velocity = make_multigrid_velocity();
 
     auto & A_preconditioner = mgc_velocity->get_preconditioner();
@@ -2105,7 +2103,6 @@ ModelProblem<dim, fe_degree_p, method>::solve()
   else
     AssertThrow(false, ExcMessage("Please, choose a valid solver variant."));
 
-  /// Post processing the discrete solution.
   post_process_solution_vector();
 
   pp_data.n_mg_levels.push_back(this->n_mg_levels);
@@ -2851,7 +2848,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::initialize(
                                   MPI_COMM_WORLD);
 
     {
-      //: initialize matrix-free storage dummy required to setup TPSS
+      //: initialize a matrix-free storage dummy
       typename MatrixFree<dim, double>::AdditionalData mf_features;
       mf_features.mg_level = level;
       QGauss<1>  quadrature(n_q_points_1d);
@@ -3571,7 +3568,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                             face_integrals_mask_velocity);
       }
 
-      /// pressure - pressure (empty but need to set up sizes)
+      /// pressure - pressure (empty but need to setup sizes)
       {
         auto & this_dsp = dsp.block(1, 1);
         this_dsp.reinit(lodof_indices_foreach_block[1],
@@ -3643,7 +3640,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
                                   lrdof_indices_foreach_block,
                                   MPI_COMM_WORLD);
 
-    //: assemble the velocity-pressure matrix A_l on current level l.
+    //: assemble the velocity-pressure block system A_l on current level l.
     assemble_multigrid(level,
                        level_constraints_velocity,
                        level_constraints_pressure,
