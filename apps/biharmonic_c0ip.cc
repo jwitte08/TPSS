@@ -270,6 +270,7 @@ main(int argc, char * argv[])
     std::fstream fout;
     const auto   filename = get_filename(prms, equation_data);
     fout.open(filename + ".log", std::ios_base::out);
+
     auto pcout = std::make_shared<ConditionalOStream>(std::cout /*fout*/, is_first_proc); // !!!
     biharmonic_problem.pcout = pcout;
     if(biharmonic_problem.equation_data.is_stream_function())

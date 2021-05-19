@@ -72,7 +72,6 @@ main(int argc, char * argv[])
 
     options.setup(test_index, damping);
     options.prms.n_cycles = n_cycles;
-    // options.prms.mesh.n_refinements    = 2;
     options.prms.multigrid.pre_smoother.schwarz.n_active_blocks =
       options.prms.multigrid.post_smoother.schwarz.n_active_blocks = 2;
 
@@ -90,6 +89,9 @@ main(int argc, char * argv[])
     equation_data.ip_factor    = ip_factor;
     equation_data.local_solver = static_cast<LocalSolver>(local_solver_variant);
 
+    std::fstream fout;
+    const auto   filename = get_filename(options.prms, equation_data);
+
     const auto pcout = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);
 
     using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomasStream>;
@@ -99,9 +101,16 @@ main(int argc, char * argv[])
     *pcout << std::endl;
     stokes_problem.run();
 
-    *pcout << std::endl
-           << std::endl
-           << write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
+    const auto results_as_string =
+      write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
+
+    *pcout << std::endl << std::endl << results_as_string;
+
+    if(is_first_proc)
+    {
+      fout.open(filename + ".tab", std::ios_base::out);
+      fout << results_as_string;
+    }
   }
 
   catch(std::exception & exc)

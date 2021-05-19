@@ -4919,9 +4919,6 @@ public:
   static constexpr int             fe_degree_v  = fe_degree_p;
   static constexpr int             n_q_points_1d =
     fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
-  static constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
-  static constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
-  static constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
 
   using value_type           = Number;
   using matrix_type          = LocalSolverStream<dim, Number>;
