@@ -40,27 +40,24 @@ struct InterfaceHandler
   void
   reinit(const Triangulation<dim> & triangulation)
   {
-    const auto cell_range = triangulation.active_cell_iterators();
-
     cached_cell_ids.clear();
     cached_interface_ids.clear();
 
-    const std::size_t n_cells =
-      std::count_if(cell_range.begin(), cell_range.end(), [](const auto &) { return true; });
+    const std::size_t n_cells = triangulation.n_global_active_cells();
     if(n_cells == 0)
       return;
 
     std::set<CellId> marked_cells;
 
     /// Choosing the first marked cell with fixed constant mode
-    const auto & first_cell = *cell_range.begin();
+    const auto & first_cell = triangulation.begin_active();
     fixed_cell_id           = first_cell->id();
     cached_interface_ids.emplace_back(first_cell->id(), first_cell->id());
     marked_cells.emplace(first_cell->id());
 
     /// Looping over all remaining cells until each cell has an "inflow" interface...
     while(marked_cells.size() < n_cells) // TODO MPI...
-      for(auto & cell : cell_range)
+      for(auto & cell : triangulation.active_cell_iterators())
       {
         const bool cell_is_marked = marked_cells.find(cell->id()) != marked_cells.cend();
 
