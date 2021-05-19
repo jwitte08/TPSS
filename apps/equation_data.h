@@ -953,6 +953,7 @@ struct EquationData
   bool                         force_positive_definite_inverse = false;
   double                       addition_to_min_eigenvalue      = 0.01;
   std::size_t                  n_lanczos_iterations            = static_cast<std::size_t>(-1);
+  bool                         use_c0ip_as_stream              = true;
 };
 
 
@@ -1033,7 +1034,9 @@ EquationData::to_string() const
     if(ksvd_tensor_indices.size() == 2U)
       oss << Util::parameter_to_fstring("Addition to min. eigenvalue:", addition_to_min_eigenvalue);
   }
-  oss << Util::parameter_to_fstring("Stream function formulation (Stokes):", is_stream_function());
+  if(is_stream_function())
+    oss << Util::parameter_to_fstring("Stream function formulation:",
+                                      use_c0ip_as_stream ? "C0IP" : "Exact");
   return oss.str();
 }
 
@@ -1348,7 +1351,7 @@ public:
     const auto x = p[0];
     const auto y = p[1];
 
-    return sin(PI * x) * cos(PI * y);
+    return sin(PI * x) * sin(PI * y);
   }
 
   virtual Tensor<1, dim>
@@ -1358,8 +1361,8 @@ public:
     const auto y = p[1];
 
     Tensor<1, dim> grad;
-    grad[0] = PI * cos(PI * x) * cos(PI * y);
-    grad[1] = -PI * sin(PI * x) * sin(PI * y);
+    grad[0] = PI * cos(PI * x) * sin(PI * y);
+    grad[1] = PI * sin(PI * x) * cos(PI * y);
 
     return grad;
   }
@@ -1371,9 +1374,9 @@ public:
     const auto y = p[1];
 
     SymmetricTensor<2, dim> hess;
-    hess[0][0] = -PI * PI * sin(PI * x) * cos(PI * y);
-    hess[0][1] = -PI * PI * cos(PI * x) * sin(PI * y);
-    hess[1][1] = -PI * PI * sin(PI * x) * cos(PI * y);
+    hess[0][0] = -PI * PI * sin(PI * x) * sin(PI * y);
+    hess[0][1] = PI * PI * cos(PI * x) * cos(PI * y);
+    hess[1][1] = -PI * PI * sin(PI * x) * sin(PI * y);
 
     return hess;
   }
@@ -1387,11 +1390,11 @@ public:
     constexpr auto PI4    = PI * PI * PI * PI;
     double         bilapl = 0.;
     /// \partial_xxxx
-    bilapl += PI4 * sin(PI * x) * cos(PI * y);
+    bilapl += PI4 * sin(PI * x) * sin(PI * y);
     /// 2 \partial_xxyy
-    bilapl += 2. * PI4 * sin(PI * x) * cos(PI * y);
+    bilapl += 2. * PI4 * sin(PI * x) * sin(PI * y);
     /// \partial_yyyy
-    bilapl += PI4 * sin(PI * x) * cos(PI * y);
+    bilapl += PI4 * sin(PI * x) * sin(PI * y);
 
     return bilapl;
   }
@@ -2023,7 +2026,7 @@ namespace NoSlipNormal
 /**
  * This class represents the vector curl of
  *
- *    PHI(x,y) = sin(pi*x) cos(pi*y)
+ *    PHI(x,y) = sin(pi*x) sin(pi*y)
  *
  * in two dimensions, which is by definition divergence free and has
  * homogeneous boundary values on the unit cube [0,1]^2.
@@ -2118,7 +2121,7 @@ SolutionVelocity<2>::hessian(const Point<2> & p, const unsigned int component) c
 
 
 /**
- *    p(x,y) = cos(2*PI*x) * cos(2*PI*x)
+ *    p(x,y) = cos(2*PI*x) * cos(2*PI*y)
  */
 template<int dim>
 class SolutionPressure : public Function<dim>

@@ -293,7 +293,7 @@ public:
   void
   make_grid_impl(const MeshParameter & mesh_prms);
 
-  template<bool is_stream_function>
+  template<bool is_stream_function, bool use_c0ip_formulation>
   void
   assemble_system_impl();
 
@@ -667,27 +667,33 @@ ModelProblem<dim, fe_degree>::setup_system()
 
 
 template<int dim, int fe_degree>
-template<bool is_stream>
+template<bool is_stream, bool use_c0ip>
 void
 ModelProblem<dim, fe_degree>::assemble_system_impl()
 {
+  constexpr bool is_stream_exact = is_stream && !use_c0ip;
+  constexpr bool is_stream_c0ip  = is_stream && use_c0ip;
+
   system_u.update_ghost_values();
   system_rhs.zero_out_ghosts();
+
+  const auto velocity_components = std::make_pair<unsigned int>(0, dim);
 
   if(is_stream)
   {
     Assert(stokes_problem, ExcMessage("FEM for Stokes equations is uninitialized."));
-
     stokes_problem->pcout         = pcout;
     stokes_problem->triangulation = this->triangulation;
     stokes_problem->setup_system();
-    stokes_problem->assemble_system();
+    stokes_problem->assemble_system(); // ???
+  }
 
+  if(is_stream_exact)
+  {
     using Stokes::Velocity::SIPG::MW::ScratchData;
 
     using Stokes::Velocity::SIPG::MW::CopyData;
 
-    const auto                     velocity_components = std::make_pair<unsigned int>(0, dim);
     Stokes::FunctionExtractor<dim> load_function_velocity(stokes_problem->load_function.get(),
                                                           velocity_components);
 
@@ -760,7 +766,6 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
 
     CopyData copy_data;
 
-    /// TODO MPI...
     MeshWorker::mesh_loop(dof_handler.begin_active(),
                           dof_handler.end(),
                           cell_worker,
@@ -780,10 +785,16 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
 
     using C0IP::MW::CopyData;
 
-    using MatrixIntegrator =
-      typename C0IP::MW::MatrixIntegrator<dim, /*multigrid?*/ false, /*stream function?*/ false>;
+    using MatrixIntegrator = typename C0IP::MW::
+      MatrixIntegrator<dim, /*multigrid?*/ false, /*stream function?*/ is_stream_c0ip>;
 
-    MatrixIntegrator matrix_integrator(load_function.get(),
+    std::shared_ptr<const Function<dim>> this_load_function = load_function;
+    if(is_stream_c0ip)
+      this_load_function =
+        std::make_shared<const Stokes::FunctionExtractor<dim>>(stokes_problem->load_function.get(),
+                                                               velocity_components);
+
+    MatrixIntegrator matrix_integrator(this_load_function.get(),
                                        analytical_solution.get(),
                                        &system_u,
                                        equation_data);
@@ -865,10 +876,12 @@ template<int dim, int fe_degree>
 void
 ModelProblem<dim, fe_degree>::assemble_system()
 {
-  if(equation_data.is_stream_function())
-    assemble_system_impl<true>();
+  if(equation_data.is_stream_function() && !equation_data.use_c0ip_as_stream)
+    assemble_system_impl<true, false>();
+  else if(equation_data.is_stream_function() && equation_data.use_c0ip_as_stream)
+    assemble_system_impl<true, true>();
   else
-    assemble_system_impl<false>();
+    assemble_system_impl<false, true>();
 }
 
 
