@@ -366,6 +366,7 @@ FDEvaluation<dim, fe_degree, n_q_points_1d_, Number>::submit_cell_matrix(
   const auto n_dofs_per_cell_1d_row = patch_dof_tensor_row.get_cell_dof_tensor().size(dimension);
   // const auto n_dofs_per_cell_1d_col = patch_dof_tensor_col.get_cell_dof_tensor().size(dimension);
   /// assuming isotropy ...
+  (void)n_dofs_per_cell_1d_row;
   AssertDimension(fe_order, n_dofs_per_cell_1d_row);
   patch_dof_tensor_row.submit_cell_matrix_plain(
     subdomain_matrix, cell_matrix, cell_no_row, cell_no_col, dimension, patch_dof_tensor_col);

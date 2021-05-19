@@ -238,6 +238,7 @@ struct LocalInterfaceHandler : public InterfaceHandler<dim>
     unsigned int fixed_cell_no     = 0;
     this->fixed_cell_id            = cells[fixed_cell_no]->id();
     const auto & [dummy_, success] = cell_id_to_cell_no.emplace(this->fixed_cell_id, fixed_cell_no);
+    (void)dummy_, (void)success;
     Assert(success, ExcMessage("Insertion failed."));
 
     this->cached_interface_ids.emplace_back(this->fixed_cell_id, this->fixed_cell_id);
@@ -274,6 +275,7 @@ struct LocalInterfaceHandler : public InterfaceHandler<dim>
           /// ncell -> cell
           this->cached_interface_ids.emplace_back(ncell->id(), cell->id());
           const auto & [dummy_, success] = cell_id_to_cell_no.emplace(cell->id(), cell_no);
+          (void)dummy_, (void)success;
           Assert(success, ExcMessage("Insertion failed."));
 
           break; // cell is marked now!
@@ -2732,6 +2734,7 @@ struct InterfaceValues
   const FaceValues<dim> &
   get_face_values(const unsigned int cell_index)
   {
+    (void)cell_index; // TODO
     AssertDimension(cell_index, 0U);
     return face_values_left;
   }
