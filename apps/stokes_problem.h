@@ -457,8 +457,13 @@ template<int             dim,
 struct MGCollectionVelocityPressure
 {
   using vector_type = LinearAlgebra::distributed::BlockVector<double>;
-  using matrix_type =
-    BlockSparseMatrixAugmented<dim, fe_degree_p, double, dof_layout_v, fe_degree_v, local_assembly, is_simplified>;
+  using matrix_type = BlockSparseMatrixAugmented<dim,
+                                                 fe_degree_p,
+                                                 double,
+                                                 dof_layout_v,
+                                                 fe_degree_v,
+                                                 local_assembly,
+                                                 is_simplified>;
   // using mg_transfer_type  = MGTransferBlockMatrixFree<dim, double>;
   using mg_transfer_type  = MGTransferBlockPrebuilt;
   using local_matrix_type = typename matrix_type::local_integrator_type::matrix_type;
@@ -3321,7 +3326,7 @@ MGCollectionVelocityPressure<
 
     using Velocity::SIPG::MW::ScratchData;
 
-    using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true, is_simplified>;
+    using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, true, is_simplified>;
 
     using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
@@ -3912,13 +3917,13 @@ const PreconditionMG<dim,
                                                            dof_layout_v,
                                                            fe_degree_v,
                                                            local_assembly,
-							   is_simplified>::vector_type,
+                                                           is_simplified>::vector_type,
                      typename MGCollectionVelocityPressure<dim,
                                                            fe_degree_p,
                                                            dof_layout_v,
                                                            fe_degree_v,
                                                            local_assembly,
-							   is_simplified>::mg_transfer_type> &
+                                                           is_simplified>::mg_transfer_type> &
 MGCollectionVelocityPressure<dim,
                              fe_degree_p,
                              dof_layout_v,

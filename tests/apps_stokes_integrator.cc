@@ -468,8 +468,8 @@ protected:
                                                                      fe_degree_p,
                                                                      double,
                                                                      StokesProblem::dof_layout_v,
-								      StokesProblem::fe_degree_v,
-								      is_simplified>;
+                                                                     StokesProblem::fe_degree_v,
+                                                                     is_simplified>;
     using local_matrix_type = typename MatrixIntegrator::matrix_type;
 
     ASSERT_TRUE(mgc->mg_schwarz_smoother_pre) << "mg_smoother is not initialized.";
@@ -919,7 +919,7 @@ protected:
 TYPED_TEST_SUITE_P(TestStokesIntegrator);
 
 
-
+/*!!!
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrixVelocity)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
@@ -1022,7 +1022,7 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
   Fixture::check_local_solvers_block(true);
   Fixture::check_local_solvers_block(false);
 }
-
+!!!*/
 
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_velocityvelocity_MPI)
@@ -1067,6 +1067,7 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_pressurevelocity_MPI)
 
 
 
+/*!!!
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwDGQ_velocityvelocity_MPI)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
@@ -1210,14 +1211,14 @@ TYPED_TEST_P(TestStokesIntegrator, localsolverstream_pressure_MPI)
   Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::check_localsolverstream(Fixture::lssVariant::Pressure);
 }
+!!!*/
 
 
-
-TYPED_TEST_P(TestStokesIntegrator, DISABLED_simplified_matrixintegratorfdQ_velocity)
+TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorfdQ_velocity_MPI)
 {
   using Fixture                               = TestStokesIntegrator<TypeParam>;
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::options.prms.mesh.n_repetitions    = 2;
+  Fixture::options.prms.mesh.n_repetitions    = 3;
   Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::template check_matrixintegratorfd_velocity<Method::Qkplus2_DGPk, true>(false);
   Fixture::options.prms.mesh.n_refinements = 1;
@@ -1233,9 +1234,9 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorlmwQ_velocityveloc
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 3;
   Fixture::options.prms.mesh.n_refinements    = 0;
-  Fixture::template check_matrixintegratorlmw<Method::Qkplus2_DGPk,true>({0U, 0U});
+  Fixture::template check_matrixintegratorlmw<Method::Qkplus2_DGPk, true>({0U, 0U});
   Fixture::options.prms.mesh.n_refinements = 1;
-  Fixture::template check_matrixintegratorlmw<Method::Qkplus2_DGPk,true>({0U, 0U});
+  Fixture::template check_matrixintegratorlmw<Method::Qkplus2_DGPk, true>({0U, 0U});
 }
 
 
@@ -1260,9 +1261,9 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             matrixintegratorstreamlmw_MPI,
                             localsolverstream_velocity_MPI,
                             localsolverstream_gradp_MPI,
-                            localsolverstream_pressure_MPI,
-                            DISABLED_simplified_matrixintegratorfdQ_velocity,*/
-			    simplified_matrixintegratorlmwQ_velocityvelocity_MPI);
+                            localsolverstream_pressure_MPI,*/
+                            simplified_matrixintegratorfdQ_velocity_MPI,
+                            simplified_matrixintegratorlmwQ_velocityvelocity_MPI);
 
 
 
