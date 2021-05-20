@@ -622,7 +622,7 @@ struct ModelProblemBase<Method::RaviartThomasStream, dim, fe_degree_p>
  *
  * TODO Description...
  */
-template<int dim, int fe_degree_p, Method method = Method::TaylorHood>
+template<int dim, int fe_degree_p, Method method, bool is_simplified = false>
 class ModelProblem : public ModelProblemBase<method, dim, fe_degree_p>
 {
   static_assert(dim == 2, "only 2D");
@@ -850,9 +850,10 @@ assemble_pressure_mass_matrix_impl(TrilinosWrappers::SparseMatrix &  matrix,
 
 
 
-template<int dim, int fe_degree_p, Method method>
-ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_parameters_in,
-                                                     const EquationData &  equation_data_in)
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
+ModelProblem<dim, fe_degree_p, method, is_simplified>::ModelProblem(
+  const RT::Parameter & rt_parameters_in,
+  const EquationData &  equation_data_in)
   : this_mpi_rank(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD)),
     is_first_proc(this_mpi_rank == 0U),
     pcout(std::make_shared<ConditionalOStream>(std::cout, is_first_proc)),
@@ -879,15 +880,15 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
       if(equation_data_in.variant == EquationData::Variant::DivFree)
         return std::make_shared<DivergenceFree::Load<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlipNormal)
-        return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
+        return std::make_shared<ManufacturedLoad<dim, is_simplified>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreeBell)
-        return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
+        return std::make_shared<ManufacturedLoad<dim, is_simplified>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuilleNoSlip)
-        return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
+        return std::make_shared<ManufacturedLoad<dim, is_simplified>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlip)
-        return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
+        return std::make_shared<ManufacturedLoad<dim, is_simplified>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuilleInhom)
-        return std::make_shared<ManufacturedLoad<dim>>(analytical_solution);
+        return std::make_shared<ManufacturedLoad<dim, is_simplified>>(analytical_solution);
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -931,29 +932,30 @@ ModelProblem<dim, fe_degree_p, method>::ModelProblem(const RT::Parameter & rt_pa
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 unsigned int
-ModelProblem<dim, fe_degree_p, method>::max_level() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::max_level() const
 {
   return triangulation->n_global_levels() - 1;
 }
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 template<typename T>
 void
-ModelProblem<dim, fe_degree_p, method>::print_parameter(const std::string & description,
-                                                        const T &           value) const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::print_parameter(
+  const std::string & description,
+  const T &           value) const
 {
   *pcout << Util::parameter_to_fstring(description, value);
 }
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
-ModelProblem<dim, fe_degree_p, method>::print_informations() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::print_informations() const
 {
   *pcout << equation_data.to_string();
   *pcout << std::endl;
@@ -964,9 +966,9 @@ ModelProblem<dim, fe_degree_p, method>::print_informations() const
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 const FiniteElement<dim> &
-ModelProblem<dim, fe_degree_p, method>::get_finite_element_velocity() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::get_finite_element_velocity() const
 {
   std::vector<bool> velocity_mask(dim, true);
   velocity_mask.push_back(false);
@@ -976,9 +978,9 @@ ModelProblem<dim, fe_degree_p, method>::get_finite_element_velocity() const
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 const FiniteElement<dim> &
-ModelProblem<dim, fe_degree_p, method>::get_finite_element_pressure() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::get_finite_element_pressure() const
 {
   std::vector<bool> pressure_mask(dim, false);
   pressure_mask.push_back(true);
@@ -988,9 +990,9 @@ ModelProblem<dim, fe_degree_p, method>::get_finite_element_pressure() const
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 std::shared_ptr<FiniteElement<dim>>
-ModelProblem<dim, fe_degree_p, method>::make_finite_element() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::make_finite_element() const
 {
   if constexpr(dof_layout_v == TPSS::DoFLayout::RT)
     return std::make_shared<FESystem<dim>>(typename Base::fe_type_v(fe_degree_v),
@@ -1007,18 +1009,18 @@ ModelProblem<dim, fe_degree_p, method>::make_finite_element() const
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 std::shared_ptr<FiniteElement<dim>>
-ModelProblem<dim, fe_degree_p, method>::make_finite_element_stream() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::make_finite_element_stream() const
 {
   return std::make_shared<FE_Q<dim>>(fe_degree_v + 1);
 }
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 bool
-ModelProblem<dim, fe_degree_p, method>::check_finite_element() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::check_finite_element() const
 {
   //: check fe
   AssertDimension(fe->n_base_elements(), 2); // velocity + pressure
@@ -1035,9 +1037,9 @@ ModelProblem<dim, fe_degree_p, method>::check_finite_element() const
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 bool
-ModelProblem<dim, fe_degree_p, method>::make_grid()
+ModelProblem<dim, fe_degree_p, method, is_simplified>::make_grid()
 {
   make_grid_impl(rt_parameters.mesh);
   return true;
@@ -1045,9 +1047,9 @@ ModelProblem<dim, fe_degree_p, method>::make_grid()
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 bool
-ModelProblem<dim, fe_degree_p, method>::make_grid(const unsigned int n_refinements)
+ModelProblem<dim, fe_degree_p, method, is_simplified>::make_grid(const unsigned int n_refinements)
 {
   MeshParameter mesh_prms = rt_parameters.mesh;
   mesh_prms.n_refinements = n_refinements;
@@ -1074,9 +1076,10 @@ ModelProblem<dim, fe_degree_p, method>::make_grid(const unsigned int n_refinemen
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
-ModelProblem<dim, fe_degree_p, method>::make_grid_impl(const MeshParameter & mesh_prms)
+ModelProblem<dim, fe_degree_p, method, is_simplified>::make_grid_impl(
+  const MeshParameter & mesh_prms)
 {
   triangulation->clear();
   *pcout << create_mesh(*triangulation, mesh_prms) << std::endl;
@@ -1086,9 +1089,9 @@ ModelProblem<dim, fe_degree_p, method>::make_grid_impl(const MeshParameter & mes
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 LinearAlgebra::distributed::Vector<double>
-ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::compute_mass_foreach_pressure_dof() const
 {
   const auto & locally_owned_dof_indices = dof_handler_pressure.locally_owned_dofs();
   IndexSet     locally_relevant_dof_indices;
@@ -1149,9 +1152,10 @@ ModelProblem<dim, fe_degree_p, method>::compute_mass_foreach_pressure_dof() cons
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 LinearAlgebra::distributed::Vector<double>
-ModelProblem<dim, fe_degree_p, method>::make_constant_pressure_mode(const unsigned int level) const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::make_constant_pressure_mode(
+  const unsigned int level) const
 {
   const bool is_multigrid = level != numbers::invalid_unsigned_int;
 
@@ -1203,9 +1207,9 @@ ModelProblem<dim, fe_degree_p, method>::make_constant_pressure_mode(const unsign
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
-ModelProblem<dim, fe_degree_p, method>::setup_system()
+ModelProblem<dim, fe_degree_p, method, is_simplified>::setup_system()
 {
   Assert(check_finite_element(),
          ExcMessage("Does the choice of finite elements suit the dof_layout?"));
@@ -1510,9 +1514,9 @@ ModelProblem<dim, fe_degree_p, method>::setup_system()
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
-ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
+ModelProblem<dim, fe_degree_p, method, is_simplified>::assemble_system_velocity_pressure()
 {
   system_rhs.zero_out_ghosts();
 
@@ -1522,7 +1526,7 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
     using Velocity::SIPG::MW::ScratchData;
 
-    using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, false>;
+    using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, false, is_simplified>;
 
     const auto             component_range = std::make_pair<unsigned int>(0, dim);
     FunctionExtractor<dim> load_function_velocity(load_function.get(), component_range);
@@ -1831,9 +1835,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_velocity_pressure()
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
-ModelProblem<dim, fe_degree_p, method>::assemble_system()
+ModelProblem<dim, fe_degree_p, method, is_simplified>::assemble_system()
 {
   assemble_system_velocity_pressure();
 
@@ -1846,9 +1850,9 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system()
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
-ModelProblem<dim, fe_degree_p, method>::assemble_system_step56()
+ModelProblem<dim, fe_degree_p, method, is_simplified>::assemble_system_step56()
 {
   AssertThrow(
     false,
@@ -1858,11 +1862,12 @@ ModelProblem<dim, fe_degree_p, method>::assemble_system_step56()
 
 
 
-template<int dim, int fe_degree_p, Method method>
-std::shared_ptr<const MGCollectionVelocity<dim,
-                                           ModelProblem<dim, fe_degree_p, method>::fe_degree_v,
-                                           ModelProblem<dim, fe_degree_p, method>::dof_layout_v>>
-ModelProblem<dim, fe_degree_p, method>::make_multigrid_velocity()
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
+std::shared_ptr<
+  const MGCollectionVelocity<dim,
+                             ModelProblem<dim, fe_degree_p, method, is_simplified>::fe_degree_v,
+                             ModelProblem<dim, fe_degree_p, method, is_simplified>::dof_layout_v>>
+ModelProblem<dim, fe_degree_p, method, is_simplified>::make_multigrid_velocity()
 {
   const auto mgc_velocity =
     std::make_shared<MGCollectionVelocity<dim, fe_degree_v, dof_layout_v>>(rt_parameters,
@@ -1893,14 +1898,14 @@ ModelProblem<dim, fe_degree_p, method>::make_multigrid_velocity()
 
 
 
-template<int dim, int fe_degree_p, Method method>
-std::shared_ptr<
-  const MGCollectionVelocityPressure<dim,
-                                     fe_degree_p,
-                                     ModelProblem<dim, fe_degree_p, method>::dof_layout_v,
-                                     ModelProblem<dim, fe_degree_p, method>::fe_degree_v,
-                                     ModelProblem<dim, fe_degree_p, method>::local_assembly>>
-ModelProblem<dim, fe_degree_p, method>::make_multigrid_velocity_pressure()
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
+std::shared_ptr<const MGCollectionVelocityPressure<
+  dim,
+  fe_degree_p,
+  ModelProblem<dim, fe_degree_p, method, is_simplified>::dof_layout_v,
+  ModelProblem<dim, fe_degree_p, method, is_simplified>::fe_degree_v,
+  ModelProblem<dim, fe_degree_p, method, is_simplified>::local_assembly>>
+ModelProblem<dim, fe_degree_p, method, is_simplified>::make_multigrid_velocity_pressure()
 {
   const auto mgc_velocity_pressure = std::make_shared<
     MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>>(
@@ -1939,19 +1944,19 @@ ModelProblem<dim, fe_degree_p, method>::make_multigrid_velocity_pressure()
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 std::shared_ptr<SolverControl>
-ModelProblem<dim, fe_degree_p, method>::make_solver_control() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::make_solver_control() const
 {
   return make_solver_control_impl(rt_parameters.solver);
 }
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 template<typename PreconditionerType>
 void
-ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
+ModelProblem<dim, fe_degree_p, method, is_simplified>::iterative_solve_impl(
   const PreconditionerType & preconditioner,
   const std::string          solver_variant)
 {
@@ -2017,9 +2022,9 @@ ModelProblem<dim, fe_degree_p, method>::iterative_solve_impl(
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
-ModelProblem<dim, fe_degree_p, method>::solve()
+ModelProblem<dim, fe_degree_p, method, is_simplified>::solve()
 {
   if(rt_parameters.solver.variant == "direct")
   {
@@ -2111,9 +2116,9 @@ ModelProblem<dim, fe_degree_p, method>::solve()
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
-ModelProblem<dim, fe_degree_p, method>::post_process_solution_vector()
+ModelProblem<dim, fe_degree_p, method, is_simplified>::post_process_solution_vector()
 {
   const double mean_pressure = VectorTools::compute_mean_value(dof_handler_pressure,
                                                                QGauss<dim>(n_q_points_1d),
@@ -2132,9 +2137,9 @@ ModelProblem<dim, fe_degree_p, method>::post_process_solution_vector()
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 double
-ModelProblem<dim, fe_degree_p, method>::compute_L2_error_velocity() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::compute_L2_error_velocity() const
 {
   const auto             component_range = std::make_pair<unsigned int>(0, dim);
   FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
@@ -2153,9 +2158,9 @@ ModelProblem<dim, fe_degree_p, method>::compute_L2_error_velocity() const
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 double
-ModelProblem<dim, fe_degree_p, method>::compute_L2_error_pressure() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::compute_L2_error_pressure() const
 {
   const auto             component_range = std::make_pair<unsigned int>(dim, dim + 1);
   FunctionExtractor<dim> analytical_solution_pressure(analytical_solution.get(), component_range);
@@ -2174,9 +2179,9 @@ ModelProblem<dim, fe_degree_p, method>::compute_L2_error_pressure() const
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 double
-ModelProblem<dim, fe_degree_p, method>::compute_H1semi_error_velocity() const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::compute_H1semi_error_velocity() const
 {
   const auto             component_range = std::make_pair<unsigned int>(0, dim);
   FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), component_range);
@@ -2195,9 +2200,9 @@ ModelProblem<dim, fe_degree_p, method>::compute_H1semi_error_velocity() const
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
-ModelProblem<dim, fe_degree_p, method>::compute_discretization_errors()
+ModelProblem<dim, fe_degree_p, method, is_simplified>::compute_discretization_errors()
 {
   {
     const auto l2_error = compute_L2_error_velocity();
@@ -2220,9 +2225,10 @@ ModelProblem<dim, fe_degree_p, method>::compute_discretization_errors()
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
-ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refinement_cycle) const
+ModelProblem<dim, fe_degree_p, method, is_simplified>::output_results(
+  const unsigned int refinement_cycle) const
 {
   std::vector<DataComponentInterpretation::DataComponentInterpretation> velocity_interpretation(
     dim, DataComponentInterpretation::component_is_part_of_vector);
@@ -2299,9 +2305,9 @@ ModelProblem<dim, fe_degree_p, method>::output_results(const unsigned int refine
 
 
 
-template<int dim, int fe_degree_p, Method method>
+template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
-ModelProblem<dim, fe_degree_p, method>::run()
+ModelProblem<dim, fe_degree_p, method, is_simplified>::run()
 {
   print_informations();
 

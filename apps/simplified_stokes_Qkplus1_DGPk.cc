@@ -1,12 +1,3 @@
-/**
- * TODO...
- *
- * Created on: Aug 20, 2020
- *     Author: witte
- */
-
-
-
 #include "stokes.h"
 
 
@@ -26,11 +17,10 @@ main(int argc, char * argv[])
     };
 
     //: default
-    unsigned int test_index                  = 5; // unprec. CG
+    unsigned int test_index                  = 6; // unprec. CG
     unsigned int debug_depth                 = 0;
     double       damping                     = 0.;
     unsigned int force_mean_value_constraint = false;
-    double       ip_factor                   = 1.;
     unsigned int n_cycles                    = 3;
     unsigned int local_solver_variant        = 0;
     unsigned int pde_index                   = 4; // NoSlip
@@ -72,45 +62,33 @@ main(int argc, char * argv[])
 
     options.setup(test_index, damping);
     options.prms.n_cycles = n_cycles;
-    options.prms.multigrid.pre_smoother.schwarz.n_active_blocks =
-      options.prms.multigrid.post_smoother.schwarz.n_active_blocks = 2;
 
     EquationData equation_data;
     AssertThrow(pde_index < EquationData::n_variants,
                 ExcMessage("This equation is not implemented."));
-    equation_data.variant = static_cast<EquationData::Variant>(pde_index);
-    // if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
-    //   equation_data.local_kernel_size = 1U;
+    equation_data.variant           = static_cast<EquationData::Variant>(pde_index);
+    equation_data.use_cuthill_mckee = false;
+    if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
+      equation_data.local_kernel_size = 1U;
     AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
                 ExcMessage("Invalid."));
     equation_data.do_mean_value_constraint = force_mean_value_constraint;
     if(options.prms.solver.variant == "direct")
       equation_data.do_mean_value_constraint = true;
-    equation_data.ip_factor    = ip_factor;
     equation_data.local_solver = static_cast<LocalSolver>(local_solver_variant);
-
-    std::fstream fout;
-    const auto   filename = get_filename(options.prms, equation_data);
 
     const auto pcout = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);
 
-    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomasStream>;
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::Qkplus2_DGPk, true>;
     StokesProblem stokes_problem(options.prms, equation_data);
     stokes_problem.pcout = pcout;
 
     *pcout << std::endl;
     stokes_problem.run();
 
-    const auto results_as_string =
-      write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
-
-    *pcout << std::endl << std::endl << results_as_string;
-
-    if(is_first_proc)
-    {
-      fout.open(filename + ".tab", std::ios_base::out);
-      fout << results_as_string;
-    }
+    *pcout << std::endl
+           << std::endl
+           << write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
   }
 
   catch(std::exception & exc)

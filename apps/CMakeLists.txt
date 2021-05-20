@@ -28,6 +28,7 @@ set(sourcefiles
   stokes_raviartthomas.cc
   stokes_raviartthomasstream.cc
   streamfunction_compute_pressure.cc
+  simplified_stokes_Qkplus1_DGPk.cc
   )
 
 foreach(src ${sourcefiles})

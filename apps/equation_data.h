@@ -1620,7 +1620,7 @@ private:
 
 
 
-template<int dim>
+template<int dim, bool is_simplified = false>
 class ManufacturedLoad : public Function<dim>
 {
 public:
@@ -1642,7 +1642,7 @@ public:
      *
      *    -2 div E + grad p
      *
-     * where E = 1/2 (grad u + [grad u]^T) is the linear strain.  The divergence
+     * where E = 1/2 (grad u + [grad u]^T) is the linear strain. The divergence
      * of matrix field E is defined by
      *
      *    (div E)_i = sum_j d/dx_j E_ij.
@@ -1654,6 +1654,11 @@ public:
      * Combining both, we have
      *
      *    (div E)_i = sum_j 1/2 * (d/dx_j d/dx_i u_j + d^2/dx_j^2 u_i).
+     *
+     * If @p is_simplified is true we use the simplified Stokes' equations, thus
+     * replacing the symmetric gradient by the gradient of u:
+     *
+     *    -lapl u + grad p
      */
     if(component < pressure_index)
     {
@@ -1662,8 +1667,9 @@ public:
       for(auto j = 0U; j < dim; ++j)
       {
         const SymmetricTensor<2, dim> & hessian_of_u_j = (solution_function->hessian(p, j));
-        const auto   Dji_of_u_j = hessian_of_u_j({i, j} /*TableIndices<2>(i, j)*/);
-        const double Djj_of_u_i = (solution_function->hessian(p, i))({j, j});
+        const double                    Dji_of_u_j = is_simplified ? 0. : hessian_of_u_j({i, j});
+        const double                    Djj_of_u_i = (solution_function->hessian(p, i))({j, j});
+        /// if simplified divE_i is (0.5 * Lapl u_i)
         divE_i += 0.5 * (Dji_of_u_j + Djj_of_u_i);
       }
       const auto & gradp_i = solution_function->gradient(p, pressure_index)[i];
@@ -1687,7 +1693,7 @@ public:
     }
 
     else
-      AssertThrow(false, ExcMessage("Invalid component."));
+      Assert(false, ExcMessage("Invalid component."));
 
     return value;
   }
@@ -1983,6 +1989,7 @@ double
 Load<2>::value(const Point<2> & p, const unsigned int component) const
 {
   Assert(component <= 2, ExcIndexRange(component, 0, 2 + 1));
+  Assert(false, ExcMessage("TODO simplified Stokes..."));
 
   using numbers::PI;
   double x = p(0);

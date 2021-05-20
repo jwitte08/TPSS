@@ -471,6 +471,8 @@ using ::Nitsche::compute_penalty_impl;
 
 namespace MW
 {
+using ::MW::compute_grad;
+
 using ::MW::compute_symgrad;
 
 using ::MW::compute_average_symgrad;
@@ -518,6 +520,8 @@ using ::MW::DoF::CopyData;
 
 
 
+using ::MW::StreamFunction::compute_grad;
+
 using ::MW::StreamFunction::compute_symgrad;
 
 using ::MW::StreamFunction::compute_vvalue;
@@ -529,6 +533,8 @@ using ::MW::StreamFunction::compute_average_symgrad;
 using ::MW::StreamFunction::compute_vjump_tangential;
 
 
+
+using ::MW::TestFunction::compute_grad;
 
 using ::MW::TestFunction::compute_symgrad;
 
@@ -678,7 +684,7 @@ make_joint_interface_indices(const std::vector<unsigned int> &            testfu
 
 
 
-template<int dim, bool is_multigrid = false>
+template<int dim, bool is_multigrid = false, bool is_simplified = false>
 struct MatrixIntegrator
 {
   using IteratorType = typename ::MW::IteratorSelector<dim, is_multigrid>::type;
@@ -929,11 +935,11 @@ struct MatrixIntegrator
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
-                                                 ScratchData<dim> &   scratch_data,
-                                                 CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::cell_worker(const IteratorType & cell,
+                                                                ScratchData<dim> &   scratch_data,
+                                                                CopyData & copy_data) const
 {
   AssertDimension(copy_data.cell_data.size(), 0U);
 
@@ -968,11 +974,12 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker(const IteratorType & cell,
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::cell_worker_stream(const IteratorType & cell,
-                                                        ScratchData<dim> &   scratch_data,
-                                                        CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::cell_worker_stream(
+  const IteratorType & cell,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
 {
   AssertDimension(copy_data.cell_data.size(), 0U);
 
@@ -1005,13 +1012,14 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker_stream(const IteratorType & cel
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::cell_residual_worker(const IteratorType &     cell,
-                                                          const IteratorType &     cell_stream,
-                                                          const IteratorType &     cell_pressure,
-                                                          ScratchData<dim, true> & scratch_data,
-                                                          CopyData &               copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::cell_residual_worker(
+  const IteratorType &     cell,
+  const IteratorType &     cell_stream,
+  const IteratorType &     cell_pressure,
+  ScratchData<dim, true> & scratch_data,
+  CopyData &               copy_data) const
 {
   AssertDimension(copy_data.cell_data.size(), 0U);
 
@@ -1060,9 +1068,9 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker(const IteratorType &  
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
+MatrixIntegrator<dim, is_multigrid, is_simplified>::cell_residual_worker_interface(
   const IteratorType &     cell,
   const IteratorType &     cell_stream,
   ScratchData<dim, true> & scratch_data,
@@ -1113,12 +1121,13 @@ MatrixIntegrator<dim, is_multigrid>::cell_residual_worker_interface(
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
-MatrixIntegrator<dim, is_multigrid>::cell_worker_impl(const TestEvaluatorType &   phi_test,
-                                                      const AnsatzEvaluatorType & phi_ansatz,
-                                                      CopyData::CellData &        cell_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::cell_worker_impl(
+  const TestEvaluatorType &   phi_test,
+  const AnsatzEvaluatorType & phi_ansatz,
+  CopyData::CellData &        cell_data) const
 {
   std::vector<Tensor<1, dim>> load_values;
   if(!is_multigrid)
@@ -1142,15 +1151,28 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker_impl(const TestEvaluatorType & 
   {
     for(unsigned int i = 0; i < cell_data.matrix.m(); ++i)
     {
-      const SymmetricTensor<2, dim> symgrad_phi_i = compute_symgrad(phi_test, i, q);
-      for(unsigned int j = 0; j < cell_data.matrix.n(); ++j)
+      if(!is_simplified)
       {
-        const SymmetricTensor<2, dim> symgrad_phi_j = compute_symgrad(phi_ansatz, j, q);
-
-        cell_data.matrix(i, j) += 2. *
-                                  scalar_product(symgrad_phi_i,   // symgrad phi_i(x)
-                                                 symgrad_phi_j) * // symgrad phi_j(x)
-                                  phi_test.JxW(q);                // dx
+        const SymmetricTensor<2, dim> symgrad_phi_i = compute_symgrad(phi_test, i, q);
+        for(unsigned int j = 0; j < cell_data.matrix.n(); ++j)
+        {
+          const SymmetricTensor<2, dim> symgrad_phi_j = compute_symgrad(phi_ansatz, j, q);
+          cell_data.matrix(i, j) += 2. *
+                                    scalar_product(symgrad_phi_i,   // symgrad phi_i(x)
+                                                   symgrad_phi_j) * // symgrad phi_j(x)
+                                    phi_test.JxW(q);                // dx
+        }
+      }
+      else
+      {
+        const Tensor<2, dim> grad_phi_i = compute_grad(phi_test, i, q);
+        for(unsigned int j = 0; j < cell_data.matrix.n(); ++j)
+        {
+          const Tensor<2, dim> grad_phi_j = compute_grad(phi_ansatz, j, q);
+          cell_data.matrix(i, j) += scalar_product(grad_phi_i,   // symgrad phi_i(x)
+                                                   grad_phi_j) * // symgrad phi_j(x)
+                                    phi_test.JxW(q);             // dx
+        }
       }
 
       if(!is_multigrid)
@@ -1166,16 +1188,16 @@ MatrixIntegrator<dim, is_multigrid>::cell_worker_impl(const TestEvaluatorType & 
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
-                                                 const unsigned int & f,
-                                                 const unsigned int & sf,
-                                                 const IteratorType & ncell,
-                                                 const unsigned int & nf,
-                                                 const unsigned int & nsf,
-                                                 ScratchData<dim> &   scratch_data,
-                                                 CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::face_worker(const IteratorType & cell,
+                                                                const unsigned int & f,
+                                                                const unsigned int & sf,
+                                                                const IteratorType & ncell,
+                                                                const unsigned int & nf,
+                                                                const unsigned int & nsf,
+                                                                ScratchData<dim> &   scratch_data,
+                                                                CopyData & copy_data) const
 {
   FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values_test;
   fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
@@ -1201,16 +1223,17 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::face_worker_stream(const IteratorType & cell,
-                                                        const unsigned int & f,
-                                                        const unsigned int & sf,
-                                                        const IteratorType & ncell,
-                                                        const unsigned int & nf,
-                                                        const unsigned int & nsf,
-                                                        ScratchData<dim> &   scratch_data,
-                                                        CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::face_worker_stream(
+  const IteratorType & cell,
+  const unsigned int & f,
+  const unsigned int & sf,
+  const IteratorType & ncell,
+  const unsigned int & nf,
+  const unsigned int & nsf,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
 {
   auto & phi = scratch_data.stream_interface_values;
   phi.reinit(cell, f, sf, ncell, nf, nsf);
@@ -1234,13 +1257,14 @@ MatrixIntegrator<dim, is_multigrid>::face_worker_stream(const IteratorType & cel
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
-MatrixIntegrator<dim, is_multigrid>::face_worker_impl(const TestEvaluatorType &   phi_test,
-                                                      const AnsatzEvaluatorType & phi_ansatz,
-                                                      const double                gamma_over_h,
-                                                      CopyData::FaceData &        face_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::face_worker_impl(
+  const TestEvaluatorType &   phi_test,
+  const AnsatzEvaluatorType & phi_ansatz,
+  const double                gamma_over_h,
+  CopyData::FaceData &        face_data) const
 {
   const auto n_interface_dofs_test   = phi_test.n_current_interface_dofs();
   const auto n_interface_dofs_ansatz = phi_ansatz.n_current_interface_dofs();
@@ -1282,16 +1306,17 @@ MatrixIntegrator<dim, is_multigrid>::face_worker_impl(const TestEvaluatorType & 
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::face_worker_tangential(const IteratorType & cell,
-                                                            const unsigned int & f,
-                                                            const unsigned int & sf,
-                                                            const IteratorType & ncell,
-                                                            const unsigned int & nf,
-                                                            const unsigned int & nsf,
-                                                            ScratchData<dim> &   scratch_data,
-                                                            CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::face_worker_tangential(
+  const IteratorType & cell,
+  const unsigned int & f,
+  const unsigned int & sf,
+  const IteratorType & ncell,
+  const unsigned int & nf,
+  const unsigned int & nsf,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
 {
   FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values_test;
   fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
@@ -1313,10 +1338,10 @@ MatrixIntegrator<dim, is_multigrid>::face_worker_tangential(const IteratorType &
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
-MatrixIntegrator<dim, is_multigrid>::face_worker_tangential_impl(
+MatrixIntegrator<dim, is_multigrid, is_simplified>::face_worker_tangential_impl(
   const TestEvaluatorType &   phi_test,
   const AnsatzEvaluatorType & phi_ansatz,
   const double                gamma_over_h,
@@ -1359,9 +1384,9 @@ MatrixIntegrator<dim, is_multigrid>::face_worker_tangential_impl(
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential(
+MatrixIntegrator<dim, is_multigrid, is_simplified>::face_residual_worker_tangential(
   const IteratorType &     cell,
   const IteratorType &     cell_stream,
   const IteratorType &     cell_pressure,
@@ -1431,9 +1456,9 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential(
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential_interface(
+MatrixIntegrator<dim, is_multigrid, is_simplified>::face_residual_worker_tangential_interface(
   const IteratorType &     cell,
   const IteratorType &     cell_stream,
   const unsigned int &     face_no,
@@ -1509,12 +1534,12 @@ MatrixIntegrator<dim, is_multigrid>::face_residual_worker_tangential_interface(
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
-                                                     const unsigned int & f,
-                                                     ScratchData<dim> &   scratch_data,
-                                                     CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker(const IteratorType & cell,
+                                                                    const unsigned int & f,
+                                                                    ScratchData<dim> & scratch_data,
+                                                                    CopyData & copy_data) const
 {
   FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values_test;
   fe_interface_values.reinit(cell, f);
@@ -1542,12 +1567,13 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker(const IteratorType & cell,
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_worker_stream(const IteratorType & cell,
-                                                            const unsigned int & f,
-                                                            ScratchData<dim> &   scratch_data,
-                                                            CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_stream(
+  const IteratorType & cell,
+  const unsigned int & f,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
 {
   auto & phi = scratch_data.stream_interface_values;
   phi.reinit(cell, f);
@@ -1572,13 +1598,14 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_stream(const IteratorType &
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_worker_impl(const TestEvaluatorType &   phi_test,
-                                                          const AnsatzEvaluatorType & phi_ansatz,
-                                                          const double                gamma_over_h,
-                                                          CopyData::FaceData & face_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_impl(
+  const TestEvaluatorType &   phi_test,
+  const AnsatzEvaluatorType & phi_ansatz,
+  const double                gamma_over_h,
+  CopyData::FaceData &        face_data) const
 {
   const auto n_interface_dofs_test   = phi_test.n_current_interface_dofs();
   const auto n_interface_dofs_ansatz = phi_ansatz.n_current_interface_dofs();
@@ -1660,13 +1687,14 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_impl(const TestEvaluatorTyp
 
 /// TODO use one implementation combining boundary_worker_impl and
 /// uniface_worker_impl
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
-MatrixIntegrator<dim, is_multigrid>::uniface_worker_impl(const TestEvaluatorType &   phi_test,
-                                                         const AnsatzEvaluatorType & phi_ansatz,
-                                                         const double                gamma_over_h,
-                                                         CopyData::FaceData & face_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker_impl(
+  const TestEvaluatorType &   phi_test,
+  const AnsatzEvaluatorType & phi_ansatz,
+  const double                gamma_over_h,
+  CopyData::FaceData &        face_data) const
 {
   const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
 
@@ -1699,13 +1727,13 @@ MatrixIntegrator<dim, is_multigrid>::uniface_worker_impl(const TestEvaluatorType
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::uniface_worker(const IteratorType & cell,
-                                                    const unsigned int & f,
-                                                    const unsigned int & sf,
-                                                    ScratchData<dim> &   scratch_data,
-                                                    CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker(const IteratorType & cell,
+                                                                   const unsigned int & f,
+                                                                   const unsigned int & sf,
+                                                                   ScratchData<dim> & scratch_data,
+                                                                   CopyData & copy_data) const
 {
   FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values_test;
   fe_interface_values.reinit(cell, f, sf, cell, f, sf);
@@ -1736,13 +1764,14 @@ MatrixIntegrator<dim, is_multigrid>::uniface_worker(const IteratorType & cell,
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::uniface_worker_stream(const IteratorType & cell,
-                                                           const unsigned int & f,
-                                                           const unsigned int & sf,
-                                                           ScratchData<dim> &   scratch_data,
-                                                           CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker_stream(
+  const IteratorType & cell,
+  const unsigned int & f,
+  const unsigned int & sf,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
 {
   auto & stream_interface_values = scratch_data.stream_interface_values;
   stream_interface_values.reinit(cell, f, sf, cell, f, sf);
@@ -1771,9 +1800,9 @@ MatrixIntegrator<dim, is_multigrid>::uniface_worker_stream(const IteratorType & 
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::uniface_residual_worker_tangential(
+MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_residual_worker_tangential(
   const IteratorType &     cell,
   const IteratorType &     cell_stream,
   const IteratorType &     cell_pressure,
@@ -1788,9 +1817,9 @@ MatrixIntegrator<dim, is_multigrid>::uniface_residual_worker_tangential(
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::uniface_residual_worker_tangential_interface(
+MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_residual_worker_tangential_interface(
   const IteratorType &     cell,
   const IteratorType &     cell_stream,
   const unsigned int &     face_no,
@@ -1804,12 +1833,13 @@ MatrixIntegrator<dim, is_multigrid>::uniface_residual_worker_tangential_interfac
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential(const IteratorType & cell,
-                                                                const unsigned int & f,
-                                                                ScratchData<dim> &   scratch_data,
-                                                                CopyData & copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_tangential(
+  const IteratorType & cell,
+  const unsigned int & f,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
 {
   FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values_test;
   fe_interface_values.reinit(cell, f);
@@ -1832,10 +1862,10 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential(const IteratorTy
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 template<bool is_uniface>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_or_uniface_residual_worker_tangential(
+MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_or_uniface_residual_worker_tangential(
   const IteratorType &     cell,
   const IteratorType &     cell_stream,
   const IteratorType &     cell_pressure,
@@ -1897,16 +1927,16 @@ MatrixIntegrator<dim, is_multigrid>::boundary_or_uniface_residual_worker_tangent
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 template<bool is_uniface>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_or_uniface_residual_worker_tangential_interface(
-  const IteratorType &     cell,
-  const IteratorType &     cell_stream,
-  const unsigned int &     face_no,
-  const unsigned int &     sface_no,
-  ScratchData<dim, true> & scratch_data,
-  CopyData &               copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::
+  boundary_or_uniface_residual_worker_tangential_interface(const IteratorType &     cell,
+                                                           const IteratorType &     cell_stream,
+                                                           const unsigned int &     face_no,
+                                                           const unsigned int &     sface_no,
+                                                           ScratchData<dim, true> & scratch_data,
+                                                           CopyData &               copy_data) const
 {
   (void)sface_no;
 
@@ -1969,9 +1999,9 @@ MatrixIntegrator<dim, is_multigrid>::boundary_or_uniface_residual_worker_tangent
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential(
+MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_residual_worker_tangential(
   const IteratorType &     cell,
   const IteratorType &     cell_stream,
   const IteratorType &     cell_pressure,
@@ -1990,9 +2020,9 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential(
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential_interface(
+MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_residual_worker_tangential_interface(
   const IteratorType &     cell,
   const IteratorType &     cell_stream,
   const unsigned int &     face_no,
@@ -2005,10 +2035,10 @@ MatrixIntegrator<dim, is_multigrid>::boundary_residual_worker_tangential_interfa
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential_impl(
+MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_tangential_impl(
   const TestEvaluatorType &   phi_test,
   const AnsatzEvaluatorType & phi_ansatz,
   const double                gamma_over_h,
@@ -2089,10 +2119,10 @@ MatrixIntegrator<dim, is_multigrid>::boundary_worker_tangential_impl(
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 template<bool is_uniface, typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
-MatrixIntegrator<dim, is_multigrid>::boundary_or_uniface_worker_tangential_impl(
+MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_or_uniface_worker_tangential_impl(
   const TestEvaluatorType &   phi_test,
   const AnsatzEvaluatorType & phi_ansatz,
   const double                gamma_over_h,
@@ -2185,13 +2215,14 @@ MatrixIntegrator<dim, is_multigrid>::boundary_or_uniface_worker_tangential_impl(
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 void
-MatrixIntegrator<dim, is_multigrid>::uniface_worker_tangential(const IteratorType & cell,
-                                                               const unsigned int & f,
-                                                               const unsigned int & sf,
-                                                               ScratchData<dim> &   scratch_data,
-                                                               CopyData &           copy_data) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker_tangential(
+  const IteratorType & cell,
+  const unsigned int & f,
+  const unsigned int & sf,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
 {
   scratch_data.fe_interface_values_test.reinit(cell, f, sf, cell, f, sf);
   const auto & phi = scratch_data.fe_interface_values_test.get_fe_face_values(0);
@@ -2214,9 +2245,10 @@ MatrixIntegrator<dim, is_multigrid>::uniface_worker_tangential(const IteratorTyp
 
 
 
-template<int dim, bool is_multigrid>
+template<int dim, bool is_multigrid, bool is_simplified>
 std::pair<std::vector<unsigned int>, std::vector<types::global_dof_index>>
-MatrixIntegrator<dim, is_multigrid>::get_active_interface_indices(const IteratorType & cell) const
+MatrixIntegrator<dim, is_multigrid, is_simplified>::get_active_interface_indices(
+  const IteratorType & cell) const
 {
   return make_active_interface_indices_impl(*interface_handler, cell);
 }
