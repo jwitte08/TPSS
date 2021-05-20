@@ -224,16 +224,16 @@ public:
 
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified = false>
 class SparseMatrixAugmented
   : public TrilinosWrappers::SparseMatrix,
-    public Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree, double, dof_layout>
+    public Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree, double, dof_layout, is_simplified>
 {
 public:
   using matrix_type = TrilinosWrappers::SparseMatrix;
   using value_type  = double;
   using local_integrator_type =
-    Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree, value_type, dof_layout>;
+    Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree, value_type, dof_layout, is_simplified>;
   using vector_type = LinearAlgebra::distributed::Vector<value_type>;
 
   /**
@@ -343,14 +343,14 @@ private:
  * hierarchy is performed when calling @p initialize(). Then, a multigrid
  * preconditioner can be queried.
  */
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified = false>
 class MGCollectionVelocity
 {
 public:
   static constexpr int n_q_points_1d = fe_degree + 1 + (dof_layout == TPSS::DoFLayout::RT ? 1 : 0);
 
   using vector_type       = LinearAlgebra::distributed::Vector<double>;
-  using matrix_type       = SparseMatrixAugmented<dim, fe_degree, dof_layout>;
+  using matrix_type       = SparseMatrixAugmented<dim, fe_degree, dof_layout, is_simplified>;
   using mg_transfer_type  = MGTransferMatrixFree<dim, double>;
   using local_matrix_type = typename matrix_type::local_integrator_type::matrix_type;
   using mg_smoother_schwarz_type =
@@ -666,7 +666,7 @@ public:
   void
   assemble_system_step56();
 
-  std::shared_ptr<const MGCollectionVelocity<dim, fe_degree_v, dof_layout_v>>
+  std::shared_ptr<const MGCollectionVelocity<dim, fe_degree_v, dof_layout_v, is_simplified>>
   make_multigrid_velocity();
 
   std::shared_ptr<
@@ -1866,12 +1866,13 @@ template<int dim, int fe_degree_p, Method method, bool is_simplified>
 std::shared_ptr<
   const MGCollectionVelocity<dim,
                              ModelProblem<dim, fe_degree_p, method, is_simplified>::fe_degree_v,
-                             ModelProblem<dim, fe_degree_p, method, is_simplified>::dof_layout_v>>
+                             ModelProblem<dim, fe_degree_p, method, is_simplified>::dof_layout_v,
+                             is_simplified>>
 ModelProblem<dim, fe_degree_p, method, is_simplified>::make_multigrid_velocity()
 {
   const auto mgc_velocity =
-    std::make_shared<MGCollectionVelocity<dim, fe_degree_v, dof_layout_v>>(rt_parameters,
-                                                                           equation_data);
+    std::make_shared<MGCollectionVelocity<dim, fe_degree_v, dof_layout_v, is_simplified>>(
+      rt_parameters, equation_data);
 
   dof_handler_velocity.distribute_mg_dofs();
 
@@ -2594,9 +2595,9 @@ BlockSparseMatrixFiltered::Tvmult(
 
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 void
-SparseMatrixAugmented<dim, fe_degree, dof_layout>::initialize(
+SparseMatrixAugmented<dim, fe_degree, dof_layout, is_simplified>::initialize(
   const TrilinosWrappers::SparsityPattern & dsp,
   const IndexSet &                          locally_owned_dof_indices,
   const IndexSet &                          ghosted_dof_indices,
@@ -2610,9 +2611,9 @@ SparseMatrixAugmented<dim, fe_degree, dof_layout>::initialize(
 }
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 void
-SparseMatrixAugmented<dim, fe_degree, dof_layout>::initialize(
+SparseMatrixAugmented<dim, fe_degree, dof_layout, is_simplified>::initialize(
   std::shared_ptr<const MatrixFree<dim, double>> mf_storage_in,
   const EquationData                             equation_data_in)
 {
@@ -2621,37 +2622,40 @@ SparseMatrixAugmented<dim, fe_degree, dof_layout>::initialize(
 }
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 void
-SparseMatrixAugmented<dim, fe_degree, dof_layout>::initialize_dof_vector(vector_type & vec) const
+SparseMatrixAugmented<dim, fe_degree, dof_layout, is_simplified>::initialize_dof_vector(
+  vector_type & vec) const
 {
   Assert(partitioner, ExcMessage("Did you initialize partitioner?"));
   vec.reinit(partitioner);
 }
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 void
-SparseMatrixAugmented<dim, fe_degree, dof_layout>::initialize_dof_vector_mf(vector_type & vec) const
+SparseMatrixAugmented<dim, fe_degree, dof_layout, is_simplified>::initialize_dof_vector_mf(
+  vector_type & vec) const
 {
   Assert(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
   mf_storage->initialize_dof_vector(vec);
 }
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 std::shared_ptr<const MatrixFree<dim, double>>
-SparseMatrixAugmented<dim, fe_degree, dof_layout>::get_matrix_free() const
+SparseMatrixAugmented<dim, fe_degree, dof_layout, is_simplified>::get_matrix_free() const
 {
   AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
   return mf_storage;
 }
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 void
-SparseMatrixAugmented<dim, fe_degree, dof_layout>::vmult(const ArrayView<double>       dst,
-                                                         const ArrayView<const double> src) const
+SparseMatrixAugmented<dim, fe_degree, dof_layout, is_simplified>::vmult(
+  const ArrayView<double>       dst,
+  const ArrayView<const double> src) const
 {
   AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1, ExcMessage("No MPI support"));
   AssertDimension(dst.size(), matrix_type::m());
@@ -2664,9 +2668,9 @@ SparseMatrixAugmented<dim, fe_degree, dof_layout>::vmult(const ArrayView<double>
 }
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 void
-SparseMatrixAugmented<dim, fe_degree, dof_layout>::clear()
+SparseMatrixAugmented<dim, fe_degree, dof_layout, is_simplified>::clear()
 {
   mf_storage.reset();
   partitioner.reset();
@@ -2676,8 +2680,9 @@ SparseMatrixAugmented<dim, fe_degree, dof_layout>::clear()
 
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
-SparseMatrixAugmented<dim, fe_degree, dof_layout>::operator const FullMatrix<value_type> &() const
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
+SparseMatrixAugmented<dim, fe_degree, dof_layout, is_simplified>::operator const FullMatrix<
+  value_type> &() const
 {
   if(!fullmatrix)
   {
@@ -2762,8 +2767,8 @@ BlockSchurPreconditionerStep56<PreconditionerAType, PreconditionerSType>::get_su
 
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
-MGCollectionVelocity<dim, fe_degree, dof_layout>::MGCollectionVelocity(
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
+MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::MGCollectionVelocity(
   const RT::Parameter & rt_parameters_in,
   const EquationData &  equation_data_in)
   : dof_handler(nullptr),
@@ -2777,9 +2782,9 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::MGCollectionVelocity(
 
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 void
-MGCollectionVelocity<dim, fe_degree, dof_layout>::clear_data()
+MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::clear_data()
 {
   preconditioner_mg.reset();
   multigrid.reset();
@@ -2799,9 +2804,9 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::clear_data()
 
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 void
-MGCollectionVelocity<dim, fe_degree, dof_layout>::initialize(
+MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::initialize(
   const unsigned int                       mg_level_max,
   const std::shared_ptr<ColoringBase<dim>> user_coloring)
 {
@@ -2937,9 +2942,9 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::initialize(
                                                        mg_level_max);
 }
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 void
-MGCollectionVelocity<dim, fe_degree, dof_layout>::initialize_schwarz_smoothers(
+MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::initialize_schwarz_smoothers(
   const std::shared_ptr<ColoringBase<dim>> user_coloring)
 {
   Assert(parameters.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz,
@@ -2977,9 +2982,9 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::initialize_schwarz_smoothers(
 
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 void
-MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid(
+MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::assemble_multigrid(
   const unsigned int          level,
   AffineConstraints<double> & level_constraints)
 {
@@ -3075,11 +3080,12 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid(
 
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
-const PreconditionMG<dim,
-                     typename MGCollectionVelocity<dim, fe_degree, dof_layout>::vector_type,
-                     typename MGCollectionVelocity<dim, fe_degree, dof_layout>::mg_transfer_type> &
-MGCollectionVelocity<dim, fe_degree, dof_layout>::get_preconditioner() const
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
+const PreconditionMG<
+  dim,
+  typename MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::vector_type,
+  typename MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::mg_transfer_type> &
+MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::get_preconditioner() const
 {
   AssertThrow(multigrid, ExcMessage("Have you called initialize() before?"));
   if(!preconditioner_mg)
@@ -3092,9 +3098,9 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::get_preconditioner() const
 
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 unsigned int
-MGCollectionVelocity<dim, fe_degree, dof_layout>::n_colors() const
+MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::n_colors() const
 {
   Assert(mg_smoother_pre || mg_smoother_post, ExcMessage("Not initialized."));
   if(mg_schwarz_smoother_pre)

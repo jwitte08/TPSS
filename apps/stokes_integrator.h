@@ -2490,12 +2490,13 @@ namespace FD
 {
 template<int dim,
          int fe_degree,
-         typename Number            = double,
-         TPSS::DoFLayout dof_layout = TPSS::DoFLayout::Q>
+         typename Number               = double,
+         TPSS::DoFLayout dof_layout    = TPSS::DoFLayout::Q,
+         bool            is_simplified = false>
 class MatrixIntegrator
 {
 public:
-  using This = MatrixIntegrator<dim, fe_degree, Number>;
+  using This = MatrixIntegrator<dim, fe_degree, Number, dof_layout, is_simplified>;
 
   static constexpr int n_q_points_1d = fe_degree + 1 + (dof_layout == TPSS::DoFLayout::RT ? 1 : 0);
 
@@ -2511,6 +2512,7 @@ public:
     equation_data = equation_data_in;
   }
 
+  /// TODO use tangential contribution only for RT !!!
   template<typename OperatorType>
   void
   assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
@@ -2519,17 +2521,9 @@ public:
                              const std::pair<unsigned int, unsigned int> subdomain_range) const
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
-    /// TODO tangential components only for RT !!!
 
     constexpr bool is_sipg =
       TPSS::DoFLayout::DGQ == dof_layout || TPSS::DoFLayout::RT == dof_layout;
-
-    // const auto zero_out = [](std::vector<std::array<matrix_type_1d, dim>> & rank1_tensors) {
-    //   for(auto & tensor : rank1_tensors)
-    //   {
-    //     tensor.front() = 0. * tensor.front();
-    //   }
-    // };
 
     for(auto comp_test = 0U; comp_test < dim; ++comp_test)
     {
@@ -2558,7 +2552,7 @@ public:
               std::array<matrix_type_1d, dim> kronecker_tensor;
               /// if direction_of_L equals the velocity component we scale by two
               AssertDimension(comp_test, comp_ansatz);
-              const auto factor = direction_of_L == comp_ansatz ? 2. : 1.;
+              const auto factor = direction_of_L == comp_ansatz && !is_simplified ? 2. : 1.;
               for(auto d = 0U; d < dim; ++d)
                 kronecker_tensor[d] = d == direction_of_L ?
                                         factor * laplace_matrices[direction_of_L] :
@@ -2575,75 +2569,89 @@ public:
 
           else
           {
-            /// The factor 2 arising from 2 * e(u) : grad v is implicitly
-            /// equalized by the factor 1/2 from the symmetrized gradient
-            /// e(u). First, we emphasize that for off-diagonal blocks there
-            /// are no penalty contributions. For the remaing contributions,
-            /// namely consistency and symmetry terms, again the factor 2 is
-            /// implicitly equalized. Nevertheless, we have to consider the
-            /// factor 1/2 arising from average operators {{e(u)}} and
-            /// {{e(v)}}, respectively.
-            const auto gradient_matrices = assemble_gradient_tensor(eval_test, eval_ansatz);
-
-            const auto & MxGxGT = [&](const auto component_test, const auto component_ansatz) {
-              const int deriv_index_ansatz = component_test;
-              const int deriv_index_test   = component_ansatz;
-              Assert(deriv_index_ansatz != deriv_index_test,
-                     ExcMessage("This case is not well-defined."));
-              std::array<matrix_type_1d, dim> kronecker_tensor;
-              for(auto d = 0; d < dim; ++d)
-              {
-                if(d == deriv_index_ansatz)
-                  kronecker_tensor[d] = gradient_matrices[deriv_index_ansatz];
-                else if(d == deriv_index_test)
-                  kronecker_tensor[d] = LinAlg::transpose(gradient_matrices[deriv_index_test]);
-                else
-                  kronecker_tensor[d] = mass_matrices[d];
-              }
-              return kronecker_tensor;
-            };
-
             std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
-            /// (0,1)-block: MxGxGT + MxPxG + MxGTxP
+
+            if(!is_simplified)
             {
-              /// MxGxGT
-              rank1_tensors.emplace_back(MxGxGT(comp_test, comp_ansatz));
+              /// The factor 2 arising from 2 * e(u) : grad v is implicitly
+              /// equalized by the factor 1/2 from the symmetrized gradient
+              /// e(u). First, we emphasize that for off-diagonal blocks there
+              /// are no penalty contributions. For the remaing contributions,
+              /// namely consistency and symmetry terms, again the factor 2 is
+              /// implicitly equalized. Nevertheless, we have to consider the
+              /// factor 1/2 arising from average operators {{e(u)}} and
+              /// {{e(v)}}, respectively.
+              const auto gradient_matrices = assemble_gradient_tensor(eval_test, eval_ansatz);
 
-              /// Factor 1/2 of average operator {{e(u)}} and {{e(v)}} is used
-              /// within assemble_mixed_nitsche_tensor
-              const auto point_mass_matrices =
-                assemble_mixed_nitsche_tensor(eval_test, eval_ansatz);
-
-              { /// MxPxG
+              const auto & MxGxGT = [&](const auto component_test, const auto component_ansatz) {
+                const int deriv_index_ansatz = component_test;
+                const int deriv_index_test   = component_ansatz;
+                Assert(deriv_index_ansatz != deriv_index_test,
+                       ExcMessage("This case is not well-defined."));
                 std::array<matrix_type_1d, dim> kronecker_tensor;
-                for(auto d = 0U; d < dim; ++d)
+                for(auto d = 0; d < dim; ++d)
                 {
-                  if(d == comp_test)
-                    kronecker_tensor[d] = gradient_matrices[comp_test];
-                  else if(d == comp_ansatz)
-                    kronecker_tensor[d] = point_mass_matrices[comp_ansatz];
+                  if(d == deriv_index_ansatz)
+                    kronecker_tensor[d] = gradient_matrices[deriv_index_ansatz];
+                  else if(d == deriv_index_test)
+                    kronecker_tensor[d] = LinAlg::transpose(gradient_matrices[deriv_index_test]);
                   else
                     kronecker_tensor[d] = mass_matrices[d];
                 }
-                rank1_tensors.emplace_back(kronecker_tensor);
-              }
+                return kronecker_tensor;
+              };
 
-              { /// MxGTxP
-                std::array<matrix_type_1d, dim> kronecker_tensor;
-                for(auto d = 0U; d < dim; ++d)
-                {
-                  if(d == comp_test)
-                    kronecker_tensor[d] = point_mass_matrices[comp_test];
-                  else if(d == comp_ansatz)
-                    kronecker_tensor[d] = LinAlg::transpose(gradient_matrices[comp_ansatz]);
-                  else
-                    kronecker_tensor[d] = mass_matrices[d];
+              /// (0,1)-block: MxGxGT + MxPxG + MxGTxP
+              {
+                /// MxGxGT
+                rank1_tensors.emplace_back(MxGxGT(comp_test, comp_ansatz));
+
+                /// Factor 1/2 of average operator {{e(u)}} and {{e(v)}} is used
+                /// within assemble_mixed_nitsche_tensor
+                const auto point_mass_matrices =
+                  assemble_mixed_nitsche_tensor(eval_test, eval_ansatz);
+
+                { /// MxPxG
+                  std::array<matrix_type_1d, dim> kronecker_tensor;
+                  for(auto d = 0U; d < dim; ++d)
+                  {
+                    if(d == comp_test)
+                      kronecker_tensor[d] = gradient_matrices[comp_test];
+                    else if(d == comp_ansatz)
+                      kronecker_tensor[d] = point_mass_matrices[comp_ansatz];
+                    else
+                      kronecker_tensor[d] = mass_matrices[d];
+                  }
+                  rank1_tensors.emplace_back(kronecker_tensor);
                 }
-                rank1_tensors.emplace_back(kronecker_tensor);
-              }
 
-              velocity_matrix.get_block(comp_test, comp_ansatz).reinit(rank1_tensors);
+                { /// MxGTxP
+                  std::array<matrix_type_1d, dim> kronecker_tensor;
+                  for(auto d = 0U; d < dim; ++d)
+                  {
+                    if(d == comp_test)
+                      kronecker_tensor[d] = point_mass_matrices[comp_test];
+                    else if(d == comp_ansatz)
+                      kronecker_tensor[d] = LinAlg::transpose(gradient_matrices[comp_ansatz]);
+                    else
+                      kronecker_tensor[d] = mass_matrices[d];
+                  }
+                  rank1_tensors.emplace_back(kronecker_tensor);
+                }
+              }
             }
+            else
+            {
+              std::array<unsigned int, dim> n_rows; /// assuming isotropy
+              const auto                    n_dofs_1d = eval_test.get_dof_tensor().n_dofs_1d(0);
+              n_rows.fill(n_dofs_1d);
+              rank1_tensors =
+                Tensors::make_zero_rank1_tensors<dim, VectorizedArray<Number>>(/*rank*/ 1,
+                                                                               n_rows,
+                                                                               n_rows);
+            }
+
+            velocity_matrix.get_block(comp_test, comp_ansatz).reinit(rank1_tensors);
 
             /// (1,0)-block: transpose of (0,1)-block
             {
@@ -2742,6 +2750,9 @@ public:
       FaceLaplace nitsche;
       nitsche.penalty_factor          = equation_data.ip_factor;
       nitsche.interior_penalty_factor = equation_data.ip_factor;
+
+      if(is_simplified)
+        return eval_test.patch_action(eval_ansatz, cell_laplace, nitsche, nitsche);
 
       const auto face_nitsche_plus_penalty = [&](const evaluator_type & eval_ansatz,
                                                  const evaluator_type & eval_test,
