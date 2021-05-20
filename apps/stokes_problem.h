@@ -1681,7 +1681,7 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::assemble_system_velocity_
   {
     using VelocityPressure::MW::Mixed::CopyData;
     using VelocityPressure::MW::Mixed::ScratchData;
-    using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, false>;
+    using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, false>; // TODO ???
     using CellIterator     = typename MatrixIntegrator::IteratorType;
 
     const auto * particular_solution_velocity =
@@ -2992,7 +2992,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout>::assemble_multigrid(
 
   using Velocity::SIPG::MW::CopyData;
   using Velocity::SIPG::MW::ScratchData;
-  using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
+  using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>; // !!! is simplified
   using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
   MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
@@ -3205,7 +3205,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   {
     using Velocity::SIPG::MW::CopyData;
     using Velocity::SIPG::MW::ScratchData;
-    using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
+    using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>; // is simplified !!!
     using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
     MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
@@ -3303,7 +3303,7 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   {
     using VelocityPressure::MW::Mixed::CopyData;
     using VelocityPressure::MW::Mixed::ScratchData;
-    using MatrixIntegrator  = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, true>;
+    using MatrixIntegrator  = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, true>; // TODO ???
     using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
     MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, nullptr, equation_data);

@@ -925,12 +925,13 @@ struct MatrixIntegrator
                        const double                gamma_over_h,
                        CopyData::FaceData &        copy_data) const;
 
-  template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
-  void
-  boundary_worker_tangential_impl(const TestEvaluatorType &   phi_test,
-                                  const AnsatzEvaluatorType & phi_ansatz,
-                                  const double                gamma_over_h,
-                                  CopyData::FaceData &        copy_data) const;
+  /// TODO remove if completely obsolete !!!
+  // template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
+  // void
+  // boundary_worker_tangential_impl(const TestEvaluatorType &   phi_test,
+  //                                 const AnsatzEvaluatorType & phi_ansatz,
+  //                                 const double                gamma_over_h,
+  //                                 CopyData::FaceData &        copy_data) const;
 
   /**
    * We query the underlying InterfaceHandler to return the local-global pair of
@@ -1393,22 +1394,45 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::face_worker_tangential_impl(
     const auto & n = normals[q];
     for(unsigned int i = 0; i < n_interface_dofs_test; ++i)
     {
-      const auto & av_symgrad_phi_i = compute_average_symgrad(phi_test, i, q);
-      const auto & jump_phit_i      = compute_vjump_tangential(phi_test, i, q);
-      double       ncontrib_i       = n * av_symgrad_phi_i * n;
-
-      for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+      if(!is_simplified)
       {
-        const auto & av_symgrad_phi_j = compute_average_symgrad(phi_ansatz, j, q);
-        const auto & jump_phit_j      = compute_vjump_tangential(phi_ansatz, j, q);
-        double       ncontrib_j       = n * av_symgrad_phi_j * n;
+        const auto & av_symgrad_phi_i = compute_average_symgrad(phi_test, i, q);
+        const auto & jump_phit_i      = compute_vjump_tangential(phi_test, i, q);
+        double       ncontrib_i       = n * av_symgrad_phi_i * n;
 
-        integral_ijq = -(n * av_symgrad_phi_j - ncontrib_j * n) * jump_phit_i;
-        integral_ijq += -(n * av_symgrad_phi_i - ncontrib_i * n) * jump_phit_j;
-        integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
-        integral_ijq *= 2. * phi_test.JxW(q);
+        for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+        {
+          const auto & av_symgrad_phi_j = compute_average_symgrad(phi_ansatz, j, q);
+          const auto & jump_phit_j      = compute_vjump_tangential(phi_ansatz, j, q);
+          double       ncontrib_j       = n * av_symgrad_phi_j * n;
 
-        face_data.matrix(i, j) += integral_ijq;
+          integral_ijq = -(n * av_symgrad_phi_j - ncontrib_j * n) * jump_phit_i;
+          integral_ijq += -(n * av_symgrad_phi_i - ncontrib_i * n) * jump_phit_j;
+          integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
+          integral_ijq *= 2. * phi_test.JxW(q);
+
+          face_data.matrix(i, j) += integral_ijq;
+        }
+      }
+      else
+      {
+        const auto & av_grad_phi_i = compute_average_grad(phi_test, i, q);
+        const auto & jump_phit_i   = compute_vjump_tangential(phi_test, i, q);
+        double       ncontrib_i    = n * av_grad_phi_i * n;
+
+        for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+        {
+          const auto & av_grad_phi_j = compute_average_grad(phi_ansatz, j, q);
+          const auto & jump_phit_j   = compute_vjump_tangential(phi_ansatz, j, q);
+          double       ncontrib_j    = n * av_grad_phi_j * n;
+
+          integral_ijq = -(n * av_grad_phi_j - ncontrib_j * n) * jump_phit_i;
+          integral_ijq += -(n * av_grad_phi_i - ncontrib_i * n) * jump_phit_j;
+          integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
+          integral_ijq *= phi_test.JxW(q);
+
+          face_data.matrix(i, j) += integral_ijq;
+        }
       }
     }
   }
@@ -2008,23 +2032,21 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_tangential(
   ScratchData<dim> &   scratch_data,
   CopyData &           copy_data) const
 {
-  FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values_test;
-  fe_interface_values.reinit(cell, f);
+  scratch_data.fe_interface_values_test.reinit(cell, f);
+  auto & phi = scratch_data.fe_interface_values_test.get_fe_face_values(0);
 
-  const unsigned int n_dofs = fe_interface_values.n_current_interface_dofs();
+  const unsigned int n_dofs = phi.dofs_per_cell;
 
   CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_dofs);
 
-  face_data.dof_indices = fe_interface_values.get_interface_dof_indices();
+  cell->get_active_or_mg_dof_indices(face_data.dof_indices);
+  face_data.dof_indices_column = face_data.dof_indices;
 
   const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
-  const auto   fe_degree = scratch_data.fe_values_test.get_fe().degree;
+  const auto   fe_degree = phi.get_fe().degree;
   const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, h);
 
-  boundary_worker_tangential_impl<!is_multigrid>(fe_interface_values,
-                                                 fe_interface_values,
-                                                 gamma_over_h,
-                                                 face_data);
+  boundary_or_uniface_worker_tangential_impl<false>(phi, phi, gamma_over_h, face_data);
 }
 
 
@@ -2202,87 +2224,88 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_residual_worker_tan
 
 
 
-template<int dim, bool is_multigrid, bool is_simplified>
-template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
-void
-MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_tangential_impl(
-  const TestEvaluatorType &   phi_test,
-  const AnsatzEvaluatorType & phi_ansatz,
-  const double                gamma_over_h,
-  CopyData::FaceData &        face_data) const
-{
-  const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
+/// TODO remove if completely obsolete !!!
+// template<int dim, bool is_multigrid, bool is_simplified>
+// template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
+// void
+// MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_tangential_impl(
+//   const TestEvaluatorType &   phi_test,
+//   const AnsatzEvaluatorType & phi_ansatz,
+//   const double                gamma_over_h,
+//   CopyData::FaceData &        face_data) const
+// {
+//   const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
 
-  std::vector<Tensor<1, dim>> solution_values;
-  std::vector<Tensor<1, dim>> tangential_solution_values;
-  if(do_rhs)
-  {
-    Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
-    AssertDimension(analytical_solution->n_components, dim);
-    const auto &                        q_points = phi_test.get_quadrature_points();
-    const std::vector<Tensor<1, dim>> & normals  = phi_test.get_normal_vectors();
-    std::transform(q_points.cbegin(),
-                   q_points.cend(),
-                   std::back_inserter(solution_values),
-                   [this](const auto & x_q) {
-                     Tensor<1, dim> value;
-                     for(auto c = 0U; c < dim; ++c)
-                       value[c] = analytical_solution->value(x_q, c);
-                     return value;
-                   });
-    std::transform(solution_values.cbegin(),
-                   solution_values.cend(),
-                   normals.cbegin(),
-                   std::back_inserter(tangential_solution_values),
-                   [](const auto & u_q, const auto & normal) {
-                     return u_q - ((u_q * normal) * normal);
-                   });
-    AssertDimension(solution_values.size(), phi_test.n_quadrature_points);
-    AssertDimension(tangential_solution_values.size(), phi_test.n_quadrature_points);
-  }
+//   std::vector<Tensor<1, dim>> solution_values;
+//   std::vector<Tensor<1, dim>> tangential_solution_values;
+//   if(do_rhs)
+//   {
+//     Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
+//     AssertDimension(analytical_solution->n_components, dim);
+//     const auto &                        q_points = phi_test.get_quadrature_points();
+//     const std::vector<Tensor<1, dim>> & normals  = phi_test.get_normal_vectors();
+//     std::transform(q_points.cbegin(),
+//                    q_points.cend(),
+//                    std::back_inserter(solution_values),
+//                    [this](const auto & x_q) {
+//                      Tensor<1, dim> value;
+//                      for(auto c = 0U; c < dim; ++c)
+//                        value[c] = analytical_solution->value(x_q, c);
+//                      return value;
+//                    });
+//     std::transform(solution_values.cbegin(),
+//                    solution_values.cend(),
+//                    normals.cbegin(),
+//                    std::back_inserter(tangential_solution_values),
+//                    [](const auto & u_q, const auto & normal) {
+//                      return u_q - ((u_q * normal) * normal);
+//                    });
+//     AssertDimension(solution_values.size(), phi_test.n_quadrature_points);
+//     AssertDimension(tangential_solution_values.size(), phi_test.n_quadrature_points);
+//   }
 
-  double integral_ijq = 0.;
-  double nitsche_iq   = 0.;
-  for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
-  {
-    const auto & n = normals[q];
-    for(unsigned int i = 0; i < face_data.matrix.m(); ++i)
-    {
-      const auto & jump_phit_i      = compute_vjump_tangential(phi_test, i, q);
-      const auto & av_symgrad_phi_i = compute_average_symgrad(phi_test, i, q);
-      double       ncontrib_i       = n * av_symgrad_phi_i * n;
+//   double integral_ijq = 0.;
+//   double nitsche_iq   = 0.;
+//   for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
+//   {
+//     const auto & n = normals[q];
+//     for(unsigned int i = 0; i < face_data.matrix.m(); ++i)
+//     {
+//       const auto & jump_phit_i      = compute_vjump_tangential(phi_test, i, q);
+//       const auto & av_symgrad_phi_i = compute_average_symgrad(phi_test, i, q);
+//       double       ncontrib_i       = n * av_symgrad_phi_i * n;
 
-      for(unsigned int j = 0; j < face_data.matrix.n(); ++j)
-      {
-        const auto & jump_phit_j      = compute_vjump_tangential(phi_ansatz, j, q);
-        const auto & av_symgrad_phi_j = compute_average_symgrad(phi_ansatz, j, q);
-        double       ncontrib_j       = n * av_symgrad_phi_j * n;
+//       for(unsigned int j = 0; j < face_data.matrix.n(); ++j)
+//       {
+//         const auto & jump_phit_j      = compute_vjump_tangential(phi_ansatz, j, q);
+//         const auto & av_symgrad_phi_j = compute_average_symgrad(phi_ansatz, j, q);
+//         double       ncontrib_j       = n * av_symgrad_phi_j * n;
 
-        integral_ijq = -(n * av_symgrad_phi_j - ncontrib_j * n) * jump_phit_i;
-        integral_ijq += -(n * av_symgrad_phi_i - ncontrib_i * n) * jump_phit_j;
-        integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
-        integral_ijq *= 2. * phi_test.JxW(q);
+//         integral_ijq = -(n * av_symgrad_phi_j - ncontrib_j * n) * jump_phit_i;
+//         integral_ijq += -(n * av_symgrad_phi_i - ncontrib_i * n) * jump_phit_j;
+//         integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
+//         integral_ijq *= 2. * phi_test.JxW(q);
 
-        face_data.matrix(i, j) += integral_ijq;
-      }
+//         face_data.matrix(i, j) += integral_ijq;
+//       }
 
-      /// Nitsche method (weak Dirichlet conditions)
-      if(do_rhs)
-      {
-        /// ut is the tangential vector field of the vector field u (which
-        /// should not be confused with the tangential component of the vector
-        /// field u!).
-        const auto & ut = tangential_solution_values[q];
+//       /// Nitsche method (weak Dirichlet conditions)
+//       if(do_rhs)
+//       {
+//         /// ut is the tangential vector field of the vector field u (which
+//         /// should not be confused with the tangential component of the vector
+//         /// field u!).
+//         const auto & ut = tangential_solution_values[q];
 
-        nitsche_iq = -(n * av_symgrad_phi_i - n * ncontrib_i) * ut;
-        nitsche_iq += gamma_over_h * ut * jump_phit_i;
-        nitsche_iq *= 2. * phi_test.JxW(q);
+//         nitsche_iq = -(n * av_symgrad_phi_i - n * ncontrib_i) * ut;
+//         nitsche_iq += gamma_over_h * ut * jump_phit_i;
+//         nitsche_iq *= 2. * phi_test.JxW(q);
 
-        face_data.rhs(i) += nitsche_iq;
-      }
-    }
-  }
-}
+//         face_data.rhs(i) += nitsche_iq;
+//       }
+//     }
+//   }
+// }
 
 
 
@@ -2297,23 +2320,22 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_or_uniface_worker_t
 {
   constexpr bool do_rhs = !is_multigrid && !is_uniface;
 
-  const auto n_interface_dofs_test   = face_data.matrix.m();
-  const auto n_interface_dofs_ansatz = face_data.matrix.n();
+  const auto n_dofs_test   = face_data.matrix.m();
+  const auto n_dofs_ansatz = face_data.matrix.n();
 
-  AssertDimension(n_interface_dofs_test, face_data.dof_indices.size());
+  AssertDimension(n_dofs_test, face_data.dof_indices.size());
   if(!face_data.dof_indices_column.empty())
-    AssertDimension(n_interface_dofs_ansatz, face_data.dof_indices_column.size());
+    AssertDimension(n_dofs_ansatz, face_data.dof_indices_column.size());
 
   const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
 
-  std::vector<Tensor<1, dim>> solution_values;
   std::vector<Tensor<1, dim>> tangential_solution_values;
   if(do_rhs)
   {
     Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
     AssertDimension(analytical_solution->n_components, dim);
-    const auto &                        q_points = phi_test.get_quadrature_points();
-    const std::vector<Tensor<1, dim>> & normals  = phi_test.get_normal_vectors();
+    const auto &                q_points = phi_test.get_quadrature_points();
+    std::vector<Tensor<1, dim>> solution_values;
     std::transform(q_points.cbegin(),
                    q_points.cend(),
                    std::back_inserter(solution_values),
@@ -2339,42 +2361,82 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_or_uniface_worker_t
   for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
   {
     const auto & n = normals[q];
-    for(unsigned int i = 0; i < n_interface_dofs_test; ++i)
+    for(unsigned int i = 0; i < n_dofs_test; ++i)
     {
-      const auto & phi_i            = compute_vvalue(phi_test, i, q);
-      const auto & jump_phit_i      = phi_i - ((phi_i * n) * n);
-      const auto & av_symgrad_phi_i = (is_uniface ? 0.5 : 1.0) * compute_symgrad(phi_test, i, q);
-      double       ncontrib_i       = n * av_symgrad_phi_i * n;
-
-      for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+      if(!is_simplified)
       {
-        const auto & phi_j       = compute_vvalue(phi_ansatz, j, q);
-        const auto & jump_phit_j = phi_j - ((phi_j * n) * n);
-        const auto & av_symgrad_phi_j =
-          (is_uniface ? 0.5 : 1.0) * compute_symgrad(phi_ansatz, j, q);
-        double ncontrib_j = n * av_symgrad_phi_j * n;
+        const auto & phi_i            = compute_vvalue(phi_test, i, q);
+        const auto & jump_phit_i      = phi_i - ((phi_i * n) * n);
+        const auto & av_symgrad_phi_i = (is_uniface ? 0.5 : 1.0) * compute_symgrad(phi_test, i, q);
+        double       ncontrib_i       = n * av_symgrad_phi_i * n;
 
-        integral_ijq = -(n * av_symgrad_phi_j - ncontrib_j * n) * jump_phit_i;
-        integral_ijq += -(n * av_symgrad_phi_i - ncontrib_i * n) * jump_phit_j;
-        integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
-        integral_ijq *= 2. * phi_test.JxW(q);
+        for(unsigned int j = 0; j < n_dofs_ansatz; ++j)
+        {
+          const auto & phi_j       = compute_vvalue(phi_ansatz, j, q);
+          const auto & jump_phit_j = phi_j - ((phi_j * n) * n);
+          const auto & av_symgrad_phi_j =
+            (is_uniface ? 0.5 : 1.0) * compute_symgrad(phi_ansatz, j, q);
+          double ncontrib_j = n * av_symgrad_phi_j * n;
 
-        face_data.matrix(i, j) += integral_ijq;
+          integral_ijq = -(n * av_symgrad_phi_j - ncontrib_j * n) * jump_phit_i;
+          integral_ijq += -(n * av_symgrad_phi_i - ncontrib_i * n) * jump_phit_j;
+          integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
+          integral_ijq *= 2. * phi_test.JxW(q);
+
+          face_data.matrix(i, j) += integral_ijq;
+        }
+
+        /// Nitsche method (weak Dirichlet conditions)
+        if(do_rhs)
+        {
+          /// ut is the tangential vector field of the vector field u (which
+          /// should not be confused with the tangential component of the vector
+          /// field u!).
+          const auto & ut = tangential_solution_values[q];
+
+          nitsche_iq = -(n * av_symgrad_phi_i - n * ncontrib_i) * ut;
+          nitsche_iq += gamma_over_h * ut * jump_phit_i;
+          nitsche_iq *= 2. * phi_test.JxW(q);
+
+          face_data.rhs(i) += nitsche_iq;
+        }
       }
-
-      /// Nitsche method (weak Dirichlet conditions)
-      if(do_rhs)
+      else
       {
-        /// ut is the tangential vector field of the vector field u (which
-        /// should not be confused with the tangential component of the vector
-        /// field u!).
-        const auto & ut = tangential_solution_values[q];
+        const auto & phi_i         = compute_vvalue(phi_test, i, q);
+        const auto & jump_phit_i   = phi_i - ((phi_i * n) * n);
+        const auto & av_grad_phi_i = (is_uniface ? 0.5 : 1.0) * compute_grad(phi_test, i, q);
+        double       ncontrib_i    = n * av_grad_phi_i * n;
 
-        nitsche_iq = -(n * av_symgrad_phi_i - n * ncontrib_i) * ut;
-        nitsche_iq += gamma_over_h * ut * jump_phit_i;
-        nitsche_iq *= 2. * phi_test.JxW(q);
+        for(unsigned int j = 0; j < n_dofs_ansatz; ++j)
+        {
+          const auto & phi_j         = compute_vvalue(phi_ansatz, j, q);
+          const auto & jump_phit_j   = phi_j - ((phi_j * n) * n);
+          const auto & av_grad_phi_j = (is_uniface ? 0.5 : 1.0) * compute_grad(phi_ansatz, j, q);
+          double       ncontrib_j    = n * av_grad_phi_j * n;
 
-        face_data.rhs(i) += nitsche_iq;
+          integral_ijq = -(n * av_grad_phi_j - ncontrib_j * n) * jump_phit_i;
+          integral_ijq += -(n * av_grad_phi_i - ncontrib_i * n) * jump_phit_j;
+          integral_ijq += gamma_over_h * jump_phit_j * jump_phit_i;
+          integral_ijq *= phi_test.JxW(q);
+
+          face_data.matrix(i, j) += integral_ijq;
+        }
+
+        /// Nitsche method (weak Dirichlet conditions)
+        if(do_rhs)
+        {
+          /// ut is the tangential vector field of the vector field u (which
+          /// should not be confused with the tangential component of the vector
+          /// field u!).
+          const auto & ut = tangential_solution_values[q];
+
+          nitsche_iq = -(n * av_grad_phi_i - n * ncontrib_i) * ut;
+          nitsche_iq += gamma_over_h * ut * jump_phit_i;
+          nitsche_iq *= phi_test.JxW(q);
+
+          face_data.rhs(i) += nitsche_iq;
+        }
       }
     }
   }
