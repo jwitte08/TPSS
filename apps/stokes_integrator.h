@@ -3989,13 +3989,14 @@ namespace LMW
  */
 template<int dim,
          int fe_degree_p,
-         typename Number              = double,
-         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
-         int             fe_degree_v  = fe_degree_p + 1>
+         typename Number               = double,
+         TPSS::DoFLayout dof_layout_v  = TPSS::DoFLayout::Q,
+         int             fe_degree_v   = fe_degree_p + 1,
+         bool            is_simplified = false>
 class MatrixIntegrator
 {
 public:
-  using This = MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
+  using This = MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, is_simplified>;
 
   static constexpr int n_q_points_1d =
     fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
@@ -4070,8 +4071,11 @@ public:
         /// velocity block
         {
           using Velocity::SIPG::MW::CopyData;
+
           using Velocity::SIPG::MW::ScratchData;
-          using MatrixIntegrator   = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
+
+          using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, true, is_simplified>;
+
           using cell_iterator_type = typename MatrixIntegrator::IteratorType;
 
           tmp_v_v = 0.;
@@ -4225,8 +4229,11 @@ public:
         /// velocity-pressure block & pressure-velocity block
         {
           using VelocityPressure::MW::Mixed::CopyData;
+
           using VelocityPressure::MW::Mixed::ScratchData;
-          using MatrixIntegrator   = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, true>;
+
+          using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, true>; // ???
+
           using cell_iterator_type = typename MatrixIntegrator::IteratorType;
 
           tmp_v_p = 0.;
@@ -5403,51 +5410,77 @@ template<LocalAssembly local_assembly,
          int           fe_degree_p,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
-         int             fe_degree_v>
+         int             fe_degree_v,
+         bool            is_simplified>
 struct MatrixIntegratorSelector
 {
 };
 
-template<int dim, int fe_degree_p, typename Number, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         bool            is_simplified>
 struct MatrixIntegratorSelector<LocalAssembly::Tensor,
                                 dim,
                                 fe_degree_p,
                                 Number,
                                 dof_layout_v,
-                                fe_degree_v>
+                                fe_degree_v,
+                                is_simplified>
 {
   using type = FD::MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
 };
 
-template<int dim, int fe_degree_p, typename Number, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         bool            is_simplified>
 struct MatrixIntegratorSelector<LocalAssembly::Cut,
                                 dim,
                                 fe_degree_p,
                                 Number,
                                 dof_layout_v,
-                                fe_degree_v>
+                                fe_degree_v,
+                                is_simplified>
 {
   using type = MatrixIntegratorCut<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
 };
 
-template<int dim, int fe_degree_p, typename Number, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         bool            is_simplified>
 struct MatrixIntegratorSelector<LocalAssembly::LMW,
                                 dim,
                                 fe_degree_p,
                                 Number,
                                 dof_layout_v,
-                                fe_degree_v>
+                                fe_degree_v,
+                                is_simplified>
 {
-  using type = LMW::MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
+  using type =
+    LMW::MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, is_simplified>;
 };
 
-template<int dim, int fe_degree_p, typename Number, TPSS::DoFLayout dof_layout_v, int fe_degree_v>
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         bool            is_simplified>
 struct MatrixIntegratorSelector<LocalAssembly::StreamLMW,
                                 dim,
                                 fe_degree_p,
                                 Number,
                                 dof_layout_v,
-                                fe_degree_v>
+                                fe_degree_v,
+                                is_simplified>
 {
   static_assert(dof_layout_v == TPSS::DoFLayout::RT, "Implemented for Raviart-Thomas.");
   static_assert(fe_degree_p == fe_degree_v, "Mismatching finite element degrees.");
@@ -5464,13 +5497,15 @@ template<int dim,
          typename Number                = double,
          TPSS::DoFLayout dof_layout_v   = TPSS::DoFLayout::Q,
          int             fe_degree_v    = fe_degree_p + 1,
-         LocalAssembly   local_assembly = LocalAssembly::Tensor>
+         LocalAssembly   local_assembly = LocalAssembly::Tensor,
+         bool            is_simplified  = false>
 using MatrixIntegrator = typename MatrixIntegratorSelector<local_assembly,
                                                            dim,
                                                            fe_degree_p,
                                                            Number,
                                                            dof_layout_v,
-                                                           fe_degree_v>::type;
+                                                           fe_degree_v,
+                                                           is_simplified>::type;
 
 } // namespace VelocityPressure
 

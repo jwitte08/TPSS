@@ -121,11 +121,16 @@ template<int dim,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
-class BlockSparseMatrixAugmented
-  : public TrilinosWrappers::BlockSparseMatrix,
-    public VelocityPressure::
-      MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
+class BlockSparseMatrixAugmented : public TrilinosWrappers::BlockSparseMatrix,
+                                   public VelocityPressure::MatrixIntegrator<dim,
+                                                                             fe_degree_p,
+                                                                             Number,
+                                                                             dof_layout_v,
+                                                                             fe_degree_v,
+                                                                             local_assembly,
+                                                                             is_simplified>
 {
   static_assert(std::is_same<Number, double>::value,
                 "TrilinosWrappers support only double-precision.");
@@ -133,8 +138,13 @@ class BlockSparseMatrixAugmented
 public:
   using value_type            = Number;
   using matrix_type           = TrilinosWrappers::BlockSparseMatrix;
-  using local_integrator_type = VelocityPressure::
-    MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>;
+  using local_integrator_type = VelocityPressure::MatrixIntegrator<dim,
+                                                                   fe_degree_p,
+                                                                   Number,
+                                                                   dof_layout_v,
+                                                                   fe_degree_v,
+                                                                   local_assembly,
+                                                                   is_simplified>;
 
   void
   initialize(const TrilinosWrappers::BlockSparsityPattern & dsp,
@@ -224,7 +234,7 @@ public:
 
 
 
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified = false>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 class SparseMatrixAugmented
   : public TrilinosWrappers::SparseMatrix,
     public Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree, double, dof_layout, is_simplified>
@@ -343,7 +353,7 @@ private:
  * hierarchy is performed when calling @p initialize(). Then, a multigrid
  * preconditioner can be queried.
  */
-template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified = false>
+template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 class MGCollectionVelocity
 {
 public:
@@ -442,12 +452,13 @@ template<int             dim,
          int             fe_degree_p,
          TPSS::DoFLayout dof_layout_v   = TPSS::DoFLayout::Q,
          int             fe_degree_v    = fe_degree_p + 1,
-         LocalAssembly   local_assembly = LocalAssembly::Tensor>
+         LocalAssembly   local_assembly = LocalAssembly::Tensor,
+         bool            is_simplified  = false>
 struct MGCollectionVelocityPressure
 {
   using vector_type = LinearAlgebra::distributed::BlockVector<double>;
   using matrix_type =
-    BlockSparseMatrixAugmented<dim, fe_degree_p, double, dof_layout_v, fe_degree_v, local_assembly>;
+    BlockSparseMatrixAugmented<dim, fe_degree_p, double, dof_layout_v, fe_degree_v, local_assembly, is_simplified>;
   // using mg_transfer_type  = MGTransferBlockMatrixFree<dim, double>;
   using mg_transfer_type  = MGTransferBlockPrebuilt;
   using local_matrix_type = typename matrix_type::local_integrator_type::matrix_type;
@@ -669,8 +680,12 @@ public:
   std::shared_ptr<const MGCollectionVelocity<dim, fe_degree_v, dof_layout_v, is_simplified>>
   make_multigrid_velocity();
 
-  std::shared_ptr<
-    const MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>>
+  std::shared_ptr<const MGCollectionVelocityPressure<dim,
+                                                     fe_degree_p,
+                                                     dof_layout_v,
+                                                     fe_degree_v,
+                                                     local_assembly,
+                                                     is_simplified>>
   make_multigrid_velocity_pressure();
 
   void
@@ -735,7 +750,13 @@ public:
 
   Table<2, DoFTools::Coupling> cell_integrals_mask;
   Table<2, DoFTools::Coupling> face_integrals_mask;
-  BlockSparseMatrixAugmented<dim, fe_degree_p, double, dof_layout_v, fe_degree_v, local_assembly>
+  BlockSparseMatrixAugmented<dim,
+                             fe_degree_p,
+                             double,
+                             dof_layout_v,
+                             fe_degree_v,
+                             local_assembly,
+                             is_simplified>
                                  system_matrix;
   TrilinosWrappers::SparseMatrix pressure_mass_matrix;
 
@@ -1905,12 +1926,17 @@ std::shared_ptr<const MGCollectionVelocityPressure<
   fe_degree_p,
   ModelProblem<dim, fe_degree_p, method, is_simplified>::dof_layout_v,
   ModelProblem<dim, fe_degree_p, method, is_simplified>::fe_degree_v,
-  ModelProblem<dim, fe_degree_p, method, is_simplified>::local_assembly>>
+  ModelProblem<dim, fe_degree_p, method, is_simplified>::local_assembly,
+  is_simplified>>
 ModelProblem<dim, fe_degree_p, method, is_simplified>::make_multigrid_velocity_pressure()
 {
-  const auto mgc_velocity_pressure = std::make_shared<
-    MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>>(
-    rt_parameters, equation_data);
+  const auto mgc_velocity_pressure =
+    std::make_shared<MGCollectionVelocityPressure<dim,
+                                                  fe_degree_p,
+                                                  dof_layout_v,
+                                                  fe_degree_v,
+                                                  local_assembly,
+                                                  is_simplified>>(rt_parameters, equation_data);
 
   const auto & prms = rt_parameters.multigrid;
 
@@ -2354,11 +2380,18 @@ template<int dim,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 void
-BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
-  initialize(std::shared_ptr<const MatrixFree<dim, Number>> mf_storage_in,
-             const EquationData                             equation_data_in)
+BlockSparseMatrixAugmented<dim,
+                           fe_degree_p,
+                           Number,
+                           dof_layout_v,
+                           fe_degree_v,
+                           local_assembly,
+                           is_simplified>::initialize(std::shared_ptr<const MatrixFree<dim, Number>>
+                                                                         mf_storage_in,
+                                                      const EquationData equation_data_in)
 {
   mf_storage = mf_storage_in;
   local_integrator_type::initialize(equation_data_in);
@@ -2371,13 +2404,20 @@ template<int dim,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 void
-BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
-  initialize(const TrilinosWrappers::BlockSparsityPattern & dsp,
-             const std::vector<IndexSet> &                  locally_owned_dof_indices_in,
-             const std::vector<IndexSet> &                  ghosted_dof_indices_in,
-             const MPI_Comm &                               mpi_communicator_in)
+BlockSparseMatrixAugmented<
+  dim,
+  fe_degree_p,
+  Number,
+  dof_layout_v,
+  fe_degree_v,
+  local_assembly,
+  is_simplified>::initialize(const TrilinosWrappers::BlockSparsityPattern & dsp,
+                             const std::vector<IndexSet> & locally_owned_dof_indices_in,
+                             const std::vector<IndexSet> & ghosted_dof_indices_in,
+                             const MPI_Comm &              mpi_communicator_in)
 {
   AssertDimension(locally_owned_dof_indices_in.size(), ghosted_dof_indices_in.size());
   AssertDimension(locally_owned_dof_indices_in.size(), 2U);
@@ -2413,10 +2453,16 @@ template<int dim,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 void
-BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
-  clear()
+BlockSparseMatrixAugmented<dim,
+                           fe_degree_p,
+                           Number,
+                           dof_layout_v,
+                           fe_degree_v,
+                           local_assembly,
+                           is_simplified>::clear()
 {
   partitioners.clear();
   fullmatrix.reset();
@@ -2431,10 +2477,16 @@ template<int dim,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 std::shared_ptr<const MatrixFree<dim, Number>>
-BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
-  get_matrix_free() const
+BlockSparseMatrixAugmented<dim,
+                           fe_degree_p,
+                           Number,
+                           dof_layout_v,
+                           fe_degree_v,
+                           local_assembly,
+                           is_simplified>::get_matrix_free() const
 {
   AssertThrow(mf_storage, ExcMessage("Did you forget to initialize mf_storage?"));
   return mf_storage;
@@ -2447,10 +2499,17 @@ template<int dim,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 void
-BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
-  initialize_dof_vector(LinearAlgebra::distributed::BlockVector<Number> & vec) const
+BlockSparseMatrixAugmented<
+  dim,
+  fe_degree_p,
+  Number,
+  dof_layout_v,
+  fe_degree_v,
+  local_assembly,
+  is_simplified>::initialize_dof_vector(LinearAlgebra::distributed::BlockVector<Number> & vec) const
 {
   AssertDimension(this->n_block_rows(), this->n_block_cols());
   vec.reinit(this->n_block_rows());
@@ -2466,11 +2525,18 @@ template<int dim,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 void
-BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
-  initialize_dof_vector(LinearAlgebra::distributed::Vector<Number> & vec,
-                        const unsigned int                           block_index) const
+BlockSparseMatrixAugmented<
+  dim,
+  fe_degree_p,
+  Number,
+  dof_layout_v,
+  fe_degree_v,
+  local_assembly,
+  is_simplified>::initialize_dof_vector(LinearAlgebra::distributed::Vector<Number> & vec,
+                                        const unsigned int block_index) const
 {
   AssertIndexRange(block_index, partitioners.size());
   vec.reinit(partitioners.at(block_index));
@@ -2483,10 +2549,16 @@ template<int dim,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 std::shared_ptr<const Utilities::MPI::Partitioner>
-BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
-  get_partitioner(const unsigned int block_index) const
+BlockSparseMatrixAugmented<dim,
+                           fe_degree_p,
+                           Number,
+                           dof_layout_v,
+                           fe_degree_v,
+                           local_assembly,
+                           is_simplified>::get_partitioner(const unsigned int block_index) const
 {
   AssertIndexRange(block_index, partitioners.size());
   return partitioners.at(block_index);
@@ -2499,11 +2571,17 @@ template<int dim,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 template<typename VectorType>
 void
-BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
-  vmult(VectorType & dst, const VectorType & src) const
+BlockSparseMatrixAugmented<dim,
+                           fe_degree_p,
+                           Number,
+                           dof_layout_v,
+                           fe_degree_v,
+                           local_assembly,
+                           is_simplified>::vmult(VectorType & dst, const VectorType & src) const
 {
   matrix_type::vmult(dst, src);
 }
@@ -2515,10 +2593,17 @@ template<int dim,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 void
-BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
-  vmult(const ArrayView<Number> dst, const ArrayView<const Number> src) const
+BlockSparseMatrixAugmented<dim,
+                           fe_degree_p,
+                           Number,
+                           dof_layout_v,
+                           fe_degree_v,
+                           local_assembly,
+                           is_simplified>::vmult(const ArrayView<Number>       dst,
+                                                 const ArrayView<const Number> src) const
 {
   AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1, ExcMessage("No MPI support"));
   AssertDimension(dst.size(), matrix_type::m());
@@ -2541,9 +2626,15 @@ template<int dim,
          typename Number,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
-BlockSparseMatrixAugmented<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, local_assembly>::
-operator const FullMatrix<Number> &() const
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
+BlockSparseMatrixAugmented<dim,
+                           fe_degree_p,
+                           Number,
+                           dof_layout_v,
+                           fe_degree_v,
+                           local_assembly,
+                           is_simplified>::operator const FullMatrix<Number> &() const
 {
   AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1, ExcMessage("No MPI support"));
 
@@ -2997,7 +3088,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::assemble_multig
 
   using Velocity::SIPG::MW::CopyData;
   using Velocity::SIPG::MW::ScratchData;
-  using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>; // !!! is simplified
+  using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true, is_simplified>;
   using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
   MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
@@ -3116,10 +3207,16 @@ template<int             dim,
          int             fe_degree_p,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-  MGCollectionVelocityPressure(const RT::Parameter & rt_parameters_in,
-                               const EquationData &  equation_data_in)
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
+MGCollectionVelocityPressure<
+  dim,
+  fe_degree_p,
+  dof_layout_v,
+  fe_degree_v,
+  local_assembly,
+  is_simplified>::MGCollectionVelocityPressure(const RT::Parameter & rt_parameters_in,
+                                               const EquationData &  equation_data_in)
   : dof_handler_velocity(nullptr),
     dof_handler_pressure(nullptr),
     dof_handler_stream(nullptr),
@@ -3139,10 +3236,15 @@ template<int             dim,
          int             fe_degree_p,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 void
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-  clear_data()
+MGCollectionVelocityPressure<dim,
+                             fe_degree_p,
+                             dof_layout_v,
+                             fe_degree_v,
+                             local_assembly,
+                             is_simplified>::clear_data()
 {
   preconditioner_mg.reset();
   multigrid.reset();
@@ -3168,13 +3270,19 @@ template<int             dim,
          int             fe_degree_p,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 void
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-  assemble_multigrid(const unsigned int                level,
-                     const AffineConstraints<double> & level_constraints_velocity,
-                     const AffineConstraints<double> & level_constraints_pressure,
-                     const AffineConstraints<double> & level_constraints_stream)
+MGCollectionVelocityPressure<
+  dim,
+  fe_degree_p,
+  dof_layout_v,
+  fe_degree_v,
+  local_assembly,
+  is_simplified>::assemble_multigrid(const unsigned int                level,
+                                     const AffineConstraints<double> & level_constraints_velocity,
+                                     const AffineConstraints<double> & level_constraints_pressure,
+                                     const AffineConstraints<double> & level_constraints_stream)
 {
   AssertDimension(mg_matrices.min_level(), parameters.coarse_level);
   Assert(dof_handler_velocity, ExcMessage("Did you set dof_handler_velocity?"));
@@ -3210,8 +3318,11 @@ MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_
   /// Assemble velocity-velocity block first.
   {
     using Velocity::SIPG::MW::CopyData;
+
     using Velocity::SIPG::MW::ScratchData;
-    using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true>; // is simplified !!!
+
+    using MatrixIntegrator  = Velocity::SIPG::MW::MatrixIntegrator<dim, true, is_simplified>;
+
     using LevelCellIterator = typename MatrixIntegrator::IteratorType;
 
     MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
@@ -3440,9 +3551,15 @@ template<int             dim,
          int             fe_degree_p,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 void
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
+MGCollectionVelocityPressure<dim,
+                             fe_degree_p,
+                             dof_layout_v,
+                             fe_degree_v,
+                             local_assembly,
+                             is_simplified>::
   initialize_schwarz_smoothers(const std::shared_ptr<ColoringBase<dim>> user_coloring)
 {
   Assert(parameters.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz,
@@ -3488,11 +3605,17 @@ template<int             dim,
          int             fe_degree_p,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 void
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-  initialize(const unsigned int                       mg_level_max,
-             const std::shared_ptr<ColoringBase<dim>> user_coloring)
+MGCollectionVelocityPressure<dim,
+                             fe_degree_p,
+                             dof_layout_v,
+                             fe_degree_v,
+                             local_assembly,
+                             is_simplified>::initialize(const unsigned int mg_level_max,
+                                                        const std::shared_ptr<ColoringBase<dim>>
+                                                          user_coloring)
 {
   Assert(dof_handler_velocity, ExcMessage("Did you set dof_handler_velocity?"));
   Assert(dof_handler_pressure, ExcMessage("Did you set dof_handler_pressure?"));
@@ -3781,20 +3904,27 @@ template<int             dim,
          int             fe_degree_p,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 const PreconditionMG<dim,
                      typename MGCollectionVelocityPressure<dim,
                                                            fe_degree_p,
                                                            dof_layout_v,
                                                            fe_degree_v,
-                                                           local_assembly>::vector_type,
+                                                           local_assembly,
+							   is_simplified>::vector_type,
                      typename MGCollectionVelocityPressure<dim,
                                                            fe_degree_p,
                                                            dof_layout_v,
                                                            fe_degree_v,
-                                                           local_assembly>::mg_transfer_type> &
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-  get_preconditioner() const
+                                                           local_assembly,
+							   is_simplified>::mg_transfer_type> &
+MGCollectionVelocityPressure<dim,
+                             fe_degree_p,
+                             dof_layout_v,
+                             fe_degree_v,
+                             local_assembly,
+                             is_simplified>::get_preconditioner() const
 {
   AssertThrow(multigrid, ExcMessage("multigrid is uninitialized."));
   std::vector<const DoFHandler<dim> *> dofhandlers{dof_handler_velocity, dof_handler_pressure};
@@ -3812,10 +3942,15 @@ template<int             dim,
          int             fe_degree_p,
          TPSS::DoFLayout dof_layout_v,
          int             fe_degree_v,
-         LocalAssembly   local_assembly>
+         LocalAssembly   local_assembly,
+         bool            is_simplified>
 unsigned int
-MGCollectionVelocityPressure<dim, fe_degree_p, dof_layout_v, fe_degree_v, local_assembly>::
-  n_colors() const
+MGCollectionVelocityPressure<dim,
+                             fe_degree_p,
+                             dof_layout_v,
+                             fe_degree_v,
+                             local_assembly,
+                             is_simplified>::n_colors() const
 {
   Assert(mg_smoother_pre || mg_smoother_post, ExcMessage("Not initialized."));
   if(mg_schwarz_smoother_pre)
