@@ -1303,6 +1303,29 @@ struct CopyData
 
 
 /**
+ * grad(phi)_{d,c} = \partial_d phi_{i;c}
+ */
+template<int dim, typename EvaluatorType>
+Tensor<2, dim>
+compute_grad_impl(const EvaluatorType & phi, const unsigned int i, const unsigned int q)
+{
+  Tensor<2, dim> grad_of_phi;
+  for(auto d = 0U; d < dim; ++d)
+    for(auto c = 0U; c < dim; ++c)
+      grad_of_phi[d][c] = phi.shape_grad_component(i, q, c)[d];
+  return grad_of_phi;
+}
+
+template<int dim>
+Tensor<2, dim>
+compute_grad(const FEValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return compute_grad_impl<dim, FEValuesBase<dim>>(phi, i, q);
+}
+
+
+
+/**
  * symgrad(phi)_{d,c} = 0.5 (\partial_d phi_{i;c} + \partial_c phi_{i;d})
  */
 template<int dim, typename EvaluatorType>
@@ -1944,6 +1967,15 @@ struct FaceValues : public ValuesBase<dim>
 
 
 template<int dim>
+Tensor<2, dim>
+compute_grad(const ValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_grad_impl<dim, ValuesBase<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
 SymmetricTensor<2, dim>
 compute_symgrad(const ValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
 {
@@ -2523,6 +2555,15 @@ struct FaceValues : public ValuesBase<dim>
     }
   }
 };
+
+
+
+template<int dim>
+Tensor<2, dim>
+compute_grad(const ValuesBase<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_grad_impl<dim, ValuesBase<dim>>(phi, i, q);
+}
 
 
 
