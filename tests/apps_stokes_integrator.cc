@@ -1227,6 +1227,19 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorfdQ_velocity_MPI)
 
 
 
+TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorfdDGQ_velocity_MPI)
+{
+  using Fixture                               = TestStokesIntegrator<TypeParam>;
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 3;
+  Fixture::options.prms.mesh.n_refinements    = 0;
+  Fixture::template check_matrixintegratorfd_velocity<Method::DGQkplus2_DGPk, true>(false);
+  Fixture::options.prms.mesh.n_refinements = 1;
+  Fixture::template check_matrixintegratorfd_velocity<Method::DGQkplus2_DGPk, true>(false);
+}
+
+
+
 TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorlmwQ_velocityvelocity_MPI)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
@@ -1237,6 +1250,20 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorlmwQ_velocityveloc
   Fixture::template check_matrixintegratorlmw<Method::Qkplus2_DGPk, true>({0U, 0U});
   Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::template check_matrixintegratorlmw<Method::Qkplus2_DGPk, true>({0U, 0U});
+}
+
+
+
+TYPED_TEST_P(TestStokesIntegrator, DISABLED_simplified_matrixintegratorlmwDGQ_velocityvelocity_MPI)
+{
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
+  Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
+  Fixture::options.prms.mesh.n_repetitions    = 3;
+  Fixture::options.prms.mesh.n_refinements    = 0;
+  Fixture::template check_matrixintegratorlmw<Method::DGQkplus2_DGPk, true>({0U, 0U});
+  Fixture::options.prms.mesh.n_refinements = 1;
+  Fixture::template check_matrixintegratorlmw<Method::DGQkplus2_DGPk, true>({0U, 0U});
 }
 
 
@@ -1263,7 +1290,9 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             localsolverstream_gradp_MPI,
                             localsolverstream_pressure_MPI,*/
                             simplified_matrixintegratorfdQ_velocity_MPI,
-                            simplified_matrixintegratorlmwQ_velocityvelocity_MPI);
+                            simplified_matrixintegratorfdDGQ_velocity_MPI,
+                            simplified_matrixintegratorlmwQ_velocityvelocity_MPI,
+                            DISABLED_simplified_matrixintegratorlmwDGQ_velocityvelocity_MPI);
 
 
 
