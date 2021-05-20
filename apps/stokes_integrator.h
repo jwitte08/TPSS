@@ -826,6 +826,13 @@ struct MatrixIntegrator
 
   template<bool is_uniface, typename TestEvaluatorType, typename AnsatzEvaluatorType>
   void
+  boundary_or_uniface_worker_impl(const TestEvaluatorType &   phi_test,
+                                  const AnsatzEvaluatorType & phi_ansatz,
+                                  const double                gamma_over_h,
+                                  CopyData::FaceData &        face_data) const;
+
+  template<bool is_uniface, typename TestEvaluatorType, typename AnsatzEvaluatorType>
+  void
   boundary_or_uniface_worker_tangential_impl(const TestEvaluatorType &   phi_test,
                                              const AnsatzEvaluatorType & phi_ansatz,
                                              const double                gamma_over_h,
@@ -869,6 +876,7 @@ struct MatrixIntegrator
                                                ScratchData<dim, true> & scratch_data,
                                                CopyData &               copy_data) const;
 
+  /// TODO remove if completely obsolete !!!
   template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
   void
   uniface_worker_impl(const TestEvaluatorType &   phi_test,
@@ -909,6 +917,7 @@ struct MatrixIntegrator
                                                 ScratchData<dim, true> & scratch_data,
                                                 CopyData &               copy_data) const;
 
+  /// TODO remove if completely obsolete !!!
   template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
   void
   boundary_worker_impl(const TestEvaluatorType &   phi_test,
@@ -1560,32 +1569,32 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::face_residual_worker_tangent
 template<int dim, bool is_multigrid, bool is_simplified>
 void
 MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker(const IteratorType & cell,
-                                                                    const unsigned int & f,
+                                                                    const unsigned int & face_no,
                                                                     ScratchData<dim> & scratch_data,
                                                                     CopyData & copy_data) const
 {
   FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values_test;
-  fe_interface_values.reinit(cell, f);
+  fe_interface_values.reinit(cell, face_no);
 
-  const unsigned int n_dofs = fe_interface_values.n_current_interface_dofs();
+  const FEFaceValuesBase<dim> & phi = fe_interface_values.get_fe_face_values(0);
+
+  const unsigned int n_dofs = phi.dofs_per_cell;
 
   CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_dofs);
 
-  face_data.dof_indices        = fe_interface_values.get_interface_dof_indices();
-  face_data.dof_indices_column = fe_interface_values.get_interface_dof_indices();
+  cell->get_active_or_mg_dof_indices(face_data.dof_indices);
+  face_data.dof_indices_column = face_data.dof_indices;
 
-  const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
-  const auto   fe_degree = scratch_data.fe_values_test.get_fe().degree;
-  const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, h);
+  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  /// TODO non-uniform meshes...
+  const auto   nh           = h;
+  const auto   fe_degree    = scratch_data.fe_values_test.get_fe().degree;
+  const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, nh);
 
-  /// TODO replace with boundary_or_uniface_worker_impl()
-  boundary_worker_impl</*do_rhs*/ !is_multigrid>(fe_interface_values,
-                                                 fe_interface_values,
-                                                 gamma_over_h,
-                                                 face_data);
+  boundary_or_uniface_worker_impl<false>(phi, phi, gamma_over_h, face_data);
 
-  AssertDimension(face_data.matrix.m(), face_data.dof_indices.size());
-  AssertDimension(face_data.matrix.n(), face_data.dof_indices_column.size());
+  AssertDimension(face_data.matrix.m(), n_dofs);
+  AssertDimension(face_data.matrix.n(), n_dofs);
 }
 
 
@@ -1621,6 +1630,7 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_stream(
 
 
 
+/// TODO remove if completely obsolete
 template<int dim, bool is_multigrid, bool is_simplified>
 template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
@@ -1734,8 +1744,7 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_impl(
 
 
 
-/// TODO use one implementation combining boundary_worker_impl and
-/// uniface_worker_impl
+/// TODO remove if completely obsolete !!!
 template<int dim, bool is_multigrid, bool is_simplified>
 template<typename TestEvaluatorType, typename AnsatzEvaluatorType>
 void
@@ -1777,6 +1786,116 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker_impl(
 
 
 template<int dim, bool is_multigrid, bool is_simplified>
+template<bool is_uniface, typename TestEvaluatorType, typename AnsatzEvaluatorType>
+void
+MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_or_uniface_worker_impl(
+  const TestEvaluatorType &   phi_test,
+  const AnsatzEvaluatorType & phi_ansatz,
+  const double                gamma_over_h,
+  CopyData::FaceData &        face_data) const
+{
+  constexpr bool do_rhs = !is_multigrid && !is_uniface;
+
+  const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
+
+  std::vector<Tensor<1, dim>> solution_values;
+  if(do_rhs)
+  {
+    Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
+    AssertDimension(analytical_solution->n_components, dim);
+    const auto & q_points = phi_test.get_quadrature_points();
+    std::transform(q_points.cbegin(),
+                   q_points.cend(),
+                   std::back_inserter(solution_values),
+                   [this](const auto & x_q) {
+                     Tensor<1, dim> value;
+                     for(auto c = 0U; c < dim; ++c)
+                       value[c] = analytical_solution->value(x_q, c);
+                     return value;
+                   });
+  }
+
+  double integral_ijq = 0.;
+  double nitsche_iq   = 0.;
+  for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
+  {
+    const auto n = normals[q];
+    for(unsigned int i = 0; i < face_data.matrix.m(); ++i)
+    {
+      if(!is_simplified)
+      {
+        const auto & av_symgrad_phi_i   = (is_uniface ? 0.5 : 1.) * compute_symgrad(phi_test, i, q);
+        const auto & jump_phi_i         = compute_vvalue(phi_test, i, q);
+        const auto & jump_phi_i_cross_n = outer_product(jump_phi_i, n);
+
+        for(unsigned int j = 0; j < face_data.matrix.n(); ++j)
+        {
+          const auto & av_symgrad_phi_j =
+            (is_uniface ? 0.5 : 1.) * compute_symgrad(phi_ansatz, j, q);
+          const auto & jump_phi_j         = compute_vvalue(phi_ansatz, j, q);
+          const auto & jump_phi_j_cross_n = outer_product(jump_phi_j, n);
+
+          integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
+          integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
+          integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
+          integral_ijq *= 2. * phi_test.JxW(q);
+
+          face_data.matrix(i, j) += integral_ijq;
+        }
+
+        /// Nitsche method (weak Dirichlet conditions)
+        if(do_rhs)
+        {
+          const auto & u         = solution_values[q];
+          const auto & u_cross_n = outer_product(u, n);
+
+          nitsche_iq = -scalar_product(u_cross_n, av_symgrad_phi_i);
+          nitsche_iq += gamma_over_h * u * jump_phi_i;
+          nitsche_iq *= 2. * phi_test.JxW(q);
+
+          face_data.rhs(i) += nitsche_iq;
+        }
+      }
+      else
+      {
+        const auto & av_grad_phi_i      = (is_uniface ? 0.5 : 1.) * compute_grad(phi_test, i, q);
+        const auto & jump_phi_i         = compute_vvalue(phi_test, i, q);
+        const auto & jump_n_cross_phi_i = outer_product(n, jump_phi_i);
+
+        for(unsigned int j = 0; j < face_data.matrix.n(); ++j)
+        {
+          const auto & av_grad_phi_j = (is_uniface ? 0.5 : 1.) * compute_grad(phi_ansatz, j, q);
+          const auto & jump_phi_j    = compute_vvalue(phi_ansatz, j, q);
+          const auto & jump_n_cross_phi_j = outer_product(n, jump_phi_j);
+
+          integral_ijq = -scalar_product(av_grad_phi_j, jump_n_cross_phi_i);
+          integral_ijq += -scalar_product(jump_n_cross_phi_j, av_grad_phi_i);
+          integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
+          integral_ijq *= phi_test.JxW(q);
+
+          face_data.matrix(i, j) += integral_ijq;
+        }
+
+        /// Nitsche method (weak Dirichlet conditions)
+        if(do_rhs)
+        {
+          const auto & u         = solution_values[q];
+          const auto & n_cross_u = outer_product(n, u);
+
+          nitsche_iq = -scalar_product(n_cross_u, av_grad_phi_i);
+          nitsche_iq += gamma_over_h * u * jump_phi_i;
+          nitsche_iq *= phi_test.JxW(q);
+
+          face_data.rhs(i) += nitsche_iq;
+        }
+      }
+    }
+  }
+}
+
+
+
+template<int dim, bool is_multigrid, bool is_simplified>
 void
 MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker(const IteratorType & cell,
                                                                    const unsigned int & f,
@@ -1803,6 +1922,7 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker(const Iterato
   const double gamma_over_h =
     equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
+  /// TODO replace by boundary_or_uniface_worker_impl() !!!
   uniface_worker_impl(phi, phi, gamma_over_h, face_data);
 
   AssertDimension(face_data.matrix.m(), n_interface_dofs);
