@@ -1627,12 +1627,12 @@ public:
   ManufacturedLoad(const std::shared_ptr<const Function<dim>> solution_function_in)
     : Function<dim>(dim + 1), solution_function(solution_function_in)
   {
-    AssertThrow(solution_function_in->n_components == this->n_components,
-                ExcMessage("Mismatching number of components."));
+    Assert(solution_function_in->n_components == this->n_components,
+           ExcMessage("Mismatching number of components."));
   }
 
   virtual double
-  value(const Point<dim> & p, const unsigned int component = 0) const override
+  value(const Point<dim> & xx, const unsigned int component = 0) const override
   {
     constexpr auto pressure_index = dim;
     double         value          = 0.;
@@ -1666,13 +1666,13 @@ public:
       double     divE_i = 0.;
       for(auto j = 0U; j < dim; ++j)
       {
-        const SymmetricTensor<2, dim> & hessian_of_u_j = (solution_function->hessian(p, j));
+        const SymmetricTensor<2, dim> & hessian_of_u_j = (solution_function->hessian(xx, j));
         const double                    Dji_of_u_j = is_simplified ? 0. : hessian_of_u_j({i, j});
-        const double                    Djj_of_u_i = (solution_function->hessian(p, i))({j, j});
+        const double                    Djj_of_u_i = (solution_function->hessian(xx, i))({j, j});
         /// if simplified divE_i is (0.5 * Lapl u_i)
         divE_i += 0.5 * (Dji_of_u_j + Djj_of_u_i);
       }
-      const auto & gradp_i = solution_function->gradient(p, pressure_index)[i];
+      const auto & gradp_i = solution_function->gradient(xx, pressure_index)[i];
       value                = -2. * divE_i + gradp_i;
     }
 
@@ -1688,7 +1688,7 @@ public:
     {
       double divu = 0.;
       for(auto j = 0U; j < dim; ++j)
-        divu += solution_function->gradient(p, j)[j];
+        divu += solution_function->gradient(xx, j)[j];
       value = -divu;
     }
 
@@ -1784,7 +1784,7 @@ SolutionVelocity<2>::value(const Point<2> & p, const unsigned int component) con
   if(component == 1)
     return -PI * y * cos(PI * x);
 
-  AssertThrow(false, ExcMessage("Invalid component."));
+  Assert(false, ExcMessage("Invalid component."));
   return 0;
 }
 
@@ -1804,7 +1804,7 @@ SolutionVelocity<3>::value(const Point<3> & p, const unsigned int component) con
   if(component == 2)
     return -PI * z * cos(PI * x);
 
-  AssertThrow(false, ExcMessage("Invalid component."));
+  Assert(false, ExcMessage("Invalid component."));
   return 0;
 }
 
@@ -1828,7 +1828,7 @@ SolutionVelocity<2>::gradient(const Point<2> & p, const unsigned int component) 
     return_value[1] = -PI * cos(PI * x);
   }
   else
-    AssertThrow(false, ExcMessage("Invalid component."));
+    Assert(false, ExcMessage("Invalid component."));
 
   return return_value;
 }
@@ -1862,16 +1862,43 @@ SolutionVelocity<3>::gradient(const Point<3> & p, const unsigned int component) 
     return_value[2] = -PI * cos(PI * x);
   }
   else
-    AssertThrow(false, ExcMessage("Invalid component."));
+    Assert(false, ExcMessage("Invalid component."));
 
   return return_value;
+}
+
+template<>
+SymmetricTensor<2, 2>
+SolutionVelocity<2>::hessian(const Point<2> & p, const unsigned int component) const
+{
+  using numbers::PI;
+  const double x = p(0);
+  const double y = p(1);
+
+  SymmetricTensor<2, 2> hess;
+  if(component == 0)
+  {
+    hess[0][0] = -PI * PI * sin(PI * x);
+    hess[1][1] = 0.;
+    hess[0][1] = 0.;
+  }
+  else if(component == 1)
+  {
+    hess[0][0] = PI * PI * PI * y * cos(PI * x);
+    hess[1][1] = 0.;
+    hess[0][1] = PI * PI * sin(PI * x);
+  }
+  else
+    Assert(false, ExcMessage("Invalid component."));
+
+  return hess;
 }
 
 template<int dim>
 SymmetricTensor<2, dim>
 SolutionVelocity<dim>::hessian(const Point<dim> &, const unsigned int) const
 {
-  AssertThrow(false, ExcMessage("Satisfying interfaces..."));
+  Assert(false, ExcMessage("TODO ..."));
   return SymmetricTensor<2, dim>{};
 }
 
@@ -1972,24 +1999,29 @@ using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>
 
 
 
-template<int dim>
+template<int dim, bool is_simplified = false>
 class Load : public Function<dim>
 {
 public:
   Load() : Function<dim>(dim + 1)
   {
+    if(is_simplified)
+      Assert(false, ExcMessage("TODO simplified Stokes..."));
   }
 
   virtual double
-  value(const Point<dim> & p, const unsigned int component = 0) const override;
+  value(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    Assert(false, ExcMessage("TODO ..."));
+    return 0.;
+  };
 };
 
 template<>
 double
-Load<2>::value(const Point<2> & p, const unsigned int component) const
+Load<2, false>::value(const Point<2> & p, const unsigned int component) const
 {
   Assert(component <= 2, ExcIndexRange(component, 0, 2 + 1));
-  Assert(false, ExcMessage("TODO simplified Stokes..."));
 
   using numbers::PI;
   double x = p(0);
@@ -2006,7 +2038,7 @@ Load<2>::value(const Point<2> & p, const unsigned int component) const
 
 template<>
 double
-Load<3>::value(const Point<3> & p, const unsigned int component) const
+Load<3, false>::value(const Point<3> & p, const unsigned int component) const
 {
   Assert(component <= 3, ExcIndexRange(component, 0, 3 + 1));
 

@@ -1373,6 +1373,29 @@ compute_divergence(const FEValues<dim> & phi, const unsigned int i, const unsign
 
 
 /**
+ * {{ grad(phi_i) }}_{d,c} = {{ \partial_d phi_{i;c} }}
+ */
+template<int dim, typename EvaluatorType>
+Tensor<2, dim>
+compute_average_grad_impl(const EvaluatorType & phi, const unsigned int i, const unsigned int q)
+{
+  Tensor<2, dim> av_grad_of_phi;
+  for(auto d = 0U; d < dim; ++d)
+    for(auto c = 0U; c < dim; ++c)
+      av_grad_of_phi[d][c] = phi.average_gradient(i, q, c)[d];
+  return av_grad_of_phi;
+}
+
+template<int dim>
+Tensor<2, dim>
+compute_average_grad(const FEInterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return compute_average_grad_impl<dim, FEInterfaceValues<dim>>(phi, i, q);
+}
+
+
+
+/**
  * {{ symgrad(phi_i) }} = 0.5 ({{ \partial_d phi_{i;c} }} + {{ \partial_c phi_{i;d} }})
  */
 template<int dim, typename EvaluatorType>
@@ -2217,6 +2240,15 @@ struct InterfaceValues
   FaceValues<dim>        face_values_left;
   unsigned int           n_quadrature_points;
 };
+
+
+
+template<int dim>
+Tensor<2, dim>
+compute_average_grad(const InterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_average_grad_impl<dim, InterfaceValues<dim>>(phi, i, q);
+}
 
 
 
@@ -3079,6 +3111,15 @@ Tensor<1, dim>
 compute_vaverage(const InterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
 {
   return ::MW::compute_vaverage_impl<dim, InterfaceValues<dim>>(phi, i, q);
+}
+
+
+
+template<int dim>
+Tensor<2, dim>
+compute_average_grad(const InterfaceValues<dim> & phi, const unsigned int i, const unsigned int q)
+{
+  return ::MW::compute_average_grad_impl<dim, InterfaceValues<dim>>(phi, i, q);
 }
 
 

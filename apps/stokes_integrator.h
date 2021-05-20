@@ -475,6 +475,8 @@ using ::MW::compute_grad;
 
 using ::MW::compute_symgrad;
 
+using ::MW::compute_average_grad;
+
 using ::MW::compute_average_symgrad;
 
 using ::MW::compute_vvalue;
@@ -529,6 +531,8 @@ using ::MW::StreamFunction::compute_vvalue;
 using ::MW::StreamFunction::compute_vjump;
 
 using ::MW::StreamFunction::compute_average_symgrad;
+
+using ::MW::StreamFunction::compute_average_grad;
 
 using ::MW::StreamFunction::compute_vjump_tangential;
 
@@ -1149,6 +1153,7 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::cell_worker_impl(
 
   for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
   {
+    const auto & dx = phi_test.JxW(q);
     for(unsigned int i = 0; i < cell_data.matrix.m(); ++i)
     {
       if(!is_simplified)
@@ -1160,7 +1165,7 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::cell_worker_impl(
           cell_data.matrix(i, j) += 2. *
                                     scalar_product(symgrad_phi_i,   // symgrad phi_i(x)
                                                    symgrad_phi_j) * // symgrad phi_j(x)
-                                    phi_test.JxW(q);                // dx
+                                    dx;                             // dx
         }
       }
       else
@@ -1169,18 +1174,17 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::cell_worker_impl(
         for(unsigned int j = 0; j < cell_data.matrix.n(); ++j)
         {
           const Tensor<2, dim> grad_phi_j = compute_grad(phi_ansatz, j, q);
-          cell_data.matrix(i, j) += scalar_product(grad_phi_i,   // symgrad phi_i(x)
-                                                   grad_phi_j) * // symgrad phi_j(x)
-                                    phi_test.JxW(q);             // dx
+          cell_data.matrix(i, j) += scalar_product(grad_phi_i,   // grad phi_i(x)
+                                                   grad_phi_j) * // grad phi_j(x)
+                                    dx;                          // dx
         }
       }
 
       if(!is_multigrid)
       {
-        const auto & phi_i = compute_vvalue(phi_test, i, q);
         const auto & f     = load_values[q];
-        const auto & dx    = phi_test.JxW(q);
-        cell_data.rhs(i) += phi_i * f * dx;
+        const auto & phi_i = compute_vvalue(phi_test, i, q);
+        cell_data.rhs(i) += f * phi_i * dx;
       }
     }
   }
@@ -1275,30 +1279,49 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::face_worker_impl(
   double integral_ijq = 0.;
   for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
   {
-    const auto & n = phi_test.normal(q);
+    const auto & n  = phi_test.normal(q);
+    const auto & dx = phi_test.JxW(q);
     for(unsigned int i = 0; i < n_interface_dofs_test; ++i)
     {
-      const auto & av_symgrad_phi_i = compute_average_symgrad(phi_test, i, q);
-      const auto & jump_phi_i       = compute_vjump(phi_test, i, q);
-      // TODO !!!
-      // Due to the symmetry of the average symgrad it is not important if
-      //      [[ phi ]] (x) n
-      // OR   n (x) [[ phi ]]
-      // BUT for tangential worker it might be relevant...
-      const auto & jump_phi_i_cross_n = outer_product(jump_phi_i, n);
-
-      for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+      if(!is_simplified)
       {
-        const auto & av_symgrad_phi_j   = compute_average_symgrad(phi_ansatz, j, q);
-        const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
-        const auto & jump_phi_j_cross_n = outer_product(jump_phi_j, n);
+        const auto & av_symgrad_phi_i   = compute_average_symgrad(phi_test, i, q);
+        const auto & jump_phi_i         = compute_vjump(phi_test, i, q);
+        const auto & jump_phi_i_cross_n = outer_product(jump_phi_i, n);
 
-        integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
-        integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
-        integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
-        integral_ijq *= 2. * phi_test.JxW(q);
+        for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+        {
+          const auto & av_symgrad_phi_j   = compute_average_symgrad(phi_ansatz, j, q);
+          const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
+          const auto & jump_phi_j_cross_n = outer_product(jump_phi_j, n);
 
-        face_data.matrix(i, j) += integral_ijq;
+          integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
+          integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
+          integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
+          integral_ijq *= 2. * dx;
+
+          face_data.matrix(i, j) += integral_ijq;
+        }
+      }
+      else
+      {
+        const auto & av_grad_phi_i      = compute_average_grad(phi_test, i, q);
+        const auto & jump_phi_i         = compute_vjump(phi_test, i, q);
+        const auto & jump_n_cross_phi_i = outer_product(n, jump_phi_i);
+
+        for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+        {
+          const auto & av_grad_phi_j      = compute_average_grad(phi_ansatz, j, q);
+          const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
+          const auto & jump_n_cross_phi_j = outer_product(n, jump_phi_j);
+
+          integral_ijq = -scalar_product(av_grad_phi_j, jump_n_cross_phi_i);
+          integral_ijq += -scalar_product(jump_n_cross_phi_j, av_grad_phi_i);
+          integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
+          integral_ijq *= dx;
+
+          face_data.matrix(i, j) += integral_ijq;
+        }
       }
     }
   }
@@ -1614,14 +1637,12 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_impl(
   AssertDimension(face_data.matrix.n(), n_interface_dofs_ansatz);
 
   std::vector<Tensor<1, dim>>         solution_values;
-  std::vector<Tensor<2, dim>>         solution_cross_normals;
   const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
   if(do_rhs)
   {
     Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
     AssertDimension(analytical_solution->n_components, dim);
     AssertDimension(face_data.rhs.size(), n_interface_dofs_test);
-
     const auto & q_points = phi_test.get_quadrature_points();
     std::transform(q_points.cbegin(),
                    q_points.cend(),
@@ -1632,14 +1653,6 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_impl(
                        value[c] = analytical_solution->value(x_q, c);
                      return value;
                    });
-    AssertDimension(normals.size(), solution_values.size());
-    std::transform(solution_values.cbegin(),
-                   solution_values.cend(),
-                   normals.cbegin(),
-                   std::back_inserter(solution_cross_normals),
-                   [](const auto & u_q, const auto & normal) {
-                     return outer_product(u_q, normal);
-                   });
   }
 
   double integral_ijq = 0.;
@@ -1649,35 +1662,71 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_impl(
     const auto n = normals[q];
     for(unsigned int i = 0; i < n_interface_dofs_test; ++i)
     {
-      const auto & av_symgrad_phi_i   = compute_average_symgrad(phi_test, i, q);
-      const auto & jump_phi_i         = compute_vjump(phi_test, i, q);
-      const auto & jump_phi_i_cross_n = outer_product(jump_phi_i, n);
-
-      for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+      if(!is_simplified)
       {
-        const auto & av_symgrad_phi_j   = compute_average_symgrad(phi_ansatz, j, q);
-        const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
-        const auto & jump_phi_j_cross_n = outer_product(jump_phi_j, n);
+        const auto & av_symgrad_phi_i   = compute_average_symgrad(phi_test, i, q);
+        const auto & jump_phi_i         = compute_vjump(phi_test, i, q);
+        const auto & jump_phi_i_cross_n = outer_product(jump_phi_i, n);
 
-        integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
-        integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
-        integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
-        integral_ijq *= 2. * phi_test.JxW(q);
+        for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+        {
+          const auto & av_symgrad_phi_j   = compute_average_symgrad(phi_ansatz, j, q);
+          const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
+          const auto & jump_phi_j_cross_n = outer_product(jump_phi_j, n);
 
-        face_data.matrix(i, j) += integral_ijq;
+          integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
+          integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
+          integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
+          integral_ijq *= 2. * phi_test.JxW(q);
+
+          face_data.matrix(i, j) += integral_ijq;
+        }
+
+        /// Nitsche method (weak Dirichlet conditions)
+        if(do_rhs)
+        {
+          const auto & u         = solution_values[q];
+          const auto & u_cross_n = outer_product(u, n);
+
+          nitsche_iq = -scalar_product(u_cross_n, av_symgrad_phi_i);
+          nitsche_iq += gamma_over_h * u * jump_phi_i;
+          nitsche_iq *= 2. * phi_test.JxW(q);
+
+          face_data.rhs(i) += nitsche_iq;
+        }
       }
-
-      /// Nitsche method (weak Dirichlet conditions)
-      if(do_rhs)
+      else
       {
-        const auto & u         = solution_values[q];
-        const auto & u_cross_n = outer_product(u, n);
+        const auto & av_grad_phi_i      = compute_average_grad(phi_test, i, q);
+        const auto & jump_phi_i         = compute_vjump(phi_test, i, q);
+        const auto & jump_n_cross_phi_i = outer_product(n, jump_phi_i);
 
-        nitsche_iq = -scalar_product(u_cross_n, av_symgrad_phi_i);
-        nitsche_iq += gamma_over_h * u * jump_phi_i;
-        nitsche_iq *= 2. * phi_test.JxW(q);
+        for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+        {
+          const auto & av_grad_phi_j      = compute_average_grad(phi_ansatz, j, q);
+          const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
+          const auto & jump_n_cross_phi_j = outer_product(n, jump_phi_j);
 
-        face_data.rhs(i) += nitsche_iq;
+          integral_ijq = -scalar_product(av_grad_phi_j, jump_n_cross_phi_i);
+          integral_ijq += -scalar_product(jump_n_cross_phi_j, av_grad_phi_i);
+          integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
+          integral_ijq *= phi_test.JxW(q);
+
+          face_data.matrix(i, j) += integral_ijq;
+        }
+
+        /// Nitsche method (weak Dirichlet conditions)
+        if(do_rhs)
+        {
+          const auto & u         = solution_values[q];
+          const auto & n_cross_u = outer_product(n, u);
+
+          nitsche_iq = -scalar_product(n_cross_u, av_grad_phi_i);
+          nitsche_iq += gamma_over_h * u * jump_phi_i;
+          nitsche_iq *= phi_test.JxW(q);
+
+          face_data.rhs(i) += nitsche_iq;
+        }
       }
     }
   }
@@ -1748,9 +1797,7 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker(const Iterato
   face_data.dof_indices_column = face_data.dof_indices;
 
   const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
-  /// TODO In general we require the neighboring cell but it suffices to use h
-  /// here (on distributed triangulation this leads to a global communication of
-  /// h and nh).
+  /// TODO non-uniform meshes...
   const auto   nh        = h;
   const auto   fe_degree = scratch_data.fe_values_test.get_fe().degree;
   const double gamma_over_h =

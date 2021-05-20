@@ -878,7 +878,7 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::ModelProblem(
     }()),
     load_function([&]() -> std::shared_ptr<Function<dim>> {
       if(equation_data_in.variant == EquationData::Variant::DivFree)
-        return std::make_shared<DivergenceFree::Load<dim>>();
+        return std::make_shared<ManufacturedLoad<dim, is_simplified>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlipNormal)
         return std::make_shared<ManufacturedLoad<dim, is_simplified>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreeBell)
