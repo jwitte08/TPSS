@@ -1343,30 +1343,30 @@ template<int dim, bool is_multigrid, bool is_simplified>
 void
 MatrixIntegrator<dim, is_multigrid, is_simplified>::face_worker_tangential(
   const IteratorType & cell,
-  const unsigned int & f,
-  const unsigned int & sf,
+  const unsigned int & face_no,
+  const unsigned int & sface_no,
   const IteratorType & ncell,
-  const unsigned int & nf,
-  const unsigned int & nsf,
+  const unsigned int & nface_no,
+  const unsigned int & nsface_no,
   ScratchData<dim> &   scratch_data,
   CopyData &           copy_data) const
 {
-  FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values_test;
-  fe_interface_values.reinit(cell, f, sf, ncell, nf, nsf);
+  FEInterfaceValues<dim> & phi = scratch_data.fe_interface_values_test;
+  phi.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no);
 
-  const unsigned int n_interface_dofs = fe_interface_values.n_current_interface_dofs();
+  const unsigned int n_interface_dofs = phi.n_current_interface_dofs();
 
   CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_interface_dofs);
 
-  face_data.dof_indices = fe_interface_values.get_interface_dof_indices();
+  face_data.dof_indices = phi.get_interface_dof_indices();
 
-  const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
-  const auto   nh        = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
+  const auto   h  = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  const auto   nh = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nface_no]);
   const auto   fe_degree = scratch_data.fe_values_test.get_fe().degree;
   const double gamma_over_h =
     equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
-  face_worker_tangential_impl(fe_interface_values, fe_interface_values, gamma_over_h, face_data);
+  face_worker_tangential_impl(phi, phi, gamma_over_h, face_data);
 }
 
 
@@ -2453,7 +2453,7 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker_tangential(
   scratch_data.fe_interface_values_test.reinit(cell, f, sf, cell, f, sf);
   const auto & phi = scratch_data.fe_interface_values_test.get_fe_face_values(0);
 
-  const unsigned int n_dofs = phi.dofs_per_cell; // fe_interface_values.n_current_interface_dofs();
+  const unsigned int n_dofs = phi.dofs_per_cell;
 
   CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_dofs);
 
