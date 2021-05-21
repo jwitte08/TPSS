@@ -916,7 +916,7 @@ protected:
 TYPED_TEST_SUITE_P(TestStokesIntegrator);
 
 
-
+/*
 TYPED_TEST_P(TestStokesIntegrator, CheckSystemMatrixVelocity)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
@@ -1144,7 +1144,7 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_pressurevelocity_MPI)
   Fixture::options.prms.mesh.n_refinements = 2;
   Fixture::template check_matrixintegratorlmw<Method::RaviartThomas>({1U, 0U});
 }
-
+*/
 
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorstreamlmw_MPI)
@@ -1159,7 +1159,7 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorstreamlmw_MPI)
 }
 
 
-
+/*
 TYPED_TEST_P(TestStokesIntegrator, localsolverstream_velocity_MPI)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
@@ -1274,11 +1274,24 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorlmwRT_velocityvelo
   Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::template check_matrixintegratorlmw<Method::RaviartThomas, true>({0U, 0U});
 }
+*/
+
+
+TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorstreamlmw_MPI)
+{
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
+  Fixture::options.prms.mesh.n_repetitions = 2;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  Fixture::template check_matrixintegratorstreamlmw<true>();
+  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::template check_matrixintegratorstreamlmw<true>();
+}
 
 
 
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
-                            CheckSystemMatrixVelocity,
+                            /*CheckSystemMatrixVelocity,
                             matrixintegratorfdQ_velocity,
                             matrixintegratorfdDGQ_velocity,
                             CheckSystemMatrix,
@@ -1293,16 +1306,18 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             matrixintegratorlmwDGQ_pressurevelocity_MPI,
                             matrixintegratorlmwRT_velocityvelocity_MPI,
                             matrixintegratorlmwRT_velocitypressure_MPI,
-                            matrixintegratorlmwRT_pressurevelocity_MPI,
-                            matrixintegratorstreamlmw_MPI,
-                            localsolverstream_velocity_MPI,
-                            localsolverstream_gradp_MPI,
-                            localsolverstream_pressure_MPI,
-                            simplified_matrixintegratorfdQ_velocity_MPI,
-                            simplified_matrixintegratorfdDGQ_velocity_MPI,
-                            simplified_matrixintegratorlmwQ_velocityvelocity_MPI,
-                            simplified_matrixintegratorlmwDGQ_velocityvelocity_MPI,
-                            simplified_matrixintegratorlmwRT_velocityvelocity_MPI);
+                            matrixintegratorlmwRT_pressurevelocity_MPI,*/
+                            matrixintegratorstreamlmw_MPI /*,
+                             localsolverstream_velocity_MPI,
+                             localsolverstream_gradp_MPI,
+                             localsolverstream_pressure_MPI,
+                             simplified_matrixintegratorfdQ_velocity_MPI,
+                             simplified_matrixintegratorfdDGQ_velocity_MPI,
+                             simplified_matrixintegratorlmwQ_velocityvelocity_MPI,
+                             simplified_matrixintegratorlmwDGQ_velocityvelocity_MPI,
+                             simplified_matrixintegratorlmwRT_velocityvelocity_MPI*/
+                            ,
+                            simplified_matrixintegratorstreamlmw_MPI);
 
 
 

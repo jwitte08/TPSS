@@ -941,12 +941,12 @@ struct MatrixIntegrator
                                                 CopyData &               copy_data) const;
 
   /// TODO remove if completely obsolete !!!
-  template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
-  void
-  boundary_worker_impl(const TestEvaluatorType &   phi_test,
-                       const AnsatzEvaluatorType & phi_ansatz,
-                       const double                gamma_over_h,
-                       CopyData::FaceData &        copy_data) const;
+  // template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
+  // void
+  // boundary_worker_impl(const TestEvaluatorType &   phi_test,
+  //                      const AnsatzEvaluatorType & phi_ansatz,
+  //                      const double                gamma_over_h,
+  //                      CopyData::FaceData &        copy_data) const;
 
   /// TODO remove if completely obsolete !!!
   // template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
@@ -1727,7 +1727,6 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_tangential_s
   CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_dofs);
 
   cell->get_active_or_mg_dof_indices(face_data.dof_indices);
-  // face_data.dof_indices_column = face_data.dof_indices;
 
   const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
   /// TODO non-uniform meshes...
@@ -1744,116 +1743,116 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_tangential_s
 
 
 /// TODO remove if completely obsolete
-template<int dim, bool is_multigrid, bool is_simplified>
-template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
-void
-MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_impl(
-  const TestEvaluatorType &   phi_test,
-  const AnsatzEvaluatorType & phi_ansatz,
-  const double                gamma_over_h,
-  CopyData::FaceData &        face_data) const
-{
-  const auto n_interface_dofs_test   = phi_test.n_current_interface_dofs();
-  const auto n_interface_dofs_ansatz = phi_ansatz.n_current_interface_dofs();
+// template<int dim, bool is_multigrid, bool is_simplified>
+// template<bool do_rhs, typename TestEvaluatorType, typename AnsatzEvaluatorType>
+// void
+// MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_impl(
+//   const TestEvaluatorType &   phi_test,
+//   const AnsatzEvaluatorType & phi_ansatz,
+//   const double                gamma_over_h,
+//   CopyData::FaceData &        face_data) const
+// {
+//   const auto n_interface_dofs_test   = phi_test.n_current_interface_dofs();
+//   const auto n_interface_dofs_ansatz = phi_ansatz.n_current_interface_dofs();
 
-  AssertDimension(face_data.matrix.m(), n_interface_dofs_test);
-  AssertDimension(face_data.matrix.n(), n_interface_dofs_ansatz);
+//   AssertDimension(face_data.matrix.m(), n_interface_dofs_test);
+//   AssertDimension(face_data.matrix.n(), n_interface_dofs_ansatz);
 
-  std::vector<Tensor<1, dim>>         solution_values;
-  const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
-  if(do_rhs)
-  {
-    Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
-    AssertDimension(analytical_solution->n_components, dim);
-    AssertDimension(face_data.rhs.size(), n_interface_dofs_test);
-    const auto & q_points = phi_test.get_quadrature_points();
-    std::transform(q_points.cbegin(),
-                   q_points.cend(),
-                   std::back_inserter(solution_values),
-                   [this](const auto & x_q) {
-                     Tensor<1, dim> value;
-                     for(auto c = 0U; c < dim; ++c)
-                       value[c] = analytical_solution->value(x_q, c);
-                     return value;
-                   });
-  }
+//   std::vector<Tensor<1, dim>>         solution_values;
+//   const std::vector<Tensor<1, dim>> & normals = phi_test.get_normal_vectors();
+//   if(do_rhs)
+//   {
+//     Assert(analytical_solution, ExcMessage("analytical_solution is not set."));
+//     AssertDimension(analytical_solution->n_components, dim);
+//     AssertDimension(face_data.rhs.size(), n_interface_dofs_test);
+//     const auto & q_points = phi_test.get_quadrature_points();
+//     std::transform(q_points.cbegin(),
+//                    q_points.cend(),
+//                    std::back_inserter(solution_values),
+//                    [this](const auto & x_q) {
+//                      Tensor<1, dim> value;
+//                      for(auto c = 0U; c < dim; ++c)
+//                        value[c] = analytical_solution->value(x_q, c);
+//                      return value;
+//                    });
+//   }
 
-  double integral_ijq = 0.;
-  double nitsche_iq   = 0.;
-  for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
-  {
-    const auto n = normals[q];
-    for(unsigned int i = 0; i < n_interface_dofs_test; ++i)
-    {
-      if(!is_simplified)
-      {
-        const auto & av_symgrad_phi_i   = compute_average_symgrad(phi_test, i, q);
-        const auto & jump_phi_i         = compute_vjump(phi_test, i, q);
-        const auto & jump_phi_i_cross_n = outer_product(jump_phi_i, n);
+//   double integral_ijq = 0.;
+//   double nitsche_iq   = 0.;
+//   for(unsigned int q = 0; q < phi_test.n_quadrature_points; ++q)
+//   {
+//     const auto n = normals[q];
+//     for(unsigned int i = 0; i < n_interface_dofs_test; ++i)
+//     {
+//       if(!is_simplified)
+//       {
+//         const auto & av_symgrad_phi_i   = compute_average_symgrad(phi_test, i, q);
+//         const auto & jump_phi_i         = compute_vjump(phi_test, i, q);
+//         const auto & jump_phi_i_cross_n = outer_product(jump_phi_i, n);
 
-        for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
-        {
-          const auto & av_symgrad_phi_j   = compute_average_symgrad(phi_ansatz, j, q);
-          const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
-          const auto & jump_phi_j_cross_n = outer_product(jump_phi_j, n);
+//         for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+//         {
+//           const auto & av_symgrad_phi_j   = compute_average_symgrad(phi_ansatz, j, q);
+//           const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
+//           const auto & jump_phi_j_cross_n = outer_product(jump_phi_j, n);
 
-          integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
-          integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
-          integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
-          integral_ijq *= 2. * phi_test.JxW(q);
+//           integral_ijq = -scalar_product(av_symgrad_phi_j, jump_phi_i_cross_n);
+//           integral_ijq += -scalar_product(jump_phi_j_cross_n, av_symgrad_phi_i);
+//           integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
+//           integral_ijq *= 2. * phi_test.JxW(q);
 
-          face_data.matrix(i, j) += integral_ijq;
-        }
+//           face_data.matrix(i, j) += integral_ijq;
+//         }
 
-        /// Nitsche method (weak Dirichlet conditions)
-        if(do_rhs)
-        {
-          const auto & u         = solution_values[q];
-          const auto & u_cross_n = outer_product(u, n);
+//         /// Nitsche method (weak Dirichlet conditions)
+//         if(do_rhs)
+//         {
+//           const auto & u         = solution_values[q];
+//           const auto & u_cross_n = outer_product(u, n);
 
-          nitsche_iq = -scalar_product(u_cross_n, av_symgrad_phi_i);
-          nitsche_iq += gamma_over_h * u * jump_phi_i;
-          nitsche_iq *= 2. * phi_test.JxW(q);
+//           nitsche_iq = -scalar_product(u_cross_n, av_symgrad_phi_i);
+//           nitsche_iq += gamma_over_h * u * jump_phi_i;
+//           nitsche_iq *= 2. * phi_test.JxW(q);
 
-          face_data.rhs(i) += nitsche_iq;
-        }
-      }
-      else
-      {
-        const auto & av_grad_phi_i      = compute_average_grad(phi_test, i, q);
-        const auto & jump_phi_i         = compute_vjump(phi_test, i, q);
-        const auto & jump_n_cross_phi_i = outer_product(n, jump_phi_i);
+//           face_data.rhs(i) += nitsche_iq;
+//         }
+//       }
+//       else
+//       {
+//         const auto & av_grad_phi_i      = compute_average_grad(phi_test, i, q);
+//         const auto & jump_phi_i         = compute_vjump(phi_test, i, q);
+//         const auto & jump_n_cross_phi_i = outer_product(n, jump_phi_i);
 
-        for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
-        {
-          const auto & av_grad_phi_j      = compute_average_grad(phi_ansatz, j, q);
-          const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
-          const auto & jump_n_cross_phi_j = outer_product(n, jump_phi_j);
+//         for(unsigned int j = 0; j < n_interface_dofs_ansatz; ++j)
+//         {
+//           const auto & av_grad_phi_j      = compute_average_grad(phi_ansatz, j, q);
+//           const auto & jump_phi_j         = compute_vjump(phi_ansatz, j, q);
+//           const auto & jump_n_cross_phi_j = outer_product(n, jump_phi_j);
 
-          integral_ijq = -scalar_product(av_grad_phi_j, jump_n_cross_phi_i);
-          integral_ijq += -scalar_product(jump_n_cross_phi_j, av_grad_phi_i);
-          integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
-          integral_ijq *= phi_test.JxW(q);
+//           integral_ijq = -scalar_product(av_grad_phi_j, jump_n_cross_phi_i);
+//           integral_ijq += -scalar_product(jump_n_cross_phi_j, av_grad_phi_i);
+//           integral_ijq += gamma_over_h * jump_phi_j * jump_phi_i;
+//           integral_ijq *= phi_test.JxW(q);
 
-          face_data.matrix(i, j) += integral_ijq;
-        }
+//           face_data.matrix(i, j) += integral_ijq;
+//         }
 
-        /// Nitsche method (weak Dirichlet conditions)
-        if(do_rhs)
-        {
-          const auto & u         = solution_values[q];
-          const auto & n_cross_u = outer_product(n, u);
+//         /// Nitsche method (weak Dirichlet conditions)
+//         if(do_rhs)
+//         {
+//           const auto & u         = solution_values[q];
+//           const auto & n_cross_u = outer_product(n, u);
 
-          nitsche_iq = -scalar_product(n_cross_u, av_grad_phi_i);
-          nitsche_iq += gamma_over_h * u * jump_phi_i;
-          nitsche_iq *= phi_test.JxW(q);
+//           nitsche_iq = -scalar_product(n_cross_u, av_grad_phi_i);
+//           nitsche_iq += gamma_over_h * u * jump_phi_i;
+//           nitsche_iq *= phi_test.JxW(q);
 
-          face_data.rhs(i) += nitsche_iq;
-        }
-      }
-    }
-  }
-}
+//           face_data.rhs(i) += nitsche_iq;
+//         }
+//       }
+//     }
+//   }
+// }
 
 
 
@@ -5453,10 +5452,11 @@ public:
               MeshWorker::assemble_ghost_faces_both,
             /*assemble faces at ghosts?*/ true,
             [&](const auto & cell, const auto face_no, auto & scratch_data, auto & copy_data) {
-              /// TODO boundary_worker_tangential_stream
-              matrix_integrator.boundary_worker_stream(cell, face_no, scratch_data, copy_data);
-              // matrix_integrator.boundary_worker_tangential_stream(cell, face_no, scratch_data,
-              // copy_data); // !!!
+              // matrix_integrator.boundary_worker_stream(cell, face_no, scratch_data, copy_data);
+              matrix_integrator.boundary_worker_tangential_stream(cell,
+                                                                  face_no,
+                                                                  scratch_data,
+                                                                  copy_data); // !!!
             },
             [&](const auto & cell,
                 const auto   face_no,

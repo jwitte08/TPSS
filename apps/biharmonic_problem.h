@@ -293,7 +293,7 @@ public:
   void
   make_grid_impl(const MeshParameter & mesh_prms);
 
-  template<bool is_stream_function, bool use_c0ip_formulation>
+  template<bool is_stream_function, bool use_stokes_formulation>
   void
   assemble_system_impl();
 
@@ -672,12 +672,11 @@ ModelProblem<dim, fe_degree, is_simplified>::setup_system()
 
 
 template<int dim, int fe_degree, bool is_simplified>
-template<bool is_stream, bool use_c0ip>
+template<bool is_stream, bool use_stokes_formulation>
 void
 ModelProblem<dim, fe_degree, is_simplified>::assemble_system_impl()
 {
-  constexpr bool is_stream_exact = is_stream && !use_c0ip;
-  constexpr bool is_stream_c0ip  = is_stream && use_c0ip;
+  constexpr bool is_stream_c0ip = is_stream && !use_stokes_formulation;
 
   system_u.update_ghost_values();
   system_rhs.zero_out_ghosts();
@@ -693,7 +692,7 @@ ModelProblem<dim, fe_degree, is_simplified>::assemble_system_impl()
     stokes_problem->assemble_system(); // ???
   }
 
-  if(is_stream_exact)
+  if(is_stream && use_stokes_formulation)
   {
     using Stokes::Velocity::SIPG::MW::ScratchData;
 
@@ -705,8 +704,8 @@ ModelProblem<dim, fe_degree, is_simplified>::assemble_system_impl()
     Stokes::FunctionExtractor<dim> analytical_solution_velocity(
       stokes_problem->analytical_solution.get(), velocity_components);
 
-    using MatrixIntegrator = typename Stokes::Velocity::SIPG::MW::
-      MatrixIntegrator<dim, /*is_multigrid*/ false, is_simplified>;
+    using MatrixIntegrator =
+      typename Stokes::Velocity::SIPG::MW::MatrixIntegrator<dim, false, is_simplified>;
 
     MatrixIntegrator matrix_integrator(&load_function_velocity,
                                        &analytical_solution_velocity,
@@ -735,7 +734,8 @@ ModelProblem<dim, fe_degree, is_simplified>::assemble_system_impl()
                                ScratchData<dim> &   scratch_data,
                                CopyData &           copy_data) {
       /// TODO boundary_worker_tangential_stream
-      matrix_integrator.boundary_worker_stream(cell, face_no, scratch_data, copy_data);
+      // matrix_integrator.boundary_worker_stream(cell, face_no, scratch_data, copy_data);
+      matrix_integrator.boundary_worker_tangential_stream(cell, face_no, scratch_data, copy_data);
     };
 
     const auto distribute_local_to_global_impl = [&](const auto & cd) {
@@ -792,8 +792,7 @@ ModelProblem<dim, fe_degree, is_simplified>::assemble_system_impl()
 
     using C0IP::MW::CopyData;
 
-    using MatrixIntegrator = typename C0IP::MW::
-      MatrixIntegrator<dim, /*multigrid?*/ false, /*stream function?*/ is_stream_c0ip>;
+    using MatrixIntegrator = typename C0IP::MW::MatrixIntegrator<dim, false, is_stream_c0ip>;
 
     std::shared_ptr<const Function<dim>> this_load_function = load_function;
     if(is_stream_c0ip)
@@ -883,12 +882,12 @@ template<int dim, int fe_degree, bool is_simplified>
 void
 ModelProblem<dim, fe_degree, is_simplified>::assemble_system()
 {
-  if(equation_data.is_stream_function() && !equation_data.use_c0ip_as_stream)
-    assemble_system_impl<true, false>();
-  else if(equation_data.is_stream_function() && equation_data.use_c0ip_as_stream)
+  if(equation_data.is_stream_function() && equation_data.use_stokes_formulation)
     assemble_system_impl<true, true>();
+  else if(equation_data.is_stream_function() && !equation_data.use_stokes_formulation)
+    assemble_system_impl<true, false>();
   else
-    assemble_system_impl<false, true>();
+    assemble_system_impl<false, false>();
 }
 
 

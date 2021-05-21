@@ -145,7 +145,7 @@ main(int argc, char * argv[])
     unsigned int ksvd_rank                 = 1;
     unsigned int n_cycles                  = 3;
     unsigned int fe_index                  = 0;
-    unsigned int use_c0ip_as_stream_form   = false;
+    unsigned int use_stokes_formulation    = true;
 
     //: parse arguments
     atoi_if(solver_index, 1);
@@ -154,7 +154,7 @@ main(int argc, char * argv[])
     atof_if(local_solver_index, 4);
     atof_if(ksvd_rank, 5);
     atoi_if(n_cycles, 6);
-    atoi_if(use_c0ip_as_stream_form, 7);
+    atoi_if(use_stokes_formulation, 7);
     atof_if(ip_factor, 8);
     atoi_if(n_threads_max, 9);
     atoi_if(use_doubling_of_steps, 10);
@@ -262,9 +262,9 @@ main(int argc, char * argv[])
     }();
     if(equation_data.ksvd_tensor_indices == std::set<unsigned int>{0U, 1U})
       equation_data.addition_to_min_eigenvalue = 0.025;
-    equation_data.ip_factor            = ip_factor;
-    equation_data.n_lanczos_iterations = 4 + 1;
-    equation_data.use_c0ip_as_stream   = (bool)use_c0ip_as_stream_form;
+    equation_data.ip_factor              = ip_factor;
+    equation_data.n_lanczos_iterations   = 4 + 1;
+    equation_data.use_stokes_formulation = (bool)use_stokes_formulation;
 
     const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0U;
 
