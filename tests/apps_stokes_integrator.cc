@@ -522,12 +522,13 @@ protected:
   }
 
 
+  template<bool is_simplified = false>
   void
   check_matrixintegratorstreamlmw()
   {
     equation_data.setup_stream_functions = true;
 
-    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomas>;
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomas, is_simplified>;
 
     const auto stokes_problem = std::make_shared<StokesProblem>(options.prms, equation_data);
     stokes_problem->pcout     = pcout_owned;
@@ -538,7 +539,7 @@ protected:
 
     ASSERT_EQ(StokesProblem::dof_layout_v, TPSS::DoFLayout::RT);
     using MatrixIntegrator =
-      VelocityPressure::LMW::MatrixIntegratorStream<dim, fe_degree_p, double>;
+      VelocityPressure::LMW::MatrixIntegratorStream<dim, fe_degree_p, double, is_simplified>;
 
     using local_matrix_type = typename MatrixIntegrator::matrix_type;
 
@@ -567,8 +568,8 @@ protected:
     equation_data_biharm.variant = Biharmonic::EquationData::Variant::ClampedStreamNoSlip;
     ASSERT_NE(fe_degree_p, 0) << "Biharmonic model problem is not implemented for linear degree!";
     constexpr int fe_degree_biharm = fe_degree_p > 0 ? fe_degree_p + 1 : 2;
-    Biharmonic::ModelProblem<dim, fe_degree_biharm> biharmonic_problem(options.prms,
-                                                                       equation_data_biharm);
+    Biharmonic::ModelProblem<dim, fe_degree_biharm, is_simplified> biharmonic_problem(
+      options.prms, equation_data_biharm);
     biharmonic_problem.pcout         = pcout_owned;
     biharmonic_problem.triangulation = stokes_problem->triangulation;
     biharmonic_problem.make_grid();
@@ -628,13 +629,14 @@ protected:
   };
 
 
+  template<bool is_simplified = false>
   void
   check_localsolverstream(lssVariant lssvariant)
   {
     equation_data.setup_stream_functions = true;
     equation_data.variant                = EquationData::Variant::DivFreeNoSlip;
 
-    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomas>;
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomas, is_simplified>;
 
     const auto stokes_problem = std::make_shared<StokesProblem>(options.prms, equation_data);
     stokes_problem->pcout     = pcout_owned;
@@ -646,7 +648,7 @@ protected:
 
     ASSERT_EQ(StokesProblem::dof_layout_v, TPSS::DoFLayout::RT);
     using MatrixIntegrator =
-      VelocityPressure::LMW::MatrixIntegratorStream<dim, fe_degree_p, double>;
+      VelocityPressure::LMW::MatrixIntegratorStream<dim, fe_degree_p, double, is_simplified>;
 
     using local_matrix_type = typename MatrixIntegrator::matrix_type;
 
@@ -1149,9 +1151,11 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorstreamlmw_MPI)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
   Fixture::setup_matrixintegratorlmw();
-  Fixture::check_matrixintegratorstreamlmw();
+  Fixture::options.prms.mesh.n_repetitions = 2;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  Fixture::template check_matrixintegratorstreamlmw<false>();
   Fixture::options.prms.mesh.n_refinements = 2;
-  Fixture::check_matrixintegratorstreamlmw();
+  Fixture::template check_matrixintegratorstreamlmw<false>();
 }
 
 
@@ -1179,7 +1183,6 @@ TYPED_TEST_P(TestStokesIntegrator, localsolverstream_gradp_MPI)
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.n_repetitions = 2;
   Fixture::options.prms.mesh.n_refinements = 0;
-  // Fixture::check_matrixintegratorstreamlmw();
   Fixture::check_localsolverstream(Fixture::lssVariant::Gradp);
   Fixture::options.prms.mesh.n_repetitions = 3;
   Fixture::options.prms.mesh.n_refinements = 0;
@@ -1196,7 +1199,6 @@ TYPED_TEST_P(TestStokesIntegrator, localsolverstream_pressure_MPI)
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.n_repetitions = 2;
   Fixture::options.prms.mesh.n_refinements = 0;
-  // Fixture::check_matrixintegratorstreamlmw();
   Fixture::check_localsolverstream(Fixture::lssVariant::Pressure);
   Fixture::options.prms.mesh.n_repetitions = 3;
   Fixture::options.prms.mesh.n_refinements = 0;
@@ -1277,7 +1279,7 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorlmwRT_velocityvelo
 
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckSystemMatrixVelocity,
-			    matrixintegratorfdQ_velocity,
+                            matrixintegratorfdQ_velocity,
                             matrixintegratorfdDGQ_velocity,
                             CheckSystemMatrix,
                             CheckSystemRHS,

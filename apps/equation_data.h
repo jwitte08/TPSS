@@ -953,7 +953,7 @@ struct EquationData
   bool                         force_positive_definite_inverse = false;
   double                       addition_to_min_eigenvalue      = 0.01;
   std::size_t                  n_lanczos_iterations            = static_cast<std::size_t>(-1);
-  bool                         use_c0ip_as_stream              = true;
+  bool                         use_c0ip_as_stream              = false;
 };
 
 

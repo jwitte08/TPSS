@@ -766,6 +766,16 @@ struct MatrixIntegrator
                          CopyData &           copy_data) const;
 
   void
+  face_worker_tangential_stream(const IteratorType & cell,
+                                const unsigned int & f,
+                                const unsigned int & sf,
+                                const IteratorType & ncell,
+                                const unsigned int & nf,
+                                const unsigned int & nsf,
+                                ScratchData<dim> &   scratch_data,
+                                CopyData &           copy_data) const;
+
+  void
   face_residual_worker_tangential(const IteratorType &     cell,
                                   const IteratorType &     cell_stream,
                                   const IteratorType &     cell_pressure,
@@ -860,6 +870,13 @@ struct MatrixIntegrator
                             CopyData &           copy_data) const;
 
   void
+  uniface_worker_tangential_stream(const IteratorType & cell,
+                                   const unsigned int & f,
+                                   const unsigned int & sf,
+                                   ScratchData<dim> &   scratch_data,
+                                   CopyData &           copy_data) const;
+
+  void
   uniface_residual_worker_tangential(const IteratorType &     cell,
                                      const IteratorType &     cell_stream,
                                      const IteratorType &     cell_pressure,
@@ -901,6 +918,12 @@ struct MatrixIntegrator
                              const unsigned int & face_no,
                              ScratchData<dim> &   scratch_data,
                              CopyData &           copy_data) const;
+
+  void
+  boundary_worker_tangential_stream(const IteratorType & cell,
+                                    const unsigned int & face_no,
+                                    ScratchData<dim> &   scratch_data,
+                                    CopyData &           copy_data) const;
 
   void
   boundary_residual_worker_tangential(const IteratorType &     cell,
@@ -1241,29 +1264,63 @@ template<int dim, bool is_multigrid, bool is_simplified>
 void
 MatrixIntegrator<dim, is_multigrid, is_simplified>::face_worker_stream(
   const IteratorType & cell,
-  const unsigned int & f,
-  const unsigned int & sf,
+  const unsigned int & face_no,
+  const unsigned int & sface_no,
   const IteratorType & ncell,
-  const unsigned int & nf,
-  const unsigned int & nsf,
+  const unsigned int & nface_no,
+  const unsigned int & nsface_no,
   ScratchData<dim> &   scratch_data,
   CopyData &           copy_data) const
 {
   auto & phi = scratch_data.stream_interface_values;
-  phi.reinit(cell, f, sf, ncell, nf, nsf);
+  phi.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no);
 
   const unsigned int   n_interface_dofs = phi.n_current_interface_dofs();
   CopyData::FaceData & face_data        = copy_data.face_data.emplace_back(n_interface_dofs);
 
   face_data.dof_indices = phi.get_interface_dof_indices();
 
-  const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
-  const auto   nh        = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nf]);
+  const auto   h  = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  const auto   nh = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nface_no]);
   const auto   fe_degree = scratch_data.fe_values_test.get_fe().degree;
   const double gamma_over_h =
     equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
   face_worker_impl(phi, phi, gamma_over_h, face_data);
+
+  AssertDimension(face_data.matrix.m(), n_interface_dofs);
+  AssertDimension(face_data.matrix.n(), n_interface_dofs);
+}
+
+
+
+template<int dim, bool is_multigrid, bool is_simplified>
+void
+MatrixIntegrator<dim, is_multigrid, is_simplified>::face_worker_tangential_stream(
+  const IteratorType & cell,
+  const unsigned int & face_no,
+  const unsigned int & sface_no,
+  const IteratorType & ncell,
+  const unsigned int & nface_no,
+  const unsigned int & nsface_no,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
+{
+  auto & phi = scratch_data.stream_interface_values;
+  phi.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no);
+
+  const unsigned int   n_interface_dofs = phi.n_current_interface_dofs();
+  CopyData::FaceData & face_data        = copy_data.face_data.emplace_back(n_interface_dofs);
+
+  face_data.dof_indices = phi.get_interface_dof_indices();
+
+  const auto   h  = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  const auto   nh = ncell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[nface_no]);
+  const auto   fe_degree = scratch_data.fe_values_test.get_fe().degree;
+  const double gamma_over_h =
+    equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
+
+  face_worker_tangential_impl(phi, phi, gamma_over_h, face_data);
 
   AssertDimension(face_data.matrix.m(), n_interface_dofs);
   AssertDimension(face_data.matrix.n(), n_interface_dofs);
@@ -1627,29 +1684,61 @@ template<int dim, bool is_multigrid, bool is_simplified>
 void
 MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_stream(
   const IteratorType & cell,
-  const unsigned int & f,
+  const unsigned int & face_no,
   ScratchData<dim> &   scratch_data,
   CopyData &           copy_data) const
 {
-  auto & phi = scratch_data.stream_interface_values;
-  phi.reinit(cell, f);
+  scratch_data.stream_interface_values.reinit(cell, face_no);
+  const auto & phi = scratch_data.stream_interface_values.get_face_values(0);
 
-  const unsigned int n_dofs = phi.n_current_interface_dofs();
+  const unsigned int n_dofs = phi.n_dofs_per_cell();
 
   CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_dofs);
 
-  face_data.dof_indices        = phi.get_interface_dof_indices();
-  face_data.dof_indices_column = phi.get_interface_dof_indices();
+  cell->get_active_or_mg_dof_indices(face_data.dof_indices);
 
-  const auto   h         = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
-  const auto   fe_degree = scratch_data.fe_values_test.get_fe().degree;
-  const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, h);
+  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  /// TODO non-uniform meshes...
+  const auto   nh           = h;
+  const auto   fe_degree    = scratch_data.fe_values_test.get_fe().degree;
+  const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, nh);
 
-  /// TODO replace with boundary_or_uniface_worker_impl()
-  boundary_worker_impl<!is_multigrid>(phi, phi, gamma_over_h, face_data);
+  boundary_or_uniface_worker_impl<false>(phi, phi, gamma_over_h, face_data);
 
-  AssertDimension(face_data.matrix.m(), face_data.dof_indices.size());
-  AssertDimension(face_data.matrix.n(), face_data.dof_indices_column.size());
+  AssertDimension(face_data.matrix.m(), n_dofs);
+  AssertDimension(face_data.matrix.n(), n_dofs);
+}
+
+
+
+template<int dim, bool is_multigrid, bool is_simplified>
+void
+MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_worker_tangential_stream(
+  const IteratorType & cell,
+  const unsigned int & face_no,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
+{
+  scratch_data.stream_interface_values.reinit(cell, face_no);
+  const auto & phi = scratch_data.stream_interface_values.get_face_values(0);
+
+  const unsigned int n_dofs = phi.n_dofs_per_cell();
+
+  CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_dofs);
+
+  cell->get_active_or_mg_dof_indices(face_data.dof_indices);
+  // face_data.dof_indices_column = face_data.dof_indices;
+
+  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
+  /// TODO non-uniform meshes...
+  const auto   nh           = h;
+  const auto   fe_degree    = scratch_data.fe_values_test.get_fe().degree;
+  const double gamma_over_h = equation_data.ip_factor * compute_penalty_impl(fe_degree, h, nh);
+
+  boundary_or_uniface_worker_tangential_impl<false>(phi, phi, gamma_over_h, face_data);
+
+  AssertDimension(face_data.matrix.m(), n_dofs);
+  AssertDimension(face_data.matrix.n(), n_dofs);
 }
 
 
@@ -2467,6 +2556,40 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker_tangential(
     equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
   boundary_or_uniface_worker_tangential_impl<true>(phi, phi, gamma_over_h, face_data);
+}
+
+
+
+template<int dim, bool is_multigrid, bool is_simplified>
+void
+MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker_tangential_stream(
+  const IteratorType & cell,
+  const unsigned int & f,
+  const unsigned int & sf,
+  ScratchData<dim> &   scratch_data,
+  CopyData &           copy_data) const
+{
+  scratch_data.stream_interface_values.reinit(cell, f, sf, cell, f, sf);
+  const auto & phi = scratch_data.stream_interface_values.get_face_values(0);
+
+  const unsigned int n_dofs = phi.n_dofs_per_cell();
+
+  CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_dofs);
+
+  cell->get_active_or_mg_dof_indices(face_data.dof_indices);
+  face_data.dof_indices_column = face_data.dof_indices;
+
+  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
+  /// TODO non-uniform meshes...
+  const auto   nh        = h;
+  const auto   fe_degree = phi.get_fe().degree;
+  const double gamma_over_h =
+    equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
+
+  boundary_or_uniface_worker_tangential_impl<true>(phi, phi, gamma_over_h, face_data);
+
+  AssertDimension(face_data.matrix.m(), n_dofs);
+  AssertDimension(face_data.matrix.n(), n_dofs);
 }
 
 
@@ -5185,11 +5308,11 @@ struct LocalSolverStream
  * Therefore, all local matrices are stored and inverted in a standard way, that
  * is without exploiting any tensor structure.
  */
-template<int dim, int fe_degree_p, typename Number = double>
+template<int dim, int fe_degree_p, typename Number = double, bool is_simplified = false>
 class MatrixIntegratorStream
 {
 public:
-  using This = MatrixIntegratorStream<dim, fe_degree_p, Number>;
+  using This = MatrixIntegratorStream<dim, fe_degree_p, Number, is_simplified>;
 
   static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::RT;
   static constexpr int             fe_degree_v  = fe_degree_p;
@@ -5197,7 +5320,7 @@ public:
     fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
 
   using value_type           = Number;
-  using matrix_type          = LocalSolverStream<dim, Number>;
+  using matrix_type          = LocalSolverStream<dim, Number>; // !!! is simplified
   using transfer_type        = typename matrix_type::transfer_type;
   using transfer_type_stream = typename matrix_type::transfer_type_stream;
   using operator_type        = TrilinosWrappers::BlockSparseMatrix;
@@ -5258,8 +5381,11 @@ public:
         /// biharmonic solver (div-free velocity)
         {
           using Velocity::SIPG::MW::CopyData;
+
           using Velocity::SIPG::MW::ScratchData;
-          using MatrixIntegrator   = Velocity::SIPG::MW::MatrixIntegrator<dim, true>;
+
+          using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, true, is_simplified>;
+
           using cell_iterator_type = typename MatrixIntegrator::IteratorType;
 
           tmp = 0.;
@@ -5329,6 +5455,8 @@ public:
             [&](const auto & cell, const auto face_no, auto & scratch_data, auto & copy_data) {
               /// TODO boundary_worker_tangential_stream
               matrix_integrator.boundary_worker_stream(cell, face_no, scratch_data, copy_data);
+              // matrix_integrator.boundary_worker_tangential_stream(cell, face_no, scratch_data,
+              // copy_data); // !!!
             },
             [&](const auto & cell,
                 const auto   face_no,
@@ -5343,7 +5471,7 @@ public:
               const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
               if(is_interface)
               {
-                /// TODO face_worker_tangential_stream
+                /// TODO face_worker_tangential_stream ?
                 matrix_integrator.face_worker_stream(
                   cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
                 copy_data.face_data.back().matrix *= 0.5; /// both sides!
@@ -5351,7 +5479,7 @@ public:
               }
               if(cell_belongs_to_collection)
               {
-                /// TODO uniface_worker_tangential_stream
+                /// TODO uniface_worker_tangential_stream ?
                 matrix_integrator.uniface_worker_stream(
                   cell, face_no, sface_no, scratch_data, copy_data);
               }
@@ -5481,7 +5609,7 @@ struct MatrixIntegratorSelector<LocalAssembly::StreamLMW,
 {
   static_assert(dof_layout_v == TPSS::DoFLayout::RT, "Implemented for Raviart-Thomas.");
   static_assert(fe_degree_p == fe_degree_v, "Mismatching finite element degrees.");
-  using type = LMW::MatrixIntegratorStream<dim, fe_degree_p, Number>;
+  using type = LMW::MatrixIntegratorStream<dim, fe_degree_p, Number, is_simplified>;
 };
 
 

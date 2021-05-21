@@ -140,13 +140,13 @@ public:
  * (2) Stream function formulation for Stokes model problems discretized by
  * means of H^div-conforming interior penalty methods.
  */
-template<int dim, int fe_degree = 2>
+template<int dim, int fe_degree = 2, bool is_simplified = false>
 class ModelProblem
 {
   static_assert(dim == 2, "The model problem is implemented for 2D only.");
   static_assert(
     fe_degree >= 2,
-    "The C0IP formulation for the biharmonic problem is reasonable for finite elements of polynomial degree two or larger.");
+    "The C0IP formulation is reasonable for finite elements of polynomial degree two or larger.");
 
 public:
   using VECTOR = LinearAlgebra::distributed::Vector<double>;
@@ -280,7 +280,7 @@ public:
   static constexpr unsigned int fe_degree_pressure = fe_degree - 1;
 
   using StokesProblem =
-    Stokes::ModelProblem<dim, fe_degree_pressure, Stokes::Method::RaviartThomas>;
+    Stokes::ModelProblem<dim, fe_degree_pressure, Stokes::Method::RaviartThomas, is_simplified>;
 
   RT::Parameter                  prms_stokes;
   Stokes::EquationData           equation_data_stokes;
@@ -420,9 +420,9 @@ SparseMatrixAugmented<dim, fe_degree, Number>::clear()
 
 
 
-template<int dim, int fe_degree>
-ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_in,
-                                           const EquationData &  equation_data_in)
+template<int dim, int fe_degree, bool is_simplified>
+ModelProblem<dim, fe_degree, is_simplified>::ModelProblem(const RT::Parameter & rt_parameters_in,
+                                                          const EquationData &  equation_data_in)
   : rt_parameters(rt_parameters_in),
     equation_data(equation_data_in),
     analytical_solution([&]() -> std::shared_ptr<Function<dim>> {
@@ -531,16 +531,21 @@ ModelProblem<dim, fe_degree>::ModelProblem(const RT::Parameter & rt_parameters_i
                      nullptr),
     proc_no(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD))
 {
-  AssertThrow(rt_parameters.multigrid.pre_smoother.schwarz.patch_variant ==
-                TPSS::PatchVariant::vertex,
-              ExcMessage("Model problem is designed for Schwarz methods on vertex patches."));
+  if(rt_parameters.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+    AssertThrow(rt_parameters.multigrid.pre_smoother.schwarz.patch_variant ==
+                  TPSS::PatchVariant::vertex,
+                ExcMessage("Model problem is designed for Schwarz methods on vertex patches."));
+  if(rt_parameters.multigrid.post_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
+    AssertThrow(rt_parameters.multigrid.post_smoother.schwarz.patch_variant ==
+                  TPSS::PatchVariant::vertex,
+                ExcMessage("Model problem is designed for Schwarz methods on vertex patches."));
 }
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 bool
-ModelProblem<dim, fe_degree>::make_grid()
+ModelProblem<dim, fe_degree, is_simplified>::make_grid()
 {
   make_grid_impl(rt_parameters.mesh);
   return true;
@@ -548,9 +553,9 @@ ModelProblem<dim, fe_degree>::make_grid()
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 bool
-ModelProblem<dim, fe_degree>::make_grid(const unsigned int n_refinements)
+ModelProblem<dim, fe_degree, is_simplified>::make_grid(const unsigned int n_refinements)
 {
   MeshParameter mesh_prms = rt_parameters.mesh;
   mesh_prms.n_refinements = n_refinements;
@@ -565,9 +570,9 @@ ModelProblem<dim, fe_degree>::make_grid(const unsigned int n_refinements)
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::make_grid_impl(const MeshParameter & mesh_prms)
+ModelProblem<dim, fe_degree, is_simplified>::make_grid_impl(const MeshParameter & mesh_prms)
 {
   triangulation->clear();
   *pcout << create_mesh(*triangulation, mesh_prms) << std::endl;
@@ -577,10 +582,10 @@ ModelProblem<dim, fe_degree>::make_grid_impl(const MeshParameter & mesh_prms)
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 template<typename OtherNumber>
 std::shared_ptr<const MatrixFree<dim, OtherNumber>>
-ModelProblem<dim, fe_degree>::build_mf_storage() const
+ModelProblem<dim, fe_degree, is_simplified>::build_mf_storage() const
 {
   typename MatrixFree<dim, OtherNumber>::AdditionalData mf_features;
   mf_features.tasks_parallel_scheme            = MatrixFree<dim, OtherNumber>::AdditionalData::none;
@@ -598,9 +603,9 @@ ModelProblem<dim, fe_degree>::build_mf_storage() const
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::setup_system()
+ModelProblem<dim, fe_degree, is_simplified>::setup_system()
 {
   dof_handler.clear();
   dof_handler.initialize(*triangulation, *finite_element);
@@ -666,10 +671,10 @@ ModelProblem<dim, fe_degree>::setup_system()
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 template<bool is_stream, bool use_c0ip>
 void
-ModelProblem<dim, fe_degree>::assemble_system_impl()
+ModelProblem<dim, fe_degree, is_simplified>::assemble_system_impl()
 {
   constexpr bool is_stream_exact = is_stream && !use_c0ip;
   constexpr bool is_stream_c0ip  = is_stream && use_c0ip;
@@ -700,8 +705,8 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
     Stokes::FunctionExtractor<dim> analytical_solution_velocity(
       stokes_problem->analytical_solution.get(), velocity_components);
 
-    using MatrixIntegrator =
-      typename Stokes::Velocity::SIPG::MW::MatrixIntegrator<dim, /*is_multigrid*/ false>;
+    using MatrixIntegrator = typename Stokes::Velocity::SIPG::MW::
+      MatrixIntegrator<dim, /*is_multigrid*/ false, is_simplified>;
 
     MatrixIntegrator matrix_integrator(&load_function_velocity,
                                        &analytical_solution_velocity,
@@ -721,6 +726,7 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
                            const unsigned int & nsf,
                            ScratchData<dim> &   scratch_data,
                            CopyData &           copy_data) {
+      /// TODO face_worker_tangential_stream ?
       matrix_integrator.face_worker_stream(cell, f, sf, ncell, nf, nsf, scratch_data, copy_data);
     };
 
@@ -728,6 +734,7 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
                                const unsigned int & face_no,
                                ScratchData<dim> &   scratch_data,
                                CopyData &           copy_data) {
+      /// TODO boundary_worker_tangential_stream
       matrix_integrator.boundary_worker_stream(cell, face_no, scratch_data, copy_data);
     };
 
@@ -872,9 +879,9 @@ ModelProblem<dim, fe_degree>::assemble_system_impl()
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::assemble_system()
+ModelProblem<dim, fe_degree, is_simplified>::assemble_system()
 {
   if(equation_data.is_stream_function() && !equation_data.use_c0ip_as_stream)
     assemble_system_impl<true, false>();
@@ -886,9 +893,9 @@ ModelProblem<dim, fe_degree>::assemble_system()
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
+ModelProblem<dim, fe_degree, is_simplified>::prepare_schwarz_smoothers()
 {
   //: pre-smoother
   Assert(rt_parameters.multigrid.pre_smoother.variant ==
@@ -920,9 +927,9 @@ ModelProblem<dim, fe_degree>::prepare_schwarz_smoothers()
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::prepare_multigrid()
+ModelProblem<dim, fe_degree, is_simplified>::prepare_multigrid()
 {
   //: clear multigrid infrastructure
   multigrid.reset();
@@ -1121,9 +1128,9 @@ ModelProblem<dim, fe_degree>::prepare_multigrid()
 }
 
 
-template<int dim, int fe_degree>
-const typename ModelProblem<dim, fe_degree>::GMG_PRECONDITIONER &
-ModelProblem<dim, fe_degree>::prepare_preconditioner_mg()
+template<int dim, int fe_degree, bool is_simplified>
+const typename ModelProblem<dim, fe_degree, is_simplified>::GMG_PRECONDITIONER &
+ModelProblem<dim, fe_degree, is_simplified>::prepare_preconditioner_mg()
 {
   prepare_multigrid();
   AssertThrow(multigrid, ExcNotInitialized());
@@ -1133,9 +1140,9 @@ ModelProblem<dim, fe_degree>::prepare_preconditioner_mg()
 }
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 const TrilinosWrappers::PreconditionAMG &
-ModelProblem<dim, fe_degree>::prepare_preconditioner_amg()
+ModelProblem<dim, fe_degree, is_simplified>::prepare_preconditioner_amg()
 {
   preconditioner_amg = std::make_shared<TrilinosWrappers::PreconditionAMG>();
   TrilinosWrappers::PreconditionAMG::AdditionalData amg_features;
@@ -1149,9 +1156,9 @@ ModelProblem<dim, fe_degree>::prepare_preconditioner_amg()
 }
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 const TrilinosWrappers::PreconditionBlockwiseDirect &
-ModelProblem<dim, fe_degree>::prepare_preconditioner_blockdirect()
+ModelProblem<dim, fe_degree, is_simplified>::prepare_preconditioner_blockdirect()
 {
   preconditioner_blockdirect = std::make_shared<TrilinosWrappers::PreconditionBlockwiseDirect>();
   TrilinosWrappers::PreconditionBlockwiseDirect::AdditionalData blockdirect_features;
@@ -1162,17 +1169,17 @@ ModelProblem<dim, fe_degree>::prepare_preconditioner_blockdirect()
 }
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 unsigned int
-ModelProblem<dim, fe_degree>::max_level() const
+ModelProblem<dim, fe_degree, is_simplified>::max_level() const
 {
   return triangulation->n_global_levels() - 1;
 }
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 unsigned int
-ModelProblem<dim, fe_degree>::n_mg_levels() const
+ModelProblem<dim, fe_degree, is_simplified>::n_mg_levels() const
 {
   if(mg_matrices.min_level() != mg_matrices.max_level())
   {
@@ -1186,9 +1193,9 @@ ModelProblem<dim, fe_degree>::n_mg_levels() const
 }
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 unsigned int
-ModelProblem<dim, fe_degree>::n_colors_system() const
+ModelProblem<dim, fe_degree, is_simplified>::n_colors_system() const
 {
   if(mg_schwarz_smoother_pre)
     return mg_schwarz_smoother_pre->get_subdomain_handler()->get_partition_data().n_colors();
@@ -1198,19 +1205,19 @@ ModelProblem<dim, fe_degree>::n_colors_system() const
 }
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 template<typename T>
 void
-ModelProblem<dim, fe_degree>::print_parameter(const std::string & description,
-                                              const T &           value) const
+ModelProblem<dim, fe_degree, is_simplified>::print_parameter(const std::string & description,
+                                                             const T &           value) const
 {
   *pcout << Util::parameter_to_fstring(description, value);
 }
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::print_informations() const
+ModelProblem<dim, fe_degree, is_simplified>::print_informations() const
 {
   *pcout << equation_data.to_string();
   *pcout << std::endl;
@@ -1220,9 +1227,9 @@ ModelProblem<dim, fe_degree>::print_informations() const
 }
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 std::shared_ptr<SolverControl>
-ModelProblem<dim, fe_degree>::make_solver_control() const
+ModelProblem<dim, fe_degree, is_simplified>::make_solver_control() const
 {
   auto solver_control = [&]() -> std::shared_ptr<SolverControl> {
     if(rt_parameters.solver.control_variant == SolverParameter::ControlVariant::relative)
@@ -1257,10 +1264,11 @@ ModelProblem<dim, fe_degree>::make_solver_control() const
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 template<typename PreconditionerType>
 void
-ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & preconditioner)
+ModelProblem<dim, fe_degree, is_simplified>::iterative_solve_impl(
+  const PreconditionerType & preconditioner)
 {
   auto solver_control = make_solver_control();
 
@@ -1290,9 +1298,9 @@ ModelProblem<dim, fe_degree>::iterative_solve_impl(const PreconditionerType & pr
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::solve()
+ModelProblem<dim, fe_degree, is_simplified>::solve()
 {
   print_parameter("Solving system", "...");
 
@@ -1363,9 +1371,9 @@ ModelProblem<dim, fe_degree>::solve()
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 std::array<LAPACKFullMatrix<double>, 2>
-ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions_old() const
+ModelProblem<dim, fe_degree, is_simplified>::compute_nondivfree_shape_functions_old() const
 {
   Assert(stokes_problem, ExcMessage("stokes_problem is not initialized"));
 
@@ -1609,9 +1617,9 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions_old() const
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 std::array<FullMatrix<double>, 2>
-ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
+ModelProblem<dim, fe_degree, is_simplified>::compute_nondivfree_shape_functions() const
 {
   Assert(stokes_problem, ExcMessage("stokes_problem is not initialized"));
 
@@ -1864,9 +1872,9 @@ ModelProblem<dim, fe_degree>::compute_nondivfree_shape_functions() const
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::solve_pressure()
+ModelProblem<dim, fe_degree, is_simplified>::solve_pressure()
 {
   print_parameter("Solving pressure system", "...");
 
@@ -1994,11 +2002,11 @@ ModelProblem<dim, fe_degree>::solve_pressure()
     Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
                                                        component_range);
 
-    MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
-                                            &analytical_velocity,
-                                            &system_u,
-                                            equation_data_stokes,
-                                            &interface_handler);
+    MatrixIntegrator<dim, false, is_simplified> matrix_integrator(&load_function_velocity,
+                                                                  &analytical_velocity,
+                                                                  &system_u,
+                                                                  equation_data_stokes,
+                                                                  &interface_handler);
 
     auto cell_worker =
       [&](const CellIterator & cell, ScratchData<dim, true> & scratch_data, CopyData & copy_data) {
@@ -2151,11 +2159,11 @@ ModelProblem<dim, fe_degree>::solve_pressure()
       Stokes::FunctionExtractor<dim> analytical_velocity(stokes_problem->analytical_solution.get(),
                                                          component_range);
 
-      MatrixIntegrator<dim> matrix_integrator(&load_function_velocity,
-                                              &analytical_velocity,
-                                              &system_u,
-                                              equation_data_stokes,
-                                              &interface_handler);
+      MatrixIntegrator<dim, false, is_simplified> matrix_integrator(&load_function_velocity,
+                                                                    &analytical_velocity,
+                                                                    &system_u,
+                                                                    equation_data_stokes,
+                                                                    &interface_handler);
 
       const auto cell_worker = [&](const CellIterator &     cell,
                                    ScratchData<dim, true> & scratch_data,
@@ -2365,10 +2373,10 @@ ModelProblem<dim, fe_degree>::solve_pressure()
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 template<bool do_error>
 double
-ModelProblem<dim, fe_degree>::compute_stream_function_error()
+ModelProblem<dim, fe_degree, is_simplified>::compute_stream_function_error()
 {
   Assert(stokes_problem, ExcMessage("stokes_problem isn't initialized."));
 
@@ -2525,9 +2533,9 @@ ModelProblem<dim, fe_degree>::compute_stream_function_error()
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 double
-ModelProblem<dim, fe_degree>::compute_L2_error_pressure() const
+ModelProblem<dim, fe_degree, is_simplified>::compute_L2_error_pressure() const
 {
   Assert(stokes_problem, ExcMessage("Not initialized."));
   return stokes_problem->compute_L2_error_pressure();
@@ -2535,9 +2543,9 @@ ModelProblem<dim, fe_degree>::compute_L2_error_pressure() const
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 double
-ModelProblem<dim, fe_degree>::compute_energy_error() const
+ModelProblem<dim, fe_degree, is_simplified>::compute_energy_error() const
 {
   using ::MW::ScratchData;
 
@@ -2704,9 +2712,9 @@ ModelProblem<dim, fe_degree>::compute_energy_error() const
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::prolongate_sf_to_velocity(
+ModelProblem<dim, fe_degree, is_simplified>::prolongate_sf_to_velocity(
   LinearAlgebra::distributed::Vector<double> &       velocity,
   const LinearAlgebra::distributed::Vector<double> & stream) const
 {
@@ -2776,9 +2784,9 @@ ModelProblem<dim, fe_degree>::prolongate_sf_to_velocity(
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 FullMatrix<double>
-ModelProblem<dim, fe_degree>::compute_prolongation_sf_to_velocity() const
+ModelProblem<dim, fe_degree, is_simplified>::compute_prolongation_sf_to_velocity() const
 {
   Assert(stokes_problem, ExcMessage("stokes_problem is not initialized"));
 
@@ -2900,9 +2908,9 @@ ModelProblem<dim, fe_degree>::compute_prolongation_sf_to_velocity() const
 // the right hand side and boundary values in a way so that we know
 // the corresponding solution). In the first two code blocks below,
 // we compute the error in the $L_2$ norm and the $H^1$ semi-norm.
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::compute_discretization_errors()
+ModelProblem<dim, fe_degree, is_simplified>::compute_discretization_errors()
 {
   if(equation_data.is_stream_function())
   {
@@ -2962,9 +2970,9 @@ ModelProblem<dim, fe_degree>::compute_discretization_errors()
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::output_results(const unsigned int cycle) const
+ModelProblem<dim, fe_degree, is_simplified>::output_results(const unsigned int cycle) const
 {
   print_parameter("Writing graphical output", "...");
 
@@ -3001,9 +3009,9 @@ ModelProblem<dim, fe_degree>::output_results(const unsigned int cycle) const
 
 
 
-template<int dim, int fe_degree>
+template<int dim, int fe_degree, bool is_simplified>
 void
-ModelProblem<dim, fe_degree>::run()
+ModelProblem<dim, fe_degree, is_simplified>::run()
 {
   print_informations();
 
