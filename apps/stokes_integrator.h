@@ -1922,35 +1922,32 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_or_uniface_worker_i
 template<int dim, bool is_multigrid, bool is_simplified>
 void
 MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker(const IteratorType & cell,
-                                                                   const unsigned int & f,
-                                                                   const unsigned int & sf,
+                                                                   const unsigned int & face_no,
+                                                                   const unsigned int & sface_no,
                                                                    ScratchData<dim> & scratch_data,
                                                                    CopyData & copy_data) const
 {
-  FEInterfaceValues<dim> & fe_interface_values = scratch_data.fe_interface_values_test;
-  fe_interface_values.reinit(cell, f, sf, cell, f, sf);
+  scratch_data.fe_interface_values_test.reinit(cell, face_no, sface_no, cell, face_no, sface_no);
+  const FEFaceValuesBase<dim> & phi = scratch_data.fe_interface_values_test.get_fe_face_values(0);
 
-  const FEFaceValuesBase<dim> & phi = fe_interface_values.get_fe_face_values(0);
+  const unsigned int n_dofs = phi.dofs_per_cell;
 
-  const unsigned int n_interface_dofs = phi.dofs_per_cell;
-
-  CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_interface_dofs);
+  CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_dofs);
 
   cell->get_active_or_mg_dof_indices(face_data.dof_indices);
   face_data.dof_indices_column = face_data.dof_indices;
 
-  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[f]);
+  const auto h = cell->extent_in_direction(GeometryInfo<dim>::unit_normal_direction[face_no]);
   /// TODO non-uniform meshes...
   const auto   nh        = h;
   const auto   fe_degree = scratch_data.fe_values_test.get_fe().degree;
   const double gamma_over_h =
     equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
-  /// TODO replace by boundary_or_uniface_worker_impl() !!!
-  uniface_worker_impl(phi, phi, gamma_over_h, face_data);
+  boundary_or_uniface_worker_impl<true>(phi, phi, gamma_over_h, face_data);
 
-  AssertDimension(face_data.matrix.m(), n_interface_dofs);
-  AssertDimension(face_data.matrix.n(), n_interface_dofs);
+  AssertDimension(face_data.matrix.m(), n_dofs);
+  AssertDimension(face_data.matrix.n(), n_dofs);
 }
 
 
@@ -1969,9 +1966,9 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker_stream(
 
   const auto & phi = stream_interface_values.get_face_values(0);
 
-  const unsigned int n_interface_dofs = phi.n_dofs_per_cell();
+  const unsigned int n_dofs = phi.n_dofs_per_cell();
 
-  CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_interface_dofs);
+  CopyData::FaceData & face_data = copy_data.face_data.emplace_back(n_dofs);
 
   cell->get_active_or_mg_dof_indices(face_data.dof_indices);
   face_data.dof_indices_column = face_data.dof_indices;
@@ -1983,10 +1980,10 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::uniface_worker_stream(
   const double gamma_over_h =
     equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
-  uniface_worker_impl(phi, phi, gamma_over_h, face_data);
+  boundary_or_uniface_worker_impl<true>(phi, phi, gamma_over_h, face_data);
 
-  AssertDimension(face_data.matrix.m(), n_interface_dofs);
-  AssertDimension(face_data.matrix.n(), n_interface_dofs);
+  AssertDimension(face_data.matrix.m(), n_dofs);
+  AssertDimension(face_data.matrix.n(), n_dofs);
 }
 
 

@@ -36,11 +36,6 @@ protected:
   void
   SetUp() override
   {
-    ASSERT_FALSE(fe_degree_p == 0)
-      << "This test is expected to fail, because there exist no piecewise constant functions with inter-element continuity (if needed use FE_DGQ<dim>(0) instead of FE_Q<dim>(0))...";
-    if(fe_degree_p == 0)
-      return;
-
     ofs.open("apps_stokes_integrator.log", std::ios_base::app);
     const bool is_first_proc   = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0;
     const bool is_higher_order = fe_degree_v > 2;
@@ -1022,7 +1017,7 @@ TYPED_TEST_P(TestStokesIntegrator, CheckLocalSolversVelocityPressure)
   Fixture::check_local_solvers_block(true);
   Fixture::check_local_solvers_block(false);
 }
-!!!*/
+
 
 
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_velocityvelocity_MPI)
@@ -1064,19 +1059,18 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwQ_pressurevelocity_MPI)
   Fixture::options.prms.mesh.n_refinements = 2;
   Fixture::template check_matrixintegratorlmw<Method::Qkplus2_DGPk>({1U, 0U});
 }
+!!!*/
 
 
-
-/*!!!
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwDGQ_velocityvelocity_MPI)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
-  Fixture::options.prms.mesh.n_refinements    = 1;
+  Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::template check_matrixintegratorlmw<Method::DGQkplus2_DGPk>({0U, 0U});
-  Fixture::options.prms.mesh.n_repetitions = 3;
+  Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::template check_matrixintegratorlmw<Method::DGQkplus2_DGPk>({0U, 0U});
 }
 
@@ -1088,9 +1082,9 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwDGQ_velocitypressure_MPI)
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
-  Fixture::options.prms.mesh.n_refinements    = 1;
+  Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::template check_matrixintegratorlmw<Method::DGQkplus2_DGPk>({0U, 1U});
-  Fixture::options.prms.mesh.n_repetitions = 3;
+  Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::template check_matrixintegratorlmw<Method::DGQkplus2_DGPk>({0U, 1U});
 }
 
@@ -1102,14 +1096,14 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwDGQ_pressurevelocity_MPI)
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
   Fixture::options.prms.mesh.n_repetitions    = 2;
-  Fixture::options.prms.mesh.n_refinements    = 1;
+  Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::template check_matrixintegratorlmw<Method::DGQkplus2_DGPk>({1U, 0U});
-  Fixture::options.prms.mesh.n_repetitions = 3;
+  Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::template check_matrixintegratorlmw<Method::DGQkplus2_DGPk>({1U, 0U});
 }
 
 
-
+/*!!!
 TYPED_TEST_P(TestStokesIntegrator, matrixintegratorlmwRT_velocityvelocity_MPI)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
@@ -1254,12 +1248,12 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorlmwQ_velocityveloc
 
 
 
-TYPED_TEST_P(TestStokesIntegrator, DISABLED_simplified_matrixintegratorlmwDGQ_velocityvelocity_MPI)
+TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorlmwDGQ_velocityvelocity_MPI)
 {
   using Fixture = TestStokesIntegrator<TypeParam>;
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.geometry_variant = MeshParameter::GeometryVariant::Cube;
-  Fixture::options.prms.mesh.n_repetitions    = 3;
+  Fixture::options.prms.mesh.n_repetitions    = 2;
   Fixture::options.prms.mesh.n_refinements    = 0;
   Fixture::template check_matrixintegratorlmw<Method::DGQkplus2_DGPk, true>({0U, 0U});
   Fixture::options.prms.mesh.n_refinements = 1;
@@ -1275,14 +1269,14 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             CheckSystemMatrix,
                             CheckSystemRHS,
                             CheckLevelMatrixVelocityPressure,
-                            CheckLocalSolversVelocityPressure,*/
+                            CheckLocalSolversVelocityPressure,
                             matrixintegratorlmwQ_velocityvelocity_MPI,
                             matrixintegratorlmwQ_velocitypressure_MPI,
-                            matrixintegratorlmwQ_pressurevelocity_MPI,
-                            /*matrixintegratorlmwDGQ_velocityvelocity_MPI,
+                            matrixintegratorlmwQ_pressurevelocity_MPI,*/
+                            matrixintegratorlmwDGQ_velocityvelocity_MPI,
                             matrixintegratorlmwDGQ_velocitypressure_MPI,
                             matrixintegratorlmwDGQ_pressurevelocity_MPI,
-                            matrixintegratorlmwRT_velocityvelocity_MPI,
+                            /*matrixintegratorlmwRT_velocityvelocity_MPI,
                             matrixintegratorlmwRT_velocitypressure_MPI,
                             matrixintegratorlmwRT_pressurevelocity_MPI,
                             matrixintegratorstreamlmw_MPI,
@@ -1292,7 +1286,7 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             simplified_matrixintegratorfdQ_velocity_MPI,
                             simplified_matrixintegratorfdDGQ_velocity_MPI,
                             simplified_matrixintegratorlmwQ_velocityvelocity_MPI,
-                            DISABLED_simplified_matrixintegratorlmwDGQ_velocityvelocity_MPI);
+                            simplified_matrixintegratorlmwDGQ_velocityvelocity_MPI);
 
 
 
