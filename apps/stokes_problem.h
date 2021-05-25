@@ -898,6 +898,8 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::ModelProblem(
         return std::make_shared<DivergenceFree::NoSlip::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuilleInhom)
         return std::make_shared<DivergenceFree::Poiseuille::Inhom::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlipExp)
+        return std::make_shared<DivergenceFree::NoSlip::Exp::Solution<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -914,6 +916,8 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::ModelProblem(
       else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlip)
         return std::make_shared<ManufacturedLoad<dim, is_simplified>>(analytical_solution);
       else if(equation_data_in.variant == EquationData::Variant::DivFreePoiseuilleInhom)
+        return std::make_shared<ManufacturedLoad<dim, is_simplified>>(analytical_solution);
+      else if(equation_data_in.variant == EquationData::Variant::DivFreeNoSlipExp)
         return std::make_shared<ManufacturedLoad<dim, is_simplified>>(analytical_solution);
       else
         AssertThrow(false, ExcMessage("Not supported..."));
@@ -2270,6 +2274,26 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::output_results(
   DataOut<dim> data_out;
   data_out.attach_dof_handler(dof_handler_velocity);
   // data_out.attach_triangulation(dof_handler_velocity.get_triangulation());
+
+  vector_type exact_solution;
+  system_matrix.initialize_dof_vector(exact_solution);
+
+  /// exact solution
+  {
+    FunctionExtractor<dim> analytical_solution_velocity(analytical_solution.get(), {0, dim});
+    VectorTools::interpolate(dof_handler_velocity,
+                             analytical_solution_velocity,
+                             exact_solution.block(0));
+    exact_solution.update_ghost_values();
+    /// u
+    {
+      std::vector<std::string> solution_names(dim, "exact_velocity");
+      data_out.add_data_vector(dof_handler_velocity,
+                               exact_solution.block(0U),
+                               solution_names,
+                               velocity_interpretation);
+    }
+  }
 
   /// discrete solution (velocity, pressure): (u, p)
   {

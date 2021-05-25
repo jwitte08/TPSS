@@ -440,6 +440,8 @@ ModelProblem<dim, fe_degree, is_simplified>::ModelProblem(const RT::Parameter & 
         return std::make_shared<Clamped::Poiseuille::Inhom::Solution<dim>>();
       else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
         return std::make_shared<Clamped::Homogeneous::Poly::Solution<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipExp)
+        return std::make_shared<Clamped::NoSlip::Exp::Solution<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -459,6 +461,8 @@ ModelProblem<dim, fe_degree, is_simplified>::ModelProblem(const RT::Parameter & 
         return nullptr;
       else if(equation_data_in.variant == EquationData::Variant::ClampedHomPoly)
         return std::make_shared<Clamped::Homogeneous::Poly::Load<dim>>();
+      else if(equation_data_in.variant == EquationData::Variant::ClampedStreamNoSlipExp)
+        return std::make_shared<Clamped::NoSlip::Exp::Load<dim>>();
       else
         AssertThrow(false, ExcMessage("Not supported..."));
       return nullptr;
@@ -508,7 +512,9 @@ ModelProblem<dim, fe_degree, is_simplified>::ModelProblem(const RT::Parameter & 
              {EquationData::Variant::ClampedStreamNoSlipNormal,
               Stokes::EquationData::Variant::DivFreeNoSlipNormal},
              {EquationData::Variant::ClampedStreamPoiseuilleInhom,
-              Stokes::EquationData::Variant::DivFreePoiseuilleInhom}};
+              Stokes::EquationData::Variant::DivFreePoiseuilleInhom},
+             {EquationData::Variant::ClampedStreamNoSlipExp,
+              Stokes::EquationData::Variant::DivFreeNoSlipExp}};
 
           Stokes::EquationData new_data;
           new_data.variant           = biharm_to_stokes_variant.at(equation_data.variant);
@@ -3040,10 +3046,10 @@ ModelProblem<dim, fe_degree, is_simplified>::run()
     if(equation_data.is_stream_function())
     {
       solve_pressure();
-      stokes_problem->output_results(cycle);
+      // stokes_problem->output_results(cycle);
     }
 
-    output_results(cycle);
+    // output_results(cycle);
 
     compute_discretization_errors();
 

@@ -22,6 +22,32 @@ using namespace dealii;
 
 namespace Common
 {
+int
+binom(int n, int k)
+{
+  if(k == 0 || k == n)
+    return 1;
+  return binom(n - 1, k - 1) + binom(n - 1, k);
+}
+
+double
+leibniz_rule(const std::vector<double> & derivatives_u, const std::vector<double> & derivatives_v)
+{
+  Assert(!derivatives_u.empty(), ExcMessage("No values passed!"));
+  AssertDimension(derivatives_u.size(), derivatives_v.size());
+
+  const int n = derivatives_u.size() - 1;
+
+  double sum = 0.;
+
+  for(auto i = 0; i <= n; ++i)
+    sum += binom(n, i) * derivatives_u[i] * derivatives_v[n - i];
+
+  return sum;
+}
+
+
+
 /**
  * This struct defines the parameters used in PolyAtCube.
  */
@@ -917,9 +943,10 @@ struct EquationData
     ClampedStreamPoiseuilleNoSlip, // 3
     ClampedStreamNoSlipNormal,     // 4
     ClampedStreamPoiseuilleInhom,  // 5
-    ClampedHomPoly                 // 6
+    ClampedHomPoly,                // 6
+    ClampedStreamNoSlipExp         // 7
   };
-  static constexpr unsigned int n_variants = 7;
+  static constexpr unsigned int n_variants = 8;
 
   static std::string
   str_equation_variant(const Variant variant);
@@ -966,7 +993,8 @@ EquationData::str_equation_variant(const Variant variant)
                                  "clamped (stream function - no-slip Poiseuille)",
                                  "clamped (stream function - no-slip-normal)",
                                  "clamped (stream function - inhom. Poiseuille)",
-                                 "clamped (polynomial, homogeneous)"};
+                                 "clamped (polynomial, homogeneous)",
+                                 "clamped (no-slip exponential)"};
   return str[static_cast<int>(variant)];
 }
 
@@ -980,7 +1008,8 @@ EquationData::sstr_equation_variant(const Variant variant)
                                  "clamped_noslip_poiseuille",
                                  "clamped_noslipnormal",
                                  "clamped_inhom_poiseuille",
-                                 "clamped_hompoly"};
+                                 "clamped_hompoly",
+                                 "clamped_noslip_exp"};
   return str[static_cast<int>(variant)];
 }
 
@@ -1047,7 +1076,8 @@ EquationData::is_stream_function() const
   return variant == EquationData::Variant::ClampedStreamNoSlip ||
          variant == EquationData::Variant::ClampedStreamPoiseuilleNoSlip ||
          variant == EquationData::Variant::ClampedStreamNoSlipNormal ||
-         variant == EquationData::Variant::ClampedStreamPoiseuilleInhom;
+         variant == EquationData::Variant::ClampedStreamPoiseuilleInhom ||
+         variant == EquationData::Variant::ClampedStreamNoSlipExp;
 }
 
 
@@ -1267,6 +1297,230 @@ private:
 
 template<int dim>
 using Load = ManufacturedLoad<dim, Solution<dim>>;
+
+
+
+namespace Exp
+{
+template<int dim>
+class Solution : public Function<dim>, protected SolutionBase<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+
+public:
+  Solution() : Function<dim>(1), poly(SolutionBase<dim>::polynomial_coefficients)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto x = p[0];
+    const auto y = p[1];
+
+    const double s_x = univariate_value(x);
+    const double s_y = univariate_value(y);
+
+    return s_x * s_y;
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto x = p[0];
+    const auto y = p[1];
+
+    const double s_x  = univariate_value(x);
+    const double Ds_x = univariate_first_derivative(x);
+    const double s_y  = univariate_value(y);
+    const double Ds_y = univariate_first_derivative(y);
+
+    Tensor<1, dim> grad;
+    grad[0] = Ds_x * s_y;
+    grad[1] = s_x * Ds_y;
+
+    return grad;
+  }
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int /*component*/ = 0) const override
+  {
+    const auto x = p[0];
+    const auto y = p[1];
+
+    const double s_x   = univariate_value(x);
+    const double Ds_x  = univariate_first_derivative(x);
+    const double D2s_x = univariate_second_derivative(x);
+    const double s_y   = univariate_value(y);
+    const double Ds_y  = univariate_first_derivative(y);
+    const double D2s_y = univariate_second_derivative(y);
+
+    SymmetricTensor<2, dim> hess;
+    hess[0][0] = D2s_x * s_y;
+    hess[0][1] = Ds_x * Ds_y;
+    hess[1][1] = s_x * D2s_y;
+
+    return hess;
+  }
+
+  double
+  bilaplacian(const Point<dim> & p, const unsigned int /*component*/ = 0) const
+  {
+    const auto & x = p[0];
+    const auto & y = p[1];
+
+    const double s_x   = univariate_value(x);
+    const double D2s_x = univariate_second_derivative(x);
+    const double D4s_x = univariate_fourth_derivative(x);
+    const double s_y   = univariate_value(y);
+    const double D2s_y = univariate_second_derivative(y);
+    const double D4s_y = univariate_fourth_derivative(y);
+
+    double bilapl = 0.;
+    bilapl        = D4s_x * s_y + 2. * D2s_x * D2s_y + s_x * D4s_y;
+
+    return bilapl;
+  }
+
+  void
+  fill_derivatives_poly(std::vector<double> & values, const double x) const
+  {
+    // poly.value(x, values);
+
+    /// p(x) = 1
+    // if(values.size() > 0)
+    //   values[0] = 1.;
+    // if(values.size() > 1)
+    //   values[1] = 0.;
+    // if(values.size() > 2)
+    //   values[2] = 0.;
+    // if(values.size() > 3)
+    //   values[3] = 0.;
+    // if(values.size() > 4)
+    //   values[4] = 0.;
+
+    /// p(x) = (x-1)*x
+    if(values.size() > 0)
+      values[0] = (x - 1.) * x;
+    if(values.size() > 1)
+      values[1] = 2. * x - 1.;
+    if(values.size() > 2)
+      values[2] = 2.;
+    if(values.size() > 3)
+      values[3] = 0.;
+    if(values.size() > 4)
+      values[4] = 0.;
+  }
+
+  void
+  fill_derivatives(std::vector<double> & values, const double x) const
+  {
+    using numbers::PI;
+
+    /// f(x) = x
+    // if(values.size() > 0)
+    //   values[0] = x;
+    // if(values.size() > 1)
+    //   values[1] = 1.;
+    // if(values.size() > 2)
+    //   values[2] = 0.;
+    // if(values.size() > 3)
+    //   values[3] = 0.;
+    // if(values.size() > 4)
+    //   values[4] = 0.;
+
+    /// f(x) = (x-1)*x
+    if(values.size() > 0)
+      values[0] = (x - 1.) * x;
+    if(values.size() > 1)
+      values[1] = 2. * x - 1.;
+    if(values.size() > 2)
+      values[2] = 2.;
+    if(values.size() > 3)
+      values[3] = 0.;
+    if(values.size() > 4)
+      values[4] = 0.;
+
+    /// f(x) = sin(pi*x)
+    // if(values.size() > 0)
+    //   values[0] = std::sin(PI * x);
+    // if(values.size() > 1)
+    //   values[1] = PI * std::cos(PI * x);
+    // if(values.size() > 2)
+    //   values[2] = -PI * PI * std::sin(PI * x);
+    // if(values.size() > 3)
+    //   values[3] = -PI * PI * PI * std::cos(PI * x);
+    // if(values.size() > 4)
+    //   values[4] = PI * PI * PI * PI * std::sin(PI * x);
+
+    /// f(x) = exp(x)
+    // if(values.size() > 0)
+    //   values[0] = std::exp(x);
+    // if(values.size() > 1)
+    //   values[1] = std::exp(x);
+    // if(values.size() > 2)
+    //   values[2] = std::exp(x);
+    // if(values.size() > 3)
+    //   values[3] = std::exp(x);
+    // if(values.size() > 4)
+    //   values[4] = std::exp(x);
+
+    if(values.size() > 5)
+      Assert(false, ExcMessage("TODO ..."));
+  }
+
+  double
+  make_univariate_derivative(const double x, const unsigned int k) const
+  {
+    std::vector<double> derivs_poly_x(k + 1);
+    fill_derivatives_poly(derivs_poly_x, x);
+
+    std::vector<double> derivs_func_x(k + 1);
+    fill_derivatives(derivs_func_x, x);
+
+    return Common::leibniz_rule(derivs_poly_x, derivs_func_x);
+  }
+
+  double
+  univariate_value(const double x) const
+  {
+    return make_univariate_derivative(x, 0);
+  }
+
+  double
+  univariate_first_derivative(const double x) const
+  {
+    return make_univariate_derivative(x, 1);
+  }
+
+  double
+  univariate_second_derivative(const double x) const
+  {
+    return make_univariate_derivative(x, 2);
+  }
+
+  double
+  univariate_third_derivative(const double x) const
+  {
+    return make_univariate_derivative(x, 3);
+  }
+
+  double
+  univariate_fourth_derivative(const double x) const
+  {
+    return make_univariate_derivative(x, 4);
+  }
+
+private:
+  Polynomials::Polynomial<double> poly;
+};
+
+
+
+template<int dim>
+using Load = ManufacturedLoad<dim, Solution<dim>>;
+} // namespace Exp
+
 } // namespace NoSlip
 
 
@@ -1451,9 +1705,10 @@ struct EquationData
     DivFreeBell,             // 2
     DivFreePoiseuilleNoSlip, // 3
     DivFreeNoSlip,           // 4
-    DivFreePoiseuilleInhom   // 5
+    DivFreePoiseuilleInhom,  // 5
+    DivFreeNoSlipExp         // 6
   };
-  static constexpr unsigned int n_variants = 6;
+  static constexpr unsigned int n_variants = 7;
 
   static std::string
   str_equation_variant(const Variant variant)
@@ -1463,7 +1718,8 @@ struct EquationData
                                    "divergence-free (Gaussian bells)",
                                    "divergence-free (no-slip Poiseuille)",
                                    "divergence-free (no-slip)",
-                                   "divergence-free (inhom. Poiseuille)"};
+                                   "divergence-free (inhom. Poiseuille)",
+                                   "divergence-free (no-slip exponential)"};
     return str[static_cast<int>(variant)];
   }
 
@@ -1518,7 +1774,8 @@ EquationData::sstr_equation_variant(const Variant variant)
                        "bell",
                        "noslip_poiseuille",
                        "noslip_stream",
-                       "inhom_poiseuille"};
+                       "inhom_poiseuille",
+                       "noslip_exp"};
   return str[static_cast<int>(variant)];
 }
 
@@ -2104,7 +2361,7 @@ SolutionVelocity<2>::value(const Point<2> & p, const unsigned int component) con
     return -PI * cos(PI * x) * sin(PI * y);
 
   AssertThrow(false, ExcMessage("Invalid component."));
-  return 0;
+  return 0.;
 }
 
 template<>
@@ -2889,6 +3146,122 @@ public:
 
   Polynomials::Polynomial<double> poly;
 };
+
+
+
+namespace Exp
+{
+/// TODO
+template<int dim>
+class SolutionVelocity : public Function<dim>
+{
+  static_assert(dim == 2, "Implemented for two dimensions.");
+
+public:
+  SolutionVelocity() : Function<dim>(dim)
+  {
+  }
+
+  virtual double
+  value(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    AssertIndexRange(component, dim);
+
+    const auto x = p[0];
+    const auto y = p[1];
+
+    const auto s_x  = phi.univariate_value(x);
+    const auto Ds_x = phi.univariate_first_derivative(x);
+    const auto s_y  = phi.univariate_value(y);
+    const auto Ds_y = phi.univariate_first_derivative(y);
+
+    double val = 0.;
+    if(component == 0U)
+      val = s_x * Ds_y;
+    else if(component == 1U)
+      val = -Ds_x * s_y;
+
+    return val;
+  }
+
+  virtual Tensor<1, dim>
+  gradient(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    AssertIndexRange(component, dim);
+
+    const auto x = p[0];
+    const auto y = p[1];
+
+    const auto s_x   = phi.univariate_value(x);
+    const auto Ds_x  = phi.univariate_first_derivative(x);
+    const auto D2s_x = phi.univariate_second_derivative(x);
+    const auto s_y   = phi.univariate_value(y);
+    const auto Ds_y  = phi.univariate_first_derivative(y);
+    const auto D2s_y = phi.univariate_second_derivative(y);
+
+    Tensor<1, dim> grad;
+    if(component == 0U)
+    {
+      grad[0] = Ds_x * Ds_y;
+      grad[1] = s_x * D2s_y;
+    }
+    else if(component == 1U)
+    {
+      grad[0] = -D2s_x * s_y;
+      grad[1] = -Ds_x * Ds_y;
+    }
+
+    return grad;
+  }
+
+  virtual SymmetricTensor<2, dim>
+  hessian(const Point<dim> & p, const unsigned int component = 0) const override
+  {
+    AssertIndexRange(component, dim);
+
+    const auto x = p[0];
+    const auto y = p[1];
+
+    const auto s_x   = phi.univariate_value(x);
+    const auto Ds_x  = phi.univariate_first_derivative(x);
+    const auto D2s_x = phi.univariate_second_derivative(x);
+    const auto D3s_x = phi.univariate_third_derivative(x);
+    const auto s_y   = phi.univariate_value(y);
+    const auto Ds_y  = phi.univariate_first_derivative(y);
+    const auto D2s_y = phi.univariate_second_derivative(y);
+    const auto D3s_y = phi.univariate_third_derivative(y);
+
+    SymmetricTensor<2, dim> hess;
+    if(component == 0U)
+    {
+      hess[0][0] = D2s_x * Ds_y;
+      hess[0][1] = Ds_x * D2s_y;
+      hess[1][1] = s_x * D3s_y;
+    }
+    else if(component == 1U)
+    {
+      hess[0][0] = -D3s_x * s_y;
+      hess[0][1] = -D2s_x * Ds_y;
+      hess[1][1] = -Ds_x * D2s_y;
+    }
+
+    return hess;
+  }
+
+private:
+  Biharmonic::Clamped::NoSlip::Exp::Solution<dim> phi;
+};
+
+
+
+template<int dim>
+using SolutionPressure = NoSlipNormal::SolutionPressure<dim>;
+
+
+
+template<int dim>
+using Solution = FunctionMerge<dim, SolutionVelocity<dim>, SolutionPressure<dim>>;
+} // namespace Exp
 
 } // namespace NoSlip
 
