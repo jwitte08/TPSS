@@ -31,6 +31,7 @@ set(sourcefiles
   simplified_stokes_Qkplus1_DGPk.cc
   simplified_stokes_DGQkplus1_DGPk.cc
   simplified_stokes_raviartthomas.cc
+    simplified_stokes_raviartthomasstream.cc
   )
 
 foreach(src ${sourcefiles})
