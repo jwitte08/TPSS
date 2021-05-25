@@ -4565,7 +4565,7 @@ public:
 
 
 
-template<int dim, typename Number>
+template<int dim, typename Number, bool is_simplified>
 struct LocalSolverStream
 {
   using matrix_type          = MatrixAsTable<VectorizedArray<Number>>;
@@ -4667,7 +4667,7 @@ struct LocalSolverStream
 
           using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
 
-          MatrixIntegrator<dim, true> matrix_integrator(
+          MatrixIntegrator<dim, true, is_simplified> matrix_integrator(
             nullptr, nullptr, nullptr, *equation_data, &interface_handler);
 
           AffineConstraints<double> empty_constraints;
@@ -4937,7 +4937,7 @@ struct LocalSolverStream
 
             using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
 
-            MatrixIntegrator<dim, true> matrix_integrator(
+            MatrixIntegrator<dim, true, is_simplified> matrix_integrator(
               nullptr, nullptr, nullptr, *equation_data, &interface_handler);
 
             const auto distribute_local_to_global_impl = [&](const auto & cd) {
@@ -5319,7 +5319,7 @@ public:
     fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
 
   using value_type           = Number;
-  using matrix_type          = LocalSolverStream<dim, Number>; // !!! is simplified
+  using matrix_type          = LocalSolverStream<dim, Number, is_simplified>;
   using transfer_type        = typename matrix_type::transfer_type;
   using transfer_type_stream = typename matrix_type::transfer_type_stream;
   using operator_type        = TrilinosWrappers::BlockSparseMatrix;
