@@ -564,7 +564,6 @@ protected:
     const auto   patch_transfer_sf   = integrator.get_patch_transfer_stream(*subdomain_handler);
     const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
 
-    Biharmonic::EquationData equation_data_biharm;
     equation_data_biharm.variant = Biharmonic::EquationData::Variant::ClampedStreamNoSlip;
     ASSERT_NE(fe_degree_p, 0) << "Biharmonic model problem is not implemented for linear degree!";
     constexpr int fe_degree_biharm = fe_degree_p > 0 ? fe_degree_p + 1 : 2;
@@ -909,6 +908,7 @@ protected:
   EquationData                                   equation_data;
   std::shared_ptr<const MatrixFree<dim, double>> mf_storage;
   std::shared_ptr<SubdomainHandler<dim, double>> subdomain_handler;
+  Biharmonic::EquationData                       equation_data_biharm;
 };
 
 
@@ -1290,6 +1290,21 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorstreamlmw_MPI)
 
 
 
+TYPED_TEST_P(TestStokesIntegrator, c0ip_matrixintegratorstreamlmw_MPI)
+{
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  ASSERT_GT(Fixture::fe_degree_p, 0) << " ... test is expected to fail!";
+  Fixture::setup_matrixintegratorlmw();
+  Fixture::equation_data_biharm.use_stokes_formulation = false; // c0ip
+  Fixture::options.prms.mesh.n_repetitions             = 2;
+  Fixture::options.prms.mesh.n_refinements             = 0;
+  Fixture::template check_matrixintegratorstreamlmw<true>();
+  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::template check_matrixintegratorstreamlmw<true>();
+}
+
+
+
 REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                             /*CheckSystemMatrixVelocity,
                             matrixintegratorfdQ_velocity,
@@ -1317,7 +1332,8 @@ REGISTER_TYPED_TEST_SUITE_P(TestStokesIntegrator,
                              simplified_matrixintegratorlmwDGQ_velocityvelocity_MPI,
                              simplified_matrixintegratorlmwRT_velocityvelocity_MPI*/
                             ,
-                            simplified_matrixintegratorstreamlmw_MPI);
+                            simplified_matrixintegratorstreamlmw_MPI,
+                            c0ip_matrixintegratorstreamlmw_MPI);
 
 
 
