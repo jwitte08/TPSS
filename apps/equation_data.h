@@ -30,6 +30,8 @@ binom(int n, int k)
   return binom(n - 1, k - 1) + binom(n - 1, k);
 }
 
+
+
 double
 leibniz_rule(const std::vector<double> & derivatives_u, const std::vector<double> & derivatives_v)
 {
@@ -45,6 +47,95 @@ leibniz_rule(const std::vector<double> & derivatives_u, const std::vector<double
 
   return sum;
 }
+
+
+
+/**
+ * Represents a Gaussian Bell curve
+ *
+ *    f(x) = beta * exp(alpha(x))
+ *
+ * where beta and alpha(x) are defined by the typical parameters mu and sigma^2,
+ *
+ *    beta = 1 / (2 PI sigma^2)^1/2
+ *
+ *    alpha(x) = - (x - mu)^2 / (2 sigma^2)
+ */
+struct GaussianBell
+{
+  static constexpr auto PI = numbers::PI;
+
+  GaussianBell(const double mu_in = 0., const double sigma2_in = 1.)
+    : mu(mu_in), sigma2(sigma2_in), beta(1. / std::sqrt(2. * PI * sigma2_in)), alpha([&]() {
+        /// computes polynomial coefficients:   factor * (x - mu)^2
+        const double        factor = -1. / (2. * sigma2_in);
+        std::vector<double> coeffs(3U, factor);
+        coeffs[0] *= mu_in * mu_in; // x^0
+        coeffs[1] *= -2. * mu_in;   // x^1
+        coeffs[2] *= 1.;            // x^2
+        return coeffs;
+      }())
+  {
+  }
+
+  void
+  fill_derivatives(std::vector<double> & values, const double x) const
+  {
+    std::vector<double> Dalpha(values.size());
+    alpha.value(x, Dalpha);
+    const auto alpha_x = Dalpha[0];
+
+    std::vector<double> factors(values.size(), 0.);
+    std::vector<double> Dfactors(values.size(), 0.);
+
+    /// Df_prev + f_prev * Da
+    const auto & make_f = [&](const unsigned int k) {
+      return Dfactors[k - 1] + factors[k - 1] * Dalpha[1];
+    };
+
+    /// D2f_prev + Df_prev * Da + f_prev * D2a
+    const auto & make_Df = [&](const unsigned int k, const double D2f_prev) {
+      return D2f_prev + Dfactors[k - 1] * Dalpha[1] + factors[k - 1] * Dalpha[2];
+    };
+
+    /// fill factors and Dfactors
+    if(values.size() > 0)
+    {
+      factors[0]  = 1.;
+      Dfactors[0] = 0.;
+    }
+    if(values.size() > 1)
+    {
+      factors[1]  = make_f(1);      // Da
+      Dfactors[1] = make_Df(1, 0.); // D2a
+    }
+    if(values.size() > 2)
+    {
+      factors[2]  = make_f(2);             // D2a + Da^2
+      Dfactors[2] = make_Df(2, Dalpha[3]); // D3a + 2*D2a*Da
+    }
+    if(values.size() > 3)
+    {
+      factors[3]  = make_f(3); // D3a + 3*D2a*Da + Da^3
+      Dfactors[3] = make_Df(3, Dalpha[4] + 2. * Dalpha[3] * Dalpha[1] + 2. * Dalpha[2] * Dalpha[2]);
+    }
+    if(values.size() > 4)
+    {
+      factors[4] = make_f(4);
+    }
+    if(values.size() > 5)
+      Assert(false, ExcMessage("TODO ..."));
+
+    /// fill all values queried
+    for(auto i = 0U; i < values.size(); ++i)
+      values[i] = factors[i] * beta * std::exp(alpha_x);
+  }
+
+  const double                          mu;
+  const double                          sigma2;
+  const double                          beta;
+  const Polynomials::Polynomial<double> alpha;
+};
 
 
 
@@ -1190,6 +1281,8 @@ template<int dim>
 struct SolutionBase
 {
   static const std::vector<double> polynomial_coefficients;
+  static constexpr double          mu     = 0.65;
+  static constexpr double          sigma2 = 1. / 3.;
 };
 
 template<>
@@ -1308,7 +1401,10 @@ class Solution : public Function<dim>, protected SolutionBase<dim>
   static_assert(dim == 2, "Implemented for two dimensions.");
 
 public:
-  Solution() : Function<dim>(1), poly(SolutionBase<dim>::polynomial_coefficients)
+  Solution()
+    : Function<dim>(1),
+      poly(SolutionBase<dim>::polynomial_coefficients),
+      bell(SolutionBase<dim>::mu, SolutionBase<dim>::sigma2)
   {
   }
 
@@ -1385,7 +1481,7 @@ public:
   void
   fill_derivatives_poly(std::vector<double> & values, const double x) const
   {
-    // poly.value(x, values);
+    poly.value(x, values);
 
     /// p(x) = 1
     // if(values.size() > 0)
@@ -1400,22 +1496,37 @@ public:
     //   values[4] = 0.;
 
     /// p(x) = (x-1)*x
-    if(values.size() > 0)
-      values[0] = (x - 1.) * x;
-    if(values.size() > 1)
-      values[1] = 2. * x - 1.;
-    if(values.size() > 2)
-      values[2] = 2.;
-    if(values.size() > 3)
-      values[3] = 0.;
-    if(values.size() > 4)
-      values[4] = 0.;
+    // if(values.size() > 0)
+    //   values[0] = (x - 1.) * x;
+    // if(values.size() > 1)
+    //   values[1] = 2. * x - 1.;
+    // if(values.size() > 2)
+    //   values[2] = 2.;
+    // if(values.size() > 3)
+    //   values[3] = 0.;
+    // if(values.size() > 4)
+    //   values[4] = 0.;
   }
 
   void
   fill_derivatives(std::vector<double> & values, const double x) const
   {
     using numbers::PI;
+
+    /// f(x) is Gaussian bell
+    bell.fill_derivatives(values, x);
+
+    /// f(x) = exp(x)
+    // if(values.size() > 0)
+    //   values[0] = std::exp(x);
+    // if(values.size() > 1)
+    //   values[1] = std::exp(x);
+    // if(values.size() > 2)
+    //   values[2] = std::exp(x);
+    // if(values.size() > 3)
+    //   values[3] = std::exp(x);
+    // if(values.size() > 4)
+    //   values[4] = std::exp(x);
 
     /// f(x) = x
     // if(values.size() > 0)
@@ -1430,16 +1541,16 @@ public:
     //   values[4] = 0.;
 
     /// f(x) = (x-1)*x
-    if(values.size() > 0)
-      values[0] = (x - 1.) * x;
-    if(values.size() > 1)
-      values[1] = 2. * x - 1.;
-    if(values.size() > 2)
-      values[2] = 2.;
-    if(values.size() > 3)
-      values[3] = 0.;
-    if(values.size() > 4)
-      values[4] = 0.;
+    // if(values.size() > 0)
+    //   values[0] = (x - 1.) * x;
+    // if(values.size() > 1)
+    //   values[1] = 2. * x - 1.;
+    // if(values.size() > 2)
+    //   values[2] = 2.;
+    // if(values.size() > 3)
+    //   values[3] = 0.;
+    // if(values.size() > 4)
+    //   values[4] = 0.;
 
     /// f(x) = sin(pi*x)
     // if(values.size() > 0)
@@ -1452,18 +1563,6 @@ public:
     //   values[3] = -PI * PI * PI * std::cos(PI * x);
     // if(values.size() > 4)
     //   values[4] = PI * PI * PI * PI * std::sin(PI * x);
-
-    /// f(x) = exp(x)
-    // if(values.size() > 0)
-    //   values[0] = std::exp(x);
-    // if(values.size() > 1)
-    //   values[1] = std::exp(x);
-    // if(values.size() > 2)
-    //   values[2] = std::exp(x);
-    // if(values.size() > 3)
-    //   values[3] = std::exp(x);
-    // if(values.size() > 4)
-    //   values[4] = std::exp(x);
 
     if(values.size() > 5)
       Assert(false, ExcMessage("TODO ..."));
@@ -1513,6 +1612,7 @@ public:
 
 private:
   Polynomials::Polynomial<double> poly;
+  Common::GaussianBell            bell;
 };
 
 

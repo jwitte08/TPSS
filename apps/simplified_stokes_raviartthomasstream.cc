@@ -26,7 +26,7 @@ main(int argc, char * argv[])
     };
 
     //: default
-    unsigned int test_index                  = 5; // unprec. CG
+    unsigned int test_index                  = 5; // GMG_CG
     unsigned int debug_depth                 = 0;
     double       damping                     = 0.;
     unsigned int force_mean_value_constraint = false;
