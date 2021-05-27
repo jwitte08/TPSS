@@ -1207,25 +1207,74 @@ MGTransferBlockPrebuilt::copy_to_mg(
   AssertDimension(dof_handlers.size(), transfer_foreach_block.size());
   AssertDimension(dof_handlers.size(), src.n_blocks());
 
-  for(auto l = dst.min_level(); l <= dst.max_level(); ++l)
-    if(dst[l].n_blocks() != src.n_blocks())
-      dst[l].reinit(src.n_blocks());
+  const unsigned int n_blocks  = src.n_blocks();
+  const unsigned int min_level = dst.min_level();
+  const unsigned int max_level = dst.max_level();
 
-  for(auto b = 0U; b < transfer_foreach_block.size(); ++b)
+  /// if needed initialize dst
   {
-    MGLevelObject<LinearAlgebra::distributed::Vector<double>> block_dst(dst.min_level(),
-                                                                        dst.max_level());
-    for(auto l = dst.min_level(); l <= dst.max_level(); ++l)
-      std::swap(block_dst[l], dst[l].block(b));
+    const parallel::TriangulationBase<dim> * tria =
+      (dynamic_cast<const parallel::TriangulationBase<dim> *>(
+        &(dof_handlers[0]->get_triangulation())));
+    for(unsigned int i = 1; i < n_blocks; ++i)
+      AssertThrow((dynamic_cast<const parallel::TriangulationBase<dim> *>(
+                     &(dof_handlers[0]->get_triangulation())) == tria),
+                  ExcMessage("Mismatching triangulations!"));
 
-    transfer_foreach_block[b].copy_to_mg(*(dof_handlers[b]), block_dst, src.block(b));
+    MGLevelObject<bool> do_reinit;
+    do_reinit.resize(min_level, max_level);
+    for(unsigned int level = min_level; level <= max_level; ++level)
+    {
+      do_reinit[level] = false;
+      if(dst[level].n_blocks() != n_blocks)
+      {
+        do_reinit[level] = true;
+        continue; // level
+      }
+      for(unsigned int b = 0; b < n_blocks; ++b)
+      {
+        auto &       vec  = dst[level].block(b);
+        const auto & dofh = *dof_handlers[b];
+        if(vec.locally_owned_elements() != dofh.locally_owned_mg_dofs(level))
+        {
+          do_reinit[level] = true;
+          break; // b
+        }
+      }
+    }
 
-    for(auto l = dst.min_level(); l <= dst.max_level(); ++l)
-      std::swap(block_dst[l], dst[l].block(b));
+    for(unsigned int level = min_level; level <= max_level; ++level)
+    {
+      if(do_reinit[level])
+      {
+        dst[level].reinit(n_blocks);
+        for(unsigned int b = 0; b < n_blocks; ++b)
+        {
+          auto &       vec  = dst[level].block(b);
+          const auto & dofh = *dof_handlers[b];
+          vec.reinit(dofh.locally_owned_mg_dofs(level), dofh.get_communicator());
+        }
+        dst[level].collect_sizes();
+      }
+      else
+        dst[level] = 0.;
+    }
   }
 
-  for(auto l = dst.min_level(); l <= dst.max_level(); ++l)
-    dst[l].collect_sizes();
+  /// TODO avoid copying to this temporary object
+  MGLevelObject<LinearAlgebra::distributed::Vector<double>> mg_vec(min_level, max_level);
+
+  for(auto b = 0U; b < n_blocks; ++b)
+  {
+    for(auto l = min_level; l <= max_level; ++l)
+      mg_vec[l].reinit(dst[l].block(b));
+
+    const auto & dofh = *dof_handlers[b];
+    transfer_foreach_block[b].copy_to_mg(dofh, mg_vec, src.block(b));
+
+    for(auto l = min_level; l <= max_level; ++l)
+      dst[l].block(b) = mg_vec[l];
+  }
 }
 
 
@@ -1282,25 +1331,28 @@ MGTransferBlockPrebuilt::copy_from_mg_impl(
   LinearAlgebra::distributed::BlockVector<double> &                      dst,
   const MGLevelObject<LinearAlgebra::distributed::BlockVector<double>> & src) const
 {
+  /// TODO avoid copying to this temporary object
+  MGLevelObject<LinearAlgebra::distributed::Vector<double>> mg_vec(src.min_level(),
+                                                                   src.max_level());
+
   for(auto b = 0U; b < transfer_foreach_block.size(); ++b)
   {
-    MGLevelObject<LinearAlgebra::distributed::Vector<double>> block_src(src.min_level(),
-                                                                        src.max_level());
     /// TODO check that no communication is pending for src
+
     for(auto l = src.min_level(); l <= src.max_level(); ++l)
       if(src[l].n_blocks() != 0U)
       {
         /// TODO use reinit() + copy_locally_owned_data()...
-        block_src[l].reinit(src[l].block(b));
-        block_src[l].copy_locally_owned_data_from(src[l].block(b));
+        // mg_vec[l].reinit(src[l].block(b));
+        // mg_vec[l].copy_locally_owned_data_from(src[l].block(b));
         /// ...or operator=() which additionally sets ghost values?
-        // block_src[l] = src[l].block(b);
+        mg_vec[l] = src[l].block(b);
       }
 
     if(do_add)
-      transfer_foreach_block[b].copy_from_mg_add(*(dof_handlers[b]), dst.block(b), block_src);
+      transfer_foreach_block[b].copy_from_mg_add(*(dof_handlers[b]), dst.block(b), mg_vec);
     else
-      transfer_foreach_block[b].copy_from_mg(*(dof_handlers[b]), dst.block(b), block_src);
+      transfer_foreach_block[b].copy_from_mg(*(dof_handlers[b]), dst.block(b), mg_vec);
   }
 }
 
