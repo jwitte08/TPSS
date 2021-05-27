@@ -61,7 +61,7 @@ protected:
   check_system_matrix_velocity()
   {
     *pcout_owned << "//////////   STOKES PROBLEM" << std::endl;
-    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::TaylorHoodDGQ>;
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::DGQkplus2_DGPk>;
     std::shared_ptr<const StokesProblem> stokes_problem;
     auto new_problem   = std::make_shared<StokesProblem>(options.prms, equation_data);
     new_problem->pcout = pcout_owned;
@@ -103,7 +103,7 @@ protected:
       options.setup(/*GMRES_GMG + Schwarz*/ 4, damping, patch_variant, smoother_variant);
     }
 
-    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::TaylorHood>;
+    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::Qkplus2_DGPk>;
 
     *pcout_owned << "//////////   STOKES PROBLEM (step-56)" << std::endl;
     auto stokes_problem_step56   = std::make_shared<StokesProblem>(options.prms, equation_data);

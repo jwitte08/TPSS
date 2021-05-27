@@ -208,7 +208,7 @@ get_filename(const RT::Parameter & prms, const EquationData & equation_data)
   if(prms.multigrid.pre_smoother.variant == SmootherParameter::SmootherVariant::Schwarz)
   {
     oss << "_" << str_schwarz_variant;
-    // oss << "_" << Util::short_name(equation_data.sstr_local_solver());
+    oss << "_" << equation_data.sstr_local_solver();
   }
   oss << "_" << CT::DIMENSION_ << "D";
   oss << "_" << CT::FE_DEGREE_ << "deg";

@@ -1781,13 +1781,11 @@ enum class LocalAssembly
 enum class LocalSolver
 {
   Exact,
-  Vdiag
+  DiagonalVelocity
 };
 
 enum class Method
 {
-  TaylorHood,
-  /*only for testing*/ TaylorHoodDGQ,
   Qkplus2_DGPk,
   DGQkplus2_DGPk,
   RaviartThomas,
@@ -1823,6 +1821,12 @@ struct EquationData
     return str[static_cast<int>(variant)];
   }
 
+  std::string
+  str_equation_variant() const
+  {
+    return str_equation_variant(variant);
+  }
+
   static std::string
   sstr_equation_variant(const Variant variant);
 
@@ -1832,7 +1836,27 @@ struct EquationData
   static std::string
   str_local_solver(const LocalSolver variant)
   {
-    std::string str[] = {"exact", "velocity (block diagonal)"};
+    std::string str[] = {"exact", "block-diagonal-velocity"};
+    return str[static_cast<int>(variant)];
+  }
+
+  std::string
+  str_local_solver() const
+  {
+    return str_local_solver(this->local_solver);
+  }
+
+  std::string
+  sstr_local_solver() const
+  {
+    std::string str[] = {"exact", "diagvelo"};
+    return str[static_cast<int>(local_solver)];
+  }
+
+  static std::string
+  str_local_assembly(LocalAssembly variant)
+  {
+    std::string str[] = {"tensor", "cut", "lmw", "lmwstream"};
     return str[static_cast<int>(variant)];
   }
 
@@ -1842,13 +1866,13 @@ struct EquationData
     std::ostringstream oss;
     oss << Util::parameter_to_fstring("Equation Data:", str_equation_variant(variant));
     oss << Util::parameter_to_fstring("IP pre-factor:", ip_factor);
-    oss << Util::parameter_to_fstring("Assemble pressure mass matrix?:",
+    oss << Util::parameter_to_fstring("Assemble pressure mass matrix?",
                                       assemble_pressure_mass_matrix);
-    oss << Util::parameter_to_fstring("Use mean value constraint:", do_mean_value_constraint);
-    oss << Util::parameter_to_fstring("Use Cuthill-McKee:", use_cuthill_mckee);
-    if(local_kernel_size != numbers::invalid_unsigned_int)
-      oss << Util::parameter_to_fstring("Kernel size per local solver:", local_kernel_size);
+    oss << Util::parameter_to_fstring("Use mean value constraint?", do_mean_value_constraint);
+    oss << Util::parameter_to_fstring("Use Cuthill-McKee?", use_cuthill_mckee);
     oss << Util::parameter_to_fstring("Local Solver:", str_local_solver(local_solver));
+    if(local_kernel_size != numbers::invalid_unsigned_int)
+      oss << Util::parameter_to_fstring("Kernel size (local solver):", local_kernel_size);
     return oss.str();
   }
 

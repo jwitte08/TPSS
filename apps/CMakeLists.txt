@@ -22,7 +22,6 @@ set(sourcefiles
   poisson_optdamping.cc
   biharmonic_c0ip.cc
   biharmonic_optdamping.cc
-  stokes_taylorhood.cc
   stokes_Qkplus2_DGPk.cc
   stokes_DGQkplus2_DGPk.cc
   stokes_raviartthomas.cc
@@ -31,7 +30,7 @@ set(sourcefiles
   simplified_stokes_Qkplus1_DGPk.cc
   simplified_stokes_DGQkplus1_DGPk.cc
   simplified_stokes_raviartthomas.cc
-    simplified_stokes_raviartthomasstream.cc
+  simplified_stokes_raviartthomasstream.cc
   )
 
 foreach(src ${sourcefiles})

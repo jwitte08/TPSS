@@ -30,8 +30,21 @@ namespace Stokes
 {
 using namespace dealii;
 
+constexpr int
+n_q_points_1d_impl(const int fe_degree_v, const TPSS::DoFLayout dof_layout_v)
+{
+  return fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
+}
 
-
+/**
+ * Computes transformation matrices that map velocity shape functions
+ * (represented by @p fe_v) to "orthogonal" velocity shape functions. The
+ * latter form a basis for the L^2-complement of the divergence-free velocity
+ * subspace, which is spanned by stream shape functions. Two matrices are
+ * returned, the first maps "orthogonal" shape functions being dual to the
+ * pressure gradient, the latter maps functions being dual to the constant
+ * pressure mode, thus @p fe_p should be a Legendre-type finite element.
+ */
 template<int dim>
 std::array<FullMatrix<double>, 2>
 compute_divfreeorth_shape_functions(const FiniteElement<dim> & fe_v,
@@ -239,6 +252,11 @@ compute_divfreeorth_shape_functions(const FiniteElement<dim> & fe_v,
 
 
 
+/**
+ * Computes the prolongation matrix mapping stream function coefficients
+ * (represented by @p fe_sf) to velocity coefficients (represented by @p fe_v)
+ * on a single reference cell.
+ */
 template<int dim>
 FullMatrix<double>
 compute_unit_prolongation_stream(const FiniteElement<dim> & fe_sf, const FiniteElement<dim> & fe_v)
@@ -281,6 +299,12 @@ compute_unit_prolongation_stream(const FiniteElement<dim> & fe_sf, const FiniteE
 
 
 
+/**
+ * Represents the prolongation operator of stream functions for a single
+ * uniform vertex patch of the unit hyper-cube. "Homogeneous" boundary
+ * conditions are taken into consideration, in other words, all degrees of freedom
+ * belonging to the boundary are set to zero.
+ */
 template<int dim, typename Number>
 struct ProlongationStream
 {
@@ -409,6 +433,9 @@ struct ProlongationStream
     }
   }
 
+  /**
+   * Prolongates stream function coefficients to velocity coefficients.
+   */
   void
   prolongate(const ArrayView<VectorizedArray<Number>> &       dst_view,
              const ArrayView<const VectorizedArray<Number>> & src_view) const
@@ -416,6 +443,10 @@ struct ProlongationStream
     return prolongation_matrix.vmult(dst_view, src_view);
   }
 
+  /**
+   * Restricts dual velocity coefficients to dual stream function
+   * coefficients. The dual restriction is simply the transpose prolongation.
+   */
   void
   dual_restrict(const ArrayView<VectorizedArray<Number>> &       dst_view,
                 const ArrayView<const VectorizedArray<Number>> & src_view) const
@@ -2617,7 +2648,7 @@ class MatrixIntegrator
 public:
   using This = MatrixIntegrator<dim, fe_degree, Number, dof_layout, is_simplified>;
 
-  static constexpr int n_q_points_1d = fe_degree + 1 + (dof_layout == TPSS::DoFLayout::RT ? 1 : 0);
+  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree, dof_layout);
 
   using value_type     = Number;
   using transfer_type  = typename TPSS::PatchTransfer<dim, Number>;
@@ -3669,8 +3700,7 @@ class MatrixIntegratorCut
 public:
   using This = MatrixIntegratorCut<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v>;
 
-  static constexpr int n_q_points_1d =
-    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
+  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
 
   using value_type    = Number;
   using transfer_type = typename TPSS::PatchTransferBlock<dim, Number>;
@@ -3802,7 +3832,7 @@ public:
 
         else /// serial
         {
-          if(equation_data.local_solver == LocalSolver::Vdiag)
+          if(equation_data.local_solver == LocalSolver::DiagonalVelocity)
           {
             for(auto comp = 0U; comp < dim; ++comp)
             {
@@ -3910,8 +3940,7 @@ class MatrixIntegrator
 public:
   using This = MatrixIntegrator<dim, fe_degree_p, Number>;
 
-  static constexpr int n_q_points_1d =
-    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
+  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
 
   using value_type              = Number;
   using transfer_type           = typename TPSS::PatchTransferBlock<dim, Number>;
@@ -4117,8 +4146,8 @@ class MatrixIntegrator
 public:
   using This = MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, is_simplified>;
 
-  static constexpr int n_q_points_1d =
-    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
+  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
+
   static constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
   static constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
   static constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
@@ -4318,7 +4347,7 @@ public:
             Assert(false, ExcMessage("FEM is not implemented."));
         }
 
-        if(equation_data.local_solver == LocalSolver::Vdiag)
+        if(equation_data.local_solver == LocalSolver::DiagonalVelocity)
         {
           for(auto comp = 0U; comp < dim; ++comp)
           {
@@ -5313,10 +5342,9 @@ class MatrixIntegratorStream
 public:
   using This = MatrixIntegratorStream<dim, fe_degree_p, Number, is_simplified>;
 
-  static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::RT;
-  static constexpr int             fe_degree_v  = fe_degree_p;
-  static constexpr int             n_q_points_1d =
-    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
+  static constexpr TPSS::DoFLayout dof_layout_v  = TPSS::DoFLayout::RT;
+  static constexpr int             fe_degree_v   = fe_degree_p;
+  static constexpr int             n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
 
   using value_type           = Number;
   using matrix_type          = LocalSolverStream<dim, Number, is_simplified>;

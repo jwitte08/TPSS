@@ -1,25 +1,11 @@
 #ifndef APPS_STOKESPROBLEM_H_
 #define APPS_STOKESPROBLEM_H_
 
-/// based on step-56
-/* ---------------------------------------------------------------------
- *
- * Copyright (C) 2016 - 2020 by the deal.II authors
- *
- * This file is part of the deal.II library.
- *
- * The deal.II library is free software; you can use it, redistribute
- * it, and/or modify it under the terms of the GNU Lesser General
- * Public License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- * The full text of the license can be found in the file LICENSE.md at
- * the top level directory of deal.II.
- *
- * ---------------------------------------------------------------------
-
- * Author: Ryan Grove, Clemson University
- *         Timo Heister, Clemson University
- */
+/// originated from step-56
+//
+//  Author: Ryan Grove, Clemson University
+//          Timo Heister, Clemson University
+//
 
 /**
  * Stokes problem...
@@ -357,7 +343,7 @@ template<int dim, int fe_degree, TPSS::DoFLayout dof_layout, bool is_simplified>
 class MGCollectionVelocity
 {
 public:
-  static constexpr int n_q_points_1d = fe_degree + 1 + (dof_layout == TPSS::DoFLayout::RT ? 1 : 0);
+  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree, dof_layout);
 
   using vector_type       = LinearAlgebra::distributed::Vector<double>;
   using matrix_type       = SparseMatrixAugmented<dim, fe_degree, dof_layout, is_simplified>;
@@ -401,7 +387,7 @@ public:
   Table<2, DoFTools::Coupling> cell_integrals_mask;
   Table<2, DoFTools::Coupling> face_integrals_mask;
 
-  /// should be private but tests require public access
+  /// should be private but googletests require public access
   // private:
   void
   clear_data();
@@ -470,8 +456,7 @@ struct MGCollectionVelocityPressure
   using mg_smoother_schwarz_type =
     MGSmootherSchwarz<dim, matrix_type, local_matrix_type, vector_type>;
 
-  static constexpr int n_q_points_1d =
-    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
+  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
 
   static constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
   static constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
@@ -498,7 +483,7 @@ struct MGCollectionVelocityPressure
   Table<2, DoFTools::Coupling> cell_integrals_mask;
   Table<2, DoFTools::Coupling> face_integrals_mask;
 
-  /// should be private but tests require public access
+  /// should be private but googletests require public access
   // private:
   void
   clear_data();
@@ -561,28 +546,6 @@ struct MGCollectionVelocityPressure
 template<Method method, int dim, int fe_degree_p>
 struct ModelProblemBase
 {
-};
-
-template<int dim, int fe_degree_p>
-struct ModelProblemBase<Method::TaylorHood, dim, fe_degree_p>
-{
-  static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q;
-  static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::Q;
-  using fe_type_v                               = FE_Q<dim>;
-  using fe_type_p                               = FE_Q<dim>;
-  static constexpr int           fe_degree_v    = fe_degree_p + 1;
-  static constexpr LocalAssembly local_assembly = LocalAssembly::Tensor;
-};
-
-template<int dim, int fe_degree_p>
-struct ModelProblemBase<Method::TaylorHoodDGQ, dim, fe_degree_p>
-{
-  static constexpr TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::DGQ;
-  static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::Q;
-  using fe_type_v                               = FE_DGQ<dim>;
-  using fe_type_p                               = FE_Q<dim>;
-  static constexpr int           fe_degree_v    = fe_degree_p + 1;
-  static constexpr LocalAssembly local_assembly = LocalAssembly::Tensor;
 };
 
 /// TODO rename... Q_k+2 only if k == 1, otherwise Q_k+1
@@ -655,8 +618,7 @@ public:
 
   static constexpr int static_fe_degree_p = fe_degree_p;
   static constexpr int fe_degree_v        = Base::fe_degree_v;
-  static constexpr int n_q_points_1d =
-    fe_degree_v + 1 + (dof_layout_v == TPSS::DoFLayout::RT ? 1 : 0);
+  static constexpr int n_q_points_1d      = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
 
   static constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
   static constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
@@ -932,7 +894,7 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::ModelProblem(
     mapping(1),
     fe(make_finite_element()),
     finite_element_stream(make_finite_element_stream()),
-    /// TODO !!! coloring depends on discrete pressure space as well
+    /// TODO coloring should depend on pressure finite elements
     user_coloring([&]() -> std::shared_ptr<ColoringBase<dim>> {
       if constexpr(dof_layout_v == TPSS::DoFLayout::Q)
         return std::make_shared<TiledColoring<dim>>(rt_parameters_in.mesh);
@@ -988,6 +950,7 @@ void
 ModelProblem<dim, fe_degree_p, method, is_simplified>::print_informations() const
 {
   *pcout << equation_data.to_string();
+  print_parameter("Local Assembly:", EquationData::str_local_assembly(local_assembly));
   *pcout << std::endl;
   print_parameter("Finite element:", fe->get_name());
   *pcout << rt_parameters.to_string();
@@ -1457,7 +1420,6 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::setup_system()
                       lrdof_indices_foreach_block[1],
                       MPI_COMM_WORLD);
 
-      // if(do_assemble_pressure_mass_matrix)
       DoFTools::make_sparsity_pattern(dof_handler_pressure, this_dsp, constraints_pressure, true);
     }
 
@@ -1475,7 +1437,6 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::setup_system()
                       lodof_indices_foreach_block[1],
                       lrdof_indices_foreach_block[0],
                       MPI_COMM_WORLD);
-      // Tools::make_sparsity_pattern(dof_handler_velocity, dof_handler_pressure, this_dsp);
       Tools::make_flux_sparsity_pattern(dof_handler_velocity,
                                         dof_handler_pressure,
                                         this_dsp,
@@ -2966,8 +2927,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::initialize(
                                           locally_owned_dof_indices,
                                           locally_relevant_dof_indices,
                                           MPI_COMM_WORLD);
-    /// TODO 1.) this method does not receive the mpi rank: is it compatible in
-    /// parallel? YES! 2.) there is no variant which receives constraints: is it
+    /// TODO there is no variant which receives constraints: is it
     /// applicable in the Hdiv case?
     MGTools::make_flux_sparsity_pattern(
       *dof_handler, dsp, level, cell_integrals_mask, face_integrals_mask);
@@ -3110,7 +3070,7 @@ MGCollectionVelocity<dim, fe_degree, dof_layout, is_simplified>::assemble_multig
 {
   AssertDimension(mg_matrices.min_level(), parameters.coarse_level);
 
-  /// TODO discard terms for Hdiv conforming SIPG?
+  /// TODO distinguish between Hdiv-IP and SIPG !?
   constexpr bool use_sipg_method =
     dof_layout == TPSS::DoFLayout::DGQ || dof_layout == TPSS::DoFLayout::RT;
   constexpr bool use_conf_method = dof_layout == TPSS::DoFLayout::Q;
@@ -3871,7 +3831,7 @@ MGCollectionVelocityPressure<dim,
 
   //: initialize coarse grid solver
   {
-    /// NOTE experimental...
+    /// NOTE this part is experimental ...
     if(use_coarse_preconditioner)
     {
       /// TODO !!! the parallel interface of CoarseGridSolver is not aware of
