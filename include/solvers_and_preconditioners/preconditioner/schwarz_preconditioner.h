@@ -271,8 +271,7 @@ private:
                                                const OtherVectorType & residual_in) const;
 
   /**
-   * Generic case is just there to throw an exception for unsupported vector
-   * types.
+   * This generic case just throws an exception.
    */
   template<typename OtherVectorType = VectorType>
   std::pair<OtherVectorType *, const OtherVectorType *>
@@ -449,7 +448,7 @@ private:
    *
    *   apply_local_solvers(x^{(c)}, r^{(c)})
    *
-   * for each remaining color c.  Details on the recursive algorithm can be
+   * for each remaining color c.  Details for the recursive algorithm can be
    * found in Toselli, Widlund page 52.
    */
   template<bool transpose = false>

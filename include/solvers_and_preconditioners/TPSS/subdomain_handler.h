@@ -216,20 +216,26 @@ private:
   void
   internal_reinit();
 
-  const dealii::MatrixFree<dim, Number> *                mf_storage;
+  const dealii::MatrixFree<dim, Number> * mf_storage;
+
   std::shared_ptr<const dealii::MatrixFree<dim, Number>> mf_storage_owned;
+
   /**
    * Stores the unique DoFHandler index @p unique_dofh_indices[dofh_index] for
    * each DoFHandler index @p dofh_index.
    */
   std::vector<unsigned int> unique_dofh_indices;
 
-  TPSS::PatchInfo<dim>                    patch_info;
-  std::vector<TPSS::DoFInfo<dim, Number>> unique_dof_infos;
-  TPSS::MatrixFreeConnect<dim, Number>    mf_connect;
-  TPSS::MappingInfo<dim, Number>          mapping_info;
+  TPSS::PatchInfo<dim> patch_info;
 
-  AdditionalData        additional_data;
+  std::vector<TPSS::DoFInfo<dim, Number>> unique_dof_infos;
+
+  TPSS::MatrixFreeConnect<dim, Number> mf_connect;
+
+  TPSS::MappingInfo<dim, Number> mapping_info;
+
+  AdditionalData additional_data;
+
   std::vector<TimeInfo> time_data;
 };
 
@@ -239,19 +245,25 @@ struct SubdomainHandler<dim, Number>::AdditionalData
   struct ForeachDoFHandler
   {
     internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<Number>> shape_infos;
-    std::set<types::boundary_id>                                      dirichlet_ids;
+
+    std::set<types::boundary_id> dirichlet_ids;
+
     bool force_no_boundary_condition = false;
   };
 
-  unsigned int          level                       = numbers::invalid_unsigned_int;
-  TPSS::PatchVariant    patch_variant               = TPSS::PatchVariant::invalid;
-  TPSS::SmootherVariant smoother_variant            = TPSS::SmootherVariant::invalid;
-  bool                  compute_ras_boolean_weights = false;
+  unsigned int level = numbers::invalid_unsigned_int;
+
+  TPSS::PatchVariant patch_variant = TPSS::PatchVariant::invalid;
+
+  TPSS::SmootherVariant smoother_variant = TPSS::SmootherVariant::invalid;
+
+  bool compute_ras_boolean_weights = false;
 
   std::function<std::vector<std::vector<PatchIterator>>(
     const std::vector<std::vector<CellIterator>> &      patches,
     const typename TPSS::PatchInfo<dim>::AdditionalData additional_data)>
     coloring_func;
+
   std::function<void(const DoFHandler<dim> *                             dof_handler,
                      const typename TPSS::PatchInfo<dim>::AdditionalData additional_data,
                      std::vector<std::vector<CellIterator>> &            cell_collections)>
