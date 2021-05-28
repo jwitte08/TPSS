@@ -1,5 +1,11 @@
 /**
- * TODO...
+ * Solves the simplified Stokes equations using a Hdiv-IP formulation with the
+ * stable decomposition of Raviart-Thomas velocity and discontinuous Q-Legendre
+ * pressure functions.
+ *
+ * The local solvers within Schwarz methods use the same formulation with
+ * appropriate boundary conditions or at least one that explicitly approximates
+ * the Hdiv-IP formulation given.
  *
  * Created on: Aug 20, 2020
  *     Author: witte
@@ -26,14 +32,14 @@ main(int argc, char * argv[])
     };
 
     //: default
-    unsigned int test_index                  = 6; // unprec. CG
+    unsigned int test_index                  = 5; // unprec. CG
     unsigned int debug_depth                 = 0;
     double       damping                     = 0.;
     unsigned int force_mean_value_constraint = false;
     double       ip_factor                   = 1.;
     unsigned int n_cycles                    = 3;
     unsigned int local_solver_variant        = 0;
-    unsigned int pde_index                   = 4; // NoSlip
+    unsigned int pde_index                   = 6; // NoSlipExp
     int          n_threads_max               = 1;
 
     //: parse arguments
@@ -45,6 +51,13 @@ main(int argc, char * argv[])
     atoi_if(force_mean_value_constraint, 6);
     atoi_if(local_solver_variant, 7);
     atoi_if(n_threads_max, 8);
+
+    //: check parsed arguments
+    AssertThrow(pde_index < EquationData::n_variants,
+                ExcMessage("This test case is not implemented."));
+    AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
+                ExcMessage("A boolean value has to be passed."));
+    AssertThrow(ip_factor >= 1., ExcMessage("A factor below one might lead to instabilities."));
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
@@ -74,38 +87,49 @@ main(int argc, char * argv[])
     options.prms.n_cycles = n_cycles;
     /// each side of the rectangular domain needs its own boundary_id (otherwise
     /// MGConstrainedDoFs::make_no_normal_zero_flux() is not supported)
-    options.prms.mesh.do_colorization = true; // !!!
+    // options.prms.mesh.do_colorization = true;
 
     EquationData equation_data;
-    AssertThrow(pde_index < EquationData::n_variants,
-                ExcMessage("This equation is not implemented."));
     equation_data.variant           = static_cast<EquationData::Variant>(pde_index);
     equation_data.use_cuthill_mckee = false;
     if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
       equation_data.local_kernel_size = 1U;
-    AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
-                ExcMessage("Invalid."));
     equation_data.do_mean_value_constraint = force_mean_value_constraint;
     if(options.prms.solver.variant == "direct")
       equation_data.do_mean_value_constraint = true;
     equation_data.ip_factor    = ip_factor;
     equation_data.local_solver = static_cast<LocalSolver>(local_solver_variant);
-    if(options.prms.mesh.do_colorization)
-      for(types::boundary_id id = 0; id < GeometryInfo<dim>::faces_per_cell; ++id)
-        equation_data.dirichlet_boundary_ids_velocity.insert(id);
+    // if(options.prms.mesh.do_colorization)
+    //   for(types::boundary_id id = 0; id < GeometryInfo<dim>::faces_per_cell; ++id)
+    //     equation_data.dirichlet_boundary_ids_velocity.insert(id);
 
-    const auto pcout = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);
+    const auto filename = get_filename(options.prms, equation_data);
+
+    std::fstream fout;
+    fout.open(filename + ".log", std::ios_base::out);
+
+    const auto pcout = std::make_shared<ConditionalOStream>(fout, is_first_proc);
 
     using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomas, true>;
+
     StokesProblem stokes_problem(options.prms, equation_data);
     stokes_problem.pcout = pcout;
 
     *pcout << std::endl;
     stokes_problem.run();
 
-    *pcout << std::endl
-           << std::endl
-           << write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
+    const auto results_as_string =
+      write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
+
+    *pcout << std::endl << std::endl << results_as_string;
+
+    fout.close();
+
+    if(is_first_proc)
+    {
+      fout.open(filename + ".tab", std::ios_base::out);
+      fout << results_as_string;
+    }
   }
 
   catch(std::exception & exc)

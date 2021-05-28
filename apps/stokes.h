@@ -193,14 +193,14 @@ get_filename(const RT::Parameter & prms, const EquationData & equation_data)
 {
   std::ostringstream oss;
 
-  const auto   n_mpi_procs            = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
-  const auto   n_threads_per_mpi_proc = MultithreadInfo::n_threads();
-  const auto & pre_schwarz            = prms.multigrid.pre_smoother.schwarz;
-  // const auto        damping                = pre_schwarz.damping_factor;
+  const auto        n_mpi_procs            = Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
+  const auto        n_threads_per_mpi_proc = MultithreadInfo::n_threads();
+  const auto &      pre_schwarz            = prms.multigrid.pre_smoother.schwarz;
   const std::string str_schwarz_variant =
     TPSS::getstr_schwarz_variant(pre_schwarz.patch_variant, pre_schwarz.smoother_variant);
 
   oss << "stokes";
+  oss << "_" << equation_data.sstr_equation_variant();
   oss << std::scientific << std::setprecision(2);
   oss << "_" << n_mpi_procs << "np";
   if(n_threads_per_mpi_proc > 1)
@@ -212,8 +212,7 @@ get_filename(const RT::Parameter & prms, const EquationData & equation_data)
   }
   oss << "_" << CT::DIMENSION_ << "D";
   oss << "_" << CT::FE_DEGREE_ << "deg";
-  // if(damping != 1.)
-  //   oss << "_" << Util::damping_to_fstring(damping) << "damp";
+
   return oss.str();
 }
 
