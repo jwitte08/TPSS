@@ -54,7 +54,7 @@ MatrixFreeConnect<dim, Number>::initialize(
   cindex_to_bindex_bcomp_pair.resize(n_cells_stored); // we don't care about the accurate size
   for(unsigned int bid = 0; bid < n_cell_batches; ++bid)
     for(unsigned int comp = 0; comp < macro_size; ++comp)
-      if(comp < mf_storage->n_components_filled(bid))
+      if(comp < mf_storage->n_active_entries_per_cell_batch(bid))
       {
         const auto         cell   = mf_storage->get_cell_iterator(bid, comp, /*dofh_index*/ 0);
         const unsigned int cindex = cell->index();

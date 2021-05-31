@@ -49,30 +49,30 @@ copy_locally_owned_data(LinearAlgebra::distributed::BlockVector<Number> &       
 
 template<typename Number>
 void
-zero_out_ghosts_if_needed(Vector<Number> &)
+zero_out_ghost_values_if_needed(Vector<Number> &)
 {
   // nothing has to be done...
 }
 
 template<typename Number>
 void
-zero_out_ghosts_if_needed(BlockVector<Number> &)
+zero_out_ghost_values_if_needed(BlockVector<Number> &)
 {
   // nothing has to be done...
 }
 
 template<typename Number>
 void
-zero_out_ghosts_if_needed(LinearAlgebra::distributed::Vector<Number> & vec)
+zero_out_ghost_values_if_needed(LinearAlgebra::distributed::Vector<Number> & vec)
 {
-  vec.zero_out_ghosts();
+  vec.zero_out_ghost_values();
 }
 
 template<typename Number>
 void
-zero_out_ghosts_if_needed(LinearAlgebra::distributed::BlockVector<Number> & vec)
+zero_out_ghost_values_if_needed(LinearAlgebra::distributed::BlockVector<Number> & vec)
 {
-  vec.zero_out_ghosts();
+  vec.zero_out_ghost_values();
 }
 
 } // namespace internal

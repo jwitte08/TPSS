@@ -185,7 +185,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::compute_ras_we
   const auto   n_colors       = partition_data.n_colors();
   for(unsigned int color = 0; color < n_colors; ++color)
   {
-    TPSS::internal::zero_out_ghosts_if_needed(*ras_weights); // write to
+    TPSS::internal::zero_out_ghost_values_if_needed(*ras_weights); // write to
     subdomain_handler->template loop<const VectorType, VectorType>(std::ref(count_appearances),
                                                                    *ras_weights,
                                                                    *ras_weights,
@@ -449,7 +449,7 @@ SchwarzPreconditioner<dim, OperatorType, VectorType, MatrixType>::
   {
     timer.restart();
     initialize_ghosted_vector_if_needed(*solution_ghosted);
-    solution_ghosted->zero_out_ghosts();
+    solution_ghosted->zero_out_ghost_values();
     TPSS::internal::copy_locally_owned_data(*solution_ghosted, solution_in);
     solution = solution_ghosted.get();
 

@@ -405,7 +405,8 @@ project_boundary_values_div_conforming(const DoFHandler<dim> &     dof_handler,
   /// project (dim-1)-dimensional quadrature points to dim-dimensional points
   /// for each hyperface
   for(unsigned int face_no = 0; face_no < GeometryInfo<dim>::faces_per_cell; ++face_no)
-    quadrature_collection.push_back(QProjector<dim>::project_to_face(face_quadrature, face_no));
+    quadrature_collection.push_back(QProjector<dim>::project_to_face(
+      dof_handler.get_fe().reference_cell(), face_quadrature, face_no));
   const auto        update_flags_cell = update_jacobians;
   hp::FEValues<dim> fe_values(mapping_collection,
                               fe_collection,

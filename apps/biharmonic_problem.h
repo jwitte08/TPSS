@@ -685,7 +685,7 @@ ModelProblem<dim, fe_degree, is_simplified>::assemble_system_impl()
   constexpr bool is_stream_c0ip = is_stream && !use_stokes_formulation;
 
   system_u.update_ghost_values();
-  system_rhs.zero_out_ghosts();
+  system_rhs.zero_out_ghost_values();
 
   const auto velocity_components = std::make_pair<unsigned int>(0, dim);
 

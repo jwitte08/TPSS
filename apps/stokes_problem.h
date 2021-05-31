@@ -1221,7 +1221,8 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::setup_system()
 
   //: setup velocity system
   {
-    dof_handler_velocity.initialize(*triangulation, get_finite_element_velocity());
+    dof_handler_velocity.reinit(*triangulation);
+    dof_handler_velocity.distribute_dofs(get_finite_element_velocity());
     AssertThrow(!equation_data.use_cuthill_mckee, ExcMessage("TODO MPI..."));
     // if(do_cuthill_mckee)
     // {
@@ -1290,7 +1291,8 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::setup_system()
 
   //: setup pressure system
   {
-    dof_handler_pressure.initialize(*triangulation, get_finite_element_pressure());
+    dof_handler_pressure.reinit(*triangulation);
+    dof_handler_pressure.distribute_dofs(get_finite_element_pressure());
     AssertThrow(!equation_data.use_cuthill_mckee, ExcMessage("TODO MPI..."));
     // if(do_cuthill_mckee)
     // {
@@ -1509,7 +1511,7 @@ template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
 ModelProblem<dim, fe_degree_p, method, is_simplified>::assemble_system_velocity_pressure()
 {
-  system_rhs.zero_out_ghosts();
+  system_rhs.zero_out_ghost_values();
 
   /// Assemble the velocity block, here block(0,0).
   {
@@ -1920,7 +1922,8 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::make_multigrid_velocity_p
   mgc_velocity_pressure->dof_handler_pressure = &dof_handler_pressure;
   if(equation_data.setup_stream_functions)
   {
-    dof_handler_stream.initialize(*triangulation, *finite_element_stream);
+    dof_handler_stream.reinit(*triangulation);
+    dof_handler_stream.distribute_dofs(*finite_element_stream);
     dof_handler_stream.distribute_mg_dofs();
     mgc_velocity_pressure->dof_handler_stream = &dof_handler_stream;
   }

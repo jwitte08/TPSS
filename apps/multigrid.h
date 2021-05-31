@@ -307,7 +307,7 @@ struct MGCoarseGridBlockSVD<LinearAlgebra::distributed::BlockVector<Number>>
     if(master_mpi_rank == this_mpi_rank)
       master_matrix->apply_inverse(local_dst, local_src);
 
-    tmp_dst.zero_out_ghosts();
+    tmp_dst.zero_out_ghost_values();
     if(master_mpi_rank == this_mpi_rank)
       for(auto b = 0U; b < partitioners.size(); ++b)
         for(types::global_dof_index dof = 0; dof < local_dst.block(b).size(); ++dof)

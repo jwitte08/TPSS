@@ -101,11 +101,10 @@ struct StokesFlow
     if(use_block_system_gmg)
     {
       prms.multigrid.coarse_grid.kernel_size   = 1U;
-      prms.multigrid.coarse_grid.threshold_svd = 1.e-10;
+      prms.multigrid.coarse_grid.threshold_svd = 1.e-10; // ???
 
       /// The iterative solver settings do not result in convergence for all
       /// reference solutions and refinements
-
       // prms.multigrid.coarse_grid.threshold_svd    = 0.;
       // prms.multigrid.coarse_grid.solver_variant   =
       // CoarseGridParameter::SolverVariant::Iterative;

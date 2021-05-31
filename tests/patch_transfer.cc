@@ -962,7 +962,7 @@ protected:
     //: restrict to and prolongate from each patch
     *pcout << "Restrict & Prolongate = Identity ...  \n\n";
     src.update_ghost_values();
-    dst.zero_out_ghosts();
+    dst.zero_out_ghost_values();
     const auto & partition_data = patch_dof_worker.get_partition_data();
     const auto   n_subdomains   = partition_data.n_subdomains();
     for(unsigned patch_id = 0; patch_id < n_subdomains; ++patch_id)
@@ -1053,7 +1053,7 @@ protected:
 
     //: restrict to and prolongate from each patch
     src.update_ghost_values();
-    dst.zero_out_ghosts();
+    dst.zero_out_ghost_values();
     *pcout << "Restrict & Prolongate = Identity ...  \n\n";
     const auto & partition_data = patch_transfer->get_patch_dof_worker(0).get_partition_data();
     const auto   n_subdomains   = partition_data.n_subdomains();
@@ -1759,7 +1759,7 @@ protected:
     const LinearAlgebra::distributed::Vector<double> src(dst);
 
     src.update_ghost_values();
-    dst.zero_out_ghosts();
+    dst.zero_out_ghost_values();
 
     //: restrict to and prolongate from each patch
     *pcout << "Restrict & Prolongate = Identity ...  \n\n";
