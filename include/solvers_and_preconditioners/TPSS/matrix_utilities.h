@@ -48,7 +48,7 @@ extract_locally_relevant_matrix(
   const auto locally_relevant_row_size =
     partitioner_row->locally_owned_size() + partitioner_row->n_ghost_indices();
   const auto locally_relevant_column_size =
-    partitioner_column->local_size() + partitioner_column->n_ghost_indices();
+    partitioner_column->locally_owned_size() + partitioner_column->n_ghost_indices();
 
   FullMatrix<double> submatrix(locally_relevant_row_size, locally_relevant_column_size);
 

@@ -614,7 +614,8 @@ void
 ModelProblem<dim, fe_degree, is_simplified>::setup_system()
 {
   dof_handler.clear();
-  dof_handler.initialize(*triangulation, *finite_element);
+  dof_handler.reinit(*triangulation);
+  dof_handler.distribute_dofs(*finite_element);
   dof_handler.distribute_mg_dofs();
 
   print_parameter("Number of degrees of freedom:", dof_handler.n_dofs());
@@ -1408,8 +1409,10 @@ ModelProblem<dim, fe_degree, is_simplified>::compute_nondivfree_shape_functions_
 
   DoFHandler<dim> unit_dofh_v;
   DoFHandler<dim> unit_dofh_p;
-  unit_dofh_v.initialize(unit_triangulation, fe_v);
-  unit_dofh_p.initialize(unit_triangulation, fe_p);
+  unit_dofh_v.reinit(unit_triangulation);
+  unit_dofh_v.distribute_dofs(fe_v);
+  unit_dofh_p.reinit(unit_triangulation);
+  unit_dofh_p.distribute_dofs(fe_p);
 
   /// DEBUG
   /// Display RT shape functions in ParaView.
@@ -1651,8 +1654,10 @@ ModelProblem<dim, fe_degree, is_simplified>::compute_nondivfree_shape_functions(
 
   DoFHandler<dim> unit_dofh_v;
   DoFHandler<dim> unit_dofh_p;
-  unit_dofh_v.initialize(unit_triangulation, fe_v);
-  unit_dofh_p.initialize(unit_triangulation, fe_p);
+  unit_dofh_v.reinit(unit_triangulation);
+  unit_dofh_v.distribute_dofs(fe_v);
+  unit_dofh_p.reinit(unit_triangulation);
+  unit_dofh_p.distribute_dofs(fe_p);
 
   /// DEBUG
   /// Display RT shape functions in ParaView.
@@ -2837,7 +2842,8 @@ ModelProblem<dim, fe_degree, is_simplified>::compute_prolongation_sf_to_velocity
   }
 
   DoFHandler<dim> unit_dofh_v;
-  unit_dofh_v.initialize(unit_triangulation, fe_v);
+  unit_dofh_v.reinit(unit_triangulation);
+  unit_dofh_v.distribute_dofs(fe_v);
 
   /// DEBUG Display prolongated/embedded unit stream functions in ParaView.
   {
@@ -2868,7 +2874,8 @@ ModelProblem<dim, fe_degree, is_simplified>::compute_prolongation_sf_to_velocity
   }
 
   DoFHandler<dim> unit_dofh_sf;
-  unit_dofh_sf.initialize(unit_triangulation, fe_sf);
+  unit_dofh_sf.reinit(unit_triangulation);
+  unit_dofh_sf.distribute_dofs(fe_sf);
 
   /// DEBUG Display unit stream functions in ParaView.
   {

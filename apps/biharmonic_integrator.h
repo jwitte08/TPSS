@@ -365,9 +365,10 @@ public:
   static constexpr int fe_order = fe_degree + 1;
 
   void
-  initialize(const EquationData & equation_data_in)
+  initialize(const EquationData & equation_data_in, const unsigned int dofh_index = 0)
   {
-    equation_data = equation_data_in;
+    equation_data     = equation_data_in;
+    active_dofh_index = dofh_index;
   }
 
   template<typename OperatorType>
@@ -378,8 +379,9 @@ public:
                              const std::pair<unsigned int, unsigned int> subdomain_range) const
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+    Assert(active_dofh_index != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
 
-    evaluator_type eval(subdomain_handler); // common evaluator for test + ansatz
+    evaluator_type eval(subdomain_handler, active_dofh_index); // common evaluator for test + ansatz
     for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
     {
       eval.reinit(patch);
@@ -680,10 +682,12 @@ public:
   std::shared_ptr<transfer_type>
   get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
   {
-    return std::make_shared<transfer_type>(subdomain_handler);
+    Assert(active_dofh_index != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+    return std::make_shared<transfer_type>(subdomain_handler, active_dofh_index);
   }
 
   EquationData equation_data;
+  unsigned int active_dofh_index = numbers::invalid_unsigned_int;
 };
 
 } // end namespace FD

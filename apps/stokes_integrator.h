@@ -72,8 +72,10 @@ compute_divfreeorth_shape_functions(const FiniteElement<dim> & fe_v,
 
   DoFHandler<dim> unit_dofh_v;
   DoFHandler<dim> unit_dofh_p;
-  unit_dofh_v.initialize(unit_triangulation, fe_v);
-  unit_dofh_p.initialize(unit_triangulation, fe_p);
+  unit_dofh_v.reinit(unit_triangulation);
+  unit_dofh_v.distribute_dofs(fe_v);
+  unit_dofh_p.reinit(unit_triangulation);
+  unit_dofh_p.distribute_dofs(fe_p);
 
   /// Caching both "interior" and "face" node functional evaluations
   LAPACKFullMatrix<double> node_values_all;
@@ -325,7 +327,8 @@ struct ProlongationStream
     }
 
     DoFHandler<dim> dofh_sf;
-    dofh_sf.initialize(unit_triangulation, fe_sf);
+    dofh_sf.reinit(unit_triangulation);
+    dofh_sf.distribute_dofs(fe_sf);
     dofh_sf.distribute_mg_dofs();
 
     PatchInfo<dim> patch_info;
@@ -353,7 +356,8 @@ struct ProlongationStream
     }
 
     DoFHandler<dim> dofh_v;
-    dofh_v.initialize(unit_triangulation, fe_v);
+    dofh_v.reinit(unit_triangulation);
+    dofh_v.distribute_dofs(fe_v);
     dofh_v.distribute_mg_dofs();
 
     dealii::internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info_v;
@@ -3918,687 +3922,11 @@ public:
 
 
 
-namespace FD
-{
-/**
- * Assembles the (exact) local matrices/solvers by exploiting the tensor
- * structure of each scalar-valued shape function, that is each block of a
- * patch matrix involving a component of the velocity vector-field and/or a
- * pressure function have a low-rank Kronecker product decomposition (representation?).
- *
- * However, each block matrix itself has no low-rank Kronecker decomposition
- * (representation?), thus, local matrices are stored and inverted in a
- * standard (vectorized) fashion.
- */
-template<int dim,
-         int fe_degree_p,
-         typename Number              = double,
-         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
-         int             fe_degree_v  = fe_degree_p + 1>
-class MatrixIntegrator
-{
-public:
-  using This = MatrixIntegrator<dim, fe_degree_p, Number>;
-
-  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
-
-  using value_type              = Number;
-  using transfer_type           = typename TPSS::PatchTransferBlock<dim, Number>;
-  using matrix_type_1d          = Table<2, VectorizedArray<Number>>;
-  using matrix_type             = MatrixAsTable<VectorizedArray<Number>>;
-  using matrix_type_mixed       = Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, -1>;
-  using velocity_evaluator_type = FDEvaluation<dim, fe_degree_v, n_q_points_1d, Number>;
-  using pressure_evaluator_type = FDEvaluation<dim, fe_degree_p, n_q_points_1d, Number>;
-
-  void
-  initialize(const EquationData & equation_data_in)
-  {
-    equation_data = equation_data_in;
-  }
-
-  template<typename OperatorType>
-  void
-  assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       subdomain_handler,
-                             std::vector<matrix_type> &                  local_matrices,
-                             const OperatorType &                        dummy_operator,
-                             const std::pair<unsigned int, unsigned int> subdomain_range) const
-  {
-    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
-
-    using MatrixIntegratorVelocity =
-      Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree_v, Number, dof_layout_v>;
-    static_assert(std::is_same<typename MatrixIntegratorVelocity::evaluator_type,
-                               velocity_evaluator_type>::value,
-                  "Velocity evaluator types mismatch.");
-    using matrix_type_velocity = typename MatrixIntegratorVelocity::matrix_type;
-
-    /// Assemble local matrices for the local velocity-velocity block.
-    std::vector<matrix_type_velocity> local_matrices_velocity(local_matrices.size());
-    {
-      MatrixIntegratorVelocity matrix_integrator;
-      matrix_integrator.initialize(equation_data);
-
-      matrix_integrator.template assemble_subspace_inverses<OperatorType>(subdomain_handler,
-                                                                          local_matrices_velocity,
-                                                                          dummy_operator,
-                                                                          subdomain_range);
-    }
-
-    /// Assemble local matrices for the local pressure-pressure block
-    {
-      /// This block is zero.
-    }
-
-    /// Assemble local matrices for the local velocity-pressure block
-    std::vector<matrix_type_mixed> local_matrices_velocity_pressure(local_matrices.size());
-    {
-      assemble_mixed_subspace_inverses<OperatorType>(subdomain_handler,
-                                                     local_matrices_velocity_pressure,
-                                                     dummy_operator,
-                                                     subdomain_range);
-    }
-
-    AssertDimension(local_matrices_velocity.size(), local_matrices.size());
-    const auto patch_transfer = get_patch_transfer(subdomain_handler);
-    for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
-        ++patch_index)
-    {
-      const auto & local_block_velocity          = local_matrices_velocity[patch_index];
-      const auto & local_block_velocity_pressure = local_matrices_velocity_pressure[patch_index];
-
-      patch_transfer->reinit(patch_index);
-      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
-      const auto n_dofs_velocity = local_block_velocity.m();
-      const auto n_dofs_pressure = local_block_velocity_pressure.n();
-      AssertDimension(patch_transfer->n_dofs_per_patch(0), n_dofs_velocity);
-      (void)n_dofs_pressure;
-      AssertDimension(patch_transfer->n_dofs_per_patch(1), n_dofs_pressure);
-
-      auto & local_matrix = local_matrices[patch_index];
-      local_matrix.as_table().reinit(n_dofs, n_dofs);
-
-      /// velocity-velocity
-      local_matrix.fill_submatrix(local_block_velocity.as_table(), 0U, 0U);
-
-      /// velocity-pressure
-      local_matrix.fill_submatrix(local_block_velocity_pressure.as_table(), 0U, n_dofs_velocity);
-
-      /// pressure-velocity
-      local_matrix.template fill_submatrix<true>(local_block_velocity_pressure.as_table(),
-                                                 n_dofs_velocity,
-                                                 0U);
-
-      local_matrix.invert({equation_data.local_kernel_size, equation_data.local_kernel_threshold});
-    }
-  }
-
-  template<typename OperatorType>
-  void
-  assemble_mixed_subspace_inverses(
-    const SubdomainHandler<dim, Number> & subdomain_handler,
-    std::vector<matrix_type_mixed> &      local_matrices,
-    const OperatorType &,
-    const std::pair<unsigned int, unsigned int> subdomain_range) const
-  {
-    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
-
-    for(auto compU = 0U; compU < dim; ++compU)
-    {
-      velocity_evaluator_type eval_velocity(subdomain_handler, /*dofh_index*/ 0, compU);
-      pressure_evaluator_type eval_pressure(subdomain_handler, /*dofh_index*/ 1, /*component*/ 0);
-
-      for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
-      {
-        auto & velocity_pressure_matrix = local_matrices[patch];
-        if(velocity_pressure_matrix.n_block_rows() == 0 &&
-           velocity_pressure_matrix.n_block_cols() == 0)
-          velocity_pressure_matrix.resize(dim, 1);
-
-        eval_velocity.reinit(patch);
-        eval_pressure.reinit(patch);
-
-        const auto mass_matrices =
-          assemble_mass_tensor(/*test*/ eval_velocity, /*ansatz*/ eval_pressure);
-        /// Note that we have flipped ansatz and test functions roles. The
-        /// divergence of the velocity test functions is obtained by
-        /// transposing gradient matrices.
-        const auto gradient_matrices =
-          assemble_gradient_tensor(/*test*/ eval_pressure, /*ansatz*/ eval_velocity);
-
-        const auto & MxMxGT = [&](const unsigned int direction_of_div) {
-          /// For example, we obtain MxMxGT for direction_of_div = 0 (dimension
-          /// 0 is rightmost!)
-          std::array<matrix_type_1d, dim> kronecker_tensor;
-          for(auto d = 0U; d < dim; ++d)
-            kronecker_tensor[d] = d == direction_of_div ?
-                                    -1. * LinAlg::transpose(gradient_matrices[direction_of_div]) :
-                                    mass_matrices[d];
-          return kronecker_tensor;
-        };
-
-        std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
-        rank1_tensors.emplace_back(MxMxGT(compU));
-        velocity_pressure_matrix.get_block(compU, 0).reinit(rank1_tensors);
-      }
-    }
-  }
-
-  std::array<matrix_type_1d, dim>
-  assemble_mass_tensor(velocity_evaluator_type & eval_test,
-                       pressure_evaluator_type & eval_ansatz) const
-  {
-    using CellMass = ::FD::L2::CellOperation<dim, fe_degree_v, n_q_points_1d, Number, fe_degree_p>;
-    return eval_test.patch_action(eval_ansatz, CellMass{});
-  }
-
-  /**
-   * We remark that the velocity takes the ansatz function role here
-   * (Gradient::CellOperation derives the ansatz function) although in
-   * assemble_mixed_subspace_inverses() we require the divergence of the
-   * velocity test functions. Therefore, we transpose the returned tensor of
-   * matrices.
-   */
-  std::array<matrix_type_1d, dim>
-  assemble_gradient_tensor(pressure_evaluator_type & eval_test,
-                           velocity_evaluator_type & eval_ansatz) const
-  {
-    using CellGradient =
-      ::FD::Gradient::CellOperation<dim, fe_degree_p, n_q_points_1d, Number, fe_degree_v>;
-    CellGradient cell_gradient;
-    return eval_test.patch_action(eval_ansatz, cell_gradient);
-  }
-
-  std::shared_ptr<transfer_type>
-  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
-  {
-    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
-    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
-    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
-    return std::make_shared<transfer_type>(dofinfos);
-  }
-
-  EquationData equation_data;
-};
-
-} // namespace FD
-
-
-
-namespace LMW
-{
-/**
- * This class actually makes no use of fast diagonalization but simply uses the
- * MeshWorker framework to assemble local matrices. Nevertheless
- * PatchTransferBlock is used as transfer and its underlying PatchDoFWorker to
- * determine collections of cell iterators.
- *
- * Therefore, all local matrices are stored and inverted in a standard way, that
- * is without exploiting any tensor structure.
- */
-template<int dim,
-         int fe_degree_p,
-         typename Number               = double,
-         TPSS::DoFLayout dof_layout_v  = TPSS::DoFLayout::Q,
-         int             fe_degree_v   = fe_degree_p + 1,
-         bool            is_simplified = false>
-class MatrixIntegrator
-{
-public:
-  using This = MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, is_simplified>;
-
-  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
-
-  static constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
-  static constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
-  static constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
-
-  using value_type    = Number;
-  using transfer_type = typename TPSS::PatchTransferBlock<dim, Number>;
-  using matrix_type   = Tensors::BlockMatrixBasic2x2<MatrixAsTable<VectorizedArray<Number>>>;
-  using operator_type = TrilinosWrappers::BlockSparseMatrix;
-
-  void
-  initialize(const EquationData & equation_data_in)
-  {
-    equation_data = equation_data_in;
-  }
-
-  void
-  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
-                             std::vector<matrix_type> &            local_matrices,
-                             const operator_type & /*level_matrix*/,
-                             const std::pair<unsigned int, unsigned int> subdomain_range) const
-  {
-    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
-
-    typename matrix_type::AdditionalData additional_data;
-    additional_data.basic_inverse = {equation_data.local_kernel_size,
-                                     equation_data.local_kernel_threshold};
-
-    const auto   patch_transfer     = get_patch_transfer(subdomain_handler);
-    const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
-    const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
-
-    FullMatrix<double> tmp_v_v;
-    FullMatrix<double> tmp_p_p;
-    FullMatrix<double> tmp_v_p;
-    FullMatrix<double> tmp_p_v;
-
-    const auto [begin, end] = subdomain_range;
-    for(auto patch_index = begin; patch_index < end; ++patch_index)
-    {
-      patch_transfer->reinit(patch_index);
-
-      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
-      const auto n_dofs_velocity = patch_transfer->n_dofs_per_patch(0);
-      const auto n_dofs_pressure = patch_transfer->n_dofs_per_patch(1);
-
-      const auto & patch_transfer_v = patch_transfer->get_patch_transfer(0);
-      const auto & patch_transfer_p = patch_transfer->get_patch_transfer(1);
-
-      matrix_type & patch_matrix = local_matrices[patch_index];
-
-      auto & block_velocity = patch_matrix.get_block(0U, 0U);
-      block_velocity.as_table().reinit(n_dofs_velocity, n_dofs_velocity);
-      tmp_v_v.reinit(n_dofs_velocity, n_dofs_velocity);
-
-      auto & block_pressure = patch_matrix.get_block(1U, 1U);
-      block_pressure.as_table().reinit(n_dofs_pressure, n_dofs_pressure);
-      tmp_p_p.reinit(n_dofs_pressure, n_dofs_pressure);
-
-      auto & block_velocity_pressure = patch_matrix.get_block(0U, 1U);
-      block_velocity_pressure.as_table().reinit(n_dofs_velocity, n_dofs_pressure);
-      tmp_v_p.reinit(n_dofs_velocity, n_dofs_pressure);
-
-      auto & block_pressure_velocity = patch_matrix.get_block(1U, 0U);
-      block_pressure_velocity.as_table().reinit(n_dofs_pressure, n_dofs_velocity);
-      tmp_p_v.reinit(n_dofs_pressure, n_dofs_velocity);
-
-      for(auto lane = 0U; lane < patch_dof_worker_v.n_lanes_filled(patch_index); ++lane)
-      {
-        /// velocity block
-        {
-          using Velocity::SIPG::MW::CopyData;
-
-          using Velocity::SIPG::MW::ScratchData;
-
-          using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, true, is_simplified>;
-
-          using cell_iterator_type = typename MatrixIntegrator::IteratorType;
-
-          tmp_v_v = 0.;
-
-          const auto & cell_collection = patch_dof_worker_v.get_cell_collection(patch_index, lane);
-
-          const TPSS::BelongsToCollection<cell_iterator_type> belongs_to_collection(
-            cell_collection);
-
-          const auto & local_cell_range = TPSS::make_local_cell_range(cell_collection);
-
-          const auto & g2l = patch_transfer_v.get_global_to_local_dof_indices(lane);
-
-          const auto distribute_local_to_patch_impl = [&](const auto & cd) {
-            std::vector<unsigned int> local_dof_indices;
-            std::transform(cd.dof_indices.begin(),
-                           cd.dof_indices.end(),
-                           std::back_inserter(local_dof_indices),
-                           [&](const auto dof_index) {
-                             const auto & local_index = g2l.find(dof_index);
-                             return local_index != g2l.cend() ? local_index->second :
-                                                                numbers::invalid_unsigned_int;
-                           });
-            for(auto i = 0U; i < cd.matrix.m(); ++i)
-              if(local_dof_indices[i] != numbers::invalid_unsigned_int)
-                for(auto j = 0U; j < cd.matrix.n(); ++j)
-                  if(local_dof_indices[j] != numbers::invalid_unsigned_int)
-                    tmp_v_v(local_dof_indices[i], local_dof_indices[j]) += cd.matrix(i, j);
-          };
-
-          const auto local_copier = [&](const CopyData & copy_data) {
-            for(const auto & cd : copy_data.cell_data)
-              distribute_local_to_patch_impl(cd);
-            for(const auto & cdf : copy_data.face_data)
-              distribute_local_to_patch_impl(cdf);
-          };
-
-          const MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
-
-          const UpdateFlags update_flags =
-            update_values | update_gradients | update_quadrature_points | update_JxW_values;
-          const UpdateFlags interface_update_flags = update_flags | update_normal_vectors;
-          ScratchData<dim>  scratch_data(subdomain_handler.get_mapping(),
-                                        subdomain_handler.get_dof_handler(0).get_fe(),
-                                        subdomain_handler.get_dof_handler(0).get_fe(),
-                                        n_q_points_1d,
-                                        update_flags,
-                                        update_flags,
-                                        interface_update_flags,
-                                        interface_update_flags);
-
-          CopyData copy_data;
-
-          if(use_conf_method)
-            MeshWorker::m2d2::mesh_loop(
-              local_cell_range,
-              [&](const auto & cell, auto & scratch_data, auto & copy_data) {
-                matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-              },
-              local_copier,
-              scratch_data,
-              copy_data,
-              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
-
-          else if(use_sipg_method || use_hdivsipg_method)
-            MeshWorker::m2d2::mesh_loop(
-              local_cell_range,
-              [&](const auto & cell, auto & scratch_data, auto & copy_data) {
-                matrix_integrator.cell_worker(cell, scratch_data, copy_data);
-              },
-              local_copier,
-              scratch_data,
-              copy_data,
-              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells |
-                MeshWorker::assemble_boundary_faces | MeshWorker::assemble_own_interior_faces_both |
-                MeshWorker::assemble_ghost_faces_both,
-              /*assemble faces at ghosts?*/ true,
-              [&](const auto & cell, const auto face_no, auto & scratch_data, auto & copy_data) {
-                if(use_sipg_method)
-                  matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
-                else if(use_hdivsipg_method)
-                  matrix_integrator.boundary_worker_tangential(cell,
-                                                               face_no,
-                                                               scratch_data,
-                                                               copy_data);
-              },
-              [&](const auto & cell,
-                  const auto   face_no,
-                  const auto   sface_no,
-                  const auto & ncell,
-                  const auto   nface_no,
-                  const auto   nsface_no,
-                  auto &       scratch_data,
-                  auto &       copy_data) {
-                const bool cell_belongs_to_collection  = belongs_to_collection(cell);
-                const bool ncell_belongs_to_collection = belongs_to_collection(ncell);
-                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
-                if(is_interface)
-                {
-                  if(use_sipg_method)
-                    matrix_integrator.face_worker(
-                      cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
-                  else if(use_hdivsipg_method)
-                    matrix_integrator.face_worker_tangential(
-                      cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
-                  copy_data.face_data.back().matrix *= 0.5; /// both sides!
-                  return;
-                }
-                if(cell_belongs_to_collection)
-                {
-                  if(use_sipg_method)
-                    matrix_integrator.uniface_worker(
-                      cell, face_no, sface_no, scratch_data, copy_data);
-                  else if(use_hdivsipg_method)
-                    matrix_integrator.uniface_worker_tangential(
-                      cell, face_no, sface_no, scratch_data, copy_data);
-                }
-              });
-
-          else
-            Assert(false, ExcMessage("FEM is not implemented."));
-        }
-
-        if(equation_data.local_solver == LocalSolver::DiagonalVelocity)
-        {
-          for(auto comp = 0U; comp < dim; ++comp)
-          {
-            const std::vector<types::global_dof_index> & velocity_dof_indices_per_comp =
-              patch_transfer_v.get_global_dof_indices(lane, comp);
-            const auto n_velocity_dofs_per_comp = velocity_dof_indices_per_comp.size();
-
-            const unsigned int start = comp * n_velocity_dofs_per_comp;
-
-            std::vector<unsigned int> local_dof_indices(n_velocity_dofs_per_comp);
-            std::iota(local_dof_indices.begin(), local_dof_indices.end(), start);
-
-            FullMatrix<double> tmp_per_comp(n_velocity_dofs_per_comp);
-            tmp_per_comp.extract_submatrix_from(tmp_v_v, local_dof_indices, local_dof_indices);
-
-            block_velocity.fill_submatrix(tmp_per_comp, start, start, lane);
-          }
-        }
-        else if(equation_data.local_solver == LocalSolver::Exact)
-          block_velocity.fill_submatrix(tmp_v_v, 0U, 0U, lane);
-        else
-          Assert(false, ExcMessage("local solver variant not implemented"));
-
-        /// pressure block (just fill with zeros!)
-        block_pressure.fill_submatrix(tmp_p_p, 0U, 0U, lane);
-
-        /// velocity-pressure block & pressure-velocity block
-        {
-          using VelocityPressure::MW::Mixed::CopyData;
-
-          using VelocityPressure::MW::Mixed::ScratchData;
-
-          using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, true>; // ???
-
-          using cell_iterator_type = typename MatrixIntegrator::IteratorType;
-
-          tmp_v_p = 0.;
-          tmp_p_v = 0.;
-
-          const auto & dof_handler_velocity = subdomain_handler.get_dof_handler(0);
-          const auto & dof_handler_pressure = subdomain_handler.get_dof_handler(1);
-
-          const auto & cell_collection_v =
-            patch_dof_worker_v.get_cell_collection(patch_index, lane);
-          const auto & cell_collection_p =
-            patch_dof_worker_p.get_cell_collection(patch_index, lane);
-
-          const auto & local_cell_range_v = TPSS::make_local_cell_range(cell_collection_v);
-
-          const TPSS::BelongsToCollection<cell_iterator_type> belongs_to_collection_v(
-            cell_collection_v);
-
-          const auto & g2l_v = patch_transfer_v.get_global_to_local_dof_indices(lane);
-          const auto & g2l_p = patch_transfer_p.get_global_to_local_dof_indices(lane);
-
-          const auto distribute_local_to_patch_impl = [&](const auto & cd,
-                                                          const auto & cd_flipped) {
-            std::vector<unsigned int> local_dof_indices_v;
-            std::transform(cd.dof_indices.begin(),
-                           cd.dof_indices.end(),
-                           std::back_inserter(local_dof_indices_v),
-                           [&](const auto dof_index) {
-                             const auto & local_index = g2l_v.find(dof_index);
-                             return local_index != g2l_v.cend() ? local_index->second :
-                                                                  numbers::invalid_unsigned_int;
-                           });
-            std::vector<unsigned int> local_dof_indices_p;
-            std::transform(cd.dof_indices_column.begin(),
-                           cd.dof_indices_column.end(),
-                           std::back_inserter(local_dof_indices_p),
-                           [&](const auto dof_index) {
-                             const auto & local_index = g2l_p.find(dof_index);
-                             return local_index != g2l_p.cend() ? local_index->second :
-                                                                  numbers::invalid_unsigned_int;
-                           });
-            AssertDimension(cd.matrix.m(), local_dof_indices_v.size());
-            AssertDimension(cd.matrix.n(), local_dof_indices_p.size());
-            /// velocity-pressure
-            for(auto i = 0U; i < cd.matrix.m(); ++i)
-              if(local_dof_indices_v[i] != numbers::invalid_unsigned_int)
-                for(auto j = 0U; j < cd.matrix.n(); ++j)
-                  if(local_dof_indices_p[j] != numbers::invalid_unsigned_int)
-                    tmp_v_p(local_dof_indices_v[i], local_dof_indices_p[j]) += cd.matrix(i, j);
-            AssertDimension(cd_flipped.matrix.m(), local_dof_indices_p.size());
-            AssertDimension(cd_flipped.matrix.n(), local_dof_indices_v.size());
-            /// pressure-velocity
-            for(auto i = 0U; i < cd_flipped.matrix.m(); ++i)
-              if(local_dof_indices_p[i] != numbers::invalid_unsigned_int)
-                for(auto j = 0U; j < cd_flipped.matrix.n(); ++j)
-                  if(local_dof_indices_v[j] != numbers::invalid_unsigned_int)
-                    tmp_p_v(local_dof_indices_p[i], local_dof_indices_v[j]) +=
-                      cd_flipped.matrix(i, j);
-          };
-
-          const auto local_copier = [&](const CopyData & copy_data_pair) {
-            const auto & [copy_data, copy_data_flipped] = copy_data_pair;
-
-            AssertDimension(copy_data.cell_data.size(), copy_data_flipped.cell_data.size());
-            AssertDimension(copy_data.face_data.size(), copy_data_flipped.face_data.size());
-
-            auto cd_flipped = copy_data_flipped.cell_data.cbegin();
-            auto cd         = copy_data.cell_data.cbegin();
-            for(; cd != copy_data.cell_data.cend(); ++cd, ++cd_flipped)
-              distribute_local_to_patch_impl(*cd, *cd_flipped);
-
-            auto cdf_flipped = copy_data_flipped.face_data.cbegin();
-            auto cdf         = copy_data.face_data.cbegin();
-            for(; cdf != copy_data.face_data.cend(); ++cdf, ++cdf_flipped)
-              distribute_local_to_patch_impl(*cdf, *cdf_flipped);
-          };
-
-          const MatrixIntegrator matrix_integrator(
-            nullptr, nullptr, nullptr, nullptr, equation_data);
-
-          const UpdateFlags update_flags_velocity =
-            update_values | update_gradients | update_quadrature_points | update_JxW_values;
-          const UpdateFlags update_flags_pressure =
-            update_values | update_gradients | update_quadrature_points | update_JxW_values;
-          const UpdateFlags interface_update_flags_velocity =
-            update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
-          const UpdateFlags interface_update_flags_pressure =
-            update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
-
-          ScratchData<dim> scratch_data(subdomain_handler.get_mapping(),
-                                        dof_handler_velocity.get_fe(),
-                                        dof_handler_pressure.get_fe(),
-                                        n_q_points_1d,
-                                        update_flags_velocity,
-                                        update_flags_pressure,
-                                        interface_update_flags_velocity,
-                                        interface_update_flags_pressure);
-
-          CopyData copy_data;
-
-          const auto & cell_worker =
-            [&](const cell_iterator_type & cell, auto & scratch_data, auto & copy_data) {
-              cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
-                                             cell->level(),
-                                             cell->index(),
-                                             &dof_handler_pressure);
-              matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
-            };
-
-          if(use_conf_method || use_hdivsipg_method)
-            MeshWorker::m2d2::mesh_loop(local_cell_range_v,
-                                        cell_worker,
-                                        local_copier,
-                                        scratch_data,
-                                        copy_data,
-                                        MeshWorker::assemble_own_cells |
-                                          MeshWorker::assemble_ghost_cells);
-
-          else if(use_sipg_method)
-            MeshWorker::m2d2::mesh_loop(
-              local_cell_range_v,
-              cell_worker,
-              local_copier,
-              scratch_data,
-              copy_data,
-              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells |
-                MeshWorker::assemble_boundary_faces | MeshWorker::assemble_own_interior_faces_both |
-                MeshWorker::assemble_ghost_faces_both,
-              /*assemble faces at ghosts?*/ true,
-              [&](const auto & cell, const auto face_no, auto & scratch_data, auto & copy_data) {
-                cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
-                                               cell->level(),
-                                               cell->index(),
-                                               &dof_handler_pressure);
-                matrix_integrator.boundary_worker(
-                  cell, cell_ansatz, face_no, scratch_data, copy_data);
-              },
-              [&](const auto & cell,
-                  const auto   face_no,
-                  const auto   sface_no,
-                  const auto & ncell,
-                  const auto   nface_no,
-                  const auto   nsface_no,
-                  auto &       scratch_data,
-                  auto &       copy_data_pair) {
-                cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
-                                               cell->level(),
-                                               cell->index(),
-                                               &dof_handler_pressure);
-                cell_iterator_type ncell_ansatz(&(dof_handler_pressure.get_triangulation()),
-                                                ncell->level(),
-                                                ncell->index(),
-                                                &dof_handler_pressure);
-                const bool         cell_belongs_to_collection  = belongs_to_collection_v(cell);
-                const bool         ncell_belongs_to_collection = belongs_to_collection_v(ncell);
-                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
-                if(is_interface)
-                {
-                  matrix_integrator.face_worker(cell,
-                                                cell_ansatz,
-                                                face_no,
-                                                sface_no,
-                                                ncell,
-                                                ncell_ansatz,
-                                                nface_no,
-                                                nsface_no,
-                                                scratch_data,
-                                                copy_data_pair);
-                  /// interfaces are assembled from both sides
-                  auto & [copy_data, copy_data_flipped] = copy_data_pair;
-                  copy_data.face_data.back().matrix *= 0.5;
-                  copy_data_flipped.face_data.back().matrix *= 0.5;
-                  return;
-                }
-                if(cell_belongs_to_collection)
-                {
-                  matrix_integrator.uniface_worker(
-                    cell, cell_ansatz, face_no, sface_no, scratch_data, copy_data_pair);
-                }
-              });
-
-          else
-            Assert(false, ExcMessage("FEM is not implemented."));
-
-          block_velocity_pressure.fill_submatrix(tmp_v_p, 0U, 0U, lane);
-
-          block_pressure_velocity.fill_submatrix(tmp_p_v, 0U, 0U, lane);
-        }
-      }
-
-      (void)n_dofs;
-      AssertDimension(patch_matrix.m(), n_dofs);
-      AssertDimension(patch_matrix.n(), n_dofs);
-
-      patch_matrix.invert(additional_data);
-    }
-  }
-
-  std::shared_ptr<transfer_type>
-  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
-  {
-    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
-    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
-    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
-    return std::make_shared<transfer_type>(dofinfos);
-  }
-
-  EquationData equation_data;
-};
-
-
-
-template<int dim, typename Number, bool is_simplified>
+template<int dim, typename Number, typename MatrixTypeStream, bool is_simplified>
 struct LocalSolverStream
 {
-  using matrix_type          = MatrixAsTable<VectorizedArray<Number>>;
-  using value_type           = typename matrix_type::value_type;
+  using matrix_type_stream   = MatrixTypeStream;
+  using value_type           = typename matrix_type_stream::value_type;
   using transfer_type        = typename TPSS::PatchTransferBlock<dim, Number>;
   using transfer_type_stream = TPSS::PatchTransfer<dim, Number>;
 
@@ -4607,7 +3935,7 @@ struct LocalSolverStream
   unsigned int                          n_q_points_1d     = numbers::invalid_unsigned_int;
   const EquationData *                  equation_data;
 
-  matrix_type                                            solver_sf;
+  matrix_type_stream                                     solver_sf;
   std::shared_ptr<const ProlongationStream<dim, Number>> prolongation_sf;
 
   std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth;
@@ -5324,6 +4652,818 @@ struct LocalSolverStream
 
 
 
+namespace FD
+{
+/**
+ * Assembles the (exact) local matrices/solvers by exploiting the tensor
+ * structure of each scalar-valued shape function, that is each block of a
+ * patch matrix involving a component of the velocity vector-field and/or a
+ * pressure function have a low-rank Kronecker product decomposition (representation?).
+ *
+ * However, each block matrix itself has no low-rank Kronecker decomposition
+ * (representation?), thus, local matrices are stored and inverted in a
+ * standard (vectorized) fashion.
+ */
+template<int dim,
+         int fe_degree_p,
+         typename Number              = double,
+         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
+         int             fe_degree_v  = fe_degree_p + 1>
+class MatrixIntegrator
+{
+public:
+  using This = MatrixIntegrator<dim, fe_degree_p, Number>;
+
+  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
+
+  using value_type              = Number;
+  using transfer_type           = typename TPSS::PatchTransferBlock<dim, Number>;
+  using matrix_type_1d          = Table<2, VectorizedArray<Number>>;
+  using matrix_type             = MatrixAsTable<VectorizedArray<Number>>;
+  using matrix_type_mixed       = Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, -1>;
+  using velocity_evaluator_type = FDEvaluation<dim, fe_degree_v, n_q_points_1d, Number>;
+  using pressure_evaluator_type = FDEvaluation<dim, fe_degree_p, n_q_points_1d, Number>;
+
+  void
+  initialize(const EquationData & equation_data_in)
+  {
+    equation_data = equation_data_in;
+  }
+
+  template<typename OperatorType>
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       subdomain_handler,
+                             std::vector<matrix_type> &                  local_matrices,
+                             const OperatorType &                        dummy_operator,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+
+    using MatrixIntegratorVelocity =
+      Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree_v, Number, dof_layout_v>;
+    static_assert(std::is_same<typename MatrixIntegratorVelocity::evaluator_type,
+                               velocity_evaluator_type>::value,
+                  "Velocity evaluator types mismatch.");
+    using matrix_type_velocity = typename MatrixIntegratorVelocity::matrix_type;
+
+    /// Assemble local matrices for the local velocity-velocity block.
+    std::vector<matrix_type_velocity> local_matrices_velocity(local_matrices.size());
+    {
+      MatrixIntegratorVelocity matrix_integrator;
+      matrix_integrator.initialize(equation_data);
+
+      matrix_integrator.template assemble_subspace_inverses<OperatorType>(subdomain_handler,
+                                                                          local_matrices_velocity,
+                                                                          dummy_operator,
+                                                                          subdomain_range);
+    }
+
+    /// Assemble local matrices for the local pressure-pressure block
+    {
+      /// This block is zero.
+    }
+
+    /// Assemble local matrices for the local velocity-pressure block
+    std::vector<matrix_type_mixed> local_matrices_velocity_pressure(local_matrices.size());
+    {
+      assemble_mixed_subspace_inverses<OperatorType>(subdomain_handler,
+                                                     local_matrices_velocity_pressure,
+                                                     dummy_operator,
+                                                     subdomain_range);
+    }
+
+    AssertDimension(local_matrices_velocity.size(), local_matrices.size());
+    const auto patch_transfer = get_patch_transfer(subdomain_handler);
+    for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
+        ++patch_index)
+    {
+      const auto & local_block_velocity          = local_matrices_velocity[patch_index];
+      const auto & local_block_velocity_pressure = local_matrices_velocity_pressure[patch_index];
+
+      patch_transfer->reinit(patch_index);
+      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
+      const auto n_dofs_velocity = local_block_velocity.m();
+      const auto n_dofs_pressure = local_block_velocity_pressure.n();
+      AssertDimension(patch_transfer->n_dofs_per_patch(0), n_dofs_velocity);
+      (void)n_dofs_pressure;
+      AssertDimension(patch_transfer->n_dofs_per_patch(1), n_dofs_pressure);
+
+      auto & local_matrix = local_matrices[patch_index];
+      local_matrix.as_table().reinit(n_dofs, n_dofs);
+
+      /// velocity-velocity
+      local_matrix.fill_submatrix(local_block_velocity.as_table(), 0U, 0U);
+
+      /// velocity-pressure
+      local_matrix.fill_submatrix(local_block_velocity_pressure.as_table(), 0U, n_dofs_velocity);
+
+      /// pressure-velocity
+      local_matrix.template fill_submatrix<true>(local_block_velocity_pressure.as_table(),
+                                                 n_dofs_velocity,
+                                                 0U);
+
+      local_matrix.invert({equation_data.local_kernel_size, equation_data.local_kernel_threshold});
+    }
+  }
+
+  template<typename OperatorType>
+  void
+  assemble_mixed_subspace_inverses(
+    const SubdomainHandler<dim, Number> & subdomain_handler,
+    std::vector<matrix_type_mixed> &      local_matrices,
+    const OperatorType &,
+    const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+
+    for(auto compU = 0U; compU < dim; ++compU)
+    {
+      velocity_evaluator_type eval_velocity(subdomain_handler, /*dofh_index*/ 0, compU);
+      pressure_evaluator_type eval_pressure(subdomain_handler, /*dofh_index*/ 1, /*component*/ 0);
+
+      for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
+      {
+        auto & velocity_pressure_matrix = local_matrices[patch];
+        if(velocity_pressure_matrix.n_block_rows() == 0 &&
+           velocity_pressure_matrix.n_block_cols() == 0)
+          velocity_pressure_matrix.resize(dim, 1);
+
+        eval_velocity.reinit(patch);
+        eval_pressure.reinit(patch);
+
+        const auto mass_matrices =
+          assemble_mass_tensor(/*test*/ eval_velocity, /*ansatz*/ eval_pressure);
+        /// Note that we have flipped ansatz and test functions roles. The
+        /// divergence of the velocity test functions is obtained by
+        /// transposing gradient matrices.
+        const auto gradient_matrices =
+          assemble_gradient_tensor(/*test*/ eval_pressure, /*ansatz*/ eval_velocity);
+
+        const auto & MxMxGT = [&](const unsigned int direction_of_div) {
+          /// For example, we obtain MxMxGT for direction_of_div = 0 (dimension
+          /// 0 is rightmost!)
+          std::array<matrix_type_1d, dim> kronecker_tensor;
+          for(auto d = 0U; d < dim; ++d)
+            kronecker_tensor[d] = d == direction_of_div ?
+                                    -1. * LinAlg::transpose(gradient_matrices[direction_of_div]) :
+                                    mass_matrices[d];
+          return kronecker_tensor;
+        };
+
+        std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
+        rank1_tensors.emplace_back(MxMxGT(compU));
+        velocity_pressure_matrix.get_block(compU, 0).reinit(rank1_tensors);
+      }
+    }
+  }
+
+  std::array<matrix_type_1d, dim>
+  assemble_mass_tensor(velocity_evaluator_type & eval_test,
+                       pressure_evaluator_type & eval_ansatz) const
+  {
+    using CellMass = ::FD::L2::CellOperation<dim, fe_degree_v, n_q_points_1d, Number, fe_degree_p>;
+    return eval_test.patch_action(eval_ansatz, CellMass{});
+  }
+
+  /**
+   * We remark that the velocity takes the ansatz function role here
+   * (Gradient::CellOperation derives the ansatz function) although in
+   * assemble_mixed_subspace_inverses() we require the divergence of the
+   * velocity test functions. Therefore, we transpose the returned tensor of
+   * matrices.
+   */
+  std::array<matrix_type_1d, dim>
+  assemble_gradient_tensor(pressure_evaluator_type & eval_test,
+                           velocity_evaluator_type & eval_ansatz) const
+  {
+    using CellGradient =
+      ::FD::Gradient::CellOperation<dim, fe_degree_p, n_q_points_1d, Number, fe_degree_v>;
+    CellGradient cell_gradient;
+    return eval_test.patch_action(eval_ansatz, cell_gradient);
+  }
+
+  std::shared_ptr<transfer_type>
+  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
+    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
+    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
+    return std::make_shared<transfer_type>(dofinfos);
+  }
+
+  EquationData equation_data;
+};
+
+
+
+/**
+ * This class makes use of fast diagonalization if possible. We assemble only
+ * local C0IP-like matrices to obtain local div-free velocity approximations. If
+ * these (inexact) local solvers have certain tensor structures we use fast
+ * diagonalization. Local pressures are reconstructed from these in a two-step
+ * process, that involves computing local residuals with respect to the local
+ * C0IP solutions. PatchTransfers are used to transfer stream function, velocity
+ * and pressure coefficients. Underlying PatchDoFWorkers determine collections
+ * of cell iterators passed to mesh_loop().
+ *
+ * Therefore, all local matrices are stored and inverted in a standard way, that
+ * is without exploiting any tensor structure.
+ */
+template<int dim, int fe_degree_p, typename Number = double, bool is_simplified = false>
+class MatrixIntegratorStream
+{
+public:
+  using This = MatrixIntegratorStream<dim, fe_degree_p, Number, is_simplified>;
+
+  static constexpr TPSS::DoFLayout dof_layout_v  = TPSS::DoFLayout::RT;
+  static constexpr int             fe_degree_v   = fe_degree_p;
+  static constexpr int             fe_degree_sf  = fe_degree_v + 1;
+  static constexpr int             n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
+
+  using value_type = Number;
+  using matrix_integrator_type_stream =
+    Biharmonic::C0IP::FD::MatrixIntegrator<dim, fe_degree_sf, Number>;
+  using matrix_type_stream   = typename matrix_integrator_type_stream::matrix_type;
+  using matrix_type          = LocalSolverStream<dim, Number, matrix_type_stream, is_simplified>;
+  using transfer_type        = typename matrix_type::transfer_type;
+  using transfer_type_stream = typename matrix_type::transfer_type_stream;
+  using operator_type        = TrilinosWrappers::BlockSparseMatrix;
+
+  void
+  initialize(const EquationData & equation_data_in)
+  {
+    active_dofh_index_v  = 0;
+    active_dofh_index_p  = 1;
+    active_dofh_index_sf = 2;
+    equation_data        = equation_data_in;
+    if(equation_data.local_solver == LocalSolver::C0IP)
+      equation_data_biharm.local_solver_variant = Biharmonic::LocalSolverVariant::Exact;
+    else
+      Assert(false, ExcMessage("Not implemented. TODO"));
+  }
+
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
+                             std::vector<matrix_type> &            local_matrices,
+                             const operator_type & /*level_matrix*/,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+    AssertDimension(subdomain_handler.n_dof_handlers(), 3U);
+    Assert(active_dofh_index_v != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+    Assert(active_dofh_index_p != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+    Assert(active_dofh_index_sf != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+
+    matrix_integrator_type_stream matrix_integrator_c0ip;
+    matrix_integrator_c0ip.initialize(equation_data_biharm, active_dofh_index_sf);
+    std::vector<matrix_type_stream> local_matrices_stream(local_matrices.size());
+    matrix_integrator_c0ip.assemble_subspace_inverses(subdomain_handler,
+                                                      local_matrices_stream,
+                                                      false,
+                                                      subdomain_range);
+
+    const auto & dofh_v  = subdomain_handler.get_dof_handler(active_dofh_index_v);
+    const auto & dofh_p  = subdomain_handler.get_dof_handler(active_dofh_index_p);
+    const auto & dofh_sf = subdomain_handler.get_dof_handler(active_dofh_index_sf);
+
+    const auto patch_transfer_sf = get_patch_transfer_stream(subdomain_handler);
+    // const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
+
+    const auto & [shape_to_test_functions_interior, shape_to_test_functions_faces] =
+      compute_divfreeorth_shape_functions(dofh_v.get_fe(), dofh_p.get_fe());
+
+    const auto prolong_sf =
+      std::make_shared<const ProlongationStream<dim, Number>>(dofh_sf.get_fe(), dofh_v.get_fe());
+    const auto velocity_to_orth =
+      std::make_shared<const FullMatrix<Number>>(shape_to_test_functions_interior);
+    const auto velocity_to_orth_faces =
+      std::make_shared<const FullMatrix<Number>>(shape_to_test_functions_faces);
+
+    const auto [begin, end] = subdomain_range;
+    for(auto patch_index = begin; patch_index < end; ++patch_index)
+    {
+      patch_transfer_sf->reinit(patch_index);
+
+      matrix_type & patch_matrix = local_matrices[patch_index];
+
+      patch_matrix.subdomain_handler = &subdomain_handler;
+      patch_matrix.patch_index       = patch_index;
+      patch_matrix.n_q_points_1d     = n_q_points_1d;
+      patch_matrix.equation_data     = &equation_data;
+
+      patch_matrix.solver_sf = local_matrices_stream[patch_index];
+
+      /// caching prolongation: from stream to velocity
+      patch_matrix.prolongation_sf = prolong_sf;
+
+      /// caching transformation matrices: orth. velocity functions
+      patch_matrix.trafomatrix_orth       = velocity_to_orth;
+      patch_matrix.trafomatrix_orth_faces = velocity_to_orth_faces;
+    }
+  }
+
+  std::shared_ptr<transfer_type>
+  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    Assert(active_dofh_index_v != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+    Assert(active_dofh_index_p != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
+    dofinfos.push_back(&subdomain_handler.get_dof_info(active_dofh_index_v));
+    dofinfos.push_back(&subdomain_handler.get_dof_info(active_dofh_index_p));
+    return std::make_shared<transfer_type>(dofinfos);
+  }
+
+  std::shared_ptr<transfer_type_stream>
+  get_patch_transfer_stream(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    Assert(active_dofh_index_sf != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+    return std::make_shared<transfer_type_stream>(subdomain_handler, active_dofh_index_sf);
+  }
+
+  unsigned int             active_dofh_index_v  = numbers::invalid_unsigned_int;
+  unsigned int             active_dofh_index_p  = numbers::invalid_unsigned_int;
+  unsigned int             active_dofh_index_sf = numbers::invalid_unsigned_int;
+  EquationData             equation_data;
+  Biharmonic::EquationData equation_data_biharm;
+};
+
+} // namespace FD
+
+
+
+namespace LMW
+{
+/**
+ * This class actually makes no use of fast diagonalization but simply uses the
+ * MeshWorker framework to assemble local matrices. Nevertheless
+ * PatchTransferBlock is used as transfer and its underlying PatchDoFWorker to
+ * determine collections of cell iterators.
+ *
+ * Therefore, all local matrices are stored and inverted in a standard way, that
+ * is without exploiting any tensor structure.
+ */
+template<int dim,
+         int fe_degree_p,
+         typename Number               = double,
+         TPSS::DoFLayout dof_layout_v  = TPSS::DoFLayout::Q,
+         int             fe_degree_v   = fe_degree_p + 1,
+         bool            is_simplified = false>
+class MatrixIntegrator
+{
+public:
+  using This = MatrixIntegrator<dim, fe_degree_p, Number, dof_layout_v, fe_degree_v, is_simplified>;
+
+  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
+
+  static constexpr bool use_sipg_method     = dof_layout_v == TPSS::DoFLayout::DGQ;
+  static constexpr bool use_hdivsipg_method = dof_layout_v == TPSS::DoFLayout::RT;
+  static constexpr bool use_conf_method     = dof_layout_v == TPSS::DoFLayout::Q;
+
+  using value_type    = Number;
+  using transfer_type = typename TPSS::PatchTransferBlock<dim, Number>;
+  using matrix_type   = Tensors::BlockMatrixBasic2x2<MatrixAsTable<VectorizedArray<Number>>>;
+  using operator_type = TrilinosWrappers::BlockSparseMatrix;
+
+  void
+  initialize(const EquationData & equation_data_in)
+  {
+    equation_data = equation_data_in;
+  }
+
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
+                             std::vector<matrix_type> &            local_matrices,
+                             const operator_type & /*level_matrix*/,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+
+    if(equation_data.local_solver == LocalSolver::C0IP)
+      return;
+
+    typename matrix_type::AdditionalData additional_data;
+    additional_data.basic_inverse = {equation_data.local_kernel_size,
+                                     equation_data.local_kernel_threshold};
+
+    const auto   patch_transfer     = get_patch_transfer(subdomain_handler);
+    const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
+    const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
+
+    FullMatrix<double> tmp_v_v;
+    FullMatrix<double> tmp_p_p;
+    FullMatrix<double> tmp_v_p;
+    FullMatrix<double> tmp_p_v;
+
+    const auto [begin, end] = subdomain_range;
+    for(auto patch_index = begin; patch_index < end; ++patch_index)
+    {
+      patch_transfer->reinit(patch_index);
+
+      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
+      const auto n_dofs_velocity = patch_transfer->n_dofs_per_patch(0);
+      const auto n_dofs_pressure = patch_transfer->n_dofs_per_patch(1);
+
+      const auto & patch_transfer_v = patch_transfer->get_patch_transfer(0);
+      const auto & patch_transfer_p = patch_transfer->get_patch_transfer(1);
+
+      matrix_type & patch_matrix = local_matrices[patch_index];
+
+      auto & block_velocity = patch_matrix.get_block(0U, 0U);
+      block_velocity.as_table().reinit(n_dofs_velocity, n_dofs_velocity);
+      tmp_v_v.reinit(n_dofs_velocity, n_dofs_velocity);
+
+      auto & block_pressure = patch_matrix.get_block(1U, 1U);
+      block_pressure.as_table().reinit(n_dofs_pressure, n_dofs_pressure);
+      tmp_p_p.reinit(n_dofs_pressure, n_dofs_pressure);
+
+      auto & block_velocity_pressure = patch_matrix.get_block(0U, 1U);
+      block_velocity_pressure.as_table().reinit(n_dofs_velocity, n_dofs_pressure);
+      tmp_v_p.reinit(n_dofs_velocity, n_dofs_pressure);
+
+      auto & block_pressure_velocity = patch_matrix.get_block(1U, 0U);
+      block_pressure_velocity.as_table().reinit(n_dofs_pressure, n_dofs_velocity);
+      tmp_p_v.reinit(n_dofs_pressure, n_dofs_velocity);
+
+      for(auto lane = 0U; lane < patch_dof_worker_v.n_lanes_filled(patch_index); ++lane)
+      {
+        /// velocity block
+        {
+          using Velocity::SIPG::MW::CopyData;
+
+          using Velocity::SIPG::MW::ScratchData;
+
+          using MatrixIntegrator = Velocity::SIPG::MW::MatrixIntegrator<dim, true, is_simplified>;
+
+          using cell_iterator_type = typename MatrixIntegrator::IteratorType;
+
+          tmp_v_v = 0.;
+
+          const auto & cell_collection = patch_dof_worker_v.get_cell_collection(patch_index, lane);
+
+          const TPSS::BelongsToCollection<cell_iterator_type> belongs_to_collection(
+            cell_collection);
+
+          const auto & local_cell_range = TPSS::make_local_cell_range(cell_collection);
+
+          const auto & g2l = patch_transfer_v.get_global_to_local_dof_indices(lane);
+
+          const auto distribute_local_to_patch_impl = [&](const auto & cd) {
+            std::vector<unsigned int> local_dof_indices;
+            std::transform(cd.dof_indices.begin(),
+                           cd.dof_indices.end(),
+                           std::back_inserter(local_dof_indices),
+                           [&](const auto dof_index) {
+                             const auto & local_index = g2l.find(dof_index);
+                             return local_index != g2l.cend() ? local_index->second :
+                                                                numbers::invalid_unsigned_int;
+                           });
+            for(auto i = 0U; i < cd.matrix.m(); ++i)
+              if(local_dof_indices[i] != numbers::invalid_unsigned_int)
+                for(auto j = 0U; j < cd.matrix.n(); ++j)
+                  if(local_dof_indices[j] != numbers::invalid_unsigned_int)
+                    tmp_v_v(local_dof_indices[i], local_dof_indices[j]) += cd.matrix(i, j);
+          };
+
+          const auto local_copier = [&](const CopyData & copy_data) {
+            for(const auto & cd : copy_data.cell_data)
+              distribute_local_to_patch_impl(cd);
+            for(const auto & cdf : copy_data.face_data)
+              distribute_local_to_patch_impl(cdf);
+          };
+
+          const MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+
+          const UpdateFlags update_flags =
+            update_values | update_gradients | update_quadrature_points | update_JxW_values;
+          const UpdateFlags interface_update_flags = update_flags | update_normal_vectors;
+          ScratchData<dim>  scratch_data(subdomain_handler.get_mapping(),
+                                        subdomain_handler.get_dof_handler(0).get_fe(),
+                                        subdomain_handler.get_dof_handler(0).get_fe(),
+                                        n_q_points_1d,
+                                        update_flags,
+                                        update_flags,
+                                        interface_update_flags,
+                                        interface_update_flags);
+
+          CopyData copy_data;
+
+          if(use_conf_method)
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range,
+              [&](const auto & cell, auto & scratch_data, auto & copy_data) {
+                matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+              },
+              local_copier,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
+
+          else if(use_sipg_method || use_hdivsipg_method)
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range,
+              [&](const auto & cell, auto & scratch_data, auto & copy_data) {
+                matrix_integrator.cell_worker(cell, scratch_data, copy_data);
+              },
+              local_copier,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells |
+                MeshWorker::assemble_boundary_faces | MeshWorker::assemble_own_interior_faces_both |
+                MeshWorker::assemble_ghost_faces_both,
+              /*assemble faces at ghosts?*/ true,
+              [&](const auto & cell, const auto face_no, auto & scratch_data, auto & copy_data) {
+                if(use_sipg_method)
+                  matrix_integrator.boundary_worker(cell, face_no, scratch_data, copy_data);
+                else if(use_hdivsipg_method)
+                  matrix_integrator.boundary_worker_tangential(cell,
+                                                               face_no,
+                                                               scratch_data,
+                                                               copy_data);
+              },
+              [&](const auto & cell,
+                  const auto   face_no,
+                  const auto   sface_no,
+                  const auto & ncell,
+                  const auto   nface_no,
+                  const auto   nsface_no,
+                  auto &       scratch_data,
+                  auto &       copy_data) {
+                const bool cell_belongs_to_collection  = belongs_to_collection(cell);
+                const bool ncell_belongs_to_collection = belongs_to_collection(ncell);
+                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
+                if(is_interface)
+                {
+                  if(use_sipg_method)
+                    matrix_integrator.face_worker(
+                      cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
+                  else if(use_hdivsipg_method)
+                    matrix_integrator.face_worker_tangential(
+                      cell, face_no, sface_no, ncell, nface_no, nsface_no, scratch_data, copy_data);
+                  copy_data.face_data.back().matrix *= 0.5; /// both sides!
+                  return;
+                }
+                if(cell_belongs_to_collection)
+                {
+                  if(use_sipg_method)
+                    matrix_integrator.uniface_worker(
+                      cell, face_no, sface_no, scratch_data, copy_data);
+                  else if(use_hdivsipg_method)
+                    matrix_integrator.uniface_worker_tangential(
+                      cell, face_no, sface_no, scratch_data, copy_data);
+                }
+              });
+
+          else
+            Assert(false, ExcMessage("FEM is not implemented."));
+        }
+
+        if(equation_data.local_solver == LocalSolver::DiagonalVelocity)
+        {
+          for(auto comp = 0U; comp < dim; ++comp)
+          {
+            const std::vector<types::global_dof_index> & velocity_dof_indices_per_comp =
+              patch_transfer_v.get_global_dof_indices(lane, comp);
+            const auto n_velocity_dofs_per_comp = velocity_dof_indices_per_comp.size();
+
+            const unsigned int start = comp * n_velocity_dofs_per_comp;
+
+            std::vector<unsigned int> local_dof_indices(n_velocity_dofs_per_comp);
+            std::iota(local_dof_indices.begin(), local_dof_indices.end(), start);
+
+            FullMatrix<double> tmp_per_comp(n_velocity_dofs_per_comp);
+            tmp_per_comp.extract_submatrix_from(tmp_v_v, local_dof_indices, local_dof_indices);
+
+            block_velocity.fill_submatrix(tmp_per_comp, start, start, lane);
+          }
+        }
+        else if(equation_data.local_solver == LocalSolver::Exact)
+          block_velocity.fill_submatrix(tmp_v_v, 0U, 0U, lane);
+        else
+          Assert(false, ExcMessage("local solver variant not implemented"));
+
+        /// pressure block (just fill with zeros!)
+        block_pressure.fill_submatrix(tmp_p_p, 0U, 0U, lane);
+
+        /// velocity-pressure block & pressure-velocity block
+        {
+          using VelocityPressure::MW::Mixed::CopyData;
+
+          using VelocityPressure::MW::Mixed::ScratchData;
+
+          using MatrixIntegrator = VelocityPressure::MW::Mixed::MatrixIntegrator<dim, true>; // ???
+
+          using cell_iterator_type = typename MatrixIntegrator::IteratorType;
+
+          tmp_v_p = 0.;
+          tmp_p_v = 0.;
+
+          const auto & dof_handler_velocity = subdomain_handler.get_dof_handler(0);
+          const auto & dof_handler_pressure = subdomain_handler.get_dof_handler(1);
+
+          const auto & cell_collection_v =
+            patch_dof_worker_v.get_cell_collection(patch_index, lane);
+          const auto & cell_collection_p =
+            patch_dof_worker_p.get_cell_collection(patch_index, lane);
+
+          const auto & local_cell_range_v = TPSS::make_local_cell_range(cell_collection_v);
+
+          const TPSS::BelongsToCollection<cell_iterator_type> belongs_to_collection_v(
+            cell_collection_v);
+
+          const auto & g2l_v = patch_transfer_v.get_global_to_local_dof_indices(lane);
+          const auto & g2l_p = patch_transfer_p.get_global_to_local_dof_indices(lane);
+
+          const auto distribute_local_to_patch_impl = [&](const auto & cd,
+                                                          const auto & cd_flipped) {
+            std::vector<unsigned int> local_dof_indices_v;
+            std::transform(cd.dof_indices.begin(),
+                           cd.dof_indices.end(),
+                           std::back_inserter(local_dof_indices_v),
+                           [&](const auto dof_index) {
+                             const auto & local_index = g2l_v.find(dof_index);
+                             return local_index != g2l_v.cend() ? local_index->second :
+                                                                  numbers::invalid_unsigned_int;
+                           });
+            std::vector<unsigned int> local_dof_indices_p;
+            std::transform(cd.dof_indices_column.begin(),
+                           cd.dof_indices_column.end(),
+                           std::back_inserter(local_dof_indices_p),
+                           [&](const auto dof_index) {
+                             const auto & local_index = g2l_p.find(dof_index);
+                             return local_index != g2l_p.cend() ? local_index->second :
+                                                                  numbers::invalid_unsigned_int;
+                           });
+            AssertDimension(cd.matrix.m(), local_dof_indices_v.size());
+            AssertDimension(cd.matrix.n(), local_dof_indices_p.size());
+            /// velocity-pressure
+            for(auto i = 0U; i < cd.matrix.m(); ++i)
+              if(local_dof_indices_v[i] != numbers::invalid_unsigned_int)
+                for(auto j = 0U; j < cd.matrix.n(); ++j)
+                  if(local_dof_indices_p[j] != numbers::invalid_unsigned_int)
+                    tmp_v_p(local_dof_indices_v[i], local_dof_indices_p[j]) += cd.matrix(i, j);
+            AssertDimension(cd_flipped.matrix.m(), local_dof_indices_p.size());
+            AssertDimension(cd_flipped.matrix.n(), local_dof_indices_v.size());
+            /// pressure-velocity
+            for(auto i = 0U; i < cd_flipped.matrix.m(); ++i)
+              if(local_dof_indices_p[i] != numbers::invalid_unsigned_int)
+                for(auto j = 0U; j < cd_flipped.matrix.n(); ++j)
+                  if(local_dof_indices_v[j] != numbers::invalid_unsigned_int)
+                    tmp_p_v(local_dof_indices_p[i], local_dof_indices_v[j]) +=
+                      cd_flipped.matrix(i, j);
+          };
+
+          const auto local_copier = [&](const CopyData & copy_data_pair) {
+            const auto & [copy_data, copy_data_flipped] = copy_data_pair;
+
+            AssertDimension(copy_data.cell_data.size(), copy_data_flipped.cell_data.size());
+            AssertDimension(copy_data.face_data.size(), copy_data_flipped.face_data.size());
+
+            auto cd_flipped = copy_data_flipped.cell_data.cbegin();
+            auto cd         = copy_data.cell_data.cbegin();
+            for(; cd != copy_data.cell_data.cend(); ++cd, ++cd_flipped)
+              distribute_local_to_patch_impl(*cd, *cd_flipped);
+
+            auto cdf_flipped = copy_data_flipped.face_data.cbegin();
+            auto cdf         = copy_data.face_data.cbegin();
+            for(; cdf != copy_data.face_data.cend(); ++cdf, ++cdf_flipped)
+              distribute_local_to_patch_impl(*cdf, *cdf_flipped);
+          };
+
+          const MatrixIntegrator matrix_integrator(
+            nullptr, nullptr, nullptr, nullptr, equation_data);
+
+          const UpdateFlags update_flags_velocity =
+            update_values | update_gradients | update_quadrature_points | update_JxW_values;
+          const UpdateFlags update_flags_pressure =
+            update_values | update_gradients | update_quadrature_points | update_JxW_values;
+          const UpdateFlags interface_update_flags_velocity =
+            update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+          const UpdateFlags interface_update_flags_pressure =
+            update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+
+          ScratchData<dim> scratch_data(subdomain_handler.get_mapping(),
+                                        dof_handler_velocity.get_fe(),
+                                        dof_handler_pressure.get_fe(),
+                                        n_q_points_1d,
+                                        update_flags_velocity,
+                                        update_flags_pressure,
+                                        interface_update_flags_velocity,
+                                        interface_update_flags_pressure);
+
+          CopyData copy_data;
+
+          const auto & cell_worker =
+            [&](const cell_iterator_type & cell, auto & scratch_data, auto & copy_data) {
+              cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
+                                             cell->level(),
+                                             cell->index(),
+                                             &dof_handler_pressure);
+              matrix_integrator.cell_worker(cell, cell_ansatz, scratch_data, copy_data);
+            };
+
+          if(use_conf_method || use_hdivsipg_method)
+            MeshWorker::m2d2::mesh_loop(local_cell_range_v,
+                                        cell_worker,
+                                        local_copier,
+                                        scratch_data,
+                                        copy_data,
+                                        MeshWorker::assemble_own_cells |
+                                          MeshWorker::assemble_ghost_cells);
+
+          else if(use_sipg_method)
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range_v,
+              cell_worker,
+              local_copier,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells |
+                MeshWorker::assemble_boundary_faces | MeshWorker::assemble_own_interior_faces_both |
+                MeshWorker::assemble_ghost_faces_both,
+              /*assemble faces at ghosts?*/ true,
+              [&](const auto & cell, const auto face_no, auto & scratch_data, auto & copy_data) {
+                cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
+                                               cell->level(),
+                                               cell->index(),
+                                               &dof_handler_pressure);
+                matrix_integrator.boundary_worker(
+                  cell, cell_ansatz, face_no, scratch_data, copy_data);
+              },
+              [&](const auto & cell,
+                  const auto   face_no,
+                  const auto   sface_no,
+                  const auto & ncell,
+                  const auto   nface_no,
+                  const auto   nsface_no,
+                  auto &       scratch_data,
+                  auto &       copy_data_pair) {
+                cell_iterator_type cell_ansatz(&(dof_handler_pressure.get_triangulation()),
+                                               cell->level(),
+                                               cell->index(),
+                                               &dof_handler_pressure);
+                cell_iterator_type ncell_ansatz(&(dof_handler_pressure.get_triangulation()),
+                                                ncell->level(),
+                                                ncell->index(),
+                                                &dof_handler_pressure);
+                const bool         cell_belongs_to_collection  = belongs_to_collection_v(cell);
+                const bool         ncell_belongs_to_collection = belongs_to_collection_v(ncell);
+                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
+                if(is_interface)
+                {
+                  matrix_integrator.face_worker(cell,
+                                                cell_ansatz,
+                                                face_no,
+                                                sface_no,
+                                                ncell,
+                                                ncell_ansatz,
+                                                nface_no,
+                                                nsface_no,
+                                                scratch_data,
+                                                copy_data_pair);
+                  /// interfaces are assembled from both sides
+                  auto & [copy_data, copy_data_flipped] = copy_data_pair;
+                  copy_data.face_data.back().matrix *= 0.5;
+                  copy_data_flipped.face_data.back().matrix *= 0.5;
+                  return;
+                }
+                if(cell_belongs_to_collection)
+                {
+                  matrix_integrator.uniface_worker(
+                    cell, cell_ansatz, face_no, sface_no, scratch_data, copy_data_pair);
+                }
+              });
+
+          else
+            Assert(false, ExcMessage("FEM is not implemented."));
+
+          block_velocity_pressure.fill_submatrix(tmp_v_p, 0U, 0U, lane);
+
+          block_pressure_velocity.fill_submatrix(tmp_p_v, 0U, 0U, lane);
+        }
+      }
+
+      (void)n_dofs;
+      AssertDimension(patch_matrix.m(), n_dofs);
+      AssertDimension(patch_matrix.n(), n_dofs);
+
+      patch_matrix.invert(additional_data);
+    }
+  }
+
+  std::shared_ptr<transfer_type>
+  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
+    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
+    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
+    return std::make_shared<transfer_type>(dofinfos);
+  }
+
+  EquationData equation_data;
+};
+
+
+
 /**
  * This class makes no use of fast diagonalization but simply uses the
  * MeshWorker framework to assemble local matrices: Actually, we assemble only
@@ -5344,10 +5484,12 @@ public:
 
   static constexpr TPSS::DoFLayout dof_layout_v  = TPSS::DoFLayout::RT;
   static constexpr int             fe_degree_v   = fe_degree_p;
+  static constexpr int             fe_degree_sf  = fe_degree_v + 1;
   static constexpr int             n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
 
   using value_type           = Number;
-  using matrix_type          = LocalSolverStream<dim, Number, is_simplified>;
+  using matrix_type_stream   = MatrixAsTable<VectorizedArray<Number>>;
+  using matrix_type          = LocalSolverStream<dim, Number, matrix_type_stream, is_simplified>;
   using transfer_type        = typename matrix_type::transfer_type;
   using transfer_type_stream = typename matrix_type::transfer_type_stream;
   using operator_type        = TrilinosWrappers::BlockSparseMatrix;
@@ -5355,7 +5497,10 @@ public:
   void
   initialize(const EquationData & equation_data_in)
   {
-    equation_data = equation_data_in;
+    active_dofh_index_v  = 0;
+    active_dofh_index_p  = 1;
+    active_dofh_index_sf = 2;
+    equation_data        = equation_data_in;
   }
 
   void
@@ -5366,10 +5511,13 @@ public:
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
     AssertDimension(subdomain_handler.n_dof_handlers(), 3U);
+    Assert(active_dofh_index_v != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+    Assert(active_dofh_index_p != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+    Assert(active_dofh_index_sf != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
 
-    const auto & dofh_v  = subdomain_handler.get_dof_handler(0);
-    const auto & dofh_p  = subdomain_handler.get_dof_handler(1);
-    const auto & dofh_sf = subdomain_handler.get_dof_handler(2);
+    const auto & dofh_v  = subdomain_handler.get_dof_handler(active_dofh_index_v);
+    const auto & dofh_p  = subdomain_handler.get_dof_handler(active_dofh_index_p);
+    const auto & dofh_sf = subdomain_handler.get_dof_handler(active_dofh_index_sf);
 
     const auto   patch_transfer_sf   = get_patch_transfer_stream(subdomain_handler);
     const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
@@ -5457,8 +5605,8 @@ public:
           const UpdateFlags interface_update_flags = update_flags | update_normal_vectors;
 
           ScratchData<dim> scratch_data(subdomain_handler.get_mapping(),
-                                        subdomain_handler.get_dof_handler(2).get_fe(),
-                                        subdomain_handler.get_dof_handler(2).get_fe(),
+                                        dofh_sf.get_fe(),
+                                        dofh_sf.get_fe(),
                                         n_q_points_1d,
                                         update_flags,
                                         update_flags,
@@ -5534,18 +5682,24 @@ public:
   std::shared_ptr<transfer_type>
   get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
   {
+    Assert(active_dofh_index_v != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+    Assert(active_dofh_index_p != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
     std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
-    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
-    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
+    dofinfos.push_back(&subdomain_handler.get_dof_info(active_dofh_index_v));
+    dofinfos.push_back(&subdomain_handler.get_dof_info(active_dofh_index_p));
     return std::make_shared<transfer_type>(dofinfos);
   }
 
   std::shared_ptr<transfer_type_stream>
   get_patch_transfer_stream(const SubdomainHandler<dim, Number> & subdomain_handler) const
   {
-    return std::make_shared<transfer_type_stream>(subdomain_handler, 2);
+    Assert(active_dofh_index_sf != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+    return std::make_shared<transfer_type_stream>(subdomain_handler, active_dofh_index_sf);
   }
 
+  unsigned int active_dofh_index_v  = numbers::invalid_unsigned_int;
+  unsigned int active_dofh_index_p  = numbers::invalid_unsigned_int;
+  unsigned int active_dofh_index_sf = numbers::invalid_unsigned_int;
   EquationData equation_data;
 };
 
@@ -5638,6 +5792,25 @@ struct MatrixIntegratorSelector<LocalAssembly::StreamLMW,
   static_assert(dof_layout_v == TPSS::DoFLayout::RT, "Implemented for Raviart-Thomas.");
   static_assert(fe_degree_p == fe_degree_v, "Mismatching finite element degrees.");
   using type = LMW::MatrixIntegratorStream<dim, fe_degree_p, Number, is_simplified>;
+};
+
+template<int dim,
+         int fe_degree_p,
+         typename Number,
+         TPSS::DoFLayout dof_layout_v,
+         int             fe_degree_v,
+         bool            is_simplified>
+struct MatrixIntegratorSelector<LocalAssembly::StreamTensor,
+                                dim,
+                                fe_degree_p,
+                                Number,
+                                dof_layout_v,
+                                fe_degree_v,
+                                is_simplified>
+{
+  static_assert(dof_layout_v == TPSS::DoFLayout::RT, "Implemented for Raviart-Thomas.");
+  static_assert(fe_degree_p == fe_degree_v, "Mismatching finite element degrees.");
+  using type = FD::MatrixIntegratorStream<dim, fe_degree_p, Number, is_simplified>;
 };
 
 

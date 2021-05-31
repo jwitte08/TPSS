@@ -1775,13 +1775,15 @@ enum class LocalAssembly
   Tensor,
   Cut,
   LMW,
-  StreamLMW
+  StreamLMW,
+  StreamTensor
 };
 
 enum class LocalSolver
 {
   Exact,
-  DiagonalVelocity
+  DiagonalVelocity,
+  C0IP
 };
 
 enum class Method
@@ -1836,7 +1838,7 @@ struct EquationData
   static std::string
   str_local_solver(const LocalSolver variant)
   {
-    std::string str[] = {"exact", "block-diagonal-velocity"};
+    std::string str[] = {"exact", "block-diagonal-velocity", "c0ip (exact)"};
     return str[static_cast<int>(variant)];
   }
 
@@ -1849,14 +1851,14 @@ struct EquationData
   std::string
   sstr_local_solver() const
   {
-    std::string str[] = {"exact", "diagvelo"};
+    std::string str[] = {"exact", "diagvelo", "c0ip"};
     return str[static_cast<int>(local_solver)];
   }
 
   static std::string
   str_local_assembly(LocalAssembly variant)
   {
-    std::string str[] = {"tensor", "cut", "lmw", "lmwstream"};
+    std::string str[] = {"tensor", "cut", "lmw", "streamlmw", "streamtensor"};
     return str[static_cast<int>(variant)];
   }
 

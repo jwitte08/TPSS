@@ -524,9 +524,13 @@ protected:
   }
 
 
-  template<bool is_simplified = false>
+  /**
+   * is_lmw : If true use LMW::MatrixIntegratorStream otherwise use
+   *          FD:MatrixIntegratorStream.
+   */
+  template<bool is_simplified = false, bool is_lmw = true>
   void
-  check_matrixintegratorstreamlmw()
+  check_matrixintegratorstream()
   {
     ASSERT_GT(fe_degree_p, 0) << " ... test is expected to fail!";
 
@@ -543,7 +547,14 @@ protected:
 
     ASSERT_EQ(StokesProblem::dof_layout_v, TPSS::DoFLayout::RT);
     using MatrixIntegrator =
-      VelocityPressure::LMW::MatrixIntegratorStream<dim, fe_degree_p, double, is_simplified>;
+      VelocityPressure::MatrixIntegrator<dim,
+                                         fe_degree_p,
+                                         double,
+                                         TPSS::DoFLayout::RT,
+                                         fe_degree_p,
+                                         (is_lmw ? LocalAssembly::StreamLMW :
+                                                   LocalAssembly::StreamTensor),
+                                         is_simplified>;
 
     using local_matrix_type = typename MatrixIntegrator::matrix_type;
 
@@ -1164,9 +1175,9 @@ TYPED_TEST_P(TestStokesIntegrator, matrixintegratorstreamlmw_MPI)
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.n_repetitions = 2;
   Fixture::options.prms.mesh.n_refinements = 0;
-  Fixture::template check_matrixintegratorstreamlmw<false>();
+  Fixture::template check_matrixintegratorstream<false>();
   Fixture::options.prms.mesh.n_refinements = 2;
-  Fixture::template check_matrixintegratorstreamlmw<false>();
+  Fixture::template check_matrixintegratorstream<false>();
 }
 */
 
@@ -1177,7 +1188,7 @@ TYPED_TEST_P(TestStokesIntegrator, localsolverstream_velocity_MPI)
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.n_repetitions = 2;
   Fixture::options.prms.mesh.n_refinements = 0;
-  Fixture::check_matrixintegratorstreamlmw();
+  Fixture::check_matrixintegratorstream();
   Fixture::check_localsolverstream(Fixture::lssVariant::Stream);
   Fixture::options.prms.mesh.n_repetitions = 3;
   Fixture::options.prms.mesh.n_refinements = 0;
@@ -1294,9 +1305,9 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorstreamlmw_MPI)
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.n_repetitions = 2;
   Fixture::options.prms.mesh.n_refinements = 0;
-  Fixture::template check_matrixintegratorstreamlmw<true>();
+  Fixture::template check_matrixintegratorstream<true>();
   Fixture::options.prms.mesh.n_refinements = 2;
-  Fixture::template check_matrixintegratorstreamlmw<true>();
+  Fixture::template check_matrixintegratorstream<true>();
 }
 
 
@@ -1308,9 +1319,9 @@ TYPED_TEST_P(TestStokesIntegrator, c0ip_matrixintegratorstreamlmw_MPI)
   Fixture::equation_data_biharm.use_stokes_formulation = false; // c0ip
   Fixture::options.prms.mesh.n_repetitions             = 2;
   Fixture::options.prms.mesh.n_refinements             = 0;
-  Fixture::template check_matrixintegratorstreamlmw<true>();
+  Fixture::template check_matrixintegratorstream<true>();
   Fixture::options.prms.mesh.n_refinements = 2;
-  Fixture::template check_matrixintegratorstreamlmw<true>();
+  Fixture::template check_matrixintegratorstream<true>();
 }
 
 
@@ -1321,7 +1332,7 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_localsolverstream_velocity_MPI)
   Fixture::setup_matrixintegratorlmw();
   Fixture::options.prms.mesh.n_repetitions = 2;
   Fixture::options.prms.mesh.n_refinements = 0;
-  Fixture::template check_matrixintegratorstreamlmw<true>();
+  Fixture::template check_matrixintegratorstream<true>();
   Fixture::template check_localsolverstream<true>(Fixture::lssVariant::Stream);
   Fixture::options.prms.mesh.n_repetitions = 3;
   Fixture::options.prms.mesh.n_refinements = 0;
@@ -1364,6 +1375,20 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_localsolverstream_pressure_MPI)
 
 
 
+TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorstreamfd_MPI)
+{
+  using Fixture = TestStokesIntegrator<TypeParam>;
+  Fixture::setup_matrixintegratorlmw();
+  Fixture::options.prms.mesh.n_repetitions = 2;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  Fixture::equation_data.local_solver      = LocalSolver::C0IP;
+  Fixture::template check_matrixintegratorstream<true, false>();
+  Fixture::options.prms.mesh.n_refinements = 2;
+  Fixture::template check_matrixintegratorstream<true, false>();
+}
+
+
+
 REGISTER_TYPED_TEST_SUITE_P(
   TestStokesIntegrator,
   /*CheckSystemMatrixVelocity,
@@ -1395,7 +1420,8 @@ REGISTER_TYPED_TEST_SUITE_P(
   c0ip_matrixintegratorstreamlmw_MPI,
   simplified_localsolverstream_velocity_MPI,
   simplified_localsolverstream_gradp_MPI,
-  simplified_localsolverstream_pressure_MPI);
+  simplified_localsolverstream_pressure_MPI,
+  simplified_matrixintegratorstreamfd_MPI);
 
 
 
