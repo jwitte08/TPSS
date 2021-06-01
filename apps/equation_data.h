@@ -1781,9 +1781,9 @@ enum class LocalAssembly
 
 enum class LocalSolver
 {
-  Exact,
-  DiagonalVelocity,
-  C0IP
+  Exact            = 0,
+  DiagonalVelocity = 1,
+  C0IP             = 2
 };
 
 enum class Method
@@ -1875,6 +1875,8 @@ struct EquationData
     oss << Util::parameter_to_fstring("Local Solver:", str_local_solver(local_solver));
     if(local_kernel_size != numbers::invalid_unsigned_int)
       oss << Util::parameter_to_fstring("Kernel size (local solver):", local_kernel_size);
+    if(local_kernel_threshold != 0.)
+      oss << Util::parameter_to_fstring("Kernel threshold (local solver):", local_kernel_threshold);
     return oss.str();
   }
 

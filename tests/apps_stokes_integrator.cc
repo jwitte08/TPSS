@@ -1282,7 +1282,7 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorlmwDGQ_velocityvel
   Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::template check_matrixintegratorlmw<Method::DGQkplus2_DGPk, true>({0U, 0U});
 }
-
+*/
 
 
 TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorlmwRT_velocityvelocity_MPI)
@@ -1295,8 +1295,15 @@ TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorlmwRT_velocityvelo
   Fixture::template check_matrixintegratorlmw<Method::RaviartThomas, true>({0U, 0U});
   Fixture::options.prms.mesh.n_refinements = 1;
   Fixture::template check_matrixintegratorlmw<Method::RaviartThomas, true>({0U, 0U});
+  /// testing IP pre-factor larger than one...
+  Fixture::equation_data.ip_factor         = 100.;
+  Fixture::options.prms.mesh.n_repetitions = 3;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  Fixture::template check_matrixintegratorlmw<Method::RaviartThomas, true>({0U, 0U});
+  Fixture::options.prms.mesh.n_refinements = 1;
+  Fixture::template check_matrixintegratorlmw<Method::RaviartThomas, true>({0U, 0U});
 }
-*/
+
 
 
 TYPED_TEST_P(TestStokesIntegrator, simplified_matrixintegratorstreamlmw_MPI)
@@ -1414,8 +1421,8 @@ REGISTER_TYPED_TEST_SUITE_P(
   /*simplified_matrixintegratorfdQ_velocity_MPI,
                      simplified_matrixintegratorfdDGQ_velocity_MPI,
                      simplified_matrixintegratorlmwQ_velocityvelocity_MPI,
-                     simplified_matrixintegratorlmwDGQ_velocityvelocity_MPI,
-                     simplified_matrixintegratorlmwRT_velocityvelocity_MPI,*/
+                     simplified_matrixintegratorlmwDGQ_velocityvelocity_MPI,*/
+  simplified_matrixintegratorlmwRT_velocityvelocity_MPI,
   simplified_matrixintegratorstreamlmw_MPI,
   c0ip_matrixintegratorstreamlmw_MPI,
   simplified_localsolverstream_velocity_MPI,

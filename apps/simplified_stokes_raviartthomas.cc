@@ -38,7 +38,7 @@ main(int argc, char * argv[])
     unsigned int force_mean_value_constraint = false;
     double       ip_factor                   = 1.;
     unsigned int n_cycles                    = 3;
-    unsigned int local_solver_variant        = 0;
+    unsigned int local_solver_index          = 0;
     unsigned int pde_index                   = 6; // NoSlipExp
     int          n_threads_max               = 1;
 
@@ -46,11 +46,12 @@ main(int argc, char * argv[])
     atoi_if(test_index, 1);
     atoi_if(pde_index, 2);
     atoi_if(n_cycles, 3);
-    atoi_if(debug_depth, 4);
+    atof_if(ip_factor, 4);
     atof_if(damping, 5);
     atoi_if(force_mean_value_constraint, 6);
-    atoi_if(local_solver_variant, 7);
+    atoi_if(local_solver_index, 7);
     atoi_if(n_threads_max, 8);
+    atoi_if(debug_depth, 9);
 
     //: check parsed arguments
     AssertThrow(pde_index < EquationData::n_variants,
@@ -85,9 +86,6 @@ main(int argc, char * argv[])
 
     options.setup(test_index, damping);
     options.prms.n_cycles = n_cycles;
-    /// each side of the rectangular domain needs its own boundary_id (otherwise
-    /// MGConstrainedDoFs::make_no_normal_zero_flux() is not supported)
-    // options.prms.mesh.do_colorization = true;
 
     EquationData equation_data;
     equation_data.variant           = static_cast<EquationData::Variant>(pde_index);
@@ -97,11 +95,9 @@ main(int argc, char * argv[])
     equation_data.do_mean_value_constraint = force_mean_value_constraint;
     if(options.prms.solver.variant == "direct")
       equation_data.do_mean_value_constraint = true;
-    equation_data.ip_factor    = ip_factor;
-    equation_data.local_solver = static_cast<LocalSolver>(local_solver_variant);
-    // if(options.prms.mesh.do_colorization)
-    //   for(types::boundary_id id = 0; id < GeometryInfo<dim>::faces_per_cell; ++id)
-    //     equation_data.dirichlet_boundary_ids_velocity.insert(id);
+    if(ip_factor != 1.)
+      equation_data.ip_factor = ip_factor * (fe_degree_p + 1);
+    equation_data.local_solver = static_cast<LocalSolver>(local_solver_index);
 
     const auto filename = get_filename(options.prms, equation_data);
 

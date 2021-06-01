@@ -32,7 +32,7 @@ main(int argc, char * argv[])
     unsigned int force_mean_value_constraint = false;
     double       ip_factor                   = 1.;
     unsigned int n_cycles                    = 3;
-    unsigned int local_solver_variant        = 0;
+    unsigned int local_solver_index          = 2; // C0IP !!!
     unsigned int pde_index                   = 4; // NoSlip
     int          n_threads_max               = 1;
 
@@ -43,7 +43,7 @@ main(int argc, char * argv[])
     atoi_if(debug_depth, 4);
     atof_if(damping, 5);
     atoi_if(force_mean_value_constraint, 6);
-    atoi_if(local_solver_variant, 7);
+    atoi_if(local_solver_index, 7);
     atoi_if(n_threads_max, 8);
 
     deallog.depth_console(debug_depth);
@@ -79,15 +79,13 @@ main(int argc, char * argv[])
     AssertThrow(pde_index < EquationData::n_variants,
                 ExcMessage("This equation is not implemented."));
     equation_data.variant = static_cast<EquationData::Variant>(pde_index);
-    // if(options.prms.solver.variant == "GMRES_GMG" || options.prms.solver.variant == "CG_GMG")
-    //   equation_data.local_kernel_size = 1U;
     AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
                 ExcMessage("Invalid."));
     equation_data.do_mean_value_constraint = force_mean_value_constraint;
     if(options.prms.solver.variant == "direct")
       equation_data.do_mean_value_constraint = true;
     equation_data.ip_factor    = ip_factor;
-    equation_data.local_solver = static_cast<LocalSolver>(local_solver_variant);
+    equation_data.local_solver = static_cast<LocalSolver>(local_solver_index);
 
     std::fstream fout;
     const auto   filename = get_filename(options.prms, equation_data);

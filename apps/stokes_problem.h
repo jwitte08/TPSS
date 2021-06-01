@@ -590,7 +590,7 @@ struct ModelProblemBase<Method::RaviartThomasStream, dim, fe_degree_p>
   using fe_type_v                               = FE_RaviartThomas_new<dim>;
   using fe_type_p                               = FE_DGQLegendre<dim>;
   static constexpr int           fe_degree_v    = fe_degree_p;
-  static constexpr LocalAssembly local_assembly = LocalAssembly::StreamLMW;
+  static constexpr LocalAssembly local_assembly = LocalAssembly::StreamTensor;
 };
 
 
@@ -918,7 +918,7 @@ ModelProblem<dim, fe_degree_p, method, is_simplified>::ModelProblem(
                 ExcMessage(oss.str()));
   }
 
-  if(local_assembly == LocalAssembly::StreamLMW)
+  if(local_assembly == LocalAssembly::StreamLMW || local_assembly == LocalAssembly::StreamTensor)
     equation_data.setup_stream_functions = true;
 }
 
