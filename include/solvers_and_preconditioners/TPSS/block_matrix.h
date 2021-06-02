@@ -1553,6 +1553,12 @@ public:
   MatrixType &
   get_block(const std::size_t row_index, const std::size_t col_index);
 
+  std::shared_ptr<const InverseTable<Number>>
+  share_basic_inverse() const
+  {
+    return basic_inverse;
+  }
+
   void
   invert(const typename InverseTable<Number>::AdditionalData & additional_data =
            typename InverseTable<Number>::AdditionalData{});
