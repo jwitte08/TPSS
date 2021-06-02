@@ -5021,7 +5021,8 @@ public:
 
   using value_type    = Number;
   using transfer_type = typename TPSS::PatchTransferBlock<dim, Number>;
-  // using matrix_type   = Tensors::BlockMatrixBasic2x2<MatrixAsTable<VectorizedArray<Number>>>; // !!!
+  // using matrix_type   = Tensors::BlockMatrixBasic2x2<MatrixAsTable<VectorizedArray<Number>>>; //
+  // !!!
   using matrix_type   = Tensors::BlockMatrixBasic<MatrixAsTable<VectorizedArray<Number>>>;
   using operator_type = TrilinosWrappers::BlockSparseMatrix;
 
@@ -5045,8 +5046,7 @@ public:
     typename matrix_type::AdditionalData additional_data;
     // additional_data.basic_inverse = {equation_data.local_kernel_size,
     //                                  equation_data.local_kernel_threshold}; // !!!
-    additional_data = {equation_data.local_kernel_size,
-		       equation_data.local_kernel_threshold};
+    additional_data = {equation_data.local_kernel_size, equation_data.local_kernel_threshold};
 
     const auto   patch_transfer     = get_patch_transfer(subdomain_handler);
     const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);

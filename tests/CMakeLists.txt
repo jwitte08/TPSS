@@ -42,6 +42,7 @@ set (src_files
   block_matrix_base.cc
   local_mesh_loop.cc
   apps_biharmonic.cc
+  apps_stokes_raviartthomas_all.cc
 )
 
 add_custom_target(setup_tests)
