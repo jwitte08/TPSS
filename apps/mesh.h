@@ -62,6 +62,7 @@ struct MeshParameter
   std::vector<unsigned int> n_subdivisions;
   double                    distortion      = -1.0;
   bool                      do_colorization = false;
+  std::pair<double, double> domain_1d       = {0., 1.};
 };
 
 
@@ -121,8 +122,8 @@ create_unit_cube(Triangulation<dim> & tria, const MeshParameter & prm)
 
   // domain
   std::ostringstream oss;
-  const double       left = 0.0, right = 1.0;
-  const auto         str_domain = [&]() {
+  const auto [left, right] = prm.domain_1d;
+  const auto str_domain    = [&]() {
     std::ostringstream oss;
     for(unsigned int d = 0; d < dim; ++d)
       oss << "(" << left << ", " << right << (d != (dim - 1) ? ") x " : ")");
@@ -171,8 +172,8 @@ create_distorted_cube(Triangulation<dim> & tria, const MeshParameter & prm)
 
   // domain
   std::ostringstream oss;
-  const double       left = 0.0, right = 1.0;
-  const auto         str_domain = [&]() {
+  const auto [left, right] = prm.domain_1d;
+  const auto str_domain    = [&]() {
     std::ostringstream oss;
     for(unsigned int d = 0; d < dim; ++d)
       oss << "(" << left << ", " << right << (d != (dim - 1) ? ") x " : ")");
