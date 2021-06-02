@@ -1498,15 +1498,15 @@ public:
   /**
    * This method inverts the 2x2 block matrix by means of Gaussian block
    * elimination (internally, an instance of BlockGaussianInverseBasic-type is
-   * used). Settings used for inversion are are passed as @p additional_data (to
+   * used). Settings used for inversion are passed as @p additional_data (to
    * this instance).
    *
    * If @p omit_inversion_of_blocks is false we invert the 0-0 block with
    * default options. If you want to invert the 0-0 block with certain
-   * parameters just query this block by get_block(0, 0), then, call invert()
-   * and finally set @p omit_inversion_of_blocks to true, which suppresses a
-   * fresh inversion of the 0-0 block with default parameters when calling this
-   * method.
+   * parameters query this block by @p get_block(0, 0) and invert it. Afterwards
+   * calling invert() with @p omit_inversion_of_blocks set to true initializes
+   * the Gaussian block elimination suppressing the default inversion of the 0-0
+   * block.
    */
   void
   invert(const AdditionalData & additional_data          = AdditionalData{},
