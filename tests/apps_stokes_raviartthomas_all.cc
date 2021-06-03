@@ -147,28 +147,28 @@ TYPED_TEST_P(TestSimplifiedRaviartThomas, localsvd)
   Fixture::options.prms.mesh.n_repetitions    = 2;
 
   /// single vertex-patch
-  Fixture::options.prms.mesh.n_refinements    = 0;
-  double h                                    = 2.;
+  Fixture::options.prms.mesh.n_refinements = 0;
+  double h                                 = 2.;
   for(auto l = 0U; l < 10; ++l)
   {
     *Fixture::pcout_owned << std::endl;
     h *= 0.5;
     Fixture::options.prms.mesh.domain_1d = {0., h};
     Fixture::check_localsvd();
-    if (l == 0U)
+    if(l == 0U)
       Fixture::stokes_problem->print_informations();
   }
 
   /// vertex-patches with all kinds of boundaries
-  Fixture::options.prms.mesh.n_refinements    = 1;
-  h                                    = 4.;
+  Fixture::options.prms.mesh.n_refinements = 1;
+  h                                        = 4.;
   for(auto l = 0U; l < 10; ++l)
   {
     *Fixture::pcout_owned << std::endl;
     h *= 0.5;
     Fixture::options.prms.mesh.domain_1d = {0., h};
     Fixture::check_localsvd();
-    if (l == 0U)
+    if(l == 0U)
       Fixture::stokes_problem->print_informations();
   }
 }

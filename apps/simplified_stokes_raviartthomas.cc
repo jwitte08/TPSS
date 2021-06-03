@@ -32,18 +32,18 @@ main(int argc, char * argv[])
     };
 
     //: default
-    unsigned int test_index                  = 5; // unprec. CG
-    unsigned int debug_depth                 = 0;
-    double       damping                     = 0.;
-    unsigned int force_mean_value_constraint = false;
-    double       ip_factor                   = 1.;
-    unsigned int n_cycles                    = 3;
-    unsigned int local_solver_index          = 0;
-    unsigned int pde_index                   = 6; // NoSlipExp
-    int          n_threads_max               = 1;
-    types::global_dof_index dof_limit_min = 1e1;
-    types::global_dof_index dof_limit_max = 1e5;
-    
+    unsigned int            test_index                  = 5; // unprec. CG
+    unsigned int            debug_depth                 = 0;
+    double                  damping                     = 0.;
+    unsigned int            force_mean_value_constraint = false;
+    double                  ip_factor                   = 1.;
+    unsigned int            n_cycles                    = 3;
+    unsigned int            local_solver_index          = 0;
+    unsigned int            pde_index                   = 6; // NoSlipExp
+    int                     n_threads_max               = 1;
+    types::global_dof_index dof_limit_min               = 1e1;
+    types::global_dof_index dof_limit_max               = 1e5;
+
 
     //: parse arguments
     atoi_if(test_index, 1);
@@ -90,7 +90,7 @@ main(int argc, char * argv[])
     }
 
     options.setup(test_index, damping);
-    options.prms.n_cycles = n_cycles;
+    options.prms.n_cycles   = n_cycles;
     options.prms.dof_limits = {dof_limit_min, dof_limit_max};
 
     EquationData equation_data;
