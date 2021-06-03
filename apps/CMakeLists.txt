@@ -31,7 +31,8 @@ set(sourcefiles
   simplified_stokes_DGQkplus1_DGPk.cc
   simplified_stokes_raviartthomas.cc
   simplified_stokes_raviartthomasstream.cc
-  )
+  stokes_optdamping.cc
+)
 
 foreach(src ${sourcefiles})
   # string replace: cut off .cc from file src  
