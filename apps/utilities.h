@@ -104,7 +104,7 @@ struct ConditionalAtoi
       return;
     if(std::strcmp(argv[index], skipper) == 0)
       return;
-    prm = std::atoi(argv[index]);
+    prm = std::atoll(argv[index]);
   }
 
   std::vector<char const *> argv;
