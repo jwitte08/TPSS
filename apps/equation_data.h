@@ -1783,7 +1783,8 @@ enum class LocalSolver
 {
   Exact            = 0,
   DiagonalVelocity = 1,
-  C0IP             = 2
+  C0IP             = 2,
+  Bilaplacian      = 3
 };
 
 enum class Method
@@ -1838,7 +1839,7 @@ struct EquationData
   static std::string
   str_local_solver(const LocalSolver variant)
   {
-    std::string str[] = {"exact", "block-diagonal-velocity", "c0ip (exact)"};
+    std::string str[] = {"exact", "block-diagonal-velocity", "c0ip (exact)", "bilaplacian"};
     return str[static_cast<int>(variant)];
   }
 
@@ -1851,7 +1852,7 @@ struct EquationData
   std::string
   sstr_local_solver() const
   {
-    std::string str[] = {"exact", "diagvelo", "c0ip"};
+    std::string str[] = {"exact", "diagvelo", "c0ip", "bila"};
     return str[static_cast<int>(local_solver)];
   }
 

@@ -3941,6 +3941,20 @@ struct LocalSolverStream
   std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth;
   std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth_faces;
 
+  unsigned int
+  m() const
+  {
+    Assert(subdomain_handler, ExcMessage("subdomain_handler is not initialized."));
+    const auto patch_transfer = get_patch_transfer(*subdomain_handler);
+    return patch_transfer->n_dofs_per_patch();
+  }
+
+  unsigned int
+  n() const
+  {
+    return m();
+  }
+
   void
   apply_inverse(const ArrayView<value_type> &       dst_view,
                 const ArrayView<const value_type> & src_view) const
@@ -4898,6 +4912,8 @@ public:
     equation_data        = equation_data_in;
     if(equation_data.local_solver == LocalSolver::C0IP)
       equation_data_biharm.local_solver_variant = Biharmonic::LocalSolverVariant::Exact;
+    else if(equation_data.local_solver == LocalSolver::Bilaplacian)
+      equation_data_biharm.local_solver_variant = Biharmonic::LocalSolverVariant::Bilaplacian;
     else
       Assert(false, ExcMessage("Not implemented. TODO"));
   }

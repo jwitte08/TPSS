@@ -32,7 +32,7 @@ main(int argc, char * argv[])
     unsigned int            force_mean_value_constraint = false;
     double                  ip_factor                   = 1.;
     unsigned int            n_cycles                    = 3;
-    unsigned int            local_solver_index          = 2; // C0IP !!!
+    unsigned int            local_solver_index          = 3; // Bila !!!
     unsigned int            pde_index                   = 6; // NoSlipExp
     int                     n_threads_max               = 1;
     types::global_dof_index dof_limit_min               = 1e1;
@@ -79,6 +79,8 @@ main(int argc, char * argv[])
     options.prms.dof_limits = {dof_limit_min, dof_limit_max};
     options.prms.multigrid.pre_smoother.schwarz.n_active_blocks =
       options.prms.multigrid.post_smoother.schwarz.n_active_blocks = 2;
+    // options.prms.multigrid.pre_smoother.n_smoothing_steps =
+    //   options.prms.multigrid.post_smoother.n_smoothing_steps = 1; // !!!
 
     EquationData equation_data;
     AssertThrow(pde_index < EquationData::n_variants,
