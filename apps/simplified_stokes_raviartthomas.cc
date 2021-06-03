@@ -41,17 +41,22 @@ main(int argc, char * argv[])
     unsigned int local_solver_index          = 0;
     unsigned int pde_index                   = 6; // NoSlipExp
     int          n_threads_max               = 1;
+    types::global_dof_index dof_limit_min = 1e1;
+    types::global_dof_index dof_limit_max = 1e5;
+    
 
     //: parse arguments
     atoi_if(test_index, 1);
     atoi_if(pde_index, 2);
     atoi_if(n_cycles, 3);
-    atof_if(ip_factor, 4);
-    atof_if(damping, 5);
+    atoi_if(dof_limit_min, 4);
+    atoi_if(dof_limit_max, 5);
     atoi_if(force_mean_value_constraint, 6);
     atoi_if(local_solver_index, 7);
     atoi_if(n_threads_max, 8);
     atoi_if(debug_depth, 9);
+    atof_if(ip_factor, 10);
+    atof_if(damping, 11);
 
     //: check parsed arguments
     AssertThrow(pde_index < EquationData::n_variants,
@@ -86,6 +91,7 @@ main(int argc, char * argv[])
 
     options.setup(test_index, damping);
     options.prms.n_cycles = n_cycles;
+    options.prms.dof_limits = {dof_limit_min, dof_limit_max};
 
     EquationData equation_data;
     equation_data.variant           = static_cast<EquationData::Variant>(pde_index);
