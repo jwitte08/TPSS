@@ -225,6 +225,12 @@ public:
                 const unsigned int            column_start,
                 const unsigned int            lane);
 
+  std::shared_ptr<const InverseTable<Number>>
+  share_basic_inverse() const
+  {
+    return inverse_matrix;
+  }
+
 private:
   Table<2, Number> matrix;
 
