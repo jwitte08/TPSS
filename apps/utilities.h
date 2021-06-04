@@ -195,14 +195,12 @@ short_name(const std::string & str_in)
 
 
 
-template<typename MatrixType,
-         typename VectorType = LinearAlgebra::distributed::Vector<typename MatrixType::value_type>>
-struct MatrixWrapper
+template<typename MatrixType>
+struct MatrixWrapperBase
 {
-  using value_type  = typename MatrixType::value_type;
-  using vector_type = VectorType;
+  using value_type = typename MatrixType::value_type;
 
-  MatrixWrapper(const MatrixType & matrix_in) : matrix(matrix_in)
+  MatrixWrapperBase(const MatrixType & matrix_in) : matrix(matrix_in)
   {
   }
 
@@ -218,18 +216,8 @@ struct MatrixWrapper
     return matrix.n();
   }
 
-  void
-  vmult(const ArrayView<value_type> dst_view, const ArrayView<const value_type> src_view) const
-  {
-    AssertThrow(Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD) == 1U,
-                ExcMessage("No MPI support"));
-    vector_type dst(dst_view.size());
-    vector_type src(src_view.size());
-
-    std::copy(src_view.cbegin(), src_view.cend(), src.begin());
-    matrix.vmult(dst, src);
-    std::copy(dst.begin(), dst.end(), dst_view.begin());
-  }
+  virtual void
+  vmult(const ArrayView<value_type> dst_view, const ArrayView<const value_type> src_view) const = 0;
 
   FullMatrix<value_type>
   as_fullmatrix()
@@ -238,6 +226,67 @@ struct MatrixWrapper
   }
 
   const MatrixType & matrix;
+};
+
+
+
+template<typename MatrixType,
+         typename VectorType = LinearAlgebra::distributed::Vector<typename MatrixType::value_type>>
+struct MatrixWrapper : public MatrixWrapperBase<MatrixType>
+{
+  using Base        = MatrixWrapperBase<MatrixType>;
+  using value_type  = typename Base::value_type;
+  using vector_type = VectorType;
+
+  MatrixWrapper(const MatrixType & matrix_in) : MatrixWrapperBase<MatrixType>(matrix_in)
+  {
+  }
+
+  virtual void
+  vmult(const ArrayView<value_type>       dst_view,
+        const ArrayView<const value_type> src_view) const override
+  {
+    vector_type dst(dst_view.size());
+    vector_type src(src_view.size());
+
+    std::copy(src_view.cbegin(), src_view.cend(), src.begin());
+    Base::matrix.vmult(dst, src);
+    std::copy(dst.begin(), dst.end(), dst_view.begin());
+  }
+};
+
+
+
+template<typename MatrixType,
+         typename VectorType =
+           LinearAlgebra::distributed::BlockVector<typename MatrixType::value_type>>
+struct BlockMatrixWrapper : public MatrixWrapperBase<MatrixType>
+{
+  using Base        = MatrixWrapperBase<MatrixType>;
+  using value_type  = typename Base::value_type;
+  using vector_type = VectorType;
+
+  BlockMatrixWrapper(const MatrixType &                           matrix_in,
+                     const std::vector<types::global_dof_index> & block_sizes_in)
+    : MatrixWrapperBase<MatrixType>(matrix_in), block_sizes(block_sizes_in)
+  {
+  }
+
+  virtual void
+  vmult(const ArrayView<value_type>       dst_view,
+        const ArrayView<const value_type> src_view) const override
+  {
+    vector_type dst(block_sizes);
+    dst.collect_sizes();
+    vector_type src(block_sizes);
+    src.collect_sizes();
+
+    std::copy(src_view.cbegin(), src_view.cend(), src.begin());
+    Base::matrix.vmult(dst, src);
+    std::copy(dst.begin(), dst.end(), dst_view.begin());
+  }
+
+  const std::vector<types::global_dof_index> block_sizes;
 };
 
 } // end namespace Util
