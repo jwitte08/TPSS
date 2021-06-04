@@ -52,13 +52,14 @@ main(int argc, char * argv[])
 
   //: default
   unsigned     n_refinements      = 0;
-  unsigned     n_repetitions      = 3;
+  unsigned     n_repetitions      = 2; // 3 !!!
   double       damping            = 1.;
   double       omega              = 1.; // local stability constant
   int          n_threads_max      = 1;
   double       ip_factor          = 1.;
   unsigned int local_solver_index = 0; // exact
   unsigned int ksvd_rank          = 1;
+  unsigned int max_size           = 50;
 
   //: parse runtime arguments
   atoi_if(n_refinements, 1);
@@ -68,6 +69,7 @@ main(int argc, char * argv[])
   atof_if(local_solver_index, 5);
   atof_if(ksvd_rank, 6);
   atoi_if(n_threads_max, 7);
+  atoi_if(max_size, 8);
 
   AssertThrow(local_solver_index < 3U, ExcMessage("invalid local solver"));
 
@@ -158,8 +160,6 @@ main(int argc, char * argv[])
               ExcMessage("MPI not supported."));
 
   ////////// LAMBDAS
-  constexpr unsigned int max_size = 50;
-
   const auto & print_fullmatrix = [&](const FullMatrix<double> & matrix,
                                       const std::string &        description) {
     if(matrix.n() > max_size)
