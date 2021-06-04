@@ -183,11 +183,17 @@ public:
   m() const
   {
     Assert(subdomain_handler, ExcMessage("subdomain_handler not initialized"));
-    AssertDimension(subdomain_handler->n_total_components(), 1U);
-    const auto              dof_infos = subdomain_handler->get_dof_infos();
-    types::global_dof_index n         = 0;
-    for(const auto & info : dof_infos)
-      n += info.vector_partitioner->size();
+    const unsigned int n_active_dof_handlers =
+      additional_data.n_active_blocks == numbers::invalid_unsigned_int ?
+        subdomain_handler->n_dof_handlers() :
+        additional_data.n_active_blocks;
+    const auto &            dof_info = subdomain_handler->get_dof_info(0);
+    types::global_dof_index n        = dof_info.vector_partitioner->size();
+    for(auto dofh_index = 1U; dofh_index < n_active_dof_handlers; ++dofh_index)
+    {
+      const auto & dof_info = subdomain_handler->get_dof_info(dofh_index);
+      n += dof_info.vector_partitioner->size();
+    }
     return n;
   }
 
