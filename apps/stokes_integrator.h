@@ -5010,6 +5010,60 @@ public:
 namespace LMW
 {
 /**
+ * Does nothing. See template specializations.
+ */
+template<typename MatrixType>
+struct CommonMatrixInterface
+{
+};
+
+/**
+ * Common interface to tensor-structure block matrices.
+ */
+template<typename Number>
+struct CommonMatrixInterface<Tensors::BlockMatrixBasic2x2<MatrixAsTable<VectorizedArray<Number>>>>
+{
+  using matrix_type = Tensors::BlockMatrixBasic2x2<MatrixAsTable<VectorizedArray<Number>>>;
+
+  typename matrix_type::AdditionalData
+  make_additional_data(const EquationData & equation_data)
+  {
+    typename matrix_type::AdditionalData additional_data;
+    additional_data.basic_inverse = {equation_data.local_kernel_size,
+                                     equation_data.local_kernel_threshold};
+    return additional_data;
+  }
+
+  void
+  resize_if(matrix_type & /*matrix*/, const unsigned int /*n_blocks*/)
+  {
+  }
+};
+
+/**
+ * Common interface to tensor-structure block matrices.
+ */
+template<typename Number>
+struct CommonMatrixInterface<Tensors::BlockMatrixBasic<MatrixAsTable<VectorizedArray<Number>>>>
+{
+  using matrix_type = Tensors::BlockMatrixBasic<MatrixAsTable<VectorizedArray<Number>>>;
+
+  typename matrix_type::AdditionalData
+  make_additional_data(const EquationData & equation_data)
+  {
+    return {equation_data.local_kernel_size, equation_data.local_kernel_threshold};
+  }
+
+  void
+  resize_if(matrix_type & matrix, const unsigned int n_blocks)
+  {
+    matrix.resize(n_blocks);
+  }
+};
+
+
+
+/**
  * This class actually makes no use of fast diagonalization but simply uses the
  * MeshWorker framework to assemble local matrices. Nevertheless
  * PatchTransferBlock is used as transfer and its underlying PatchDoFWorker to
@@ -5059,10 +5113,11 @@ public:
     if(equation_data.local_solver == LocalSolver::C0IP)
       return;
 
-    typename matrix_type::AdditionalData additional_data;
-    // additional_data.basic_inverse = {equation_data.local_kernel_size,
-    //                                  equation_data.local_kernel_threshold}; // !!!
-    additional_data = {equation_data.local_kernel_size, equation_data.local_kernel_threshold};
+    if(equation_data.local_solver == LocalSolver::Bilaplacian)
+      return;
+
+    typename matrix_type::AdditionalData additional_data =
+      CommonMatrixInterface<matrix_type>{}.make_additional_data(equation_data);
 
     const auto   patch_transfer     = get_patch_transfer(subdomain_handler);
     const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
@@ -5086,7 +5141,7 @@ public:
       const auto & patch_transfer_p = patch_transfer->get_patch_transfer(1);
 
       matrix_type & patch_matrix = local_matrices[patch_index];
-      patch_matrix.resize(2U);
+      CommonMatrixInterface<matrix_type>{}.resize_if(patch_matrix, 2U);
 
       auto & block_velocity = patch_matrix.get_block(0U, 0U);
       block_velocity.as_table().reinit(n_dofs_velocity, n_dofs_velocity);
