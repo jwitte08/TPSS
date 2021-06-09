@@ -436,6 +436,18 @@ remove_noise_from_matrix(MatrixType & matrix)
 
 
 
+template<typename MatrixType, typename Number = typename MatrixType::value_type>
+void
+remove_noise_from_matrix(MatrixType & matrix, const Number threshold)
+{
+  for(auto i = 0U; i < matrix.m(); ++i)
+    for(auto j = 0U; j < matrix.n(); ++j)
+      if(has_nearly_zero_abs_impl(matrix(i, j), threshold))
+        matrix(i, j) = 0.;
+}
+
+
+
 template<typename VectorType>
 void
 remove_noise_from_vector(VectorType & vec)

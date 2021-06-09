@@ -49,7 +49,7 @@ main(int argc, char * argv[])
   double       damping             = 1.;
   double       omega               = 1.; // local stability constant
   unsigned int local_solver_index  = 3;  // Bila !!!
-  bool         do_mirror_p_v_block = true;
+  bool         do_mirror_p_v_block = false;
   unsigned int max_size            = 60;
   ///
   double       ip_factor     = 1.;
@@ -86,7 +86,8 @@ main(int argc, char * argv[])
   constexpr auto fe_degree_p  = fe_degree_sf - 1;
   // constexpr auto patch_variant    = CT::PATCH_VARIANT_;
   // constexpr auto smoother_variant = CT::SMOOTHER_VARIANT_;
-  constexpr bool is_simplified = true;
+  constexpr bool   is_simplified   = true;
+  constexpr double threshold_noise = 1.e-10;
 
   options.setup(test_index, damping);
   options.prms.multigrid.pre_smoother.schwarz.n_active_blocks =
@@ -97,13 +98,16 @@ main(int argc, char * argv[])
   EquationData equation_data;
   AssertThrow(pde_index < EquationData::n_variants,
               ExcMessage("This equation is not implemented."));
-  equation_data.variant      = static_cast<EquationData::Variant>(pde_index);
-  equation_data.ip_factor    = ip_factor;
-  equation_data.local_solver = static_cast<LocalSolver>(local_solver_index);
+  equation_data.variant           = static_cast<EquationData::Variant>(pde_index);
+  equation_data.ip_factor         = ip_factor;
+  equation_data.local_solver      = static_cast<LocalSolver>(local_solver_index);
+  equation_data.local_kernel_size = 1U;
 
   const auto pcout = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);
 
-  using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomasStream, is_simplified>;
+  // using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomasStream,
+  // is_simplified>; // !!!
+  using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomas, is_simplified>;
   StokesProblem stokes_problem(options.prms, equation_data);
   stokes_problem.pcout = pcout;
 
@@ -115,9 +119,9 @@ main(int argc, char * argv[])
 
   AssertThrow(mgc->mg_schwarz_smoother_pre, ExcMessage("Check runtime parameters."));
 
-  using MatrixIntegrator =
-    VelocityPressure::FD::MatrixIntegratorStream<dim, fe_degree_p, double, is_simplified>;
-  using local_matrix_type = typename MatrixIntegrator::matrix_type;
+  // using MatrixIntegrator =
+  //   VelocityPressure::FD::MatrixIntegratorStream<dim, fe_degree_p, double, is_simplified>;
+  // using local_matrix_type = typename MatrixIntegrator::matrix_type;
 
   const auto                                  level          = mgc->mg_matrices.max_level();
   const TrilinosWrappers::BlockSparseMatrix & level_matrix   = mgc->mg_matrices[level];
@@ -191,7 +195,7 @@ main(int argc, char * argv[])
   Util::BlockMatrixWrapper<TrilinosWrappers::BlockSparseMatrix> matrix_wrap(level_matrix,
                                                                             block_sizes_col);
   auto level_fullmatrix = matrix_wrap.as_fullmatrix();
-  remove_noise_from_matrix(level_fullmatrix);
+  remove_noise_from_matrix(level_fullmatrix, threshold_noise);
   print_fullmatrix(level_fullmatrix, "level matrix A:");
 
   using level_precond_type = std::decay<decltype(*level_precond)>::type;
@@ -199,7 +203,7 @@ main(int argc, char * argv[])
   auto                                         level_fullprecond = precond_wrap.as_fullmatrix();
   if(do_mirror_p_v_block)
     mirror_p_v_block(level_fullprecond, n_level_dofs_v);
-  remove_noise_from_matrix(level_fullprecond);
+  remove_noise_from_matrix(level_fullprecond, threshold_noise);
   print_fullmatrix(level_fullprecond, "preconditioner B^{-1}:");
 
   FullMatrix<double> BinvA(level_fullmatrix.m());
@@ -208,7 +212,7 @@ main(int argc, char * argv[])
 
   FullMatrix<double> E(IdentityMatrix(level_fullmatrix.m()));
   E.add(-1., BinvA);
-  remove_noise_from_matrix(E);
+  remove_noise_from_matrix(E, threshold_noise);
   print_fullmatrix(E, "error propagation matrix E=I-B^{-1}A:");
 
   ///// compare local matrices
@@ -228,7 +232,7 @@ main(int argc, char * argv[])
       // tildeAj_inv /= omega;
       if(do_mirror_p_v_block)
         mirror_p_v_block(tildeAj_inv, n_dofs_v);
-      remove_noise_from_matrix(tildeAj_inv);
+      remove_noise_from_matrix(tildeAj_inv, threshold_noise);
       print_fullmatrix(tildeAj_inv, "tildeAj_inv");
 
       FullMatrix<double> Aj(patch_transfer->n_dofs_per_patch());
@@ -245,12 +249,12 @@ main(int argc, char * argv[])
           std::iota(local_indices_col.begin(), local_indices_col.end(), 0U + bj * n_dofs_v);
           tmp.scatter_matrix_to(local_indices_row, local_indices_col, Aj);
         }
-      remove_noise_from_matrix(Aj);
+      remove_noise_from_matrix(Aj, threshold_noise);
       print_fullmatrix(Aj, "Rj A Rj^T:");
 
       FullMatrix<double> approx_identity(Aj.m());
       tildeAj_inv.mmult(approx_identity, Aj);
-      remove_noise_from_matrix(approx_identity);
+      remove_noise_from_matrix(approx_identity, threshold_noise);
       print_fullmatrix(approx_identity, "tildeAj^{-1} Rj A Rj^T:");
 
       const auto & evs = compute_eigenvalues(approx_identity);
@@ -280,10 +284,12 @@ main(int argc, char * argv[])
     const auto copyof_A = level_fullmatrix;
     level_fullmatrix.reinit(interior_dofs.size(), interior_dofs.size());
     level_fullmatrix.extract_submatrix_from(copyof_A, interior_dofs, interior_dofs);
+    remove_noise_from_matrix(level_fullmatrix, threshold_noise);
 
     const auto copyof_E = E;
     E.reinit(interior_dofs.size(), interior_dofs.size());
     E.extract_submatrix_from(copyof_E, interior_dofs, interior_dofs);
+    remove_noise_from_matrix(E, threshold_noise);
   }
 
   print_fullmatrix(level_fullmatrix, "level matrix A (no boundary!):");
