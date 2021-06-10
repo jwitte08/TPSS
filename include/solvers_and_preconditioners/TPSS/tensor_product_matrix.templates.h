@@ -306,7 +306,20 @@ template<int order, typename Number, int n_rows_1d>
 TensorProductMatrix<order, Number, n_rows_1d> &
 TensorProductMatrix<order, Number, n_rows_1d>::operator=(const TensorProductMatrix & other)
 {
-  reinit(other.elementary_tensors, other.additional_data);
+  /// If @p other has separable state other.elementary_tensors are already
+  /// expanded into a separable decomposition, e.g. {[A,M], [M,A]}. However
+  /// calling reinit() with separable state requires exactly two rank-1 tensors,
+  /// one for the mass and the second for the derivative matrices, that is
+  /// {[M,M], [A,A]}.
+  if(other.additional_data.state == State::separable)
+  {
+    Base::reinit(other.elementary_tensors);
+    this->additional_data = other.additional_data;
+    this->eigenvectors    = other.eigenvectors;
+    this->eigenvalues     = other.eigenvalues;
+  }
+  else
+    reinit(other.elementary_tensors, other.additional_data);
   return *this;
 }
 
