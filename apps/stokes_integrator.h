@@ -1117,6 +1117,9 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::cell_residual_worker(
 
   cell_worker_impl(phi_test, phi_ansatz, cell_data);
 
+  if(equation_data.skip_A)
+    cell_data.matrix *= 0.;
+
   if(discrete_solution)
   {
     Vector<double> dof_values(cell_data.dof_indices_column.size());
@@ -1173,6 +1176,9 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::cell_residual_worker_interfa
   cell_stream->get_active_or_mg_dof_indices(cell_data.dof_indices_column);
 
   cell_worker_impl(phi_test, phi_ansatz, cell_data);
+
+  if(equation_data.skip_A)
+    cell_data.matrix *= 0.;
 
   AssertDimension(cell_data.matrix.n(), cell_data.dof_indices_column.size());
 
@@ -1586,6 +1592,9 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::face_residual_worker_tangent
 
   face_worker_tangential_impl(phi_test, phi_ansatz, gamma_over_h, face_data);
 
+  if(equation_data.skip_A)
+    face_data.matrix *= 0.;
+
   if(discrete_solution)
   {
     Vector<double> dof_values(face_data.dof_indices_column.size());
@@ -1662,6 +1671,9 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::face_residual_worker_tangent
     equation_data.ip_factor * 0.5 * compute_penalty_impl(fe_degree, h, nh);
 
   face_worker_tangential_impl(phi_test, phi_ansatz, gamma_over_h, face_data);
+
+  if(equation_data.skip_A)
+    face_data.matrix *= 0.;
 
   AssertDimension(face_data.matrix.m(), face_data.rhs.size());
   AssertDimension(face_data.matrix.n(), face_data.dof_indices_column.size());
@@ -2218,6 +2230,9 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::boundary_or_uniface_residual
                                                          gamma_over_h,
                                                          face_data);
 
+  if(equation_data.skip_A)
+    face_data.matrix *= 0.;
+
   if(discrete_solution)
   {
     Vector<double> dof_values(face_data.dof_indices_column.size());
@@ -2288,6 +2303,9 @@ MatrixIntegrator<dim, is_multigrid, is_simplified>::
                                                          phi_ansatz,
                                                          gamma_over_h,
                                                          face_data);
+
+  if(equation_data.skip_A)
+    face_data.matrix *= 0.;
 
   AssertDimension(face_data.matrix.m(), face_data.rhs.size());
   AssertDimension(face_data.matrix.n(), face_data.dof_indices_column.size());
@@ -3933,7 +3951,7 @@ struct LocalSolverStream
   const SubdomainHandler<dim, Number> * subdomain_handler = nullptr;
   unsigned int                          patch_index       = numbers::invalid_unsigned_int;
   unsigned int                          n_q_points_1d     = numbers::invalid_unsigned_int;
-  const EquationData *                  equation_data;
+  EquationData                          equation_data;
 
   matrix_type_stream                                     solver_sf;
   std::shared_ptr<const ProlongationStream<dim, Number>> prolongation_sf;
@@ -4039,7 +4057,7 @@ struct LocalSolverStream
           using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
 
           MatrixIntegrator<dim, true, is_simplified> matrix_integrator(
-            nullptr, nullptr, nullptr, *equation_data, &interface_handler);
+            nullptr, nullptr, nullptr, equation_data, &interface_handler);
 
           AffineConstraints<double> empty_constraints;
           empty_constraints.close();
@@ -4073,7 +4091,6 @@ struct LocalSolverStream
 
             Vector<Number> Ax(cd.matrix.m());
             cd.matrix.vmult(Ax, local_solution_sf);
-
             Ax -= cd.rhs; // Ax - f
 
             AssertDimension(local_dof_indices_p.size(), cd.matrix.m());
@@ -4309,7 +4326,7 @@ struct LocalSolverStream
             using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
 
             MatrixIntegrator<dim, true, is_simplified> matrix_integrator(
-              nullptr, nullptr, nullptr, *equation_data, &interface_handler);
+              nullptr, nullptr, nullptr, equation_data, &interface_handler);
 
             const auto distribute_local_to_global_impl = [&](const auto & cd) {
               std::vector<unsigned int> local_dof_indices_sf;
@@ -4441,7 +4458,7 @@ struct LocalSolverStream
               });
 
             /// compute the residual for this patch
-            local_rhs_constp *= -1.; // -Ax
+            local_rhs_constp *= -1.; // -Ax // ???
             const auto local_rhs_v = array_view_to_vector(src_v_view, lane);
             prolongation_matrix_interface.Tvmult_add(local_rhs_constp, local_rhs_v); // f - Ax
           }
@@ -4457,7 +4474,7 @@ struct LocalSolverStream
             ArrayView<const VectorizedArray<double>> dst_p_cview = make_array_view(dst_p_view);
 
             MatrixIntegrator<dim, true> matrix_integrator(
-              nullptr, &interface_handler, *equation_data, &g2l_p, &dst_p_cview, lane);
+              nullptr, &interface_handler, equation_data, &g2l_p, &dst_p_cview, lane);
 
             const auto local_copier = [&](const CopyData & copy_data) {
               for(const auto & cdf : copy_data.face_data)
@@ -4910,6 +4927,8 @@ public:
     active_dofh_index_p  = 1;
     active_dofh_index_sf = 2;
     equation_data        = equation_data_in;
+
+    equation_data_biharm.skip_A = equation_data.skip_A;
     if(equation_data.local_solver == LocalSolver::C0IP)
       equation_data_biharm.local_solver_variant = Biharmonic::LocalSolverVariant::Exact;
     else if(equation_data.local_solver == LocalSolver::Bilaplacian)
@@ -4965,7 +4984,7 @@ public:
       patch_matrix.subdomain_handler = &subdomain_handler;
       patch_matrix.patch_index       = patch_index;
       patch_matrix.n_q_points_1d     = n_q_points_1d;
-      patch_matrix.equation_data     = &equation_data;
+      patch_matrix.equation_data     = equation_data;
 
       patch_matrix.solver_sf = local_matrices_stream[patch_index];
 

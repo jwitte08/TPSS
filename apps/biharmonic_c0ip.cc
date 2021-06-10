@@ -146,6 +146,7 @@ main(int argc, char * argv[])
     unsigned int n_cycles                  = 3;
     unsigned int fe_index                  = 0;
     unsigned int use_stokes_formulation    = true;
+    unsigned int skip_A                    = false;
 
     //: parse arguments
     atoi_if(solver_index, 1);
@@ -156,12 +157,13 @@ main(int argc, char * argv[])
     atoi_if(n_cycles, 6);
     atoi_if(use_stokes_formulation, 7);
     atof_if(ip_factor, 8);
-    atoi_if(n_threads_max, 9);
+    atoi_if(skip_A, 9);
     atoi_if(use_doubling_of_steps, 10);
     atoi_if(debug_depth, 11);
     atoi_if(use_hierarchical_elements, 12);
     atoi_if(n_smoothing_steps, 13);
     atoi_if(fe_index, 14);
+    atoi_if(n_threads_max, 15);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
@@ -175,6 +177,7 @@ main(int argc, char * argv[])
     constexpr int  fe_degree             = CT::FE_DEGREE_;
     constexpr auto patch_variant         = CT::PATCH_VARIANT_;
     constexpr auto tpss_smoother_variant = CT::SMOOTHER_VARIANT_;
+    constexpr bool is_simplified         = true;
 
     // 0: direct solver
     // 1: CG solver (no preconditioner)
@@ -265,10 +268,11 @@ main(int argc, char * argv[])
     equation_data.ip_factor              = ip_factor;
     equation_data.n_lanczos_iterations   = 4 + 1;
     equation_data.use_stokes_formulation = (bool)use_stokes_formulation;
+    equation_data.skip_A                 = skip_A;
 
     const bool is_first_proc = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0U;
 
-    ModelProblem<dim, fe_degree> biharmonic_problem(prms, equation_data);
+    ModelProblem<dim, fe_degree, is_simplified> biharmonic_problem(prms, equation_data);
 
     std::fstream fout;
     const auto   filename = get_filename(prms, equation_data);

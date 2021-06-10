@@ -45,14 +45,15 @@ main(int argc, char * argv[])
     Util::ConditionalAtof(argc, argv)(prm, index);
   };
 
-  constexpr int  dim              = CT::DIMENSION_;
-  constexpr int  fe_degree        = CT::FE_DEGREE_;
-  constexpr auto patch_variant    = CT::PATCH_VARIANT_;
-  constexpr auto smoother_variant = CT::SMOOTHER_VARIANT_;
+  constexpr int    dim              = CT::DIMENSION_;
+  constexpr int    fe_degree        = CT::FE_DEGREE_;
+  constexpr auto   patch_variant    = CT::PATCH_VARIANT_;
+  constexpr auto   smoother_variant = CT::SMOOTHER_VARIANT_;
+  constexpr double threshold_noise  = 1.e-10;
 
   //: default
   unsigned     n_refinements      = 0;
-  unsigned     n_repetitions      = 2; // 3 !!!
+  unsigned     n_repetitions      = 2;
   double       damping            = 1.;
   double       omega              = 1.; // local stability constant
   int          n_threads_max      = 1;
@@ -160,10 +161,11 @@ main(int argc, char * argv[])
               ExcMessage("MPI not supported."));
 
   ////////// LAMBDAS
-  const auto & print_fullmatrix = [&](const FullMatrix<double> & matrix,
-                                      const std::string &        description) {
+  const auto & print_fullmatrix = [&](FullMatrix<double> & matrix,
+                                      const std::string &  description) {
     if(matrix.n() > max_size)
       return;
+    remove_noise_from_matrix(matrix, threshold_noise);
     std::cout << description << std::endl;
     matrix.print_formatted(std::cout);
     std::cout << std::endl;
@@ -199,7 +201,7 @@ main(int argc, char * argv[])
 
   using level_precond_type = std::decay<decltype(level_precond)>::type;
   MatrixWrapper<level_precond_type> precond_wrap(level_precond);
-  const auto &                      level_fullprecond = precond_wrap.as_fullmatrix();
+  auto                              level_fullprecond = precond_wrap.as_fullmatrix();
   print_fullmatrix(level_fullprecond, "preconditioner B^{-1}:");
 
   FullMatrix<double> BinvA(level_fullmatrix.m());
@@ -219,6 +221,18 @@ main(int argc, char * argv[])
       auto tildeAj = table_to_fullmatrix(Tensors::matrix_to_table(local_solver), lane);
       tildeAj /= omega;
       print_fullmatrix(tildeAj, "tildeAj / omega:");
+
+      const auto eigenvalues_tildeAj = compute_eigenvalues(tildeAj);
+      std::cout << "complex eigenvalues of (tildeAj / omega): " << std::endl;
+      std::cout << vector_to_string(eigenvalues_tildeAj) << std::endl;
+
+      auto tildeAj_inv = table_to_fullmatrix(Tensors::inverse_matrix_to_table(local_solver), lane);
+      tildeAj_inv *= omega;
+      print_fullmatrix(tildeAj_inv, "omega * tildeAj^{-1}:");
+
+      const auto eigenvalues_tildeAj_inv = compute_eigenvalues(tildeAj_inv);
+      std::cout << "complex eigenvalues of (omega * tildeAj^{-1}): " << std::endl;
+      std::cout << vector_to_string(eigenvalues_tildeAj_inv) << std::endl;
 
       patch_transfer.reinit(j);
       std::vector<types::global_dof_index> dof_indices_on_patch;
