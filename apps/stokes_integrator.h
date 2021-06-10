@@ -473,19 +473,141 @@ struct ProlongationDivFreeOrth
     const auto & [velocity_to_dual_gradp, velocity_to_dual_constp] =
       compute_divfreeorth_shape_functions(fe_v, fe_p);
 
-    unit_prolongation_matrix.reinit(velocity_to_dual_gradp.n(), velocity_to_dual_gradp.m());
-    for(auto i = 0U; i < unit_prolongation_matrix.m(); ++i)
-      for(auto j = 0U; j < unit_prolongation_matrix.n(); ++j)
-        unit_prolongation_matrix(i, j) = velocity_to_dual_gradp(j, i);
+    const unsigned int n_q_points_1d = fe_v.tensor_degree() + 1;
 
-    unit_prolongation_matrix_faces.reinit(velocity_to_dual_constp.n(), velocity_to_dual_constp.m());
-    for(auto i = 0U; i < unit_prolongation_matrix_faces.m(); ++i)
-      for(auto j = 0U; j < unit_prolongation_matrix_faces.n(); ++j)
-        unit_prolongation_matrix_faces(i, j) = velocity_to_dual_constp(j, i);
+    Triangulation<dim> unit_triangulation(Triangulation<dim>::maximum_smoothing);
+    {
+      MeshParameter mesh_prms;
+      mesh_prms.geometry_variant = MeshParameter::GeometryVariant::Cube;
+      mesh_prms.n_refinements    = 0U;
+      mesh_prms.n_repetitions    = 2U;
+      create_mesh(unit_triangulation, mesh_prms);
+      AssertDimension(unit_triangulation.n_active_cells(), 1 << dim);
+    }
+
+    DoFHandler<dim> dofh_p;
+    dofh_p.reinit(unit_triangulation);
+    dofh_p.distribute_dofs(fe_p);
+    dofh_p.distribute_mg_dofs();
+
+    PatchInfo<dim> patch_info;
+    {
+      using additional_data_type = typename PatchInfo<dim>::AdditionalData;
+      additional_data_type additional_data;
+      additional_data.patch_variant    = PatchVariant::vertex;
+      additional_data.smoother_variant = SmootherVariant::additive;
+      additional_data.level            = 0;
+      patch_info.initialize(&dofh_p, additional_data);
+      PatchWorker<dim, double>{patch_info};
+    }
+
+    QGauss<1> quad_1d(n_q_points_1d);
+
+    dealii::internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info;
+    shape_info.reinit(quad_1d, fe_p);
+
+    DoFInfo<dim, double> dof_info;
+    {
+      using additional_data_type = typename DoFInfo<dim, double>::AdditionalData;
+      additional_data_type additional_data;
+      additional_data.level = 0;
+      dof_info.initialize(&dofh_p, &patch_info, &shape_info, additional_data);
+    }
+
+    DoFHandler<dim> dofh_v;
+    dofh_v.reinit(unit_triangulation);
+    dofh_v.distribute_dofs(fe_v);
+    dofh_v.distribute_mg_dofs();
+
+    dealii::internal::MatrixFreeFunctions::ShapeInfo<VectorizedArray<double>> shape_info_v;
+    shape_info_v.reinit(quad_1d, fe_v);
+
+    DoFInfo<dim, double> dof_info_v;
+    {
+      using additional_data_type = typename DoFInfo<dim, double>::AdditionalData;
+      additional_data_type additional_data;
+      additional_data.level = 0;
+      dof_info_v.initialize(&dofh_v, &patch_info, &shape_info_v, additional_data);
+    }
+
+    PatchTransfer<dim, double> patch_transfer_p(dof_info);
+    PatchTransfer<dim, double> patch_transfer_v(dof_info_v);
+
+    unsigned int patch_index = 0;
+    unsigned int lane        = 0;
+
+    patch_transfer_p.reinit(patch_index);
+    patch_transfer_v.reinit(patch_index);
+
+    const auto & g2l_p = patch_transfer_p.get_global_to_local_dof_indices(lane);
+    const auto & g2l_v = patch_transfer_v.get_global_to_local_dof_indices(lane);
+
+    const auto g2l_if_impl = [&](const auto & map, const types::global_dof_index i) {
+      const auto it = map.find(i);
+      return it == map.end() ? numbers::invalid_unsigned_int : it->second;
+    };
+
+    const auto & g2l_if_p = [&](const types::global_dof_index i) { return g2l_if_impl(g2l_p, i); };
+
+    const auto & g2l_if_v = [&](const types::global_dof_index i) { return g2l_if_impl(g2l_v, i); };
+
+    const unsigned int n_patch_dofs_p = g2l_p.size();
+    const unsigned int n_patch_dofs_v = g2l_v.size();
+
+    auto & this_matrix = prolongation_matrix.as_table();
+    this_matrix.reinit(n_patch_dofs_v, n_patch_dofs_p);
+
+    const auto & cell_collection_p =
+      patch_transfer_p.get_patch_dof_worker().get_cell_collection(patch_index, lane);
+    const auto & cell_collection_v =
+      patch_transfer_v.get_patch_dof_worker().get_cell_collection(patch_index, lane);
+
+    std::vector<types::global_dof_index> global_dof_indices_p(fe_p.dofs_per_cell);
+    AssertDimension(fe_p.dofs_per_cell - 1, velocity_to_dual_gradp.m());
+    std::vector<types::global_dof_index> global_dof_indices_gradp(fe_p.dofs_per_cell - 1);
+    std::vector<types::global_dof_index> global_dof_indices_v(fe_v.dofs_per_cell);
+
+    for(auto cell_no = 0U; cell_no < cell_collection_p.size(); ++cell_no)
+    {
+      const auto & cell_p = cell_collection_p[cell_no];
+      const auto & cell_v = cell_collection_v[cell_no];
+
+      cell_p->get_active_or_mg_dof_indices(global_dof_indices_p);
+      cell_v->get_active_or_mg_dof_indices(global_dof_indices_v);
+      std::copy(global_dof_indices_p.begin() + 1,
+                global_dof_indices_p.end(),
+                global_dof_indices_gradp.begin());
+
+      for(auto ci = 0U; ci < global_dof_indices_v.size(); ++ci)
+      {
+        const auto         i  = global_dof_indices_v[ci];
+        const unsigned int ii = g2l_if_v(i);
+        if(ii != numbers::invalid_unsigned_int)
+        {
+          for(auto cj = 0U; cj < global_dof_indices_gradp.size(); ++cj)
+          {
+            const auto         j  = global_dof_indices_gradp[cj];
+            const unsigned int jj = g2l_if_p(j);
+            if(jj != numbers::invalid_unsigned_int)
+              this_matrix(ii, jj) = velocity_to_dual_gradp(cj, ci);
+          }
+        }
+      }
+    }
   }
 
-  Table<2, VectorizedArray<Number>> unit_prolongation_matrix;
-  Table<2, VectorizedArray<Number>> unit_prolongation_matrix_faces;
+  /**
+   * Restricts dual velocity coefficients to dual stream function
+   * coefficients. The dual restriction is simply the transpose prolongation.
+   */
+  void
+  dual_restrict(const ArrayView<VectorizedArray<Number>> &       dst_view,
+                const ArrayView<const VectorizedArray<Number>> & src_view) const
+  {
+    return prolongation_matrix.Tvmult(dst_view, src_view);
+  }
+
+  MatrixAsTable<VectorizedArray<Number>> prolongation_matrix;
 };
 
 
@@ -3953,8 +4075,9 @@ struct LocalSolverStream
   unsigned int                          n_q_points_1d     = numbers::invalid_unsigned_int;
   EquationData                          equation_data;
 
-  matrix_type_stream                                     solver_sf;
-  std::shared_ptr<const ProlongationStream<dim, Number>> prolongation_sf;
+  matrix_type_stream                                          solver_sf;
+  std::shared_ptr<const ProlongationStream<dim, Number>>      prolongation_sf;
+  std::shared_ptr<const ProlongationDivFreeOrth<dim, Number>> prolongation_orth;
 
   std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth;
   std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth_faces;
@@ -4025,6 +4148,9 @@ struct LocalSolverStream
       const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
       const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
 
+      Assert(prolongation_orth, ExcMessage("prolongation_orth is uninitialized"));
+      prolongation_orth->dual_restrict(dst_p_view, src_v_view);
+
       for(auto lane = 0U; lane < patch_dof_worker_v.n_lanes_filled(patch_index); ++lane)
       {
         const auto & cells = patch_dof_worker_v.get_cell_collection(patch_index, lane);
@@ -4091,7 +4217,7 @@ struct LocalSolverStream
 
             Vector<Number> Ax(cd.matrix.m());
             cd.matrix.vmult(Ax, local_solution_sf);
-            Ax -= cd.rhs; // Ax - f
+            // Ax -= cd.rhs; // Ax - f
 
             AssertDimension(local_dof_indices_p.size(), cd.matrix.m());
             for(auto i = 0U; i < Ax.size(); ++i)
@@ -4969,6 +5095,9 @@ public:
 
     const auto prolong_sf =
       std::make_shared<const ProlongationStream<dim, Number>>(dofh_sf.get_fe(), dofh_v.get_fe());
+    const auto prolong_orth =
+      std::make_shared<const ProlongationDivFreeOrth<dim, Number>>(dofh_v.get_fe(),
+                                                                   dofh_p.get_fe());
     const auto velocity_to_orth =
       std::make_shared<const FullMatrix<Number>>(shape_to_test_functions_interior);
     const auto velocity_to_orth_faces =
@@ -4989,7 +5118,8 @@ public:
       patch_matrix.solver_sf = local_matrices_stream[patch_index];
 
       /// caching prolongation: from stream to velocity
-      patch_matrix.prolongation_sf = prolong_sf;
+      patch_matrix.prolongation_sf   = prolong_sf;
+      patch_matrix.prolongation_orth = prolong_orth;
 
       /// caching transformation matrices: orth. velocity functions
       patch_matrix.trafomatrix_orth       = velocity_to_orth;
