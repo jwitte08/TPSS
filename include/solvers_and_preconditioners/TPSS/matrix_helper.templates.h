@@ -233,6 +233,32 @@ MatrixAsTable<Number>::vmult_impl(const ArrayView<Number> &       dst_view,
 
 
 template<typename Number>
+template<bool add, bool transpose>
+void
+MatrixAsTable<Number>::vmult_impl(const ArrayView<Number> &       dst_view,
+                                  const Number &                  factor,
+                                  const ArrayView<const Number> & src_view) const
+{
+  const unsigned int m = transpose ? this->n() : this->m();
+  const unsigned int n = transpose ? this->m() : this->n();
+  AssertDimension(dst_view.size(), m);
+  AssertDimension(src_view.size(), n);
+
+  for(auto i = 0U; i < m; ++i)
+  {
+    Number value(0.);
+    for(auto j = 0U; j < n; ++j)
+      value += matrix(transpose ? j : i, transpose ? i : j) * src_view[j];
+    if(add)
+      dst_view[i] += factor * value;
+    else
+      dst_view[i] = factor * value;
+  }
+}
+
+
+
+template<typename Number>
 void
 MatrixAsTable<Number>::vmult(const ArrayView<Number> &       dst_view,
                              const ArrayView<const Number> & src_view) const
@@ -260,6 +286,17 @@ MatrixAsTable<Number>::vmult_add(AlignedVector<Number> &       dst,
   const ArrayView<Number>       dst_view(dst.begin(), dst.size());
   const ArrayView<const Number> src_view(src.begin(), src.size());
   vmult_add(dst_view, src_view);
+}
+
+
+
+template<typename Number>
+void
+MatrixAsTable<Number>::vmult_sadd(const ArrayView<Number> &       dst_view,
+                                  const Number &                  scalar,
+                                  const ArrayView<const Number> & src_view) const
+{
+  vmult_impl<true, /*transpose*/ false>(dst_view, scalar, src_view);
 }
 
 

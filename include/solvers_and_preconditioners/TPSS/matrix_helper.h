@@ -127,6 +127,12 @@ public:
   void
   vmult_impl(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
+  template<bool add, bool transpose>
+  void
+  vmult_impl(const ArrayView<Number> &       dst_view,
+             const Number &                  factor,
+             const ArrayView<const Number> & src_view) const;
+
   void
   vmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
 
@@ -135,6 +141,11 @@ public:
 
   void
   vmult_add(AlignedVector<Number> & dst, const AlignedVector<Number> & src) const;
+
+  void
+  vmult_sadd(const ArrayView<Number> &       dst_view,
+             const Number &                  scalar,
+             const ArrayView<const Number> & src_view) const;
 
   void
   Tvmult(const ArrayView<Number> & dst_view, const ArrayView<const Number> & src_view) const;
