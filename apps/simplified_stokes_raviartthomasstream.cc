@@ -32,11 +32,12 @@ main(int argc, char * argv[])
     unsigned int            force_mean_value_constraint = false;
     double                  ip_factor                   = 1.;
     unsigned int            n_cycles                    = 3;
-    unsigned int            local_solver_index          = 3; // Bila !!!
+    unsigned int            local_solver_index          = 2; // C0IP !!!
     unsigned int            pde_index                   = 6; // NoSlipExp
     int                     n_threads_max               = 1;
     types::global_dof_index dof_limit_min               = 1e1;
     types::global_dof_index dof_limit_max               = 1e5;
+    bool                    skip_A                      = false;
 
     //: parse arguments
     atoi_if(test_index, 1);
@@ -44,11 +45,12 @@ main(int argc, char * argv[])
     atoi_if(n_cycles, 3);
     atoi_if(dof_limit_min, 4);
     atoi_if(dof_limit_max, 5);
-    atoi_if(force_mean_value_constraint, 6);
+    atoi_if(skip_A, 6);
     atoi_if(local_solver_index, 7);
     atoi_if(n_threads_max, 8);
     atoi_if(debug_depth, 9);
     atof_if(damping, 10);
+    atoi_if(force_mean_value_constraint, 11);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
@@ -93,6 +95,7 @@ main(int argc, char * argv[])
       equation_data.do_mean_value_constraint = true;
     equation_data.ip_factor    = ip_factor;
     equation_data.local_solver = static_cast<LocalSolver>(local_solver_index);
+    equation_data.skip_A       = skip_A;
 
     std::fstream fout;
     const auto   filename = get_filename(options.prms, equation_data);

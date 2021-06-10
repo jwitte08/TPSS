@@ -48,9 +48,10 @@ main(int argc, char * argv[])
   unsigned     n_repetitions       = 2;
   double       damping             = 1.;
   double       omega               = 1.; // local stability constant
-  unsigned int local_solver_index  = 3;  // Bila !!!
-  bool         do_mirror_p_v_block = false;
+  unsigned int local_solver_index  = 2;  // C0IP
+  bool         do_mirror_p_v_block = true;
   unsigned int max_size            = 60;
+  bool         skip_A              = false;
   ///
   double       ip_factor     = 1.;
   int          n_threads_max = 1;
@@ -65,6 +66,7 @@ main(int argc, char * argv[])
   atof_if(local_solver_index, 5);
   atoi_if(do_mirror_p_v_block, 6);
   atoi_if(max_size, 7);
+  atoi_if(skip_A, 8);
 
   AssertThrow(damping <= 1., ExcMessage("Over-relaxation is not allowed."));
 
@@ -102,12 +104,13 @@ main(int argc, char * argv[])
   equation_data.ip_factor         = ip_factor;
   equation_data.local_solver      = static_cast<LocalSolver>(local_solver_index);
   equation_data.local_kernel_size = 1U;
+  equation_data.skip_A            = skip_A;
 
   const auto pcout = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);
 
-  // using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomasStream,
-  // is_simplified>; // !!!
-  using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomas, is_simplified>;
+  using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomasStream, is_simplified>;
+  // using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomas, is_simplified>; //
+  // !!!
   StokesProblem stokes_problem(options.prms, equation_data);
   stokes_problem.pcout = pcout;
 
@@ -148,10 +151,11 @@ main(int argc, char * argv[])
   const auto & local_matrices = *(level_precond->get_local_solvers());
 
   ////////// LAMBDAS
-  const auto & print_fullmatrix = [&](const FullMatrix<double> & matrix,
-                                      const std::string &        description) {
+  const auto & print_fullmatrix = [&](FullMatrix<double> & matrix,
+                                      const std::string &  description) {
     if(matrix.n() > max_size)
       return;
+    remove_noise_from_matrix(matrix, threshold_noise);
     std::cout << description << std::endl;
     matrix.print_formatted(std::cout);
     std::cout << std::endl;
@@ -232,8 +236,14 @@ main(int argc, char * argv[])
       // tildeAj_inv /= omega;
       if(do_mirror_p_v_block)
         mirror_p_v_block(tildeAj_inv, n_dofs_v);
-      remove_noise_from_matrix(tildeAj_inv, threshold_noise);
       print_fullmatrix(tildeAj_inv, "tildeAj_inv");
+
+      /// DEBUG only if RaviartThomasStream
+      // auto Cj = table_to_fullmatrix(Tensors::matrix_to_table(local_solver.solver_sf), lane);
+      // print_fullmatrix(Cj, "Cj (stream function problem):");
+      // const auto eigenvalues_Cj = compute_eigenvalues(Cj);
+      // std::cout << "complex eigenvalues of Cj (stream function problem): " << std::endl;
+      // std::cout << vector_to_string(eigenvalues_Cj) << std::endl;
 
       FullMatrix<double> Aj(patch_transfer->n_dofs_per_patch());
       for(auto bj = 0U; bj < 2U; ++bj)
@@ -301,16 +311,17 @@ main(int argc, char * argv[])
     std::cout << "complex eigenvalues of E:" << std::endl;
     std::cout << vector_to_string(complex_eigenvalues) << std::endl;
 
-    FullMatrix<double> AE(level_fullmatrix.m());
-    level_fullmatrix.mmult(AE, E);
-    FullMatrix<double> Q(level_fullmatrix.m());
-    const auto &       geigenvalues = compute_generalized_eigenvalues_symm(AE, level_fullmatrix, Q);
-    std::cout
-      << "Generalized eigenvalues for AEx = Ax:\n"
-      << "NOTE These are the eigenvalues of error propagation E in the A-induced inner product.\n"
-      << "NOTE From left to right means from high to low frequency modes.\n";
-    std::cout << vector_to_string(geigenvalues) << std::endl;
-    std::cout << std::endl;
+    // FullMatrix<double> AE(level_fullmatrix.m());
+    // level_fullmatrix.mmult(AE, E);
+    // FullMatrix<double> Q(level_fullmatrix.m());
+    // const auto &       geigenvalues = compute_generalized_eigenvalues_symm(AE, level_fullmatrix,
+    // Q); std::cout
+    //   << "Generalized eigenvalues for AEx = Ax:\n"
+    //   << "NOTE These are the eigenvalues of error propagation E in the A-induced inner
+    //   product.\n"
+    //   << "NOTE From left to right means from high to low frequency modes.\n";
+    // std::cout << vector_to_string(geigenvalues) << std::endl;
+    // std::cout << std::endl;
 
     //   /// DEBUG
     //   // FullMatrix<double> tmp(level_fullmatrix.m());
