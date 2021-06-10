@@ -1017,9 +1017,9 @@ namespace Biharmonic
 {
 enum LocalSolverVariant
 {
-  Exact,
-  Bilaplacian,
-  KSVD
+  Exact       = 0,
+  Bilaplacian = 1,
+  KSVD        = 2
 };
 
 
@@ -1028,14 +1028,14 @@ struct EquationData
 {
   enum class Variant
   {
-    ClampedHom,                    // 0
-    ClampedBell,                   // 1
-    ClampedStreamNoSlip,           // 2
-    ClampedStreamPoiseuilleNoSlip, // 3
-    ClampedStreamNoSlipNormal,     // 4
-    ClampedStreamPoiseuilleInhom,  // 5
-    ClampedHomPoly,                // 6
-    ClampedStreamNoSlipExp         // 7
+    ClampedHom                    = 0, // 0
+    ClampedBell                   = 1, // 1
+    ClampedStreamNoSlip           = 2, // 2
+    ClampedStreamPoiseuilleNoSlip = 3, // 3
+    ClampedStreamNoSlipNormal     = 4, // 4
+    ClampedStreamPoiseuilleInhom  = 5, // 5
+    ClampedHomPoly                = 6, // 6
+    ClampedStreamNoSlipExp        = 7  // 7
   };
   static constexpr unsigned int n_variants = 8;
 
@@ -1072,6 +1072,7 @@ struct EquationData
   double                       addition_to_min_eigenvalue      = 0.01;
   std::size_t                  n_lanczos_iterations            = static_cast<std::size_t>(-1);
   bool                         use_stokes_formulation          = true;
+  bool                         skip_A                          = false;
 };
 
 
@@ -1155,8 +1156,11 @@ EquationData::to_string() const
       oss << Util::parameter_to_fstring("Addition to min. eigenvalue:", addition_to_min_eigenvalue);
   }
   if(is_stream_function())
+  {
     oss << Util::parameter_to_fstring("Stream function formulation:",
                                       use_stokes_formulation ? "Hdiv-IP" : "C0IP");
+    oss << Util::parameter_to_fstring("Skip A?", skip_A);
+  }
   return oss.str();
 }
 
@@ -1878,6 +1882,7 @@ struct EquationData
       oss << Util::parameter_to_fstring("Kernel size (local solver):", local_kernel_size);
     if(local_kernel_threshold != 0.)
       oss << Util::parameter_to_fstring("Kernel threshold (local solver):", local_kernel_threshold);
+    oss << Util::parameter_to_fstring("Skip A?", skip_A);
     return oss.str();
   }
 
@@ -1892,6 +1897,7 @@ struct EquationData
   unsigned int                 local_kernel_size               = numbers::invalid_unsigned_int;
   double                       local_kernel_threshold          = 0.;
   LocalSolver                  local_solver                    = LocalSolver::Exact;
+  bool                         skip_A                          = false;
 };
 
 
