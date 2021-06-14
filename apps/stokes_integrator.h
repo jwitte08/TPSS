@@ -467,11 +467,12 @@ template<int dim, typename Number>
 struct ProlongationDivFreeOrth
 {
   ProlongationDivFreeOrth(const FiniteElement<dim> & fe_v, const FiniteElement<dim> & fe_p)
+    : velocity_to_divfreeorth_shape_functions(compute_divfreeorth_shape_functions(fe_v, fe_p))
   {
     using namespace TPSS;
 
     const auto & [velocity_to_dual_gradp, velocity_to_dual_constp] =
-      compute_divfreeorth_shape_functions(fe_v, fe_p);
+      velocity_to_divfreeorth_shape_functions;
 
     const unsigned int n_q_points_1d = fe_v.tensor_degree() + 1;
 
@@ -607,6 +608,7 @@ struct ProlongationDivFreeOrth
     return prolongation_matrix.Tvmult(dst_view, src_view);
   }
 
+  std::array<FullMatrix<double>, 2>      velocity_to_divfreeorth_shape_functions;
   MatrixAsTable<VectorizedArray<Number>> prolongation_matrix;
 };
 
@@ -4073,14 +4075,19 @@ struct LocalSolverStream
   const SubdomainHandler<dim, Number> * subdomain_handler = nullptr;
   unsigned int                          patch_index       = numbers::invalid_unsigned_int;
   unsigned int                          n_q_points_1d     = numbers::invalid_unsigned_int;
-  EquationData                          equation_data;
 
   matrix_type_stream                                          solver_sf;
   std::shared_ptr<const ProlongationStream<dim, Number>>      prolongation_sf;
   std::shared_ptr<const ProlongationDivFreeOrth<dim, Number>> prolongation_orth;
+  MatrixAsTable<VectorizedArray<Number>>                      prolongation_orth_faces;
 
-  std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth;
-  std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth_faces;
+  MatrixAsTable<VectorizedArray<Number>> Aorth;
+  MatrixAsTable<VectorizedArray<Number>> Aorth_faces;
+  MatrixAsTable<VectorizedArray<Number>> Mconstp;
+  MatrixAsTable<VectorizedArray<Number>> Ap;
+
+  // std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth;
+  // std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth_faces;
 
   unsigned int
   m() const
@@ -4106,26 +4113,23 @@ struct LocalSolverStream
 
     std::fill(dst_view.begin(), dst_view.end(), 0.);
 
-    const auto & dofh_v  = subdomain_handler->get_dof_handler(0);
-    const auto & dofh_p  = subdomain_handler->get_dof_handler(1);
-    const auto & dofh_sf = subdomain_handler->get_dof_handler(2);
+    const auto & dofh_p = subdomain_handler->get_dof_handler(1);
 
     const auto & mapping = subdomain_handler->get_mapping();
 
-    const auto patch_transfer    = get_patch_transfer(*subdomain_handler);
-    const auto patch_transfer_sf = get_patch_transfer_stream(*subdomain_handler);
-
+    const auto patch_transfer = get_patch_transfer(*subdomain_handler);
     patch_transfer->reinit(patch_index);
-    patch_transfer_sf->reinit(patch_index);
-
-    AssertDimension(src_view.size(), patch_transfer->n_dofs_per_patch());
-    AssertDimension(dst_view.size(), patch_transfer->n_dofs_per_patch());
+    const auto & patch_transfer_p = patch_transfer->get_patch_transfer(1);
 
     const auto n_dofs_v  = patch_transfer->n_dofs_per_patch(0);
     const auto n_dofs_p  = patch_transfer->n_dofs_per_patch(1);
-    const auto n_dofs_sf = patch_transfer_sf->n_dofs_per_patch();
+    const auto n_dofs_sf = Aorth.n();
 
-    const ArrayView<value_type> dst_v_view(dst_view.begin(), n_dofs_v);
+    AssertDimension(src_view.size(), n_dofs_v + n_dofs_p)
+      AssertDimension(dst_view.size(), n_dofs_v + n_dofs_p)
+
+        const ArrayView<value_type>
+                                dst_v_view(dst_view.begin(), n_dofs_v);
     const ArrayView<value_type> dst_p_view(dst_view.begin() + n_dofs_v, n_dofs_p);
 
     const ArrayView<const value_type> src_v_view(src_view.begin(), n_dofs_v);
@@ -4145,646 +4149,154 @@ struct LocalSolverStream
 
     /// solve pressure
     {
-      const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
-      const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
+      /// NEW cached version
 
       Assert(prolongation_orth, ExcMessage("prolongation_orth is uninitialized"));
-      prolongation_orth->dual_restrict(dst_p_view, src_v_view);
+      prolongation_orth->dual_restrict(dst_p_view, src_v_view); // f^\orth
 
-      for(auto lane = 0U; lane < patch_dof_worker_v.n_lanes_filled(patch_index); ++lane)
+      Aorth.vmult_sadd(dst_p_view, make_vectorized_array<Number>(-1.), solution_sf_view);
+
+      /// NEW cached version
+
+      AlignedVector<value_type>   local_rhs_orth_faces(1 << dim);
+      const ArrayView<value_type> local_rhs_orth_faces_view(local_rhs_orth_faces.begin(),
+                                                            local_rhs_orth_faces.size());
+      prolongation_orth_faces.Tvmult_add(local_rhs_orth_faces_view, src_v_view);
+
+      AlignedVector<value_type>   Ax_orth_faces(1 << dim);
+      const ArrayView<value_type> Ax_orth_faces_view(Ax_orth_faces.begin(), Ax_orth_faces.size());
+      Aorth_faces.vmult(Ax_orth_faces_view, solution_sf_view);
+
+      AlignedVector<value_type>   Ax_pressure(1 << dim);
+      const ArrayView<value_type> Ax_pressure_view(Ax_pressure.begin(), Ax_pressure.size());
+      Ap.vmult(Ax_pressure_view, dst_p_view);
+
+      AlignedVector<value_type>   local_solution_constp_(1 << dim);
+      const ArrayView<value_type> local_solution_constp__view(local_solution_constp_.begin(),
+                                                              local_solution_constp_.size());
+
+      AlignedVector<value_type>   local_rhs_constp_(1 << dim);
+      const ArrayView<value_type> local_rhs_constp__view(local_rhs_constp_.begin(),
+                                                         local_rhs_constp_.size());
+
+      for(auto i = 0U; i < local_rhs_constp_.size(); ++i)
       {
-        const auto & cells = patch_dof_worker_v.get_cell_collection(patch_index, lane);
+        local_rhs_constp_[i] += local_rhs_orth_faces_view[i]; // f
+        local_rhs_constp_[i] -= Ax_orth_faces_view[i];        // f - A \phi
+        local_rhs_constp_[i] += Ax_pressure_view[i];          // f - A \phi + A p
+      }
+
+      Mconstp.apply_inverse(local_solution_constp__view, local_rhs_constp__view);
+
+
+
+      const auto & patch_dof_worker_p = patch_transfer_p.get_patch_dof_worker();
+
+      for(auto lane = 0U; lane < patch_dof_worker_p.n_lanes_filled(patch_index); ++lane)
+      {
+        const auto & cells_p = patch_dof_worker_p.get_cell_collection(patch_index, lane);
+
+        const auto & local_cell_range_p = TPSS::make_local_cell_range(cells_p);
 
         LocalInterfaceHandler<dim> interface_handler;
-        interface_handler.reinit(cells);
+        interface_handler.reinit(cells_p);
 
-        using CellIterator = typename DoFHandler<dim>::level_cell_iterator;
+        const auto & g2l_p = patch_transfer_p.get_global_to_local_dof_indices(lane);
 
-        std::vector<types::global_dof_index> constant_pressure_dof_indices(cells.size());
+        Vector<double> local_solution_constp(cells_p.size());
 
-        const TPSS::BelongsToCollection<CellIterator> belongs_to_collection(cells);
+        for(auto i = 0U; i < local_solution_constp.size(); ++i)
+          local_solution_constp[i] = local_solution_constp__view[i][lane];
 
-        const auto & local_cell_range_v = TPSS::make_local_cell_range(cells);
-
-        const auto & g2l_v =
-          patch_transfer->get_patch_transfer(0).get_global_to_local_dof_indices(lane);
-
-        const auto & g2l_p =
-          patch_transfer->get_patch_transfer(1).get_global_to_local_dof_indices(lane);
-
-        const auto & g2l_sf = patch_transfer_sf->get_global_to_local_dof_indices(lane);
-
-        /// non-constant pressure modes
+        //: distribute the pressure constants to the local pressure solution
         {
-          using Stokes::Velocity::SIPG::MW::ScratchData;
+          std::vector<types::global_dof_index> dof_indices(dofh_p.get_fe().dofs_per_cell);
+          for(const auto & cell_p : cells_p)
+          {
+            cell_p->get_active_or_mg_dof_indices(dof_indices);
+            const auto local_dof_index        = g2l_p.at(dof_indices.front());
+            const auto cell_index             = interface_handler.get_cell_index(cell_p->id());
+            dst_p_view[local_dof_index][lane] = local_solution_constp(cell_index);
+          }
+        }
 
-          using Stokes::Velocity::SIPG::MW::CopyData;
+        /// post-process local pressure
+        {
+          using ::MW::ScratchData;
+          using ::MW::Cell::CopyData;
 
-          using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
-
-          MatrixIntegrator<dim, true, is_simplified> matrix_integrator(
-            nullptr, nullptr, nullptr, equation_data, &interface_handler);
-
-          AffineConstraints<double> empty_constraints;
-          empty_constraints.close();
-
-          const auto distribute_local_to_patch_impl = [&](const auto & cd) {
-            std::vector<unsigned int> local_dof_indices_sf;
-            std::transform(cd.dof_indices_column.begin(),
-                           cd.dof_indices_column.end(),
-                           std::back_inserter(local_dof_indices_sf),
-                           [&](const auto dof_index) {
-                             const auto & local_index = g2l_sf.find(dof_index);
-                             return local_index != g2l_sf.cend() ? local_index->second :
-                                                                   numbers::invalid_unsigned_int;
-                           });
-
-            std::vector<unsigned int> local_dof_indices_p;
-            std::transform(cd.dof_indices.begin(),
-                           cd.dof_indices.end(),
-                           std::back_inserter(local_dof_indices_p),
-                           [&](const auto dof_index) {
-                             const auto & local_index = g2l_p.find(dof_index);
-                             return local_index != g2l_p.cend() ? local_index->second :
-                                                                  numbers::invalid_unsigned_int;
-                           });
-
-            AssertDimension(local_dof_indices_sf.size(), cd.matrix.n());
-            Vector<Number> local_solution_sf(cd.matrix.n());
-            for(auto i = 0U; i < local_solution_sf.size(); ++i)
-              if(local_dof_indices_sf[i] != numbers::invalid_unsigned_int)
-                local_solution_sf(i) = solution_sf[local_dof_indices_sf[i]][lane];
-
-            Vector<Number> Ax(cd.matrix.m());
-            cd.matrix.vmult(Ax, local_solution_sf);
-            // Ax -= cd.rhs; // Ax - f
-
-            AssertDimension(local_dof_indices_p.size(), cd.matrix.m());
-            for(auto i = 0U; i < Ax.size(); ++i)
-            {
-              Assert(local_dof_indices_p[i] != numbers::invalid_unsigned_int, ExcInternalError());
-              dst_p_view[local_dof_indices_p[i]][lane] -= Ax(i); // f - Ax
-            }
-          };
+          double mean_value = 0.;
+          double volume     = 0.;
 
           const auto local_copier = [&](const CopyData & copy_data) {
             for(const auto & cd : copy_data.cell_data)
             {
-              distribute_local_to_patch_impl(cd);
-            }
-            for(const auto & cdf : copy_data.face_data)
-            {
-              distribute_local_to_patch_impl(cdf);
+              mean_value += cd.values(0);
+              volume += cd.values(1);
             }
           };
 
-          const UpdateFlags update_flags_v =
-            update_values | update_gradients | update_quadrature_points | update_JxW_values;
-          const UpdateFlags interface_update_flags_v = update_flags_v | update_normal_vectors;
+          const UpdateFlags update_flags_p =
+            update_values | update_quadrature_points | update_JxW_values;
 
-          const UpdateFlags update_flags_sf           = update_flags_v | update_hessians;
-          const UpdateFlags interface_update_flags_sf = interface_update_flags_v | update_hessians;
+          ScratchData<dim> scratch_data(mapping, dofh_p.get_fe(), n_q_points_1d, update_flags_p);
 
-          ScratchData<dim, true> scratch_data_tmpl(mapping,
-                                                   dofh_v.get_fe(),
-                                                   dofh_sf.get_fe(),
-                                                   n_q_points_1d,
-                                                   *trafomatrix_orth,
-                                                   update_flags_v,
-                                                   update_flags_sf,
-                                                   interface_update_flags_v,
-                                                   interface_update_flags_sf);
+          CopyData copy_data;
 
-          CopyData copy_data_tmpl;
+          MeshWorker::m2d2::mesh_loop( /// TODO use simple for-loop
+            local_cell_range_p,
+            [&](const auto & cell, auto & scratch_data, auto & copy_data) {
+              auto & phi = scratch_data.fe_values;
+              phi.reinit(cell);
 
-          MeshWorker::m2d2::mesh_loop(
-            local_cell_range_v,
-            [&](const CellIterator &     cell,
-                ScratchData<dim, true> & scratch_data,
-                CopyData &               copy_data) {
-              CellIterator cell_sf(&dofh_sf.get_triangulation(),
-                                   cell->level(),
-                                   cell->index(),
-                                   &dofh_sf);
-              CellIterator cell_p(&dofh_p.get_triangulation(),
-                                  cell->level(),
-                                  cell->index(),
-                                  &dofh_p);
-              /// compute local matrix A^\orth
-              matrix_integrator.cell_residual_worker(
-                cell, cell_sf, cell_p, scratch_data, copy_data);
+              const unsigned int n_dofs = cell->get_fe().dofs_per_cell;
 
-              /// compute local rhs f^\orth (dual restriction)
-              AssertDimension(copy_data.cell_data.size(), 1);
-              auto &                               cd = copy_data.cell_data.back();
-              std::vector<types::global_dof_index> dof_indices_v(cell->get_fe().dofs_per_cell);
-              cell->get_active_or_mg_dof_indices(dof_indices_v);
-              std::vector<unsigned int> local_dof_indices_v;
-              std::transform(dof_indices_v.begin(),
-                             dof_indices_v.end(),
-                             std::back_inserter(local_dof_indices_v),
+              std::vector<types::global_dof_index> dof_indices(n_dofs);
+              cell->get_active_or_mg_dof_indices(dof_indices);
+
+              std::vector<unsigned int> local_dof_indices;
+              std::transform(dof_indices.begin(),
+                             dof_indices.end(),
+                             std::back_inserter(local_dof_indices),
                              [&](const auto dof_index) {
-                               const auto & local_index = g2l_v.find(dof_index);
-                               return local_index != g2l_v.cend() ? local_index->second :
+                               const auto & local_index = g2l_p.find(dof_index);
+                               return local_index != g2l_p.cend() ? local_index->second :
                                                                     numbers::invalid_unsigned_int;
                              });
-              Vector<Number> local_rhs_v(dof_indices_v.size());
-              for(auto i = 0U; i < local_rhs_v.size(); ++i)
-                if(local_dof_indices_v[i] != numbers::invalid_unsigned_int)
-                  local_rhs_v(i) = src_v_view[local_dof_indices_v[i]][lane];
-              trafomatrix_orth->vmult(cd.rhs, local_rhs_v);
+
+              Vector<double> dof_values(n_dofs);
+              for(auto i = 0U; i < n_dofs; ++i)
+                if(local_dof_indices[i] != numbers::invalid_unsigned_int)
+                  dof_values(i) = dst_p_view[local_dof_indices[i]][lane];
+
+              const auto & compute_value = [&](const unsigned int q) {
+                double value = 0.;
+                for(auto j = 0U; j < n_dofs; ++j)
+                  value += dof_values[j] * phi.shape_value(j, q);
+                return value;
+              };
+
+              auto & cd = copy_data.cell_data.emplace_back(2U);
+
+              for(auto q = 0U; q < phi.n_quadrature_points; ++q)
+              {
+                const auto & dx      = phi.JxW(q);
+                const auto & value_p = compute_value(q);
+                cd.values(0) += value_p * dx;
+                cd.values(1) += dx;
+              }
             },
             local_copier,
-            scratch_data_tmpl,
-            copy_data_tmpl,
-            MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells |
-              MeshWorker::assemble_boundary_faces | MeshWorker::assemble_own_interior_faces_both |
-              MeshWorker::assemble_ghost_faces_both,
-            /*assemble faces at ghosts?*/ true,
-            [&](const CellIterator &     cell,
-                const unsigned int &     face_no,
-                ScratchData<dim, true> & scratch_data,
-                CopyData &               copy_data) {
-              CellIterator cell_sf(&dofh_sf.get_triangulation(),
-                                   cell->level(),
-                                   cell->index(),
-                                   &dofh_sf);
-              CellIterator cell_p(&dofh_p.get_triangulation(),
-                                  cell->level(),
-                                  cell->index(),
-                                  &dofh_p);
-              matrix_integrator.boundary_residual_worker_tangential(
-                cell, cell_sf, cell_p, face_no, scratch_data, copy_data);
-              copy_data.face_data.back().rhs *= 0.; // safety
-            },
-            [&](const CellIterator &     cell,
-                const unsigned int &     face_no,
-                const unsigned int &     sface_no,
-                const CellIterator &     ncell,
-                const unsigned int &     nface_no,
-                const unsigned int &     nsface_no,
-                ScratchData<dim, true> & scratch_data,
-                CopyData &               copy_data) {
-              CellIterator cell_sf(&dofh_sf.get_triangulation(),
-                                   cell->level(),
-                                   cell->index(),
-                                   &dofh_sf);
-              CellIterator cell_p(&dofh_p.get_triangulation(),
-                                  cell->level(),
-                                  cell->index(),
-                                  &dofh_p);
-              CellIterator ncell_sf(&dofh_sf.get_triangulation(),
-                                    ncell->level(),
-                                    ncell->index(),
-                                    &dofh_sf);
-              CellIterator ncell_p(&dofh_p.get_triangulation(),
-                                   ncell->level(),
-                                   ncell->index(),
-                                   &dofh_p);
-              const bool   cell_belongs_to_collection  = belongs_to_collection(cell);
-              const bool   ncell_belongs_to_collection = belongs_to_collection(ncell);
-              const bool   is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
-              if(is_interface)
-              {
-                matrix_integrator.face_residual_worker_tangential(cell,
-                                                                  cell_sf,
-                                                                  cell_p,
-                                                                  face_no,
-                                                                  sface_no,
-                                                                  ncell,
-                                                                  ncell_sf,
-                                                                  ncell_p,
-                                                                  nface_no,
-                                                                  nsface_no,
-                                                                  scratch_data,
-                                                                  copy_data);
-                /// interfaces are assembled from both sides
-                copy_data.face_data.back().matrix *= 0.5;
-                copy_data.face_data.back().rhs *= 0.; // safety
-                return;
-              }
-              if(cell_belongs_to_collection)
-              {
-                matrix_integrator.uniface_residual_worker_tangential(
-                  cell, cell_sf, cell_p, face_no, sface_no, scratch_data, copy_data);
-                copy_data.face_data.back().rhs *= 0.; // safety
-              }
-            });
-        }
+            scratch_data,
+            copy_data,
+            MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
 
-        /// constant pressure modes
-        {
-          const auto & cells_p = patch_dof_worker_p.get_cell_collection(patch_index, lane);
-
-          const auto & local_cell_range_p = TPSS::make_local_cell_range(cells_p);
-
-          //: setup local system (pressure constants)
-          AffineConstraints<double> constraints_on_interface;
-          const auto interface_index_of_fixed_cell = interface_handler.get_fixed_interface_index();
-          constraints_on_interface.add_line(interface_index_of_fixed_cell);
-          constraints_on_interface.set_inhomogeneity(interface_index_of_fixed_cell, 0.);
-          constraints_on_interface.close();
-
-          /// we use the same constraints on cells and interfaces
-          AssertDimension(cells.size(), interface_handler.n_interfaces());
-          AssertDimension(interface_handler.get_fixed_cell_index(),
-                          interface_handler.get_fixed_interface_index());
-          const auto & constraints_on_cell = constraints_on_interface;
-
-          DynamicSparsityPattern dsp(interface_handler.n_interfaces());
-          for(const auto & id : interface_handler.cached_interface_ids)
+          /// make the local pressure solution mean-value-free
+          for(const auto & cell_p : cells_p)
           {
-            const auto e                 = interface_handler.get_interface_index(id);
-            const auto [K_left, K_right] = interface_handler.get_cell_index_pair(id);
-            dsp.add(e, K_left);
-            dsp.add(e, K_right);
-          }
-
-          constraints_on_interface.condense(dsp);
-
-          SparsityPattern sparsity_pattern;
-          sparsity_pattern.copy_from(dsp);
-
-          SparseMatrix<double> local_matrix_constp;
-          local_matrix_constp.reinit(sparsity_pattern);
-          Vector<double> local_rhs_constp(interface_handler.n_interfaces());
-          Vector<double> local_solution_constp(cells.size());
-
-          //: assemble prolongation matrix on this patch (pressure constants)
-          FullMatrix<Number> prolongation_matrix_interface;
-          prolongation_matrix_interface.reinit(n_dofs_v, cells.size());
-
-          const auto make_active_interface_indices = [&](const CellIterator & cell) {
-            return Stokes::Velocity::SIPG::MW::make_active_interface_indices_impl(interface_handler,
-                                                                                  cell);
-          };
-
-          for(const auto & cell : cells)
-          {
-            std::vector<types::global_dof_index> dof_indices_v(cell->get_fe().dofs_per_cell);
-            cell->get_active_or_mg_dof_indices(dof_indices_v);
-
-            std::vector<unsigned int> local_dof_indices_v;
-            std::transform(dof_indices_v.begin(),
-                           dof_indices_v.end(),
-                           std::back_inserter(local_dof_indices_v),
-                           [&](const auto dof_index) {
-                             const auto & local_index = g2l_v.find(dof_index);
-                             return local_index != g2l_v.cend() ? local_index->second :
-                                                                  numbers::invalid_unsigned_int;
-                           });
-
-            const auto & [active_face_nos, global_face_nos] = make_active_interface_indices(cell);
-
-            for(auto ci = 0U; ci < local_dof_indices_v.size(); ++ci)
-              if(local_dof_indices_v[ci] != numbers::invalid_unsigned_int)
-                for(auto cj = 0U; cj < active_face_nos.size(); ++cj)
-                  prolongation_matrix_interface(local_dof_indices_v[ci], global_face_nos[cj]) =
-                    (*trafomatrix_orth_faces)(active_face_nos[cj], ci);
-          }
-
-          //: assemble the local residual of the Stokes system (pressure constants)
-          {
-            using Stokes::Velocity::SIPG::MW::ScratchData;
-
-            using Stokes::Velocity::SIPG::MW::CopyData;
-
-            using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
-
-            MatrixIntegrator<dim, true, is_simplified> matrix_integrator(
-              nullptr, nullptr, nullptr, equation_data, &interface_handler);
-
-            const auto distribute_local_to_global_impl = [&](const auto & cd) {
-              std::vector<unsigned int> local_dof_indices_sf;
-              std::transform(cd.dof_indices_column.begin(),
-                             cd.dof_indices_column.end(),
-                             std::back_inserter(local_dof_indices_sf),
-                             [&](const auto dof_index) {
-                               const auto & local_index = g2l_sf.find(dof_index);
-                               return local_index != g2l_sf.cend() ? local_index->second :
-                                                                     numbers::invalid_unsigned_int;
-                             });
-
-              AssertDimension(local_dof_indices_sf.size(), cd.matrix.n());
-              Vector<Number> local_solution_sf(cd.matrix.n());
-              for(auto i = 0U; i < local_solution_sf.size(); ++i)
-                if(local_dof_indices_sf[i] != numbers::invalid_unsigned_int)
-                  local_solution_sf(i) = solution_sf[local_dof_indices_sf[i]][lane];
-
-              Vector<Number> Ax(cd.matrix.m());
-              cd.matrix.vmult(Ax, local_solution_sf);
-
-              constraints_on_interface.template distribute_local_to_global(Ax,
-                                                                           cd.dof_indices,
-                                                                           local_rhs_constp);
-            };
-
-            const auto local_copier = [&](const CopyData & copy_data) {
-              for(const auto & cd : copy_data.cell_data)
-                distribute_local_to_global_impl(cd);
-              for(const auto & cdf : copy_data.face_data)
-                distribute_local_to_global_impl(cdf);
-            };
-
-            const UpdateFlags update_flags_v =
-              update_values | update_gradients | update_quadrature_points | update_JxW_values;
-            const UpdateFlags interface_update_flags_v = update_values | update_gradients |
-                                                         update_quadrature_points |
-                                                         update_JxW_values | update_normal_vectors;
-
-            const UpdateFlags update_flags_sf = update_flags_v | update_hessians;
-            const UpdateFlags interface_update_flags_sf =
-              interface_update_flags_v | update_hessians;
-
-            ScratchData<dim, true> scratch_data(mapping,
-                                                dofh_v.get_fe(),
-                                                dofh_sf.get_fe(),
-                                                n_q_points_1d,
-                                                *trafomatrix_orth_faces,
-                                                update_flags_v,
-                                                update_flags_sf,
-                                                interface_update_flags_v,
-                                                interface_update_flags_sf);
-
-            CopyData copy_data;
-
-            MeshWorker::m2d2::mesh_loop(
-              local_cell_range_v,
-              [&](const CellIterator &     cell,
-                  ScratchData<dim, true> & scratch_data,
-                  CopyData &               copy_data) {
-                CellIterator cell_sf(&dofh_sf.get_triangulation(),
-                                     cell->level(),
-                                     cell->index(),
-                                     &dofh_sf);
-                /// compute local matrix A^\orth
-                matrix_integrator.cell_residual_worker_interface(cell,
-                                                                 cell_sf,
-                                                                 scratch_data,
-                                                                 copy_data);
-              },
-              local_copier,
-              scratch_data,
-              copy_data,
-              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells |
-                MeshWorker::assemble_boundary_faces | MeshWorker::assemble_own_interior_faces_both |
-                MeshWorker::assemble_ghost_faces_both,
-              /*assemble faces at ghosts?*/ true,
-              [&](const CellIterator &     cell,
-                  const unsigned int &     face_no,
-                  ScratchData<dim, true> & scratch_data,
-                  CopyData &               copy_data) {
-                CellIterator cell_sf(&dofh_sf.get_triangulation(),
-                                     cell->level(),
-                                     cell->index(),
-                                     &dofh_sf);
-                matrix_integrator.boundary_residual_worker_tangential_interface(
-                  cell, cell_sf, face_no, scratch_data, copy_data);
-              },
-              [&](const CellIterator &     cell,
-                  const unsigned int &     face_no,
-                  const unsigned int &     sface_no,
-                  const CellIterator &     ncell,
-                  const unsigned int &     nface_no,
-                  const unsigned int &     nsface_no,
-                  ScratchData<dim, true> & scratch_data,
-                  CopyData &               copy_data) {
-                CellIterator cell_sf(&dofh_sf.get_triangulation(),
-                                     cell->level(),
-                                     cell->index(),
-                                     &dofh_sf);
-                CellIterator ncell_sf(&dofh_sf.get_triangulation(),
-                                      ncell->level(),
-                                      ncell->index(),
-                                      &dofh_sf);
-                const bool   cell_belongs_to_collection  = belongs_to_collection(cell);
-                const bool   ncell_belongs_to_collection = belongs_to_collection(ncell);
-                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
-                if(is_interface)
-                {
-                  matrix_integrator.face_residual_worker_tangential_interface(cell,
-                                                                              cell_sf,
-                                                                              face_no,
-                                                                              sface_no,
-                                                                              ncell,
-                                                                              ncell_sf,
-                                                                              nface_no,
-                                                                              nsface_no,
-                                                                              scratch_data,
-                                                                              copy_data);
-                  /// interfaces are assembled from both sides
-                  copy_data.face_data.back().matrix *= 0.5;
-                  return;
-                }
-                if(cell_belongs_to_collection)
-                {
-                  matrix_integrator.uniface_residual_worker_tangential_interface(
-                    cell, cell_sf, face_no, sface_no, scratch_data, copy_data);
-                }
-              });
-
-            /// compute the residual for this patch
-            local_rhs_constp *= -1.; // -Ax // ???
-            const auto local_rhs_v = array_view_to_vector(src_v_view, lane);
-            prolongation_matrix_interface.Tvmult_add(local_rhs_constp, local_rhs_v); // f - Ax
-          }
-
-          //: assemble the local matrix and right-hand side (pressure constants)
-          {
-            using Biharmonic::Pressure::Interface::MW::ScratchData;
-
-            using Biharmonic::Pressure::Interface::MW::CopyData;
-
-            using Biharmonic::Pressure::Interface::MW::MatrixIntegrator;
-
-            ArrayView<const VectorizedArray<double>> dst_p_cview = make_array_view(dst_p_view);
-
-            MatrixIntegrator<dim, true> matrix_integrator(
-              nullptr, &interface_handler, equation_data, &g2l_p, &dst_p_cview, lane);
-
-            const auto local_copier = [&](const CopyData & copy_data) {
-              for(const auto & cdf : copy_data.face_data)
-              {
-                constraints_on_interface.template distribute_local_to_global<Vector<double>>(
-                  cdf.rhs, cdf.dof_indices, local_rhs_constp);
-
-                constraints_on_interface.template distribute_local_to_global<SparseMatrix<double>>(
-                  cdf.matrix,
-                  cdf.dof_indices,
-                  constraints_on_cell,
-                  cdf.dof_indices_column,
-                  local_matrix_constp);
-              }
-            };
-
-            const UpdateFlags update_flags_v =
-              update_values | update_quadrature_points | update_JxW_values;
-            const UpdateFlags interface_update_flags_v = update_flags_v | update_normal_vectors;
-
-            const UpdateFlags update_flags_p = update_default;
-            const UpdateFlags interface_update_flags_p =
-              update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
-
-            ScratchData<dim> scratch_data(mapping,
-                                          dofh_v.get_fe(),
-                                          dofh_p.get_fe(),
-                                          n_q_points_1d,
-                                          *trafomatrix_orth_faces,
-                                          update_flags_v,
-                                          update_flags_p,
-                                          interface_update_flags_v,
-                                          interface_update_flags_p);
-
-            CopyData copy_data;
-
-            MeshWorker::m2d2::mesh_loop(
-              local_cell_range_v,
-              /*cell_worker*/ nullptr,
-              local_copier,
-              scratch_data,
-              copy_data,
-              MeshWorker::assemble_own_interior_faces_both | MeshWorker::assemble_ghost_faces_both,
-              /*assemble faces at ghosts?*/ true,
-              /*boundary_worker*/ nullptr,
-              [&](const auto & cell,
-                  const auto   face_no,
-                  const auto   sface_no,
-                  const auto & ncell,
-                  const auto   nface_no,
-                  const auto   nsface_no,
-                  auto &       scratch_data,
-                  auto &       copy_data) {
-                const bool cell_belongs_to_collection  = belongs_to_collection(cell);
-                const bool ncell_belongs_to_collection = belongs_to_collection(ncell);
-                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
-                if(is_interface)
-                {
-                  CellIterator cellP(&dofh_p.get_triangulation(),
-                                     cell->level(),
-                                     cell->index(),
-                                     &dofh_p);
-                  CellIterator ncellP(&dofh_p.get_triangulation(),
-                                      ncell->level(),
-                                      ncell->index(),
-                                      &dofh_p);
-                  const bool   was_assembled = matrix_integrator.face_worker(cell,
-                                                                           cellP,
-                                                                           face_no,
-                                                                           sface_no,
-                                                                           ncell,
-                                                                           ncellP,
-                                                                           nface_no,
-                                                                           nsface_no,
-                                                                           scratch_data,
-                                                                           copy_data);
-                  if(was_assembled)
-                  {
-                    copy_data.face_data.back().matrix *= 0.5; /// both sides!
-                    copy_data.face_data.back().rhs *= 0.5;    /// both sides!
-                  }
-                }
-              });
-          }
-
-          //: solve the local system (pressure constants)
-          constraints_on_interface.condense(local_matrix_constp, local_rhs_constp);
-
-          SparseDirectUMFPACK A_direct;
-          A_direct.template initialize<SparseMatrix<double>>(local_matrix_constp);
-          A_direct.vmult(local_solution_constp, local_rhs_constp);
-
-          constraints_on_interface.distribute(local_solution_constp);
-
-          //: distribute the pressure constants to the local pressure solution
-          {
-            std::vector<types::global_dof_index> dof_indices(dofh_p.get_fe().dofs_per_cell);
-            for(const auto & cell_p : cells_p)
-            {
-              cell_p->get_active_or_mg_dof_indices(dof_indices);
-              const auto local_dof_index        = g2l_p.at(dof_indices.front());
-              const auto cell_index             = interface_handler.get_cell_index(cell_p->id());
-              dst_p_view[local_dof_index][lane] = local_solution_constp(cell_index);
-            }
-          }
-
-          /// post-process local pressure
-          {
-            using ::MW::ScratchData;
-            using ::MW::Cell::CopyData;
-
-            double mean_value = 0.;
-            double volume     = 0.;
-
-            const auto local_copier = [&](const CopyData & copy_data) {
-              for(const auto & cd : copy_data.cell_data)
-              {
-                mean_value += cd.values(0);
-                volume += cd.values(1);
-              }
-            };
-
-            const UpdateFlags update_flags_p =
-              update_values | update_quadrature_points | update_JxW_values;
-
-            ScratchData<dim> scratch_data(mapping, dofh_p.get_fe(), n_q_points_1d, update_flags_p);
-
-            CopyData copy_data;
-
-            MeshWorker::m2d2::mesh_loop(
-              local_cell_range_p,
-              [&](const auto & cell, auto & scratch_data, auto & copy_data) {
-                auto & phi = scratch_data.fe_values;
-                phi.reinit(cell);
-
-                const unsigned int n_dofs = cell->get_fe().dofs_per_cell;
-
-                std::vector<types::global_dof_index> dof_indices(n_dofs);
-                cell->get_active_or_mg_dof_indices(dof_indices);
-
-                std::vector<unsigned int> local_dof_indices;
-                std::transform(dof_indices.begin(),
-                               dof_indices.end(),
-                               std::back_inserter(local_dof_indices),
-                               [&](const auto dof_index) {
-                                 const auto & local_index = g2l_p.find(dof_index);
-                                 return local_index != g2l_p.cend() ? local_index->second :
-                                                                      numbers::invalid_unsigned_int;
-                               });
-
-                Vector<double> dof_values(n_dofs);
-                for(auto i = 0U; i < n_dofs; ++i)
-                  if(local_dof_indices[i] != numbers::invalid_unsigned_int)
-                    dof_values(i) = dst_p_view[local_dof_indices[i]][lane];
-
-                const auto & compute_value = [&](const unsigned int q) {
-                  double value = 0.;
-                  for(auto j = 0U; j < n_dofs; ++j)
-                    value += dof_values[j] * phi.shape_value(j, q);
-                  return value;
-                };
-
-                auto & cd = copy_data.cell_data.emplace_back(2U);
-
-                for(auto q = 0U; q < phi.n_quadrature_points; ++q)
-                {
-                  const auto & dx      = phi.JxW(q);
-                  const auto & value_p = compute_value(q);
-                  cd.values(0) += value_p * dx;
-                  cd.values(1) += dx;
-                }
-              },
-              local_copier,
-              scratch_data,
-              copy_data,
-              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells);
-
-            /// make the local pressure solution mean-value-free
-            for(const auto & cell_p : cells_p)
-            {
-              std::vector<types::global_dof_index> dof_indices(cell_p->get_fe().dofs_per_cell);
-              cell_p->get_active_or_mg_dof_indices(dof_indices);
-              dst_p_view[g2l_p.at(dof_indices.front())][lane] -= mean_value / volume;
-            }
+            std::vector<types::global_dof_index> dof_indices(cell_p->get_fe().dofs_per_cell);
+            cell_p->get_active_or_mg_dof_indices(dof_indices);
+            dst_p_view[g2l_p.at(dof_indices.front())][lane] -= mean_value / volume;
           }
         }
       } // loop over lanes
@@ -5083,29 +4595,41 @@ public:
                                                       false,
                                                       subdomain_range);
 
+    const auto & mapping = subdomain_handler.get_mapping();
+
     const auto & dofh_v  = subdomain_handler.get_dof_handler(active_dofh_index_v);
     const auto & dofh_p  = subdomain_handler.get_dof_handler(active_dofh_index_p);
     const auto & dofh_sf = subdomain_handler.get_dof_handler(active_dofh_index_sf);
 
+    const auto patch_transfer    = get_patch_transfer(subdomain_handler);
     const auto patch_transfer_sf = get_patch_transfer_stream(subdomain_handler);
+
+    const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
+    const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
     // const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
 
-    const auto & [shape_to_test_functions_interior, shape_to_test_functions_faces] =
-      compute_divfreeorth_shape_functions(dofh_v.get_fe(), dofh_p.get_fe());
+    const auto n_dofs_v  = patch_transfer->n_dofs_per_patch(0);
+    const auto n_dofs_p  = patch_transfer->n_dofs_per_patch(1);
+    const auto n_dofs_sf = patch_transfer_sf->n_dofs_per_patch();
 
     const auto prolong_sf =
       std::make_shared<const ProlongationStream<dim, Number>>(dofh_sf.get_fe(), dofh_v.get_fe());
     const auto prolong_orth =
       std::make_shared<const ProlongationDivFreeOrth<dim, Number>>(dofh_v.get_fe(),
                                                                    dofh_p.get_fe());
-    const auto velocity_to_orth =
-      std::make_shared<const FullMatrix<Number>>(shape_to_test_functions_interior);
-    const auto velocity_to_orth_faces =
-      std::make_shared<const FullMatrix<Number>>(shape_to_test_functions_faces);
+
+    const auto & [velocity_to_dual_gradp, velocity_to_dual_constp] =
+      prolong_orth->velocity_to_divfreeorth_shape_functions;
+
+    // const auto velocity_to_orth =
+    //   std::make_shared<const FullMatrix<Number>>(velocity_to_dual_gradp); // TODO
+    // const auto velocity_to_orth_faces =
+    //   std::make_shared<const FullMatrix<Number>>(velocity_to_dual_constp); // TODO
 
     const auto [begin, end] = subdomain_range;
     for(auto patch_index = begin; patch_index < end; ++patch_index)
     {
+      patch_transfer->reinit(patch_index);
       patch_transfer_sf->reinit(patch_index);
 
       matrix_type & patch_matrix = local_matrices[patch_index];
@@ -5113,18 +4637,731 @@ public:
       patch_matrix.subdomain_handler = &subdomain_handler;
       patch_matrix.patch_index       = patch_index;
       patch_matrix.n_q_points_1d     = n_q_points_1d;
-      patch_matrix.equation_data     = equation_data;
+      // patch_matrix.equation_data     = equation_data;
 
       patch_matrix.solver_sf = local_matrices_stream[patch_index];
 
       /// caching prolongation: from stream to velocity
-      patch_matrix.prolongation_sf   = prolong_sf;
-      patch_matrix.prolongation_orth = prolong_orth;
+      patch_matrix.prolongation_sf = prolong_sf;
 
       /// caching transformation matrices: orth. velocity functions
-      patch_matrix.trafomatrix_orth       = velocity_to_orth;
-      patch_matrix.trafomatrix_orth_faces = velocity_to_orth_faces;
-    }
+      // patch_matrix.trafomatrix_orth       = velocity_to_orth;       // TODO
+      // patch_matrix.trafomatrix_orth_faces = velocity_to_orth_faces; // TODO
+      patch_matrix.prolongation_orth = prolong_orth;
+
+      /// NEW caching matrix for residual
+
+      auto & this_matrix_orth = patch_matrix.Aorth.as_table();
+      this_matrix_orth.reinit(n_dofs_p, n_dofs_sf);
+
+      for(auto lane = 0U; lane < patch_dof_worker_v.n_lanes_filled(patch_index); ++lane)
+      {
+        const auto & cells = patch_dof_worker_v.get_cell_collection(patch_index, lane);
+
+        LocalInterfaceHandler<dim> interface_handler;
+        interface_handler.reinit(cells);
+
+        using CellIterator = typename DoFHandler<dim>::level_cell_iterator;
+
+        const TPSS::BelongsToCollection<CellIterator> belongs_to_collection(cells);
+
+        const auto & local_cell_range_v = TPSS::make_local_cell_range(cells);
+
+        const auto & g2l_v =
+          patch_transfer->get_patch_transfer(0).get_global_to_local_dof_indices(lane);
+
+        const auto & g2l_p =
+          patch_transfer->get_patch_transfer(1).get_global_to_local_dof_indices(lane);
+
+        const auto & g2l_sf = patch_transfer_sf->get_global_to_local_dof_indices(lane);
+
+        /// non-constant pressure modes
+        {
+          using Stokes::Velocity::SIPG::MW::ScratchData;
+
+          using Stokes::Velocity::SIPG::MW::CopyData;
+
+          using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
+
+          MatrixIntegrator<dim, true, is_simplified> matrix_integrator(
+            nullptr, nullptr, nullptr, equation_data, &interface_handler);
+
+          AffineConstraints<double> empty_constraints;
+          empty_constraints.close();
+
+          const auto distribute_local_to_patch_cache_impl = [&](const auto & cd) {
+            std::vector<unsigned int> local_dof_indices_sf;
+            std::transform(cd.dof_indices_column.begin(),
+                           cd.dof_indices_column.end(),
+                           std::back_inserter(local_dof_indices_sf),
+                           [&](const auto dof_index) {
+                             const auto & local_index = g2l_sf.find(dof_index);
+                             return local_index != g2l_sf.cend() ? local_index->second :
+                                                                   numbers::invalid_unsigned_int;
+                           });
+
+            std::vector<unsigned int> local_dof_indices_p;
+            std::transform(cd.dof_indices.begin(),
+                           cd.dof_indices.end(),
+                           std::back_inserter(local_dof_indices_p),
+                           [&](const auto dof_index) {
+                             const auto & local_index = g2l_p.find(dof_index);
+                             return local_index != g2l_p.cend() ? local_index->second :
+                                                                  numbers::invalid_unsigned_int;
+                           });
+
+            AssertDimension(local_dof_indices_p.size(), cd.matrix.m());
+            AssertDimension(local_dof_indices_sf.size(), cd.matrix.n());
+            for(auto i = 0U; i < local_dof_indices_p.size(); ++i)
+            {
+              const unsigned int ii = local_dof_indices_p[i];
+              if(ii != numbers::invalid_unsigned_int)
+                for(auto j = 0U; j < local_dof_indices_sf.size(); ++j)
+                {
+                  const unsigned int jj = local_dof_indices_sf[j];
+                  if(jj != numbers::invalid_unsigned_int)
+                    this_matrix_orth(ii, jj)[lane] += cd.matrix(i, j);
+                }
+            }
+          };
+
+          const auto local_copier_cache = [&](const CopyData & copy_data) {
+            for(const auto & cd : copy_data.cell_data)
+            {
+              distribute_local_to_patch_cache_impl(cd);
+            }
+            for(const auto & cdf : copy_data.face_data)
+            {
+              distribute_local_to_patch_cache_impl(cdf);
+            }
+          };
+
+          // const auto distribute_local_to_patch_impl = [&](const auto & cd) {
+          //   std::vector<unsigned int> local_dof_indices_sf;
+          //   std::transform(cd.dof_indices_column.begin(),
+          //                  cd.dof_indices_column.end(),
+          //                  std::back_inserter(local_dof_indices_sf),
+          //                  [&](const auto dof_index) {
+          //                    const auto & local_index = g2l_sf.find(dof_index);
+          //                    return local_index != g2l_sf.cend() ? local_index->second :
+          //                                                          numbers::invalid_unsigned_int;
+          //                  });
+
+          //   std::vector<unsigned int> local_dof_indices_p;
+          //   std::transform(cd.dof_indices.begin(),
+          //                  cd.dof_indices.end(),
+          //                  std::back_inserter(local_dof_indices_p),
+          //                  [&](const auto dof_index) {
+          //                    const auto & local_index = g2l_p.find(dof_index);
+          //                    return local_index != g2l_p.cend() ? local_index->second :
+          //                                                         numbers::invalid_unsigned_int;
+          //                  });
+
+          //   AssertDimension(local_dof_indices_sf.size(), cd.matrix.n());
+          //   Vector<Number> local_solution_sf(cd.matrix.n());
+          //   for(auto i = 0U; i < local_solution_sf.size(); ++i)
+          //     if(local_dof_indices_sf[i] != numbers::invalid_unsigned_int)
+          //       local_solution_sf(i) = solution_sf[local_dof_indices_sf[i]][lane];
+
+          //   Vector<Number> Ax(cd.matrix.m());
+          //   cd.matrix.vmult(Ax, local_solution_sf);
+          //   // Ax -= cd.rhs; // Ax - f
+
+          //   AssertDimension(local_dof_indices_p.size(), cd.matrix.m());
+          //   for(auto i = 0U; i < Ax.size(); ++i)
+          //   {
+          //     Assert(local_dof_indices_p[i] != numbers::invalid_unsigned_int,
+          //     ExcInternalError()); dst_p_view[local_dof_indices_p[i]][lane] -= Ax(i); // f - Ax
+          //   }
+          // };
+
+          // const auto local_copier = [&](const CopyData & copy_data) {
+          //   for(const auto & cd : copy_data.cell_data)
+          //   {
+          //     distribute_local_to_patch_impl(cd);
+          //   }
+          //   for(const auto & cdf : copy_data.face_data)
+          //   {
+          //     distribute_local_to_patch_impl(cdf);
+          //   }
+          // };
+
+          const UpdateFlags update_flags_v =
+            update_values | update_gradients | update_quadrature_points | update_JxW_values;
+          const UpdateFlags interface_update_flags_v = update_flags_v | update_normal_vectors;
+
+          const UpdateFlags update_flags_sf           = update_flags_v | update_hessians;
+          const UpdateFlags interface_update_flags_sf = interface_update_flags_v | update_hessians;
+
+          ScratchData<dim, true> scratch_data_tmpl(mapping,
+                                                   dofh_v.get_fe(),
+                                                   dofh_sf.get_fe(),
+                                                   n_q_points_1d,
+                                                   velocity_to_dual_gradp,
+                                                   update_flags_v,
+                                                   update_flags_sf,
+                                                   interface_update_flags_v,
+                                                   interface_update_flags_sf);
+
+          CopyData copy_data_tmpl;
+
+          MeshWorker::m2d2::mesh_loop(
+            local_cell_range_v,
+            [&](const CellIterator &     cell,
+                ScratchData<dim, true> & scratch_data,
+                CopyData &               copy_data) {
+              CellIterator cell_sf(&dofh_sf.get_triangulation(),
+                                   cell->level(),
+                                   cell->index(),
+                                   &dofh_sf);
+              CellIterator cell_p(&dofh_p.get_triangulation(),
+                                  cell->level(),
+                                  cell->index(),
+                                  &dofh_p);
+              /// compute local matrix A^\orth
+              matrix_integrator.cell_residual_worker(
+                cell, cell_sf, cell_p, scratch_data, copy_data);
+
+              /// compute local rhs f^\orth (dual restriction)
+              // AssertDimension(copy_data.cell_data.size(), 1);
+              // auto &                               cd = copy_data.cell_data.back();
+              // std::vector<types::global_dof_index> dof_indices_v(cell->get_fe().dofs_per_cell);
+              // cell->get_active_or_mg_dof_indices(dof_indices_v);
+              // std::vector<unsigned int> local_dof_indices_v;
+              // std::transform(dof_indices_v.begin(),
+              //                dof_indices_v.end(),
+              //                std::back_inserter(local_dof_indices_v),
+              //                [&](const auto dof_index) {
+              //                  const auto & local_index = g2l_v.find(dof_index);
+              //                  return local_index != g2l_v.cend() ? local_index->second :
+              //                                                       numbers::invalid_unsigned_int;
+              //                });
+              // Vector<Number> local_rhs_v(dof_indices_v.size());
+              // for(auto i = 0U; i < local_rhs_v.size(); ++i)
+              //   if(local_dof_indices_v[i] != numbers::invalid_unsigned_int)
+              //     local_rhs_v(i) = src_v_view[local_dof_indices_v[i]][lane];
+              // trafomatrix_orth->vmult(cd.rhs, local_rhs_v);
+            },
+            local_copier_cache,
+            scratch_data_tmpl,
+            copy_data_tmpl,
+            MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells |
+              MeshWorker::assemble_boundary_faces | MeshWorker::assemble_own_interior_faces_both |
+              MeshWorker::assemble_ghost_faces_both,
+            /*assemble faces at ghosts?*/ true,
+            [&](const CellIterator &     cell,
+                const unsigned int &     face_no,
+                ScratchData<dim, true> & scratch_data,
+                CopyData &               copy_data) {
+              CellIterator cell_sf(&dofh_sf.get_triangulation(),
+                                   cell->level(),
+                                   cell->index(),
+                                   &dofh_sf);
+              CellIterator cell_p(&dofh_p.get_triangulation(),
+                                  cell->level(),
+                                  cell->index(),
+                                  &dofh_p);
+              matrix_integrator.boundary_residual_worker_tangential(
+                cell, cell_sf, cell_p, face_no, scratch_data, copy_data);
+              copy_data.face_data.back().rhs *= 0.; // safety
+            },
+            [&](const CellIterator &     cell,
+                const unsigned int &     face_no,
+                const unsigned int &     sface_no,
+                const CellIterator &     ncell,
+                const unsigned int &     nface_no,
+                const unsigned int &     nsface_no,
+                ScratchData<dim, true> & scratch_data,
+                CopyData &               copy_data) {
+              CellIterator cell_sf(&dofh_sf.get_triangulation(),
+                                   cell->level(),
+                                   cell->index(),
+                                   &dofh_sf);
+              CellIterator cell_p(&dofh_p.get_triangulation(),
+                                  cell->level(),
+                                  cell->index(),
+                                  &dofh_p);
+              CellIterator ncell_sf(&dofh_sf.get_triangulation(),
+                                    ncell->level(),
+                                    ncell->index(),
+                                    &dofh_sf);
+              CellIterator ncell_p(&dofh_p.get_triangulation(),
+                                   ncell->level(),
+                                   ncell->index(),
+                                   &dofh_p);
+              const bool   cell_belongs_to_collection  = belongs_to_collection(cell);
+              const bool   ncell_belongs_to_collection = belongs_to_collection(ncell);
+              const bool   is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
+              if(is_interface)
+              {
+                matrix_integrator.face_residual_worker_tangential(cell,
+                                                                  cell_sf,
+                                                                  cell_p,
+                                                                  face_no,
+                                                                  sface_no,
+                                                                  ncell,
+                                                                  ncell_sf,
+                                                                  ncell_p,
+                                                                  nface_no,
+                                                                  nsface_no,
+                                                                  scratch_data,
+                                                                  copy_data);
+                /// interfaces are assembled from both sides
+                copy_data.face_data.back().matrix *= 0.5;
+                copy_data.face_data.back().rhs *= 0.; // safety
+                return;
+              }
+              if(cell_belongs_to_collection)
+              {
+                matrix_integrator.uniface_residual_worker_tangential(
+                  cell, cell_sf, cell_p, face_no, sface_no, scratch_data, copy_data);
+                copy_data.face_data.back().rhs *= 0.; // safety
+              }
+            });
+        } /// non-constant pressure modes
+
+        /// constant pressure modes
+        {
+          const auto make_active_interface_indices = [&](const CellIterator & cell) {
+            return Stokes::Velocity::SIPG::MW::make_active_interface_indices_impl(interface_handler,
+                                                                                  cell);
+          };
+
+          auto & this_prolongation_matrix = patch_matrix.prolongation_orth_faces.as_table();
+          if(lane == 0U)
+            this_prolongation_matrix.reinit(n_dofs_v, /*n_cells*/ 1 << dim);
+
+          for(const auto & cell : cells)
+          {
+            std::vector<types::global_dof_index> dof_indices_v(cell->get_fe().dofs_per_cell);
+            cell->get_active_or_mg_dof_indices(dof_indices_v);
+
+            std::vector<unsigned int> local_dof_indices_v;
+            std::transform(dof_indices_v.begin(),
+                           dof_indices_v.end(),
+                           std::back_inserter(local_dof_indices_v),
+                           [&](const auto dof_index) {
+                             const auto & local_index = g2l_v.find(dof_index);
+                             return local_index != g2l_v.cend() ? local_index->second :
+                                                                  numbers::invalid_unsigned_int;
+                           });
+
+            const auto & [active_face_nos, global_face_nos] = make_active_interface_indices(cell);
+
+            for(auto ci = 0U; ci < local_dof_indices_v.size(); ++ci)
+              if(local_dof_indices_v[ci] != numbers::invalid_unsigned_int)
+                for(auto cj = 0U; cj < active_face_nos.size(); ++cj)
+                  this_prolongation_matrix(local_dof_indices_v[ci], global_face_nos[cj])[lane] =
+                    (velocity_to_dual_constp)(active_face_nos[cj], ci);
+          }
+
+          //: assemble the local residual of the Stokes system (pressure constants)
+          {
+            auto & this_matrix_orth_faces = patch_matrix.Aorth_faces.as_table();
+            if(lane == 0U)
+              this_matrix_orth_faces.reinit(interface_handler.n_interfaces(), n_dofs_sf);
+
+            using Stokes::Velocity::SIPG::MW::ScratchData;
+
+            using Stokes::Velocity::SIPG::MW::CopyData;
+
+            using Stokes::Velocity::SIPG::MW::MatrixIntegrator;
+
+            MatrixIntegrator<dim, true, is_simplified> matrix_integrator(
+              nullptr, nullptr, nullptr, equation_data, &interface_handler);
+
+            const auto distribute_local_to_global_cache_impl = [&](const auto & cd) {
+              std::vector<unsigned int> local_dof_indices_sf;
+              std::transform(cd.dof_indices_column.begin(),
+                             cd.dof_indices_column.end(),
+                             std::back_inserter(local_dof_indices_sf),
+                             [&](const auto dof_index) {
+                               const auto & local_index = g2l_sf.find(dof_index);
+                               return local_index != g2l_sf.cend() ? local_index->second :
+                                                                     numbers::invalid_unsigned_int;
+                             });
+
+              AssertDimension(cd.matrix.m(), cd.dof_indices.size());
+
+              for(auto i = 0U; i < cd.dof_indices.size(); ++i)
+                for(auto j = 0U; j < local_dof_indices_sf.size(); ++j)
+                {
+                  const unsigned int jj = local_dof_indices_sf[j];
+                  if(jj != numbers::invalid_unsigned_int)
+                    this_matrix_orth_faces(cd.dof_indices[i], jj)[lane] += cd.matrix(i, j);
+                }
+            };
+
+            const auto local_copier_cache = [&](const CopyData & copy_data) {
+              for(const auto & cd : copy_data.cell_data)
+                distribute_local_to_global_cache_impl(cd);
+              for(const auto & cdf : copy_data.face_data)
+                distribute_local_to_global_cache_impl(cdf);
+            };
+
+            // const auto distribute_local_to_global_impl = [&](const auto & cd) {
+            //   std::vector<unsigned int> local_dof_indices_sf;
+            //   std::transform(cd.dof_indices_column.begin(),
+            //                  cd.dof_indices_column.end(),
+            //                  std::back_inserter(local_dof_indices_sf),
+            //                  [&](const auto dof_index) {
+            //                    const auto & local_index = g2l_sf.find(dof_index);
+            //                    return local_index != g2l_sf.cend() ? local_index->second :
+            //                                                          numbers::invalid_unsigned_int;
+            //                  });
+
+            //   AssertDimension(local_dof_indices_sf.size(), cd.matrix.n());
+            //   Vector<Number> local_solution_sf(cd.matrix.n());
+            //   for(auto i = 0U; i < local_solution_sf.size(); ++i)
+            //     if(local_dof_indices_sf[i] != numbers::invalid_unsigned_int)
+            //       local_solution_sf(i) = solution_sf[local_dof_indices_sf[i]][lane];
+
+            //   Vector<Number> Ax(cd.matrix.m());
+            //   cd.matrix.vmult(Ax, local_solution_sf);
+
+            //   constraints_on_interface.template distribute_local_to_global(Ax,
+            //                                                                cd.dof_indices,
+            //                                                                local_rhs_constp);
+            // };
+
+            // const auto local_copier = [&](const CopyData & copy_data) {
+            //   for(const auto & cd : copy_data.cell_data)
+            //     distribute_local_to_global_impl(cd);
+            //   for(const auto & cdf : copy_data.face_data)
+            //     distribute_local_to_global_impl(cdf);
+            // };
+
+            const UpdateFlags update_flags_v =
+              update_values | update_gradients | update_quadrature_points | update_JxW_values;
+            const UpdateFlags interface_update_flags_v = update_values | update_gradients |
+                                                         update_quadrature_points |
+                                                         update_JxW_values | update_normal_vectors;
+
+            const UpdateFlags update_flags_sf = update_flags_v | update_hessians;
+            const UpdateFlags interface_update_flags_sf =
+              interface_update_flags_v | update_hessians;
+
+            ScratchData<dim, true> scratch_data(mapping,
+                                                dofh_v.get_fe(),
+                                                dofh_sf.get_fe(),
+                                                n_q_points_1d,
+                                                velocity_to_dual_constp,
+                                                update_flags_v,
+                                                update_flags_sf,
+                                                interface_update_flags_v,
+                                                interface_update_flags_sf);
+
+            CopyData copy_data;
+
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range_v,
+              [&](const CellIterator &     cell,
+                  ScratchData<dim, true> & scratch_data,
+                  CopyData &               copy_data) {
+                CellIterator cell_sf(&dofh_sf.get_triangulation(),
+                                     cell->level(),
+                                     cell->index(),
+                                     &dofh_sf);
+                /// compute local matrix A^\orth
+                matrix_integrator.cell_residual_worker_interface(cell,
+                                                                 cell_sf,
+                                                                 scratch_data,
+                                                                 copy_data);
+              },
+              local_copier_cache,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_cells | MeshWorker::assemble_ghost_cells |
+                MeshWorker::assemble_boundary_faces | MeshWorker::assemble_own_interior_faces_both |
+                MeshWorker::assemble_ghost_faces_both,
+              /*assemble faces at ghosts?*/ true,
+              [&](const CellIterator &     cell,
+                  const unsigned int &     face_no,
+                  ScratchData<dim, true> & scratch_data,
+                  CopyData &               copy_data) {
+                CellIterator cell_sf(&dofh_sf.get_triangulation(),
+                                     cell->level(),
+                                     cell->index(),
+                                     &dofh_sf);
+                matrix_integrator.boundary_residual_worker_tangential_interface(
+                  cell, cell_sf, face_no, scratch_data, copy_data);
+              },
+              [&](const CellIterator &     cell,
+                  const unsigned int &     face_no,
+                  const unsigned int &     sface_no,
+                  const CellIterator &     ncell,
+                  const unsigned int &     nface_no,
+                  const unsigned int &     nsface_no,
+                  ScratchData<dim, true> & scratch_data,
+                  CopyData &               copy_data) {
+                CellIterator cell_sf(&dofh_sf.get_triangulation(),
+                                     cell->level(),
+                                     cell->index(),
+                                     &dofh_sf);
+                CellIterator ncell_sf(&dofh_sf.get_triangulation(),
+                                      ncell->level(),
+                                      ncell->index(),
+                                      &dofh_sf);
+                const bool   cell_belongs_to_collection  = belongs_to_collection(cell);
+                const bool   ncell_belongs_to_collection = belongs_to_collection(ncell);
+                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
+                if(is_interface)
+                {
+                  matrix_integrator.face_residual_worker_tangential_interface(cell,
+                                                                              cell_sf,
+                                                                              face_no,
+                                                                              sface_no,
+                                                                              ncell,
+                                                                              ncell_sf,
+                                                                              nface_no,
+                                                                              nsface_no,
+                                                                              scratch_data,
+                                                                              copy_data);
+                  /// interfaces are assembled from both sides
+                  copy_data.face_data.back().matrix *= 0.5;
+                  return;
+                }
+                if(cell_belongs_to_collection)
+                {
+                  matrix_integrator.uniface_residual_worker_tangential_interface(
+                    cell, cell_sf, face_no, sface_no, scratch_data, copy_data);
+                }
+              });
+          }
+
+          AssertDimension(cells.size(), interface_handler.n_interfaces());
+
+          auto & this_matrix_constp = patch_matrix.Mconstp.as_table();
+          if(lane == 0U)
+            this_matrix_constp.reinit(interface_handler.n_interfaces(), cells.size());
+
+          //: assemble the local matrix (pressure constants)
+          {
+            using Biharmonic::Pressure::Interface::MW::ScratchData;
+
+            using Biharmonic::Pressure::Interface::MW::CopyData;
+
+            using Biharmonic::Pressure::Interface::MW::MatrixIntegrator;
+
+            MatrixIntegrator<dim, true> matrix_integrator(nullptr,
+                                                          &interface_handler,
+                                                          equation_data);
+
+            const auto local_copier = [&](const CopyData & copy_data) {
+              for(const auto & cdf : copy_data.face_data)
+              {
+                for(auto face_no = 0U; face_no < cdf.dof_indices.size(); ++face_no)
+                  for(auto cell_no = 0U; cell_no < cdf.dof_indices_column.size(); ++cell_no)
+                    this_matrix_constp(cdf.dof_indices[face_no],
+                                       cdf.dof_indices_column[cell_no])[lane] +=
+                      cdf.matrix(face_no, cell_no);
+              }
+            };
+
+            const UpdateFlags update_flags_v =
+              update_values | update_quadrature_points | update_JxW_values;
+            const UpdateFlags interface_update_flags_v = update_flags_v | update_normal_vectors;
+
+            const UpdateFlags update_flags_p = update_default;
+            const UpdateFlags interface_update_flags_p =
+              update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+
+            ScratchData<dim> scratch_data(mapping,
+                                          dofh_v.get_fe(),
+                                          dofh_p.get_fe(),
+                                          n_q_points_1d,
+                                          velocity_to_dual_constp,
+                                          update_flags_v,
+                                          update_flags_p,
+                                          interface_update_flags_v,
+                                          interface_update_flags_p);
+
+            CopyData copy_data;
+
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range_v,
+              /*cell_worker*/ nullptr,
+              local_copier,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_interior_faces_both | MeshWorker::assemble_ghost_faces_both,
+              /*assemble faces at ghosts?*/ true,
+              /*boundary_worker*/ nullptr,
+              [&](const auto & cell,
+                  const auto   face_no,
+                  const auto   sface_no,
+                  const auto & ncell,
+                  const auto   nface_no,
+                  const auto   nsface_no,
+                  auto &       scratch_data,
+                  auto &       copy_data) {
+                const bool cell_belongs_to_collection  = belongs_to_collection(cell);
+                const bool ncell_belongs_to_collection = belongs_to_collection(ncell);
+                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
+                if(is_interface)
+                {
+                  CellIterator cellP(&dofh_p.get_triangulation(),
+                                     cell->level(),
+                                     cell->index(),
+                                     &dofh_p);
+                  CellIterator ncellP(&dofh_p.get_triangulation(),
+                                      ncell->level(),
+                                      ncell->index(),
+                                      &dofh_p);
+                  const bool   was_assembled = matrix_integrator.face_worker(cell,
+                                                                           cellP,
+                                                                           face_no,
+                                                                           sface_no,
+                                                                           ncell,
+                                                                           ncellP,
+                                                                           nface_no,
+                                                                           nsface_no,
+                                                                           scratch_data,
+                                                                           copy_data);
+                  if(was_assembled)
+                  {
+                    copy_data.face_data.back().matrix *= 0.5; /// both sides!
+                    copy_data.face_data.back().rhs *= 0.5;    /// both sides!
+                  }
+                }
+              });
+
+            /// apply constraint (fix a single pressure dof)
+            AssertDimension(interface_handler.get_fixed_cell_index(),
+                            interface_handler.get_fixed_interface_index());
+            AssertDimension(this_matrix_constp.n_rows(), this_matrix_constp.n_cols());
+            for(auto i = 0U; i < this_matrix_constp.n_rows(); ++i)
+            {
+              this_matrix_constp(i, interface_handler.get_fixed_cell_index())[lane] = 0.;
+              this_matrix_constp(interface_handler.get_fixed_cell_index(), i)[lane] = 0.;
+            }
+            this_matrix_constp(interface_handler.get_fixed_cell_index(),
+                               interface_handler.get_fixed_cell_index())[lane] = 1.;
+          }
+
+          auto & this_matrix_p = patch_matrix.Ap.as_table();
+          if(lane == 0U)
+            this_matrix_p.reinit(interface_handler.n_interfaces(), n_dofs_p);
+
+          //: assemble the pressure matrix to obtain the right-hand side (pressure constants)
+          {
+            using Biharmonic::Pressure::Interface::MW::ScratchData;
+
+            using Biharmonic::Pressure::Interface::MW::CopyData;
+
+            using Biharmonic::Pressure::Interface::MW::MatrixIntegrator;
+
+            MatrixIntegrator<dim, true> matrix_integrator(nullptr,
+                                                          &interface_handler,
+                                                          equation_data);
+
+            const auto local_copier = [&](const CopyData & copy_data) {
+              for(const auto & cdf : copy_data.face_data)
+              {
+                std::vector<unsigned int> local_dof_indices_p;
+                std::transform(cdf.dof_indices_column.begin(),
+                               cdf.dof_indices_column.end(),
+                               std::back_inserter(local_dof_indices_p),
+                               [&](const auto dof_index) {
+                                 const auto & local_index = g2l_p.find(dof_index);
+                                 return local_index != g2l_p.cend() ? local_index->second :
+                                                                      numbers::invalid_unsigned_int;
+                               });
+
+                for(auto face_no = 0U; face_no < cdf.dof_indices.size(); ++face_no)
+                  for(auto j = 0U; j < local_dof_indices_p.size(); ++j)
+                    if(local_dof_indices_p[j] != numbers::invalid_unsigned_int)
+                      this_matrix_p(cdf.dof_indices[face_no], local_dof_indices_p[j])[lane] +=
+                        cdf.matrix(face_no, j);
+              }
+            };
+
+            const UpdateFlags update_flags_v =
+              update_values | update_quadrature_points | update_JxW_values;
+            const UpdateFlags interface_update_flags_v = update_flags_v | update_normal_vectors;
+
+            const UpdateFlags update_flags_p = update_default;
+            const UpdateFlags interface_update_flags_p =
+              update_values | update_quadrature_points | update_JxW_values | update_normal_vectors;
+
+            ScratchData<dim> scratch_data(mapping,
+                                          dofh_v.get_fe(),
+                                          dofh_p.get_fe(),
+                                          n_q_points_1d,
+                                          velocity_to_dual_constp,
+                                          update_flags_v,
+                                          update_flags_p,
+                                          interface_update_flags_v,
+                                          interface_update_flags_p);
+
+            CopyData copy_data;
+
+            MeshWorker::m2d2::mesh_loop(
+              local_cell_range_v,
+              /*cell_worker*/ nullptr,
+              local_copier,
+              scratch_data,
+              copy_data,
+              MeshWorker::assemble_own_interior_faces_both | MeshWorker::assemble_ghost_faces_both,
+              /*assemble faces at ghosts?*/ true,
+              /*boundary_worker*/ nullptr,
+              [&](const auto & cell,
+                  const auto   face_no,
+                  const auto   sface_no,
+                  const auto & ncell,
+                  const auto   nface_no,
+                  const auto   nsface_no,
+                  auto &       scratch_data,
+                  auto &       copy_data) {
+                const bool cell_belongs_to_collection  = belongs_to_collection(cell);
+                const bool ncell_belongs_to_collection = belongs_to_collection(ncell);
+                const bool is_interface = cell_belongs_to_collection && ncell_belongs_to_collection;
+                if(is_interface)
+                {
+                  CellIterator cellP(&dofh_p.get_triangulation(),
+                                     cell->level(),
+                                     cell->index(),
+                                     &dofh_p);
+                  CellIterator ncellP(&dofh_p.get_triangulation(),
+                                      ncell->level(),
+                                      ncell->index(),
+                                      &dofh_p);
+                  const bool   was_assembled = matrix_integrator.face_rhsmatrix_worker(cell,
+                                                                                     cellP,
+                                                                                     face_no,
+                                                                                     sface_no,
+                                                                                     ncell,
+                                                                                     ncellP,
+                                                                                     nface_no,
+                                                                                     nsface_no,
+                                                                                     scratch_data,
+                                                                                     copy_data);
+                  if(was_assembled)
+                  {
+                    copy_data.face_data.back().matrix *= 0.5; /// both sides!
+                    copy_data.face_data.back().rhs *= 0.5;    /// both sides!
+                  }
+                }
+              });
+
+            /// apply constraint (fix a single pressure dof)
+            AssertDimension(interface_handler.get_fixed_cell_index(),
+                            interface_handler.get_fixed_interface_index());
+            AssertDimension(this_matrix_constp.n_rows(), this_matrix_constp.n_cols());
+            for(auto i = 0U; i < this_matrix_constp.n_rows(); ++i)
+            {
+              this_matrix_constp(i, interface_handler.get_fixed_cell_index())[lane] = 0.;
+              this_matrix_constp(interface_handler.get_fixed_cell_index(), i)[lane] = 0.;
+            }
+            this_matrix_constp(interface_handler.get_fixed_cell_index(),
+                               interface_handler.get_fixed_cell_index())[lane] = 1.;
+          }
+        } // constant pressure modes
+      }   // for-loop: lane
+
+      patch_matrix.Mconstp.invert();
+
+    } // for-loop: patch_index
   }
 
   std::shared_ptr<transfer_type>
@@ -5733,6 +5970,8 @@ public:
                              const operator_type & /*level_matrix*/,
                              const std::pair<unsigned int, unsigned int> subdomain_range) const
   {
+    AssertThrow(false, ExcMessage("TODO see other MatrixIntegratorStream..."));
+
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
     AssertDimension(subdomain_handler.n_dof_handlers(), 3U);
     Assert(active_dofh_index_v != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));

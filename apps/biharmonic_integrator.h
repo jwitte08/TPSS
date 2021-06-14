@@ -748,6 +748,18 @@ struct MatrixIntegrator
               ScratchData<dim> &   scratch_data,
               CopyData &           copy_data) const;
 
+  bool
+  face_rhsmatrix_worker(const IteratorType & cell,
+                        const IteratorType & cellP,
+                        const unsigned int & face_no,
+                        const unsigned int & sface_no,
+                        const IteratorType & ncell,
+                        const IteratorType & ncellP,
+                        const unsigned int & nface_no,
+                        const unsigned int & nsface_no,
+                        ScratchData<dim> &   scratch_data,
+                        CopyData &           copy_data) const;
+
   std::vector<double>
   make_dof_values_p(const std::vector<types::global_dof_index> & dof_indices_p) const
   {
@@ -761,6 +773,10 @@ struct MatrixIntegrator
     {
       for(const auto i : dof_indices_p)
         dof_values_p.push_back((*local_discrete_pressure)[g2l_pressure->at(i)][lane]);
+    }
+    else
+    {
+      dof_values_p.resize(dof_indices_p.size());
     }
     AssertDimension(dof_values_p.size(), dof_indices_p.size());
     return dof_values_p;
@@ -877,6 +893,59 @@ MatrixIntegrator<dim, is_multigrid>::face_worker(const IteratorType & cell,
   face_data.rhs[face_no] += pn_dot_v;
   face_data.matrix(face_no, 0U) = alpha_left;
   face_data.matrix(face_no, 1U) = alpha_right;
+
+  return true;
+}
+
+
+
+template<int dim, bool is_multigrid>
+bool
+MatrixIntegrator<dim, is_multigrid>::face_rhsmatrix_worker(const IteratorType & cell,
+                                                           const IteratorType & cellP,
+                                                           const unsigned int & face_no,
+                                                           const unsigned int & sface_no,
+                                                           const IteratorType & ncell,
+                                                           const IteratorType & ncellP,
+                                                           const unsigned int & nface_no,
+                                                           const unsigned int & nsface_no,
+                                                           ScratchData<dim> &   scratch_data,
+                                                           CopyData &           copy_data) const
+{
+  InterfaceId        interface_id{cell->id(), ncell->id()};
+  const unsigned int interface_index       = interface_handler->get_interface_index(interface_id);
+  const bool this_interface_isnt_contained = interface_index == numbers::invalid_unsigned_int;
+  if(this_interface_isnt_contained)
+    return false;
+
+  FEInterfaceValues<dim> & phiP = scratch_data.fe_interface_values_ansatz;
+  phiP.reinit(cellP, face_no, sface_no, ncellP, nface_no, nsface_no);
+
+  std::vector<std::array<unsigned int, 2>> testfunc_indices;
+  testfunc_indices.push_back({face_no, nface_no});
+
+  auto & phiV = scratch_data.test_interface_values;
+  phiV.reinit(cell, face_no, sface_no, ncell, nface_no, nsface_no, testfunc_indices);
+
+  const unsigned int n_interface_dofs_p = phiP.n_current_interface_dofs();
+
+  auto & face_data = copy_data.face_data.emplace_back(1U, n_interface_dofs_p);
+
+  face_data.dof_indices[0U] = interface_index;
+
+  face_data.dof_indices_column = phiP.get_interface_dof_indices();
+
+  for(unsigned int q = 0; q < phiP.n_quadrature_points; ++q)
+  {
+    const auto &           dx     = phiV.JxW(q);
+    const Tensor<1, dim>   n      = phiP.normal(q);
+    const Tensor<1, dim> & v_face = compute_vaverage(phiV, 0, q);
+
+    for(auto j = 0U; j < n_interface_dofs_p; ++j) // constant mode is zero !
+    {
+      face_data.matrix(0, j) += phiP.jump(j, q) * n * v_face * dx; // [ p n ] . v
+    }
+  }
 
   return true;
 }
