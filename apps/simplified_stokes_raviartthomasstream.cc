@@ -82,7 +82,7 @@ main(int argc, char * argv[])
     options.prms.multigrid.pre_smoother.schwarz.n_active_blocks =
       options.prms.multigrid.post_smoother.schwarz.n_active_blocks = 2;
     // options.prms.multigrid.pre_smoother.n_smoothing_steps =
-    //   options.prms.multigrid.post_smoother.n_smoothing_steps = 1; // !!!
+    //   options.prms.multigrid.post_smoother.n_smoothing_steps = 1;
 
     EquationData equation_data;
     AssertThrow(pde_index < EquationData::n_variants,
@@ -97,10 +97,12 @@ main(int argc, char * argv[])
     equation_data.local_solver = static_cast<LocalSolver>(local_solver_index);
     equation_data.skip_A       = skip_A;
 
-    std::fstream fout;
-    const auto   filename = get_filename(options.prms, equation_data);
+    const auto filename = get_filename(options.prms, equation_data);
 
-    const auto pcout = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);
+    std::fstream fout;
+    fout.open(filename + ".log", std::ios_base::out);
+
+    const auto pcout = std::make_shared<ConditionalOStream>(fout, is_first_proc);
 
     using StokesProblem = ModelProblem<dim, fe_degree_p, Method::RaviartThomasStream, true>;
     StokesProblem stokes_problem(options.prms, equation_data);
@@ -113,6 +115,8 @@ main(int argc, char * argv[])
       write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
 
     *pcout << std::endl << std::endl << results_as_string;
+
+    fout.close();
 
     if(is_first_proc)
     {

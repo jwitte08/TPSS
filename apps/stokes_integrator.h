@@ -5416,7 +5416,7 @@ public:
     std::is_same_v<matrix_type_stream, typename matrix_integrator_type_stream::matrix_type>,
     "mismatching matrix types for stream functions");
 
-  virtual void
+  void
   initialize(const EquationData & equation_data_in) override
   {
     AssertThrow(equation_data_in.local_solver == LocalSolver::C0IP ||
@@ -6030,7 +6030,7 @@ public:
   using typename Base::transfer_type_stream;
   using typename Base::value_type;
 
-  virtual void
+  void
   initialize(const EquationData & equation_data_in) override
   {
     AssertThrow(equation_data_in.local_solver == LocalSolver::C0IP,

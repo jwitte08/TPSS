@@ -951,6 +951,8 @@ template<int dim, int fe_degree_p, Method method, bool is_simplified>
 void
 ModelProblem<dim, fe_degree_p, method, is_simplified>::print_informations() const
 {
+  print_parameter("////////////////////////////////////////",
+                  is_simplified ? "SIMPLIFIED STOKES" : "STOKES");
   *pcout << equation_data.to_string();
   print_parameter("Local Assembly:", EquationData::str_local_assembly(local_assembly));
   *pcout << std::endl;
