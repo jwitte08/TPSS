@@ -377,7 +377,7 @@ void
 MatrixAsTable<Number>::apply_inverse(const ArrayView<Number> &       dst_view,
                                      const ArrayView<const Number> & src_view) const
 {
-  AssertThrow(inverse_matrix, ExcMessage("Have you called invert() after modifying entries?"));
+  Assert(inverse_matrix, ExcMessage("Have you called invert() after modifying entries?"));
   inverse_matrix->vmult(dst_view, src_view);
 }
 
