@@ -4074,7 +4074,6 @@ struct LocalSolverStream
 
   const SubdomainHandler<dim, Number> * subdomain_handler = nullptr;
   unsigned int                          patch_index       = numbers::invalid_unsigned_int;
-  unsigned int                          n_q_points_1d     = numbers::invalid_unsigned_int;
 
   matrix_type_stream                                          solver_sf;
   std::shared_ptr<const ProlongationStream<dim, Number>>      prolongation_sf;
@@ -4085,9 +4084,6 @@ struct LocalSolverStream
   MatrixAsTable<VectorizedArray<Number>> Aorth_faces;
   MatrixAsTable<VectorizedArray<Number>> Mconstp;
   MatrixAsTable<VectorizedArray<Number>> Ap;
-
-  // std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth;
-  // std::shared_ptr<const FullMatrix<Number>> trafomatrix_orth_faces;
 
   unsigned int
   m() const
@@ -4125,11 +4121,10 @@ struct LocalSolverStream
     const auto n_dofs_p  = patch_transfer->n_dofs_per_patch(1);
     const auto n_dofs_sf = Aorth.n();
 
-    AssertDimension(src_view.size(), n_dofs_v + n_dofs_p)
-      AssertDimension(dst_view.size(), n_dofs_v + n_dofs_p)
+    AssertDimension(src_view.size(), n_dofs_v + n_dofs_p);
+    AssertDimension(dst_view.size(), n_dofs_v + n_dofs_p);
 
-        const ArrayView<value_type>
-                                dst_v_view(dst_view.begin(), n_dofs_v);
+    const ArrayView<value_type> dst_v_view(dst_view.begin(), n_dofs_v);
     const ArrayView<value_type> dst_p_view(dst_view.begin() + n_dofs_v, n_dofs_p);
 
     const ArrayView<const value_type> src_v_view(src_view.begin(), n_dofs_v);
@@ -4149,47 +4144,41 @@ struct LocalSolverStream
 
     /// solve pressure
     {
-      /// NEW cached version
-
+      /// reconstruct non-constant pressure modes
+      ///
+      ///    p_i = (R f)_i - a(curl \phi, v_i)
+      ///
+      /// R    : dual restriction from SF to velocity
+      /// \phi : stream function solution
+      /// v_i  : "orthogonal velocity" function dual to grad p_i
       Assert(prolongation_orth, ExcMessage("prolongation_orth is uninitialized"));
-      prolongation_orth->dual_restrict(dst_p_view, src_v_view); // f^\orth
+      prolongation_orth->dual_restrict(dst_p_view, src_v_view); // f^{\orth\circ}
 
-      Aorth.vmult_sadd(dst_p_view, make_vectorized_array<Number>(-1.), solution_sf_view);
+      Aorth.vmult_sadd(dst_p_view,
+                       make_vectorized_array<Number>(-1.),
+                       solution_sf_view); // f^{\orth\circ - A \phi}
 
-      /// NEW cached version
+      /// reconstruct constant pressure modes
+      ///
+      ///    p_{K,0} = ...
+      AlignedVector<value_type>   local_rhs_constp(Mconstp.m());
+      const ArrayView<value_type> local_rhs_constp_view(local_rhs_constp.begin(),
+                                                        local_rhs_constp.size());
 
-      AlignedVector<value_type>   local_rhs_orth_faces(1 << dim);
-      const ArrayView<value_type> local_rhs_orth_faces_view(local_rhs_orth_faces.begin(),
-                                                            local_rhs_orth_faces.size());
-      prolongation_orth_faces.Tvmult_add(local_rhs_orth_faces_view, src_v_view);
+      /// f^{\orth\partial} - A^{\orth\partial} \phi + A^p p
+      prolongation_orth_faces.Tvmult_add(local_rhs_constp_view, src_v_view); // f^{\orth\partial}
+      Aorth_faces.vmult_sadd(local_rhs_constp_view,
+                             make_vectorized_array<Number>(-1.),
+                             solution_sf_view);        // - A \phi
+      Ap.vmult_add(local_rhs_constp_view, dst_p_view); // A p
 
-      AlignedVector<value_type>   Ax_orth_faces(1 << dim);
-      const ArrayView<value_type> Ax_orth_faces_view(Ax_orth_faces.begin(), Ax_orth_faces.size());
-      Aorth_faces.vmult(Ax_orth_faces_view, solution_sf_view);
+      AlignedVector<value_type>   local_solution_constp(Mconstp.n());
+      const ArrayView<value_type> local_solution_constp_view(local_solution_constp.begin(),
+                                                             local_solution_constp.size());
 
-      AlignedVector<value_type>   Ax_pressure(1 << dim);
-      const ArrayView<value_type> Ax_pressure_view(Ax_pressure.begin(), Ax_pressure.size());
-      Ap.vmult(Ax_pressure_view, dst_p_view);
+      Mconstp.apply_inverse(local_solution_constp_view, local_rhs_constp_view);
 
-      AlignedVector<value_type>   local_solution_constp_(1 << dim);
-      const ArrayView<value_type> local_solution_constp__view(local_solution_constp_.begin(),
-                                                              local_solution_constp_.size());
-
-      AlignedVector<value_type>   local_rhs_constp_(1 << dim);
-      const ArrayView<value_type> local_rhs_constp__view(local_rhs_constp_.begin(),
-                                                         local_rhs_constp_.size());
-
-      for(auto i = 0U; i < local_rhs_constp_.size(); ++i)
-      {
-        local_rhs_constp_[i] += local_rhs_orth_faces_view[i]; // f
-        local_rhs_constp_[i] -= Ax_orth_faces_view[i];        // f - A \phi
-        local_rhs_constp_[i] += Ax_pressure_view[i];          // f - A \phi + A p
-      }
-
-      Mconstp.apply_inverse(local_solution_constp__view, local_rhs_constp__view);
-
-
-
+      /// compute mean value free pressure solution
       const auto & patch_dof_worker_p = patch_transfer_p.get_patch_dof_worker();
 
       for(auto lane = 0U; lane < patch_dof_worker_p.n_lanes_filled(patch_index); ++lane)
@@ -4204,9 +4193,10 @@ struct LocalSolverStream
         const auto & g2l_p = patch_transfer_p.get_global_to_local_dof_indices(lane);
 
         Vector<double> local_solution_constp(cells_p.size());
+        AssertDimension(local_solution_constp.size(), local_solution_constp_view.size());
 
         for(auto i = 0U; i < local_solution_constp.size(); ++i)
-          local_solution_constp[i] = local_solution_constp__view[i][lane];
+          local_solution_constp[i] = local_solution_constp_view[i][lane];
 
         //: distribute the pressure constants to the local pressure solution
         {
@@ -4238,6 +4228,8 @@ struct LocalSolverStream
 
           const UpdateFlags update_flags_p =
             update_values | update_quadrature_points | update_JxW_values;
+
+          const unsigned int n_q_points_1d = dofh_p.get_fe().tensor_degree() + 1;
 
           ScratchData<dim> scratch_data(mapping, dofh_p.get_fe(), n_q_points_1d, update_flags_p);
 
@@ -4321,244 +4313,41 @@ struct LocalSolverStream
 
 
 
-namespace FD
-{
 /**
- * Assembles the (exact) local matrices/solvers by exploiting the tensor
- * structure of each scalar-valued shape function, that is each block of a
- * patch matrix involving a component of the velocity vector-field and/or a
- * pressure function have a low-rank Kronecker product decomposition (representation?).
+ * This base class computes the discretization matrices and (dual) restrictions
+ * that are needed to reconstruct a local mean value free pressure solution from
+ * a local stream function solution. Most entities are cached as a
+ * re-computation of residuals and prolongations turned out to be awkwardly
+ * slow...
  *
- * However, each block matrix itself has no low-rank Kronecker decomposition
- * (representation?), thus, local matrices are stored and inverted in a
- * standard (vectorized) fashion.
+ * In which way the local stream function solution (which might be just an
+ * approximation to the actual velocity solution) is computed has to be
+ * determined by a derived class.
  */
 template<int dim,
          int fe_degree_p,
-         typename Number              = double,
-         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
-         int             fe_degree_v  = fe_degree_p + 1>
-class MatrixIntegrator
+         typename Number,
+         typename MatrixTypeStream,
+         bool is_simplified = false>
+class MatrixIntegratorStreamBase
 {
 public:
-  using This = MatrixIntegrator<dim, fe_degree_p, Number>;
-
-  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
-
-  using value_type              = Number;
-  using transfer_type           = typename TPSS::PatchTransferBlock<dim, Number>;
-  using matrix_type_1d          = Table<2, VectorizedArray<Number>>;
-  using matrix_type             = MatrixAsTable<VectorizedArray<Number>>;
-  using matrix_type_mixed       = Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, -1>;
-  using velocity_evaluator_type = FDEvaluation<dim, fe_degree_v, n_q_points_1d, Number>;
-  using pressure_evaluator_type = FDEvaluation<dim, fe_degree_p, n_q_points_1d, Number>;
-
-  void
-  initialize(const EquationData & equation_data_in)
-  {
-    equation_data = equation_data_in;
-  }
-
-  template<typename OperatorType>
-  void
-  assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       subdomain_handler,
-                             std::vector<matrix_type> &                  local_matrices,
-                             const OperatorType &                        dummy_operator,
-                             const std::pair<unsigned int, unsigned int> subdomain_range) const
-  {
-    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
-
-    using MatrixIntegratorVelocity =
-      Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree_v, Number, dof_layout_v>;
-    static_assert(std::is_same<typename MatrixIntegratorVelocity::evaluator_type,
-                               velocity_evaluator_type>::value,
-                  "Velocity evaluator types mismatch.");
-    using matrix_type_velocity = typename MatrixIntegratorVelocity::matrix_type;
-
-    /// Assemble local matrices for the local velocity-velocity block.
-    std::vector<matrix_type_velocity> local_matrices_velocity(local_matrices.size());
-    {
-      MatrixIntegratorVelocity matrix_integrator;
-      matrix_integrator.initialize(equation_data);
-
-      matrix_integrator.template assemble_subspace_inverses<OperatorType>(subdomain_handler,
-                                                                          local_matrices_velocity,
-                                                                          dummy_operator,
-                                                                          subdomain_range);
-    }
-
-    /// Assemble local matrices for the local pressure-pressure block
-    {
-      /// This block is zero.
-    }
-
-    /// Assemble local matrices for the local velocity-pressure block
-    std::vector<matrix_type_mixed> local_matrices_velocity_pressure(local_matrices.size());
-    {
-      assemble_mixed_subspace_inverses<OperatorType>(subdomain_handler,
-                                                     local_matrices_velocity_pressure,
-                                                     dummy_operator,
-                                                     subdomain_range);
-    }
-
-    AssertDimension(local_matrices_velocity.size(), local_matrices.size());
-    const auto patch_transfer = get_patch_transfer(subdomain_handler);
-    for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
-        ++patch_index)
-    {
-      const auto & local_block_velocity          = local_matrices_velocity[patch_index];
-      const auto & local_block_velocity_pressure = local_matrices_velocity_pressure[patch_index];
-
-      patch_transfer->reinit(patch_index);
-      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
-      const auto n_dofs_velocity = local_block_velocity.m();
-      const auto n_dofs_pressure = local_block_velocity_pressure.n();
-      AssertDimension(patch_transfer->n_dofs_per_patch(0), n_dofs_velocity);
-      (void)n_dofs_pressure;
-      AssertDimension(patch_transfer->n_dofs_per_patch(1), n_dofs_pressure);
-
-      auto & local_matrix = local_matrices[patch_index];
-      local_matrix.as_table().reinit(n_dofs, n_dofs);
-
-      /// velocity-velocity
-      local_matrix.fill_submatrix(local_block_velocity.as_table(), 0U, 0U);
-
-      /// velocity-pressure
-      local_matrix.fill_submatrix(local_block_velocity_pressure.as_table(), 0U, n_dofs_velocity);
-
-      /// pressure-velocity
-      local_matrix.template fill_submatrix<true>(local_block_velocity_pressure.as_table(),
-                                                 n_dofs_velocity,
-                                                 0U);
-
-      local_matrix.invert({equation_data.local_kernel_size, equation_data.local_kernel_threshold});
-    }
-  }
-
-  template<typename OperatorType>
-  void
-  assemble_mixed_subspace_inverses(
-    const SubdomainHandler<dim, Number> & subdomain_handler,
-    std::vector<matrix_type_mixed> &      local_matrices,
-    const OperatorType &,
-    const std::pair<unsigned int, unsigned int> subdomain_range) const
-  {
-    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
-
-    for(auto compU = 0U; compU < dim; ++compU)
-    {
-      velocity_evaluator_type eval_velocity(subdomain_handler, /*dofh_index*/ 0, compU);
-      pressure_evaluator_type eval_pressure(subdomain_handler, /*dofh_index*/ 1, /*component*/ 0);
-
-      for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
-      {
-        auto & velocity_pressure_matrix = local_matrices[patch];
-        if(velocity_pressure_matrix.n_block_rows() == 0 &&
-           velocity_pressure_matrix.n_block_cols() == 0)
-          velocity_pressure_matrix.resize(dim, 1);
-
-        eval_velocity.reinit(patch);
-        eval_pressure.reinit(patch);
-
-        const auto mass_matrices =
-          assemble_mass_tensor(/*test*/ eval_velocity, /*ansatz*/ eval_pressure);
-        /// Note that we have flipped ansatz and test functions roles. The
-        /// divergence of the velocity test functions is obtained by
-        /// transposing gradient matrices.
-        const auto gradient_matrices =
-          assemble_gradient_tensor(/*test*/ eval_pressure, /*ansatz*/ eval_velocity);
-
-        const auto & MxMxGT = [&](const unsigned int direction_of_div) {
-          /// For example, we obtain MxMxGT for direction_of_div = 0 (dimension
-          /// 0 is rightmost!)
-          std::array<matrix_type_1d, dim> kronecker_tensor;
-          for(auto d = 0U; d < dim; ++d)
-            kronecker_tensor[d] = d == direction_of_div ?
-                                    -1. * LinAlg::transpose(gradient_matrices[direction_of_div]) :
-                                    mass_matrices[d];
-          return kronecker_tensor;
-        };
-
-        std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
-        rank1_tensors.emplace_back(MxMxGT(compU));
-        velocity_pressure_matrix.get_block(compU, 0).reinit(rank1_tensors);
-      }
-    }
-  }
-
-  std::array<matrix_type_1d, dim>
-  assemble_mass_tensor(velocity_evaluator_type & eval_test,
-                       pressure_evaluator_type & eval_ansatz) const
-  {
-    using CellMass = ::FD::L2::CellOperation<dim, fe_degree_v, n_q_points_1d, Number, fe_degree_p>;
-    return eval_test.patch_action(eval_ansatz, CellMass{});
-  }
-
-  /**
-   * We remark that the velocity takes the ansatz function role here
-   * (Gradient::CellOperation derives the ansatz function) although in
-   * assemble_mixed_subspace_inverses() we require the divergence of the
-   * velocity test functions. Therefore, we transpose the returned tensor of
-   * matrices.
-   */
-  std::array<matrix_type_1d, dim>
-  assemble_gradient_tensor(pressure_evaluator_type & eval_test,
-                           velocity_evaluator_type & eval_ansatz) const
-  {
-    using CellGradient =
-      ::FD::Gradient::CellOperation<dim, fe_degree_p, n_q_points_1d, Number, fe_degree_v>;
-    CellGradient cell_gradient;
-    return eval_test.patch_action(eval_ansatz, cell_gradient);
-  }
-
-  std::shared_ptr<transfer_type>
-  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
-  {
-    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
-    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
-    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
-    return std::make_shared<transfer_type>(dofinfos);
-  }
-
-  EquationData equation_data;
-};
-
-
-
-/**
- * This class makes use of fast diagonalization if possible. We assemble only
- * local C0IP-like matrices to obtain local div-free velocity approximations. If
- * these (inexact) local solvers have certain tensor structures we use fast
- * diagonalization. Local pressures are reconstructed from these in a two-step
- * process, that involves computing local residuals with respect to the local
- * C0IP solutions. PatchTransfers are used to transfer stream function, velocity
- * and pressure coefficients. Underlying PatchDoFWorkers determine collections
- * of cell iterators passed to mesh_loop().
- *
- * Therefore, all local matrices are stored and inverted in a standard way, that
- * is without exploiting any tensor structure.
- */
-template<int dim, int fe_degree_p, typename Number = double, bool is_simplified = false>
-class MatrixIntegratorStream
-{
-public:
-  using This = MatrixIntegratorStream<dim, fe_degree_p, Number, is_simplified>;
+  using This =
+    MatrixIntegratorStreamBase<dim, fe_degree_p, Number, MatrixTypeStream, is_simplified>;
 
   static constexpr TPSS::DoFLayout dof_layout_v  = TPSS::DoFLayout::RT;
   static constexpr int             fe_degree_v   = fe_degree_p;
   static constexpr int             fe_degree_sf  = fe_degree_v + 1;
   static constexpr int             n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
 
-  using value_type = Number;
-  using matrix_integrator_type_stream =
-    Biharmonic::C0IP::FD::MatrixIntegrator<dim, fe_degree_sf, Number>;
-  using matrix_type_stream   = typename matrix_integrator_type_stream::matrix_type;
+  using value_type           = Number;
+  using matrix_type_stream   = MatrixTypeStream;
   using matrix_type          = LocalSolverStream<dim, Number, matrix_type_stream, is_simplified>;
   using transfer_type        = typename matrix_type::transfer_type;
   using transfer_type_stream = typename matrix_type::transfer_type_stream;
   using operator_type        = TrilinosWrappers::BlockSparseMatrix;
 
-  void
+  virtual void
   initialize(const EquationData & equation_data_in)
   {
     active_dofh_index_v  = 0;
@@ -4575,10 +4364,17 @@ public:
       Assert(false, ExcMessage("Not implemented. TODO"));
   }
 
+  virtual void
+  assemble_subspace_inverses_sf(
+    const SubdomainHandler<dim, Number> & subdomain_handler,
+    std::vector<matrix_type> &            local_matrices,
+    const operator_type & /*level_matrix*/,
+    const std::pair<unsigned int, unsigned int> subdomain_range) const = 0;
+
   void
-  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
-                             std::vector<matrix_type> &            local_matrices,
-                             const operator_type & /*level_matrix*/,
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       subdomain_handler,
+                             std::vector<matrix_type> &                  local_matrices,
+                             const operator_type &                       level_matrix,
                              const std::pair<unsigned int, unsigned int> subdomain_range) const
   {
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
@@ -4587,13 +4383,7 @@ public:
     Assert(active_dofh_index_p != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
     Assert(active_dofh_index_sf != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
 
-    matrix_integrator_type_stream matrix_integrator_c0ip;
-    matrix_integrator_c0ip.initialize(equation_data_biharm, active_dofh_index_sf);
-    std::vector<matrix_type_stream> local_matrices_stream(local_matrices.size());
-    matrix_integrator_c0ip.assemble_subspace_inverses(subdomain_handler,
-                                                      local_matrices_stream,
-                                                      false,
-                                                      subdomain_range);
+    assemble_subspace_inverses_sf(subdomain_handler, local_matrices, level_matrix, subdomain_range);
 
     const auto & mapping = subdomain_handler.get_mapping();
 
@@ -4605,8 +4395,6 @@ public:
     const auto patch_transfer_sf = get_patch_transfer_stream(subdomain_handler);
 
     const auto & patch_dof_worker_v = patch_transfer->get_patch_dof_worker(0);
-    const auto & patch_dof_worker_p = patch_transfer->get_patch_dof_worker(1);
-    // const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
 
     const auto n_dofs_v  = patch_transfer->n_dofs_per_patch(0);
     const auto n_dofs_p  = patch_transfer->n_dofs_per_patch(1);
@@ -4621,11 +4409,6 @@ public:
     const auto & [velocity_to_dual_gradp, velocity_to_dual_constp] =
       prolong_orth->velocity_to_divfreeorth_shape_functions;
 
-    // const auto velocity_to_orth =
-    //   std::make_shared<const FullMatrix<Number>>(velocity_to_dual_gradp); // TODO
-    // const auto velocity_to_orth_faces =
-    //   std::make_shared<const FullMatrix<Number>>(velocity_to_dual_constp); // TODO
-
     const auto [begin, end] = subdomain_range;
     for(auto patch_index = begin; patch_index < end; ++patch_index)
     {
@@ -4636,20 +4419,12 @@ public:
 
       patch_matrix.subdomain_handler = &subdomain_handler;
       patch_matrix.patch_index       = patch_index;
-      patch_matrix.n_q_points_1d     = n_q_points_1d;
-      // patch_matrix.equation_data     = equation_data;
-
-      patch_matrix.solver_sf = local_matrices_stream[patch_index];
 
       /// caching prolongation: from stream to velocity
       patch_matrix.prolongation_sf = prolong_sf;
 
-      /// caching transformation matrices: orth. velocity functions
-      // patch_matrix.trafomatrix_orth       = velocity_to_orth;       // TODO
-      // patch_matrix.trafomatrix_orth_faces = velocity_to_orth_faces; // TODO
+      /// caching prolongation: from orthogonal velocity to velocity (grad p)
       patch_matrix.prolongation_orth = prolong_orth;
-
-      /// NEW caching matrix for residual
 
       auto & this_matrix_orth = patch_matrix.Aorth.as_table();
       this_matrix_orth.reinit(n_dofs_p, n_dofs_sf);
@@ -5389,6 +5164,296 @@ public:
   Biharmonic::EquationData equation_data_biharm;
 };
 
+
+
+namespace FD
+{
+/**
+ * Assembles the (exact) local matrices/solvers by exploiting the tensor
+ * structure of each scalar-valued shape function, that is each block of a
+ * patch matrix involving a component of the velocity vector-field and/or a
+ * pressure function have a low-rank Kronecker product decomposition (representation?).
+ *
+ * However, each block matrix itself has no low-rank Kronecker decomposition
+ * (representation?), thus, local matrices are stored and inverted in a
+ * standard (vectorized) fashion.
+ */
+template<int dim,
+         int fe_degree_p,
+         typename Number              = double,
+         TPSS::DoFLayout dof_layout_v = TPSS::DoFLayout::Q,
+         int             fe_degree_v  = fe_degree_p + 1>
+class MatrixIntegrator
+{
+public:
+  using This = MatrixIntegrator<dim, fe_degree_p, Number>;
+
+  static constexpr int n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
+
+  using value_type              = Number;
+  using transfer_type           = typename TPSS::PatchTransferBlock<dim, Number>;
+  using matrix_type_1d          = Table<2, VectorizedArray<Number>>;
+  using matrix_type             = MatrixAsTable<VectorizedArray<Number>>;
+  using matrix_type_mixed       = Tensors::BlockMatrix<dim, VectorizedArray<Number>, -1, -1>;
+  using velocity_evaluator_type = FDEvaluation<dim, fe_degree_v, n_q_points_1d, Number>;
+  using pressure_evaluator_type = FDEvaluation<dim, fe_degree_p, n_q_points_1d, Number>;
+
+  void
+  initialize(const EquationData & equation_data_in)
+  {
+    equation_data = equation_data_in;
+  }
+
+  template<typename OperatorType>
+  void
+  assemble_subspace_inverses(const SubdomainHandler<dim, Number> &       subdomain_handler,
+                             std::vector<matrix_type> &                  local_matrices,
+                             const OperatorType &                        dummy_operator,
+                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+
+    using MatrixIntegratorVelocity =
+      Velocity::SIPG::FD::MatrixIntegrator<dim, fe_degree_v, Number, dof_layout_v>;
+    static_assert(std::is_same<typename MatrixIntegratorVelocity::evaluator_type,
+                               velocity_evaluator_type>::value,
+                  "Velocity evaluator types mismatch.");
+    using matrix_type_velocity = typename MatrixIntegratorVelocity::matrix_type;
+
+    /// Assemble local matrices for the local velocity-velocity block.
+    std::vector<matrix_type_velocity> local_matrices_velocity(local_matrices.size());
+    {
+      MatrixIntegratorVelocity matrix_integrator;
+      matrix_integrator.initialize(equation_data);
+
+      matrix_integrator.template assemble_subspace_inverses<OperatorType>(subdomain_handler,
+                                                                          local_matrices_velocity,
+                                                                          dummy_operator,
+                                                                          subdomain_range);
+    }
+
+    /// Assemble local matrices for the local pressure-pressure block
+    {
+      /// This block is zero.
+    }
+
+    /// Assemble local matrices for the local velocity-pressure block
+    std::vector<matrix_type_mixed> local_matrices_velocity_pressure(local_matrices.size());
+    {
+      assemble_mixed_subspace_inverses<OperatorType>(subdomain_handler,
+                                                     local_matrices_velocity_pressure,
+                                                     dummy_operator,
+                                                     subdomain_range);
+    }
+
+    AssertDimension(local_matrices_velocity.size(), local_matrices.size());
+    const auto patch_transfer = get_patch_transfer(subdomain_handler);
+    for(auto patch_index = subdomain_range.first; patch_index < subdomain_range.second;
+        ++patch_index)
+    {
+      const auto & local_block_velocity          = local_matrices_velocity[patch_index];
+      const auto & local_block_velocity_pressure = local_matrices_velocity_pressure[patch_index];
+
+      patch_transfer->reinit(patch_index);
+      const auto n_dofs          = patch_transfer->n_dofs_per_patch();
+      const auto n_dofs_velocity = local_block_velocity.m();
+      const auto n_dofs_pressure = local_block_velocity_pressure.n();
+      AssertDimension(patch_transfer->n_dofs_per_patch(0), n_dofs_velocity);
+      (void)n_dofs_pressure;
+      AssertDimension(patch_transfer->n_dofs_per_patch(1), n_dofs_pressure);
+
+      auto & local_matrix = local_matrices[patch_index];
+      local_matrix.as_table().reinit(n_dofs, n_dofs);
+
+      /// velocity-velocity
+      local_matrix.fill_submatrix(local_block_velocity.as_table(), 0U, 0U);
+
+      /// velocity-pressure
+      local_matrix.fill_submatrix(local_block_velocity_pressure.as_table(), 0U, n_dofs_velocity);
+
+      /// pressure-velocity
+      local_matrix.template fill_submatrix<true>(local_block_velocity_pressure.as_table(),
+                                                 n_dofs_velocity,
+                                                 0U);
+
+      local_matrix.invert({equation_data.local_kernel_size, equation_data.local_kernel_threshold});
+    }
+  }
+
+  template<typename OperatorType>
+  void
+  assemble_mixed_subspace_inverses(
+    const SubdomainHandler<dim, Number> & subdomain_handler,
+    std::vector<matrix_type_mixed> &      local_matrices,
+    const OperatorType &,
+    const std::pair<unsigned int, unsigned int> subdomain_range) const
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+
+    for(auto compU = 0U; compU < dim; ++compU)
+    {
+      velocity_evaluator_type eval_velocity(subdomain_handler, /*dofh_index*/ 0, compU);
+      pressure_evaluator_type eval_pressure(subdomain_handler, /*dofh_index*/ 1, /*component*/ 0);
+
+      for(unsigned int patch = subdomain_range.first; patch < subdomain_range.second; ++patch)
+      {
+        auto & velocity_pressure_matrix = local_matrices[patch];
+        if(velocity_pressure_matrix.n_block_rows() == 0 &&
+           velocity_pressure_matrix.n_block_cols() == 0)
+          velocity_pressure_matrix.resize(dim, 1);
+
+        eval_velocity.reinit(patch);
+        eval_pressure.reinit(patch);
+
+        const auto mass_matrices =
+          assemble_mass_tensor(/*test*/ eval_velocity, /*ansatz*/ eval_pressure);
+        /// Note that we have flipped ansatz and test functions roles. The
+        /// divergence of the velocity test functions is obtained by
+        /// transposing gradient matrices.
+        const auto gradient_matrices =
+          assemble_gradient_tensor(/*test*/ eval_pressure, /*ansatz*/ eval_velocity);
+
+        const auto & MxMxGT = [&](const unsigned int direction_of_div) {
+          /// For example, we obtain MxMxGT for direction_of_div = 0 (dimension
+          /// 0 is rightmost!)
+          std::array<matrix_type_1d, dim> kronecker_tensor;
+          for(auto d = 0U; d < dim; ++d)
+            kronecker_tensor[d] = d == direction_of_div ?
+                                    -1. * LinAlg::transpose(gradient_matrices[direction_of_div]) :
+                                    mass_matrices[d];
+          return kronecker_tensor;
+        };
+
+        std::vector<std::array<matrix_type_1d, dim>> rank1_tensors;
+        rank1_tensors.emplace_back(MxMxGT(compU));
+        velocity_pressure_matrix.get_block(compU, 0).reinit(rank1_tensors);
+      }
+    }
+  }
+
+  std::array<matrix_type_1d, dim>
+  assemble_mass_tensor(velocity_evaluator_type & eval_test,
+                       pressure_evaluator_type & eval_ansatz) const
+  {
+    using CellMass = ::FD::L2::CellOperation<dim, fe_degree_v, n_q_points_1d, Number, fe_degree_p>;
+    return eval_test.patch_action(eval_ansatz, CellMass{});
+  }
+
+  /**
+   * We remark that the velocity takes the ansatz function role here
+   * (Gradient::CellOperation derives the ansatz function) although in
+   * assemble_mixed_subspace_inverses() we require the divergence of the
+   * velocity test functions. Therefore, we transpose the returned tensor of
+   * matrices.
+   */
+  std::array<matrix_type_1d, dim>
+  assemble_gradient_tensor(pressure_evaluator_type & eval_test,
+                           velocity_evaluator_type & eval_ansatz) const
+  {
+    using CellGradient =
+      ::FD::Gradient::CellOperation<dim, fe_degree_p, n_q_points_1d, Number, fe_degree_v>;
+    CellGradient cell_gradient;
+    return eval_test.patch_action(eval_ansatz, cell_gradient);
+  }
+
+  std::shared_ptr<transfer_type>
+  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
+  {
+    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
+    dofinfos.push_back(&subdomain_handler.get_dof_info(0));
+    dofinfos.push_back(&subdomain_handler.get_dof_info(1));
+    return std::make_shared<transfer_type>(dofinfos);
+  }
+
+  EquationData equation_data;
+};
+
+
+
+/**
+ * This class makes use of fast diagonalization if possible. We assemble local
+ * C0IP-like matrices to obtain local div-free velocity approximations. If these
+ * (inexact) local solvers have certain tensor structures we use fast
+ * diagonalization. A local mean value free pressure solution is reconstructed
+ * from the local stream function solution in a two-step process, that involves
+ * computing local residuals, for more details see
+ * MatrixIntegratorStreamBase. PatchTransfers are used to transfer stream
+ * function, velocity and pressure coefficients. Underlying PatchDoFWorkers
+ * determine collections of cell iterators passed to mesh_loop().
+ */
+template<int dim, int fe_degree_p, typename Number = double, bool is_simplified = false>
+class MatrixIntegratorStream
+  : public MatrixIntegratorStreamBase<dim,
+                                      fe_degree_p,
+                                      Number,
+                                      Tensors::TensorProductMatrix<dim, VectorizedArray<Number>>,
+                                      is_simplified>
+{
+public:
+  using Base =
+    MatrixIntegratorStreamBase<dim,
+                               fe_degree_p,
+                               Number,
+                               Tensors::TensorProductMatrix<dim, VectorizedArray<Number>>,
+                               is_simplified>;
+  using This = MatrixIntegratorStream<dim, fe_degree_p, Number, is_simplified>;
+
+  using Base::dof_layout_v;
+  using Base::fe_degree_sf;
+  using Base::fe_degree_v;
+  using Base::n_q_points_1d;
+
+  using typename Base::value_type;
+  using matrix_integrator_type_stream =
+    Biharmonic::C0IP::FD::MatrixIntegrator<dim, fe_degree_sf, Number>;
+  using typename Base::matrix_type;
+  using typename Base::matrix_type_stream;
+  using typename Base::operator_type;
+  using typename Base::transfer_type;
+  using typename Base::transfer_type_stream;
+
+  static_assert(
+    std::is_same_v<matrix_type_stream, typename matrix_integrator_type_stream::matrix_type>,
+    "mismatching matrix types for stream functions");
+
+  virtual void
+  initialize(const EquationData & equation_data_in) override
+  {
+    AssertThrow(equation_data_in.local_solver == LocalSolver::C0IP ||
+                  equation_data_in.local_solver == LocalSolver::Bilaplacian,
+                ExcMessage("local_solver is not supported."));
+    Base::initialize(equation_data_in);
+  }
+
+  virtual void
+  assemble_subspace_inverses_sf(
+    const SubdomainHandler<dim, Number> & subdomain_handler,
+    std::vector<matrix_type> &            local_matrices,
+    const operator_type & /*level_matrix*/,
+    const std::pair<unsigned int, unsigned int> subdomain_range) const override
+  {
+    AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
+    AssertDimension(subdomain_handler.n_dof_handlers(), 3U);
+    Assert(Base::active_dofh_index_sf != numbers::invalid_unsigned_int,
+           ExcMessage("Not initialized."));
+
+    matrix_integrator_type_stream matrix_integrator_c0ip;
+    matrix_integrator_c0ip.initialize(Base::equation_data_biharm, Base::active_dofh_index_sf);
+    std::vector<matrix_type_stream> local_matrices_stream(local_matrices.size());
+    matrix_integrator_c0ip.assemble_subspace_inverses(subdomain_handler,
+                                                      local_matrices_stream,
+                                                      false,
+                                                      subdomain_range);
+
+    const auto [begin, end] = subdomain_range;
+    for(auto patch_index = begin; patch_index < end; ++patch_index)
+    {
+      matrix_type & patch_matrix = local_matrices[patch_index];
+      patch_matrix.solver_sf     = local_matrices_stream[patch_index];
+    }
+  }
+};
+
 } // namespace FD
 
 
@@ -5939,61 +6004,56 @@ public:
  */
 template<int dim, int fe_degree_p, typename Number = double, bool is_simplified = false>
 class MatrixIntegratorStream
+  : public MatrixIntegratorStreamBase<dim,
+                                      fe_degree_p,
+                                      Number,
+                                      MatrixAsTable<VectorizedArray<Number>>,
+                                      is_simplified>
 {
 public:
+  using Base = MatrixIntegratorStreamBase<dim,
+                                          fe_degree_p,
+                                          Number,
+                                          MatrixAsTable<VectorizedArray<Number>>,
+                                          is_simplified>;
   using This = MatrixIntegratorStream<dim, fe_degree_p, Number, is_simplified>;
 
-  static constexpr TPSS::DoFLayout dof_layout_v  = TPSS::DoFLayout::RT;
-  static constexpr int             fe_degree_v   = fe_degree_p;
-  static constexpr int             fe_degree_sf  = fe_degree_v + 1;
-  static constexpr int             n_q_points_1d = n_q_points_1d_impl(fe_degree_v, dof_layout_v);
+  using Base::dof_layout_v;
+  using Base::fe_degree_sf;
+  using Base::fe_degree_v;
+  using Base::n_q_points_1d;
 
-  using value_type           = Number;
-  using matrix_type_stream   = MatrixAsTable<VectorizedArray<Number>>;
-  using matrix_type          = LocalSolverStream<dim, Number, matrix_type_stream, is_simplified>;
-  using transfer_type        = typename matrix_type::transfer_type;
-  using transfer_type_stream = typename matrix_type::transfer_type_stream;
-  using operator_type        = TrilinosWrappers::BlockSparseMatrix;
+  using typename Base::matrix_type;
+  using typename Base::matrix_type_stream;
+  using typename Base::operator_type;
+  using typename Base::transfer_type;
+  using typename Base::transfer_type_stream;
+  using typename Base::value_type;
 
-  void
-  initialize(const EquationData & equation_data_in)
+  virtual void
+  initialize(const EquationData & equation_data_in) override
   {
-    active_dofh_index_v  = 0;
-    active_dofh_index_p  = 1;
-    active_dofh_index_sf = 2;
-    equation_data        = equation_data_in;
+    AssertThrow(equation_data_in.local_solver == LocalSolver::C0IP,
+                ExcMessage("local_solver is not supported."));
+    Base::initialize(equation_data_in);
   }
 
-  void
-  assemble_subspace_inverses(const SubdomainHandler<dim, Number> & subdomain_handler,
-                             std::vector<matrix_type> &            local_matrices,
-                             const operator_type & /*level_matrix*/,
-                             const std::pair<unsigned int, unsigned int> subdomain_range) const
+  virtual void
+  assemble_subspace_inverses_sf(
+    const SubdomainHandler<dim, Number> & subdomain_handler,
+    std::vector<matrix_type> &            local_matrices,
+    const operator_type & /*level_matrix*/,
+    const std::pair<unsigned int, unsigned int> subdomain_range) const override
   {
-    AssertThrow(false, ExcMessage("TODO see other MatrixIntegratorStream..."));
-
     AssertDimension(subdomain_handler.get_partition_data().n_subdomains(), local_matrices.size());
     AssertDimension(subdomain_handler.n_dof_handlers(), 3U);
-    Assert(active_dofh_index_v != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
-    Assert(active_dofh_index_p != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
-    Assert(active_dofh_index_sf != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
+    Assert(Base::active_dofh_index_sf != numbers::invalid_unsigned_int,
+           ExcMessage("Not initialized."));
 
-    const auto & dofh_v  = subdomain_handler.get_dof_handler(active_dofh_index_v);
-    const auto & dofh_p  = subdomain_handler.get_dof_handler(active_dofh_index_p);
-    const auto & dofh_sf = subdomain_handler.get_dof_handler(active_dofh_index_sf);
+    const auto & dofh_sf = subdomain_handler.get_dof_handler(Base::active_dofh_index_sf);
 
-    const auto   patch_transfer_sf   = get_patch_transfer_stream(subdomain_handler);
+    const auto   patch_transfer_sf   = Base::get_patch_transfer_stream(subdomain_handler);
     const auto & patch_dof_worker_sf = patch_transfer_sf->get_patch_dof_worker();
-
-    const auto & [shape_to_test_functions_interior, shape_to_test_functions_faces] =
-      compute_divfreeorth_shape_functions(dofh_v.get_fe(), dofh_p.get_fe());
-
-    const auto prolong_sf =
-      std::make_shared<const ProlongationStream<dim, Number>>(dofh_sf.get_fe(), dofh_v.get_fe());
-    const auto velocity_to_orth =
-      std::make_shared<const FullMatrix<Number>>(shape_to_test_functions_interior);
-    const auto velocity_to_orth_faces =
-      std::make_shared<const FullMatrix<Number>>(shape_to_test_functions_faces);
 
     FullMatrix<double> tmp;
 
@@ -6005,11 +6065,6 @@ public:
       const auto n_dofs_stream = patch_transfer_sf->n_dofs_per_patch();
 
       matrix_type & patch_matrix = local_matrices[patch_index];
-
-      patch_matrix.subdomain_handler = &subdomain_handler;
-      patch_matrix.patch_index       = patch_index;
-      patch_matrix.n_q_points_1d     = n_q_points_1d;
-      patch_matrix.equation_data     = &equation_data;
 
       patch_matrix.solver_sf.as_table().reinit(n_dofs_stream, n_dofs_stream);
       tmp.reinit(n_dofs_stream, n_dofs_stream);
@@ -6061,7 +6116,7 @@ public:
               distribute_local_to_patch_impl(cdf);
           };
 
-          const MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, equation_data);
+          const MatrixIntegrator matrix_integrator(nullptr, nullptr, nullptr, Base::equation_data);
 
           const UpdateFlags update_flags = update_values | update_gradients | update_hessians |
                                            update_quadrature_points | update_JxW_values;
@@ -6132,38 +6187,8 @@ public:
       AssertDimension(patch_matrix.solver_sf.n(), n_dofs_stream);
 
       patch_matrix.solver_sf.invert();
-
-      /// caching prolongation: from stream to velocity
-      patch_matrix.prolongation_sf = prolong_sf;
-
-      /// caching transformation matrices: orth. velocity functions
-      patch_matrix.trafomatrix_orth       = velocity_to_orth;
-      patch_matrix.trafomatrix_orth_faces = velocity_to_orth_faces;
     }
   }
-
-  std::shared_ptr<transfer_type>
-  get_patch_transfer(const SubdomainHandler<dim, Number> & subdomain_handler) const
-  {
-    Assert(active_dofh_index_v != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
-    Assert(active_dofh_index_p != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
-    std::vector<const TPSS::DoFInfo<dim, Number> *> dofinfos;
-    dofinfos.push_back(&subdomain_handler.get_dof_info(active_dofh_index_v));
-    dofinfos.push_back(&subdomain_handler.get_dof_info(active_dofh_index_p));
-    return std::make_shared<transfer_type>(dofinfos);
-  }
-
-  std::shared_ptr<transfer_type_stream>
-  get_patch_transfer_stream(const SubdomainHandler<dim, Number> & subdomain_handler) const
-  {
-    Assert(active_dofh_index_sf != numbers::invalid_unsigned_int, ExcMessage("Not initialized."));
-    return std::make_shared<transfer_type_stream>(subdomain_handler, active_dofh_index_sf);
-  }
-
-  unsigned int active_dofh_index_v  = numbers::invalid_unsigned_int;
-  unsigned int active_dofh_index_p  = numbers::invalid_unsigned_int;
-  unsigned int active_dofh_index_sf = numbers::invalid_unsigned_int;
-  EquationData equation_data;
 };
 
 } // namespace LMW

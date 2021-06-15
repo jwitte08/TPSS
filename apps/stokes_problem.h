@@ -591,6 +591,8 @@ struct ModelProblemBase<Method::RaviartThomasStream, dim, fe_degree_p>
   using fe_type_p                               = FE_DGQLegendre<dim>;
   static constexpr int           fe_degree_v    = fe_degree_p;
   static constexpr LocalAssembly local_assembly = LocalAssembly::StreamTensor;
+  /// static SWITCH
+  // static constexpr LocalAssembly local_assembly = LocalAssembly::StreamLMW;
 };
 
 
