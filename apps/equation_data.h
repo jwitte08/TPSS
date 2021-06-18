@@ -1788,7 +1788,8 @@ enum class LocalSolver
   Exact            = 0,
   DiagonalVelocity = 1,
   C0IP             = 2,
-  Bilaplacian      = 3
+  Bilaplacian      = 3,
+  C0IP_KSVD        = 4
 };
 
 enum class Method
@@ -1843,7 +1844,8 @@ struct EquationData
   static std::string
   str_local_solver(const LocalSolver variant)
   {
-    std::string str[] = {"exact", "block-diagonal-velocity", "c0ip (exact)", "bilaplacian"};
+    std::string str[] = {
+      "exact", "block-diagonal-velocity", "c0ip (exact)", "bilaplacian", "c0ip (ksvd)"};
     return str[static_cast<int>(variant)];
   }
 
@@ -1856,7 +1858,7 @@ struct EquationData
   std::string
   sstr_local_solver() const
   {
-    std::string str[] = {"exact", "diagvelo", "c0ip", "bila"};
+    std::string str[] = {"exact", "diagvelo", "c0ip", "bila", "c0ipksvd"};
     return str[static_cast<int>(local_solver)];
   }
 
@@ -1882,6 +1884,18 @@ struct EquationData
       oss << Util::parameter_to_fstring("Kernel size (local solver):", local_kernel_size);
     if(local_kernel_threshold != 0.)
       oss << Util::parameter_to_fstring("Kernel threshold (local solver):", local_kernel_threshold);
+    if(local_solver == LocalSolver::C0IP_KSVD)
+    {
+      oss << Util::parameter_to_fstring("Selected KSVD tensors:",
+                                        set_to_string(ksvd_tensor_indices));
+      oss << Util::parameter_to_fstring("Number of Lanczos iterations:", n_lanczos_iterations);
+      if(force_positive_definite_inverse)
+        oss << Util::parameter_to_fstring("Force positive definite inverses:",
+                                          force_positive_definite_inverse);
+      if(ksvd_tensor_indices.size() == 2U)
+        oss << Util::parameter_to_fstring("Addition to min. eigenvalue:",
+                                          addition_to_min_eigenvalue);
+    }
     oss << Util::parameter_to_fstring("Skip A?", skip_A);
     return oss.str();
   }
@@ -1897,6 +1911,10 @@ struct EquationData
   unsigned int                 local_kernel_size               = numbers::invalid_unsigned_int;
   double                       local_kernel_threshold          = 0.;
   LocalSolver                  local_solver                    = LocalSolver::Exact;
+  std::set<unsigned int>       ksvd_tensor_indices             = {0U};
+  bool                         force_positive_definite_inverse = false;
+  double                       addition_to_min_eigenvalue      = 0.01;
+  std::size_t                  n_lanczos_iterations            = static_cast<std::size_t>(-1);
   bool                         skip_A                          = false;
 };
 

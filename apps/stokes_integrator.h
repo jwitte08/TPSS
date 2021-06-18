@@ -4355,11 +4355,20 @@ public:
     active_dofh_index_sf = 2;
     equation_data        = equation_data_in;
 
-    equation_data_biharm.skip_A = equation_data.skip_A;
-    if(equation_data.local_solver == LocalSolver::C0IP)
+    equation_data_biharm.skip_A = equation_data_in.skip_A;
+    if(equation_data_in.local_solver == LocalSolver::C0IP)
       equation_data_biharm.local_solver_variant = Biharmonic::LocalSolverVariant::Exact;
-    else if(equation_data.local_solver == LocalSolver::Bilaplacian)
+    else if(equation_data_in.local_solver == LocalSolver::Bilaplacian)
       equation_data_biharm.local_solver_variant = Biharmonic::LocalSolverVariant::Bilaplacian;
+    else if(equation_data_in.local_solver == LocalSolver::C0IP_KSVD)
+    {
+      equation_data_biharm.local_solver_variant = Biharmonic::LocalSolverVariant::KSVD;
+      equation_data_biharm.ksvd_tensor_indices  = equation_data_in.ksvd_tensor_indices;
+      equation_data_biharm.force_positive_definite_inverse =
+        equation_data_in.force_positive_definite_inverse;
+      equation_data_biharm.addition_to_min_eigenvalue = equation_data_in.addition_to_min_eigenvalue;
+      equation_data_biharm.n_lanczos_iterations       = equation_data_in.n_lanczos_iterations;
+    }
     else
       Assert(false, ExcMessage("Not implemented. TODO"));
   }
@@ -5420,7 +5429,8 @@ public:
   initialize(const EquationData & equation_data_in) override
   {
     AssertThrow(equation_data_in.local_solver == LocalSolver::C0IP ||
-                  equation_data_in.local_solver == LocalSolver::Bilaplacian,
+                  equation_data_in.local_solver == LocalSolver::Bilaplacian ||
+                  equation_data_in.local_solver == LocalSolver::C0IP_KSVD,
                 ExcMessage("local_solver is not supported."));
     Base::initialize(equation_data_in);
   }

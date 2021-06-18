@@ -38,6 +38,7 @@ main(int argc, char * argv[])
     types::global_dof_index dof_limit_min               = 1e1;
     types::global_dof_index dof_limit_max               = 1e5;
     bool                    skip_A                      = false;
+    unsigned int            ksvd_rank                   = 1;
 
     //: parse arguments
     atoi_if(test_index, 1);
@@ -45,12 +46,13 @@ main(int argc, char * argv[])
     atoi_if(n_cycles, 3);
     atoi_if(dof_limit_min, 4);
     atoi_if(dof_limit_max, 5);
-    atoi_if(skip_A, 6);
-    atoi_if(local_solver_index, 7);
+    atoi_if(local_solver_index, 6);
+    atoi_if(ksvd_rank, 7);
     atoi_if(n_threads_max, 8);
     atoi_if(debug_depth, 9);
     atof_if(damping, 10);
     atoi_if(force_mean_value_constraint, 11);
+    atoi_if(skip_A, 12);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
@@ -90,12 +92,32 @@ main(int argc, char * argv[])
     equation_data.variant = static_cast<EquationData::Variant>(pde_index);
     AssertThrow(force_mean_value_constraint == 0 || force_mean_value_constraint == 1,
                 ExcMessage("Invalid."));
+
     equation_data.do_mean_value_constraint = force_mean_value_constraint;
     if(options.prms.solver.variant == "direct")
       equation_data.do_mean_value_constraint = true;
-    equation_data.ip_factor    = ip_factor;
-    equation_data.local_solver = static_cast<LocalSolver>(local_solver_index);
-    equation_data.skip_A       = skip_A;
+
+    equation_data.ip_factor = ip_factor;
+
+    equation_data.local_solver        = static_cast<LocalSolver>(local_solver_index);
+    equation_data.ksvd_tensor_indices = [&]() -> std::set<unsigned int> {
+      if(ksvd_rank == 1U)
+        return {0U};
+      else if(ksvd_rank == 2U)
+        return {0U, 1U};
+      else if(ksvd_rank == 12U)
+        return {0U, 2U};
+      else if(ksvd_rank == 3U)
+        return {0U, 1U, 2U};
+      else
+        AssertThrow(false, ExcMessage("KSVD rank isn't supported."));
+      return {};
+    }();
+    equation_data.n_lanczos_iterations = 4 + 1;
+    if(equation_data.ksvd_tensor_indices == std::set<unsigned int>{0U, 1U})
+      equation_data.addition_to_min_eigenvalue = 0.025;
+
+    equation_data.skip_A = skip_A;
 
     const auto filename = get_filename(options.prms, equation_data);
 
