@@ -179,6 +179,7 @@ std::string
 damping_to_fstring(double factor)
 {
   std::ostringstream oss;
+  oss << std::setprecision(3);
   oss << factor;
   return oss.str();
 }
