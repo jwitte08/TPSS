@@ -140,6 +140,8 @@ private:
       }
       else
         preconditioner->vmult(tmp, residual);
+      Assert(additional_data.damping_factor == 1.,
+             ExcMessage("Safety stop. For my thesis this parameter should not be used."));
       dst.add(additional_data.damping_factor, tmp);
     }
   }
