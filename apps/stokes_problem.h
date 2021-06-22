@@ -3563,16 +3563,18 @@ MGCollectionVelocityPressure<dim,
   for(auto level = mg_matrices.min_level(); level <= mg_matrices.max_level(); ++level)
     AssertThrow(mg_matrices[level].mf_storage, ExcMessage("mf_storage is not initialized."));
 
+  typename mg_smoother_schwarz_type::AdditionalData additional_data;
+
   //: pre-smoother
   {
     const auto mgss = std::make_shared<mg_smoother_schwarz_type>();
-    typename mg_smoother_schwarz_type::AdditionalData additional_data;
     if(parameters.pre_smoother.schwarz.userdefined_coloring)
     {
       Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
       additional_data.coloring_func = std::ref(*user_coloring);
     }
     additional_data.parameters = parameters.pre_smoother;
+    additional_data.use_tbb    = use_tbb;
     additional_data.foreach_dofh.resize(dof_handler_stream ? 3 : 2);
     additional_data.foreach_dofh[0].dirichlet_ids = equation_data.dirichlet_boundary_ids_velocity;
     additional_data.foreach_dofh[1].dirichlet_ids = equation_data.dirichlet_boundary_ids_pressure;
@@ -3582,13 +3584,7 @@ MGCollectionVelocityPressure<dim,
 
   //: post-smoother (so far only shallow copy!)
   {
-    const auto mgss_post = std::make_shared<mg_smoother_schwarz_type>();
-    typename mg_smoother_schwarz_type::AdditionalData additional_data;
-    if(parameters.pre_smoother.schwarz.userdefined_coloring)
-    {
-      Assert(user_coloring, ExcMessage("user_coloring is uninitialized."));
-      additional_data.coloring_func = std::ref(*user_coloring);
-    }
+    const auto mgss_post       = std::make_shared<mg_smoother_schwarz_type>();
     additional_data.parameters = parameters.post_smoother;
     mgss_post->initialize(*mg_schwarz_smoother_pre, additional_data);
     mg_schwarz_smoother_post = mgss_post;
