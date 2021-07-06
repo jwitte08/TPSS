@@ -17,24 +17,28 @@ main(int argc, char * argv[])
     };
 
     //: default
-    unsigned int test_index                  = 6; // unprec. CG
-    unsigned int debug_depth                 = 0;
-    double       damping                     = 0.;
-    unsigned int force_mean_value_constraint = false;
-    unsigned int n_cycles                    = 3;
-    unsigned int local_solver_variant        = 0;
-    unsigned int pde_index                   = 4; // NoSlip
-    int          n_threads_max               = 1;
+    unsigned int            test_index                  = 5; // CG_GMG
+    unsigned int            debug_depth                 = 0;
+    double                  damping                     = 0.;
+    unsigned int            force_mean_value_constraint = false;
+    unsigned int            n_cycles                    = 3;
+    unsigned int            local_solver_variant        = 0;
+    unsigned int            pde_index                   = 6; // NoSlipExp
+    int                     n_threads_max               = 1;
+    types::global_dof_index dof_limit_min               = 1e1;
+    types::global_dof_index dof_limit_max               = 1e5;
 
     //: parse arguments
     atoi_if(test_index, 1);
     atoi_if(pde_index, 2);
     atoi_if(n_cycles, 3);
-    atoi_if(debug_depth, 4);
-    atof_if(damping, 5);
+    atoi_if(dof_limit_min, 4);
+    atoi_if(dof_limit_max, 5);
     atoi_if(force_mean_value_constraint, 6);
     atoi_if(local_solver_variant, 7);
     atoi_if(n_threads_max, 8);
+    atoi_if(debug_depth, 9);
+    atof_if(damping, 10);
 
     deallog.depth_console(debug_depth);
     Utilities::MPI::MPI_InitFinalize mpi_initialization(argc,
@@ -77,18 +81,34 @@ main(int argc, char * argv[])
       equation_data.do_mean_value_constraint = true;
     equation_data.local_solver = static_cast<LocalSolver>(local_solver_variant);
 
-    const auto pcout = std::make_shared<ConditionalOStream>(std::cout, is_first_proc);
+    const auto filename = get_filename(options.prms, equation_data);
 
-    using StokesProblem = ModelProblem<dim, fe_degree_p, Method::Qkplus2_DGPk, true>;
+    std::fstream fout;
+    fout.open(filename + ".log", std::ios_base::out);
+
+    const auto pcout = std::make_shared<ConditionalOStream>(fout, is_first_proc);
+
+    using StokesProblem =
+      ModelProblem<dim, fe_degree_p, Method::Qkplus2_DGPk, /*is_simplified*/ true>;
+
     StokesProblem stokes_problem(options.prms, equation_data);
     stokes_problem.pcout = pcout;
 
     *pcout << std::endl;
     stokes_problem.run();
 
-    *pcout << std::endl
-           << std::endl
-           << write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
+    const auto results_as_string =
+      write_ppdata_to_string(stokes_problem.pp_data, stokes_problem.pp_data_pressure);
+
+    *pcout << std::endl << std::endl << results_as_string;
+
+    fout.close();
+
+    if(is_first_proc)
+    {
+      fout.open(filename + ".tab", std::ios_base::out);
+      fout << results_as_string;
+    }
   }
 
   catch(std::exception & exc)

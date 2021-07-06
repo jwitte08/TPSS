@@ -33,7 +33,7 @@ struct StokesFlow
   // 3 : ... with GMG based on Schwarz smoothers for velocity (FGMRES_GMGvelocity)
   //     GMRES prec. by GMG ...
   // 4 : ...based on Gauss-Seidel smoothers for velocity-pressure (GMRES_GMG)
-  // 5 : ...based on Gauss-Seidel smoothers for velocity-pressure (GMRES_CG)
+  // 5 : ...based on Gauss-Seidel smoothers for velocity-pressure (CG_GMG)
   // 6 : unpreconditioned CG (CG)
   // 7 : unpreconditioned GMRES (GMRES)
   static constexpr unsigned int test_index_max = 7;

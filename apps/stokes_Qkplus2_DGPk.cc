@@ -17,13 +17,13 @@ main(int argc, char * argv[])
     };
 
     //: default
-    unsigned int test_index                  = 5; // unprec. CG
+    unsigned int test_index                  = 5; // CG_GMG
     unsigned int debug_depth                 = 0;
     double       damping                     = 0.;
     unsigned int force_mean_value_constraint = false;
     unsigned int n_cycles                    = 3;
     unsigned int local_solver_variant        = 0;
-    unsigned int pde_index                   = 4; // NoSlip
+    unsigned int pde_index                   = 6; // NoSlipExp
     int          n_threads_max               = 1;
 
     //: parse arguments

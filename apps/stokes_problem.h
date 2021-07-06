@@ -560,6 +560,7 @@ struct ModelProblemBase<Method::Qkplus2_DGPk, dim, fe_degree_p>
   static constexpr LocalAssembly local_assembly = LocalAssembly::LMW;
 };
 
+/// TODO rename... DGQ_k+1 instead of DGQ_k+2
 template<int dim, int fe_degree_p>
 struct ModelProblemBase<Method::DGQkplus2_DGPk, dim, fe_degree_p>
 {
@@ -567,7 +568,7 @@ struct ModelProblemBase<Method::DGQkplus2_DGPk, dim, fe_degree_p>
   static constexpr TPSS::DoFLayout dof_layout_p = TPSS::DoFLayout::DGP;
   using fe_type_v                               = FE_DGQ<dim>;
   using fe_type_p                               = FE_DGP<dim>;
-  static constexpr int           fe_degree_v    = fe_degree_p + 1;
+  static constexpr int           fe_degree_v    = fe_degree_p + 1; // !!!
   static constexpr LocalAssembly local_assembly = LocalAssembly::LMW;
 };
 
