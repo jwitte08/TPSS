@@ -26,5 +26,5 @@ cmake                                                \
     -DBUILD_SHARED_LIBS=ON                           \
     -DCMAKE_VERBOSE_MAKEFILE=OFF                     \
     -DCMAKE_BUILD_TYPE=RELEASE                       \
-    -DCMAKE_INSTALL_PREFIX:PATH=../install           \
+    -DCMAKE_INSTALL_PREFIX:PATH=$HOME/workspace/trilinos/install           \
     ../

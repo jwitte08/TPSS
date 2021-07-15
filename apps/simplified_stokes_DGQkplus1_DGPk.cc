@@ -68,6 +68,7 @@ main(int argc, char * argv[])
 
     options.setup(test_index, damping);
     options.prms.n_cycles = n_cycles;
+    options.prms.dof_limits = {dof_limit_min, dof_limit_max};
 
     EquationData equation_data;
     AssertThrow(pde_index < EquationData::n_variants,
