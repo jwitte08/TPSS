@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --nodes=&NODES&
 #SBATCH --ntasks-per-node=&PPN&
-#SBATCH --time=00:10:00
+#SBATCH --time=00:30:00
 #SBATCH --mail-type=BEGIN,END,FAIL
 #SBATCH --mail-user=julius.witte@iwr.uni-heidelberg.de
 
 export OMP_NUM_THREADS=1
 export DEAL_II_NUM_THREADS=1
-module load mpi/openmpi/4.0
+module load mpi/openmpi/default
 
 echo "starting on `date` with ppn=&PPN&, nodes=&NODES& at `pwd`"
 
