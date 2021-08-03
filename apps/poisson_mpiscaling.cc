@@ -154,11 +154,10 @@ struct Test
     return oss.str();
   }
 
-  std::string
-  write_timings_to_string(const Timings & timings, const PostProcessData & pp_data)
+  void
+  write_timings(std::ostream & os, const Timings & timings, const PostProcessData & pp_data)
   {
-    std::ostringstream oss;
-    ConvergenceTable   timings_table;
+    ConvergenceTable timings_table;
     for(unsigned n = 0; n < timings.apply.size(); ++n)
     {
       timings_table.add_value("sample", n + 1);
@@ -178,8 +177,14 @@ struct Test
     timings_table.set_scientific("apply (max)", true);
     timings_table.set_scientific("apply (min)", true);
     timings_table.set_scientific("apply (avg)", true);
-    timings_table.write_text(oss, TableHandler::TextOutputFormat::org_mode_table);
+    timings_table.write_text(os, TableHandler::TextOutputFormat::org_mode_table);
+  }
 
+  std::string
+  write_timings_to_string(const Timings & timings, const PostProcessData & pp_data)
+  {
+    std::ostringstream oss;
+    write_timings(oss, timings, pp_data);
     return oss.str();
   }
 
@@ -344,19 +349,20 @@ struct Test
       Utilities::MPI::MinMaxAvg t_apply = time.get_last_lap_wall_time_data();
       t_apply                           = t_apply / prms.n_subsamples_vmult;
       timings_vmult.apply.push_back(t_apply);
-    }
 
-    //: write performance timings
-    const std::string filename = get_filename(n_dofs_global);
-    if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-    {
-      std::fstream      fstream;
-      PostProcessData & pp_data = poisson_problem.pp_data;
-      pp_data.n_dofs_global.push_back(n_dofs_global);
+      //: write performance timings
+      const std::string filename = get_filename(n_dofs_global);
+      if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+      {
+        std::fstream      fstream;
+        PostProcessData & pp_data = poisson_problem.pp_data;
+        pp_data.n_dofs_global.push_back(n_dofs_global);
 
-      fstream.open("vmult_" + filename + ".time", std::ios_base::out);
-      fstream << write_timings_to_string(timings_vmult, pp_data);
-      fstream.close();
+        fstream.open("vmult_" + filename + "." + Utilities::int_to_string(sample, 4) + ".time",
+                     std::ios_base::out);
+        write_timings(fstream, timings_vmult, pp_data);
+        fstream.close();
+      }
     }
   }
 
@@ -454,19 +460,20 @@ struct Test
       for(const auto & time_info : time_data)
         pcout << Util::parameter_to_fstring(time_info.description,
                                             Utilities::MPI::max(time_info.time, MPI_COMM_WORLD));
-    }
 
-    //: write performance timings
-    const std::string filename = get_filename(n_dofs_global);
-    if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-    {
-      std::fstream      fstream;
-      PostProcessData & pp_data = poisson_problem.pp_data;
-      pp_data.n_dofs_global.push_back(n_dofs_global);
+      //: write performance timings
+      const std::string filename = get_filename(n_dofs_global);
+      if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+      {
+        std::fstream      fstream;
+        PostProcessData & pp_data = poisson_problem.pp_data;
+        pp_data.n_dofs_global.push_back(n_dofs_global);
 
-      fstream.open("smooth_" + filename + ".time", std::ios_base::out);
-      fstream << write_timings_to_string(timings_smooth, pp_data);
-      fstream.close();
+        fstream.open("smooth_" + filename + "." + Utilities::int_to_string(sample, 4) + ".time",
+                     std::ios_base::out);
+        write_timings(fstream, timings_smooth, pp_data);
+        fstream.close();
+      }
     }
   }
 
@@ -534,18 +541,19 @@ struct Test
       timings_mg.apply.push_back(t_apply);
       print_row(pcout, 20, "VmPeak", "VmSize", "VmHWM", "VmRSS");
       pcout << str_memory_stats("mg");
-    }
 
-    //: write performance timings
-    const types::global_dof_index n_dofs_global = poisson_problem.pp_data.n_dofs_global.front();
-    const std::string             filename      = get_filename(n_dofs_global);
-    if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-    {
-      std::fstream            fstream;
-      const PostProcessData & pp_data = poisson_problem.pp_data;
-      fstream.open("mg_" + filename + ".time", std::ios_base::out);
-      fstream << write_timings_to_string(timings_mg, pp_data);
-      fstream.close();
+      //: write performance timings
+      const types::global_dof_index n_dofs_global = poisson_problem.pp_data.n_dofs_global.front();
+      const std::string             filename      = get_filename(n_dofs_global);
+      if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+      {
+        std::fstream            fstream;
+        const PostProcessData & pp_data = poisson_problem.pp_data;
+        fstream.open("mg_" + filename + "." + Utilities::int_to_string(sample, 4) + ".time",
+                     std::ios_base::out);
+        write_timings(fstream, timings_mg, pp_data);
+        fstream.close();
+      }
     }
   }
 
@@ -637,19 +645,20 @@ struct Test
       time.stop();
       Utilities::MPI::MinMaxAvg t_apply = time.get_last_lap_wall_time_data();
       timings_solve.apply.push_back(t_apply);
-    }
 
-    //: write performance timings
-    const std::string filename = get_filename(n_dofs_global);
-    if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
-    {
-      std::fstream      fstream;
-      PostProcessData & pp_data = poisson_problem.pp_data;
-      pp_data.n_dofs_global.push_back(n_dofs_global);
+      //: write performance timings
+      const std::string filename = get_filename(n_dofs_global);
+      if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+      {
+        std::fstream      fstream;
+        PostProcessData & pp_data = poisson_problem.pp_data;
+        pp_data.n_dofs_global.push_back(n_dofs_global);
 
-      fstream.open("solve_" + filename + ".time", std::ios_base::out);
-      fstream << write_timings_to_string(timings_solve, pp_data);
-      fstream.close();
+        fstream.open("solve_" + filename + "." + Utilities::int_to_string(sample, 4) + ".time",
+                     std::ios_base::out);
+        write_timings(fstream, timings_solve, pp_data);
+        fstream.close();
+      }
     }
   }
 
