@@ -31,7 +31,7 @@ struct TestParameter
   double   coarse_grid_accuracy = 1.e-12;
   unsigned n_refinements        = 1;
   unsigned n_smoothing_steps    = 1;
-  unsigned n_samples            = 10;
+  unsigned n_samples            = 20;
   unsigned n_subsamples_vmult   = 100;
   unsigned n_subsamples_smooth  = 20;
   unsigned n_subsamples_mg      = 10;
