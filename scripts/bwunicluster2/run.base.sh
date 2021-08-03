@@ -7,7 +7,7 @@
 
 export OMP_NUM_THREADS=1
 export DEAL_II_NUM_THREADS=1
-module load mpi/openmpi/default
+module load mpi/openmpi/4.0
 
 echo "starting on `date` with ppn=&PPN&, nodes=&NODES& at `pwd`"
 
