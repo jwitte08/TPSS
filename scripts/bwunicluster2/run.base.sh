@@ -1,8 +1,10 @@
 #!/bin/bash
+
+#SBATCH --partition=multiple
 #SBATCH --nodes=&NODES&
 #SBATCH --ntasks-per-node=&PPN&
 #SBATCH --time=00:30:00
-#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=julius.witte@iwr.uni-heidelberg.de
 
 export OMP_NUM_THREADS=1

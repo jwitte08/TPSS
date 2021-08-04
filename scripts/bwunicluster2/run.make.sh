@@ -1,6 +1,6 @@
 #!/bin/bash
 
-declare -a refinements=('4' '5' '6' '7' '8')
+declare -a refinements=('4' '5' '6' '7' '8' '9')
 declare -a myprogs=()
 for prog in $@;
 do
@@ -12,7 +12,7 @@ ppn=40
 args=${refinements[*]}
 proglist=${myprogs[*]}
 
-for nodes in "2" "4" "8" "16" "32" "64";
+for nodes in "2" "4" "8" "16" "32" "64" "128";
 do
     processes=$(($nodes * $ppn))
     echo "nodes=$nodes ppn=$ppn processes=$processes"
