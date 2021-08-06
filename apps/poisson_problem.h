@@ -404,7 +404,8 @@ struct ModelProblem : public Subscriptor
   distribute_dofs()
   {
     dof_handler.clear();
-    dof_handler.initialize(triangulation, *fe);
+    dof_handler.reinit(triangulation);
+    dof_handler.distribute_dofs(*fe);
     dof_handler.distribute_mg_dofs();
   }
 
