@@ -4324,11 +4324,7 @@ struct LocalSolverStream
  * approximation to the actual velocity solution) is computed has to be
  * determined by a derived class.
  */
-template<int dim,
-         int fe_degree_p,
-         typename Number,
-         typename MatrixTypeStream,
-         bool is_simplified = false>
+template<int dim, int fe_degree_p, typename Number, typename MatrixTypeStream, bool is_simplified>
 class MatrixIntegratorStreamBase
 {
 public:
@@ -5390,7 +5386,7 @@ public:
  * function, velocity and pressure coefficients. Underlying PatchDoFWorkers
  * determine collections of cell iterators passed to mesh_loop().
  */
-template<int dim, int fe_degree_p, typename Number = double, bool is_simplified = false>
+template<int dim, int fe_degree_p, typename Number, bool is_simplified>
 class MatrixIntegratorStream
   : public MatrixIntegratorStreamBase<dim,
                                       fe_degree_p,
@@ -6012,7 +6008,7 @@ public:
  * Therefore, all local matrices are stored and inverted in a standard way, that
  * is without exploiting any tensor structure.
  */
-template<int dim, int fe_degree_p, typename Number = double, bool is_simplified = false>
+template<int dim, int fe_degree_p, typename Number, bool is_simplified>
 class MatrixIntegratorStream
   : public MatrixIntegratorStreamBase<dim,
                                       fe_degree_p,
