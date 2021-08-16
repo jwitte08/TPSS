@@ -113,7 +113,7 @@ main(int argc, char * argv[])
         AssertThrow(false, ExcMessage("KSVD rank isn't supported."));
       return {};
     }();
-    equation_data.n_lanczos_iterations = 4 + 1;
+    equation_data.n_lanczos_iterations = 4 + 1 + /*not simplified*/ 2;
     if(equation_data.ksvd_tensor_indices == std::set<unsigned int>{0U, 1U})
       equation_data.addition_to_min_eigenvalue = 0.025;
 

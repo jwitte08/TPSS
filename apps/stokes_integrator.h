@@ -6039,7 +6039,8 @@ public:
   void
   initialize(const EquationData & equation_data_in) override
   {
-    AssertThrow(equation_data_in.local_solver == LocalSolver::C0IP,
+    AssertThrow(equation_data_in.local_solver == LocalSolver::C0IP ||
+                  equation_data_in.local_solver == LocalSolver::C0IP_KSVD,
                 ExcMessage("local_solver is not supported."));
     Base::initialize(equation_data_in);
   }
@@ -6186,7 +6187,87 @@ public:
             });
         }
 
-        patch_matrix.solver_sf.fill_submatrix(tmp, 0U, 0U, lane);
+
+        if(Base::equation_data.local_solver == LocalSolver::C0IP_KSVD)
+        {
+          using tensor_matrix_type = Tensors::TensorProductMatrix<dim, Number>;
+          using matrix_state       = typename tensor_matrix_type::State;
+          tensor_matrix_type tpm;
+
+          std::array<std::size_t, dim> rows, columns;
+          for(unsigned int d = 0; d < dim; ++d)
+            rows[d] = columns[d] = patch_transfer_sf->get_patch_dof_worker().n_dofs_1d(d);
+
+          const unsigned int ksvd_rank = *(Base::equation_data.ksvd_tensor_indices.rbegin()) + 1;
+          auto               ksvd_tensors =
+            Tensors::make_zero_rank1_tensors<dim, Number>(ksvd_rank, rows, columns);
+          const auto & ksvd_singular_values =
+            compute_ksvd(tmp, ksvd_tensors, Base::equation_data.n_lanczos_iterations);
+
+          std::vector<std::array<Table<2, Number>, dim>> approximation;
+          for(auto i = 0U; i < ksvd_tensors.size(); ++i)
+            if(Base::equation_data.ksvd_tensor_indices.find(i) !=
+               Base::equation_data.ksvd_tensor_indices.cend())
+              approximation.emplace_back(ksvd_tensors[i]);
+
+          AssertDimension(Base::equation_data.ksvd_tensor_indices.size(), approximation.size());
+
+          if(approximation.size() == 1U)
+          {
+            tpm.reinit(approximation, matrix_state::rankone);
+          }
+
+          else if(approximation.size() == 2U)
+          {
+            /// first tensor must contain s.p.d. matrices ("mass matrices")
+            typename tensor_matrix_type::AdditionalData additional_data;
+            additional_data.state = matrix_state::ranktwo;
+
+            tpm.reinit(approximation, additional_data);
+
+            const auto & tensor_of_eigenvalues = tpm.get_eigenvalue_tensor();
+            const auto   eigenvalues_ksvd1 =
+              Tensors::kronecker_product<dim, Number>(tensor_of_eigenvalues);
+
+            /// if the rank-2 KSVD isn't positive definite we scale the second
+            /// tensor of matrices by a factor \alpha (with 0 < \alpha < 1),
+            /// thus obtaing an approximation that is better than the best
+            /// rank-1 approximation but worse than the best rank-2
+            /// approximation. \alpha is computed at negligible costs due to the
+            /// specific eigendecomposition with tensor structure
+            if(Base::equation_data.ksvd_tensor_indices == std::set<unsigned int>{0U, 1U})
+            {
+              Number alpha(1.);
+              // std::cout << "eigenvalues of KSVD[1]:\n"
+              //           << vector_to_string(alignedvector_to_vector(eigenvalues_ksvd1))
+              //           << std::endl;
+              const auto min_elem =
+                std::min_element(eigenvalues_ksvd1.begin(), eigenvalues_ksvd1.end());
+              const Number lambda_min = (*min_elem);
+
+              /// \alpha = -1 / ((1 + \epsilon) * \lambda_{min})
+              if(lambda_min < -0.99) // KSVD isn't positive definite
+                alpha /= -(1. + Base::equation_data.addition_to_min_eigenvalue) * lambda_min;
+              if(alpha > 1.)
+                alpha = 0.99;
+
+              Tensors::scaling<dim>(alpha, approximation.at(1U));
+              tpm.reinit(approximation, additional_data);
+            }
+          }
+
+          else
+          {
+            AssertThrow(false, ExcNotImplemented());
+          }
+
+          /// TODO exploit reduced memory-intensity of tensor product matrix
+          patch_matrix.solver_sf.fill_submatrix(tpm.as_table(), 0U, 0U, lane);
+          continue;
+        }
+
+        else
+          patch_matrix.solver_sf.fill_submatrix(tmp, 0U, 0U, lane);
       }
 
       AssertDimension(patch_matrix.solver_sf.m(), n_dofs_stream);
