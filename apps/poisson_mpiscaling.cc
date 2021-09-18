@@ -27,15 +27,16 @@ struct TestParameter
   std::string                        solver_variant   = "cg"; // see SolverSelector
   CoarseGridParameter::SolverVariant coarse_grid_variant =
     CoarseGridParameter::SolverVariant::Iterative;
-  double   cg_reduction         = 1.e-8;
-  double   coarse_grid_accuracy = 1.e-12;
-  unsigned n_refinements        = 1;
-  unsigned n_smoothing_steps    = 1;
-  unsigned n_samples            = 20;
-  unsigned n_subsamples_vmult   = 100;
-  unsigned n_subsamples_smooth  = 20;
-  unsigned n_subsamples_mg      = 10;
-  unsigned test_variants        = 0;
+  double                cg_reduction         = 1.e-8;
+  double                coarse_grid_accuracy = 1.e-12;
+  unsigned              n_refinements        = 1;
+  unsigned              n_smoothing_steps    = 1;
+  unsigned              n_samples            = 20;
+  unsigned              n_subsamples_vmult   = 100;
+  unsigned              n_subsamples_smooth  = 20;
+  unsigned              n_subsamples_mg      = 10;
+  unsigned              test_variants        = 0;
+  static constexpr bool do_residual          = true;
 
   /*
    * variant_no: 0 = vmult
@@ -250,9 +251,15 @@ struct Test
 
     if(prms.do_test_variant(0))
     {
-      pcout << Util::parameter_to_fstring("Testing vmult()", "");
+      if(prms.do_residual)
+        pcout << Util::parameter_to_fstring("Testing residual()", "");
+      else
+        pcout << Util::parameter_to_fstring("Testing vmult()", "");
       time.start();
-      vmult_impl(poisson_problem);
+      if(prms.do_residual)
+        residual_impl(poisson_problem);
+      else
+        vmult_impl(poisson_problem);
       time.stop();
       time.print_last_lap_wall_time_data(pcout);
       pcout << std::endl;
@@ -361,6 +368,63 @@ struct Test
         fstream.open("vmult_" + filename + "." + Utilities::int_to_string(sample, 4) + ".time",
                      std::ios_base::out);
         write_timings(fstream, timings_vmult, pp_data);
+        fstream.close();
+      }
+    }
+  }
+
+  void
+  residual_impl(const PoissonProblem & poisson_problem)
+  {
+    Timings                 timings_residual;
+    auto &                  pcout         = *(poisson_problem.pcout);
+    types::global_dof_index n_dofs_global = 0;
+    for(unsigned sample = 0; sample < prms.n_samples; ++sample)
+    {
+      Timer time(MPI_COMM_WORLD, true);
+      //:setup
+      time.restart();
+      const auto    mf_storage = poisson_problem.template build_mf_storage<double>();
+      SYSTEM_MATRIX system_matrix;
+      system_matrix.initialize(mf_storage, poisson_problem.equation_data);
+      n_dofs_global = system_matrix.m();
+      time.stop();
+      timings_residual.setup.push_back(time.get_last_lap_wall_time_data());
+
+      //: residual
+      VECTOR tmp;
+      mf_storage->initialize_dof_vector(tmp);
+      fill_with_random_values(tmp);
+      VECTOR rhs;
+      mf_storage->initialize_dof_vector(rhs);
+      fill_with_random_values(rhs);
+      VECTOR src;
+      mf_storage->initialize_dof_vector(src);
+      fill_with_random_values(src);
+      time.restart();
+      for(unsigned subsample = 0; subsample < prms.n_subsamples_vmult; ++subsample)
+      {
+        system_matrix.vmult(tmp, src); // Ax
+        tmp.sadd(-1., 1., rhs);        // b - Ax
+      }
+      print_row(pcout, 20, "VmPeak", "VmSize", "VmHWM", "VmRSS");
+      pcout << str_memory_stats("residual");
+      time.stop();
+      Utilities::MPI::MinMaxAvg t_apply = time.get_last_lap_wall_time_data();
+      t_apply                           = t_apply / prms.n_subsamples_vmult;
+      timings_residual.apply.push_back(t_apply);
+
+      //: write performance timings
+      const std::string filename = get_filename(n_dofs_global);
+      if(Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+      {
+        std::fstream      fstream;
+        PostProcessData & pp_data = poisson_problem.pp_data;
+        pp_data.n_dofs_global.push_back(n_dofs_global);
+
+        fstream.open("residual_" + filename + "." + Utilities::int_to_string(sample, 4) + ".time",
+                     std::ios_base::out);
+        write_timings(fstream, timings_residual, pp_data);
         fstream.close();
       }
     }
