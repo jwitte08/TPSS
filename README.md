@@ -7,6 +7,13 @@ TODO ... intro
 
 The code is based on the generic finite element library [deal.II](https://github.com/dealii/dealii). Using MPI requires the "forest-of-octrees" library [p4est](https://github.com/cburstedde/p4est) which is responsible to efficiently partition the triangulation with respect to distributed memory.
 
+---
+**Warning**
+
+To run the current TPSS software this branch (https://github.com/jwitte08/dealii/tree/rt_matrixfree) of jwitte08's deal.II fork is required.
+
+---
+
 ### Installing p4est
 
 First clone **deal.II**, here, e.g. cloned to the directory _dealii_:
@@ -58,8 +65,6 @@ make -j2
 Installing the build into a separate directory is possible and explained in deal.II's INSTALL README.
 
 ### Configuring TPSS
-
-To run the current TPSS software this branch (https://github.com/jwitte08/dealii/tree/rt_matrixfree) of jwitte08's deal.II fork is required.
 
 ```bash
 git clone --recurse-submodules <tpss-repo> <folder-name>
