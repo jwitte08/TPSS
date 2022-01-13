@@ -59,4 +59,56 @@ Installing the build into a separate directory is possible and explained in deal
 
 ### Configuring TPSS
 
-TODO ...
+To run the current TPSS software this branch (https://github.com/jwitte08/dealii/tree/rt_matrixfree) of jwitte08's deal.II fork is required.
+
+```bash
+git clone --recurse-submodules <tpss-repo> <folder-name>
+mkdir <folder-name>/build
+cd <folder-name>/build
+bash ../scripts/tpss-setup.sh
+make -j2 all
+```
+
+#### Running applications
+
+```bash
+<go to build folder>
+make -j2 poisson_standard biharmonic_c0ip stokes_raviartthomas
+./apps/poisson_standard
+./apps/biharmonic_c0ip
+./apps/stokes_raviartthomas
+```
+
+For the applications in `apps`  a few methodological parameters need to be set at compile time. These parameters are available in `include/ct_parameter.h`.
+
+There exists a helper script `scripts/ct_parameter.py` which can be run with a python3 interpreter. Using
+
+```bash
+python3 scripts/ct_parameter.py -h
+```
+
+presents an overview of possible options. For example, running
+
+```bash
+python3 scripts/ct_parameter.py -DIM 2 -DEG 3 -SMO 'MVP'
+```
+
+resets the spatial dimension to 2, finite element degree to 3 and the smoother to a **M**ultiplicative, **V**ertex-**Patch** Schwarz smoother. Note, that the executables need to be rebuilt.
+
+The Poisson problem and some Stokes problems can be executed in parallel via MPI.
+
+```bash
+mpirun -np 2 ./apps/poisson_standard
+mpirun -np 2 ./apps/stokes_raviartthomas
+```
+
+### Running tests
+
+Requires a valid setup of build files (see previous section).
+
+```bash
+<go to the build folder>
+make -j2 setup_tests
+cd tests
+ctest --output-on-failure
+```
